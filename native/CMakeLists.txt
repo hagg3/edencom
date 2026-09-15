@@ -907,9 +907,29 @@ file(GLOB _f "${EDEN_PARENT_DIR}/media/sound/*.caf" "${EDEN_PARENT_DIR}/media/so
              "${EDEN_PARENT_DIR}/media/sound/ambientloops/*.wav"
              "${EDEN_PARENT_DIR}/media/new_sound/*.mp3"
              "${EDEN_PARENT_DIR}/media/music/*.mp3")
-list(APPEND EDEN_ASSET_GLOBS ${_f}
-     "${EDEN_PARENT_DIR}/report_flag.png"
-     "${EDEN_PARENT_DIR}/Eden.eden")
+list(APPEND EDEN_ASSET_GLOBS ${_f} "${EDEN_PARENT_DIR}/report_flag.png")
+
+# Stage 4.4: on iOS the bundle is COPIED into the .app (see the COPY_ON_ERROR comment below), so
+# Eden.eden's 52.47 MiB is charged against install size; on every other target it's a symlink and
+# costs nothing, so it ships raw there. gzip -9 removes 84% of it (measurement:
+# WORKING/phase-n-stage4-4-asset-payload-2026-09-15.md) with a decompressor
+# (Classes/zpipe.c's decompressFile(), auto-detects the gzip container) already linked and already
+# called from Menu::loadShared — Classes/FileManagerHelper.mm's fmh_init() inflates this once into
+# a writable cache file on first launch and reuses it after that.
+if(IOS)
+  set(EDEN_GZ_EDEN "${CMAKE_CURRENT_BINARY_DIR}/Eden.eden.gz")
+  add_custom_command(
+    OUTPUT "${EDEN_GZ_EDEN}"
+    COMMAND sh -c "gzip -9 -c '${EDEN_PARENT_DIR}/Eden.eden' > '${EDEN_GZ_EDEN}'"
+    DEPENDS "${EDEN_PARENT_DIR}/Eden.eden"
+    COMMENT "Eden native (iOS): gzip -9 Eden.eden for the device bundle (Stage 4.4, ~52 MiB -> ~8 MiB)"
+    VERBATIM)
+  add_custom_target(eden_gz_world DEPENDS "${EDEN_GZ_EDEN}")
+  add_dependencies(eden_native eden_gz_world)
+  list(APPEND EDEN_ASSET_GLOBS "${EDEN_GZ_EDEN}")
+else()
+  list(APPEND EDEN_ASSET_GLOBS "${EDEN_PARENT_DIR}/Eden.eden")
+endif()
 list(REMOVE_DUPLICATES EDEN_ASSET_GLOBS)
 list(LENGTH EDEN_ASSET_GLOBS EDEN_ASSET_COUNT)
 

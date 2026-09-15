@@ -11,7 +11,13 @@ format itself is specified in [eden-file-format.md](eden-file-format.md).
 - `Classes/FileManagerHelper.mm` — read-only access to the **bundled** default world
   `Eden.eden` (its own file handle, header and directory hashmap; the comment at the
   top warns the identically-named statics refer to the *default* world, not the
-  active one).
+  active one). Since Phase N Stage 4.4, `fmh_init()` prefers a bundled `Eden.eden.gz`
+  over the raw file when present (iOS only — `native/CMakeLists.txt` gzips it at
+  build time because the iOS bundle is copied into the `.app`, not symlinked like
+  every other native target): it inflates the bundle asset once, with
+  `Classes/zpipe.c`'s `decompressFile()`, into `<documents>/Eden.eden.cache` and
+  reopens that cache file on every later launch, since the bundle itself is
+  read-only and can't be decompressed in place.
 - `Classes/hashmap.mm` — int-keyed hashmap holding `ColumnIndex*` records.
 - File-scope statics in `FileManager.mm`: `saveFile` (NSFileHandle), `sfh` (in-memory
   header), `indexes` (directory hashmap), `cur_dir_offset`, `file_version`,

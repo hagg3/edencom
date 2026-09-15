@@ -11,6 +11,7 @@
 #import "FileArchive.h"
 #import "World.h"
 #import "hashmap.h"
+#import "zpipe.h"
 
 
 FileManager* fm;
@@ -34,14 +35,49 @@ void fmh_init(FileManager* t_fm){
     indexes=hashmap_new();
      
  //  NSString* file_name=[NSString stringWithFormat:@"%@/Eden.eden",fm.documents];
-    
-    NSString* file_name=[[NSBundle mainBundle] pathForResource:@"Eden.eden" ofType:nil];
-    
-   /*  if(TRUE){
-     DecompressWorld([file_name cStringUsingEncoding:NSUTF8StringEncoding]);
-     }
-     */
-    
+
+    // Stage 4.4: iOS ships Eden.eden.gz (8.4 MiB vs. 52.5 MiB raw -- see
+    // WORKING/phase-n-stage4-4-asset-payload-2026-09-15.md) because on-device install size is
+    // charged for every byte the bundle copies in, unlike the symlinked desktop bundles. The
+    // bundle itself is read-only, so a compressed asset has to be inflated to a WRITABLE cache
+    // file once and reopened from there every launch after -- this is the fix for the dead
+    // in-place DecompressWorld() call this replaces, below, which could never work against a
+    // read-only source path. Platforms that still ship the raw file (web, desktop) just don't
+    // find Eden.eden.gz in the bundle and fall through unchanged.
+    // NSBundle's web shim never returns nil (a miss synthesizes a non-existent path so untouched
+    // callers can keep using -fileExistsAtPath:) so the presence check has to be
+    // -fileExistsAtPath:, not a nil check against the path string.
+    NSString* gz_name=[[NSBundle mainBundle] pathForResource:@"Eden.eden.gz" ofType:nil];
+    NSFileManager* nsfm=[NSFileManager defaultManager];
+    NSString* file_name=nil;
+    if(gz_name!=nil&&[nsfm fileExistsAtPath:gz_name]){
+        file_name=[NSString stringWithFormat:@"%@/Eden.eden.cache",fm->documents];
+        if(![nsfm fileExistsAtPath:file_name]){
+            printg("fmh init: inflating bundled Eden.eden.gz to cache...\n");
+            FILE* fsource=fopen([gz_name cStringUsingEncoding:NSUTF8StringEncoding],"rb");
+            FILE* fdest=fopen([file_name cStringUsingEncoding:NSUTF8StringEncoding],"wb");
+            if(fsource&&fdest){
+                int ret=decompressFile(fsource,fdest);
+                fclose(fsource);
+                fclose(fdest);
+                if(ret!=Z_OK){
+                    printg("fmh init: failed to inflate Eden.eden.gz (zlib err %d)\n",ret);
+                    remove([file_name cStringUsingEncoding:NSUTF8StringEncoding]);
+                    file_name=nil;
+                }
+            }else{
+                printg("fmh init: could not open Eden.eden.gz or its cache destination\n");
+                if(fsource)fclose(fsource);
+                if(fdest)fclose(fdest);
+                file_name=nil;
+            }
+        }
+        // A previous launch already inflated it -- reuse the cache file as-is.
+    }
+    if(file_name==nil){
+        file_name=[[NSBundle mainBundle] pathForResource:@"Eden.eden" ofType:nil];
+    }
+
      saveFile=[NSFileHandle fileHandleForReadingAtPath:file_name];
     [saveFile retain];
      sfh=(WorldFileHeader*)[[saveFile readDataOfLength:sizeof(WorldFileHeader)] bytes];
