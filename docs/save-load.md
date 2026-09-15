@@ -298,7 +298,10 @@ byte-for-byte what it was.
   is no honest place to hang the shim's deferred-until-first-write guard. Both call the same
   implementation, `web/src/shim/foundation/save_backup.cpp`, which is where the rules now live
   (skip a missing/zero-length source, skip at or above `g_save_inplace_threshold`, delete a
-  partial `.bak`).
+  partial `.bak`, and — since a player-facing toggle was added — skip if the "save_backup" row in
+  `kSettings[]` (`Settings_web.mm`) is off. Default ON: it is what
+  `eden_load_restore_backup()`/`LoadFailure_web.mm`'s corrupted-load recovery prompt offers to
+  restore, so turning it off is an explicit trade of that safety net for fewer/smaller writes.
 
 Why the native default is not `~/Documents`: macOS will not let an unsigned command-line tool
 write there and **redirects the writes into `~/Library/Containers/<UUID>/Data/Documents` with no

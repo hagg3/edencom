@@ -149,6 +149,8 @@ static const Setting kSettings[] = {
   { "fps_normalize",     "Frame-rate normalize", "Experiments", KIND_TOGGLE, -1,        0,   1,   1,   1,  "Keep walk speed the same at any refresh rate (PC audit F1).",     NULL },
   { "advanced_movement", "Advanced movement (bhop)", "Experiments", KIND_TOGGLE, -1,     0,   1,   1,   0,  "Opt-in: zero-delay bunny-hop and wheel-jump. Off by default.",    NULL },
   { "crouch",            "Crouch mode",       "Experiments", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Adds a crouch key/button (halves hitbox height for 1-block gaps). Off by default.", NULL },
+
+  { "save_backup",       "Keep a save backup", "Saves",      KIND_TOGGLE, -1,           0,   1,   1,   1,  "Keep a '.bak' copy of a world's previous save so a corrupted or interrupted save can be recovered. Roughly doubles the disk write per save below the in-place threshold. On by default -- this is what a corrupted-load recovery prompt offers to restore.", NULL },
 };
 static const int kSettingCount = (int)(sizeof(kSettings) / sizeof(kSettings[0]));
 
@@ -201,6 +203,11 @@ float eden_legacy_menu      = 0.0f;
 float eden_gamepad_enabled  = 1.0f;
 float eden_gamepad_look_sensitivity = 1.0f;
 float eden_gamepad_deadzone = 0.15f;
+// Read (via eden_get_save_backup() below, not directly -- see there) by the portable
+// save_backup.cpp, shared with native. Default ON: it is what keeps a corrupted/truncated save
+// recoverable through eden_load_restore_backup(), so OFF is an explicit opt-out of that safety
+// net, not a neutral default.
+float eden_save_backup      = 1.0f;
 
 // ---------------------------------------------------------------------------------------------
 // Phase 2 — input mode: Auto(0) / Touch(1) / Keyboard+Mouse(2). "Auto" defers to whatever the
@@ -396,6 +403,8 @@ static void eden_apply_setting(int i, bool commitEngine) {
         eden_gamepad_look_sensitivity = v;
     } else if (std::strcmp(s.key, "gamepad_deadzone") == 0) {
         eden_gamepad_deadzone = v;
+    } else if (std::strcmp(s.key, "save_backup") == 0) {
+        eden_save_backup = v;
     } else if (std::strcmp(s.key, "input_mode") == 0) {
         g_inputMode = (int)lroundf(v);
         eden_apply_input_profile();
@@ -596,6 +605,10 @@ EDEN_EXPORT
 int eden_get_display_mode(void) { return (int)lroundf(eden_display_mode); }
 EDEN_EXPORT
 int eden_get_advanced_movement(void) { return eden_advanced_movement != 0.0f; }
+// Not polled -- read once per save by save_backup.cpp (portable C++, no Settings_web.mm include),
+// which is the actual reason this is a function and not a direct extern of the float above.
+EDEN_EXPORT
+int eden_get_save_backup(void) { return eden_save_backup != 0.0f; }
 
 // Audit item #6. Returned as integer percent / hundredths rather than floats so the page does no
 // index->value mapping of its own (the tables below are the only copy). Out-of-range indexes fall

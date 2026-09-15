@@ -13,8 +13,13 @@
 #include <string>
 #include <sys/types.h>
 
+// Settings_web.mm's getter, not the float itself: that file is compiled with real Foundation/
+// Objective-C++ headers this portable file deliberately does not include (see the file comment).
+extern "C" int eden_get_save_backup(void);
+
 extern "C" void eden_save_backup_before_overwrite(const char* path) {
     if (!path || !*path) return;
+    if (!eden_get_save_backup()) return;   // opted out -- see kSettings[]'s "save_backup" row
 
     FILE* src = std::fopen(path, "rb");
     if (!src) return;                      // nothing to back up yet (first save of this world)
