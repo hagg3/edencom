@@ -37,19 +37,31 @@ string moved to `Experiments`, their engine defaults and behavior are unchanged.
 engine behavior, not a bug to fix. The port's own `eden_apply_port_settings()` must
 re-run after every `save()`/`load()` or these two values silently revert.
 
-Keybinds are the **one deliberate exception** to "settings live in the C table":
-`window.EdenKeybinds`, a JS-owned `localStorage` blob mapping action → physical key
-code, because the C settings model only stores floats. See
-[conventions-and-pitfalls.md](conventions-and-pitfalls.md) #7.
+Keybinds were the **one deliberate exception** to "settings live in the C table" through Phase N
+Stage 5.1: `window.EdenKeybinds`, a JS-owned `localStorage` blob mapping action → physical key
+code, because the C settings model only stores floats. **Stage 5.2 (2026-09) retired that
+exception**: a binding is a USB HID usage ID (the same number SDL3 scancodes and browser
+`event.code` strings both refer to), which fits in a float, so keybinds moved into a second C
+table — `kKeybinds[]`, parallel to `kSettings[]` in the same file (`src/seam/Settings_web.mm`;
+see its header comment for why a *parallel* table rather than widening `kSettings[]`'s `Setting`
+struct). `public/eden-keybinds.js` (`window.EdenKeybinds`) is now a thin bridge over
+`eden_keybind_*`/`eden_keybinds_schema()`/`eden_keybind_code_table()` — the persistence, defaults
+and the code<->action map all live in C; the JS keeps only the DOM rebind-capture protocol
+(capture-phase `keydown`, `preventDefault`/`stopPropagation`) and `codeToActions`/
+`MOMENTARY_ACTIONS`/`CONTINUOUS_ACTIONS` as the bare top-level bindings `eden-input.js` consumes.
+See [conventions-and-pitfalls.md](conventions-and-pitfalls.md) #7.
 
 **Unified surface (audit row 20/G2, 2026-08-04).** The storage split above is real and stays —
 but the panel's UI was already a single shell before this pass, contrary to the audit's pass-59
 note: `Keys` (keybinds) and `Storage` are tabs in the same rail as every schema-driven group. The
 actual gap was that there was no *shared* reset — only the Keys tab had one. Added
 `eden_settings_reset_all()` (loops `kSettings[]`, resets each row via the existing
-`eden_settings_set`) and a `Reset` tab (`renderResetBody` in `eden-settings.js`) whose one
-confirm-guarded button calls that plus `window.EdenKeybinds.resetDefaults()`, then re-renders —
-one reset, for both halves, in the tab list every other setting already lives in.
+`eden_settings_set`, **and since Stage 5.2 also calls `eden_keybind_reset_all()`**) and a `Reset`
+tab (`renderResetBody` in `eden-settings.js`) whose one confirm-guarded button calls that —
+`window.EdenKeybinds.resetDefaults()` is no longer called alongside it there (redundant now that
+the C reset covers keybinds too) but stays on the public surface for the Keys tab's own
+standalone reset button — one reset, for both halves, in the tab list every other setting already
+lives in.
 
 `NSUserDefaults` itself is localStorage-backed
 (`src/shim/foundation/NSUserDefaults.mm`) — NSNumber/NSString only, namespaced under

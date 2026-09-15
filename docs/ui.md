@@ -37,6 +37,27 @@ with OpenGL by the game itself. There is **no UIKit UI** beyond the GL view (and
   `eden_ui_wants_cursor()` returns true while a `GLDialog` is up, so the native mouse-capture
   predicate releases the pointer for it — needed because `Hud::handlePickMenu` clears `inmenu` in
   the same breath as `showAlertWarpHome()`, so the "in a menu" term alone would not cover it.
+- `KeybindsMenu` (`Classes/KeybindsMenu.{h,mm}`) — **added Phase N Stage 5.3.** The GL keybinds
+  screen, and the kit's second consumer: a paginated list (7 rows a page, grouped
+  Movement/Actions/Interface/Hotbar) of every rebindable action against its current key, drawn
+  entirely in `GLWidgets` calls. **It is a CHILD of `SettingsMenu`, not a sibling** — its "Keys"
+  button shows it and `SettingsMenu::update/render` delegate to it wholesale while it is up. That
+  is deliberate and load-bearing: web `--wrap`s `SettingsMenu::update/render` to no-ops, so a
+  screen reachable only from inside them cannot draw or take input on web, where the DOM Keys tab
+  is authoritative. `SettingsMenu::showKeybinds()` is the programmatic entry point (the `--shot`
+  harness and `--keybind-selftest` use it rather than hit-testing the button).
+  - **The data is not here.** Bindings live in the shared keybind model — see the KEYBINDS section
+    below — and this screen only reads `eden_keybind_*`.
+  - **Rebind capture is armed in the model, not in the screen** (`eden_keybind_capture_begin`).
+    The engine's `Input` carries touches and nothing else, so the key that closes a capture arrives
+    on a path no GL screen can see: on native it comes through SDL and
+    `native/src/seam/Input_native.cpp` feeds it to `eden_keybind_capture_feed()` **ahead of every
+    other dispatch**, which is what stops the key you are binding also walking the player. Escape
+    cancels (and therefore cannot be bound from this screen — the trade is deliberate: it is the
+    one key every keyboard has, and a capture with no exit strands the player in a modal).
+  - Only the PRIMARY binding is rebindable. A fixed secondary (arrow keys, the right-hand
+    modifiers) is shown as dim "also X" text beside the button rather than on it — visible, because
+    it is live input, but plainly not the control.
 - `Joystick` (`Classes/Joystick.mm`) — virtual analog stick, owned by Hud.
 - `Graphics::beginHud/endHud`, `prepareMenu/endMenu` — orthographic projection setup.
   All layout code branches on `IS_IPAD`/`IS_WIDESCREEN` with hard-coded coordinates
@@ -142,6 +163,8 @@ them — the ordering in `World::update` is the arbitration.
   `SettingsMenu::update/render` to no-ops (the DOM panel owns settings there). Rows whose effect
   is web-only (`render_scale`, `dpr_cap`, `ui_scale`, `display_mode`, `display_layout`,
   `input_mode`, `legacy_menu`) are hidden via `eden_settings_native_hidden()`.
+  **Stage 5.3 added a "Keys" button** to its bottom row (beside Save/prev/next), which shows
+  `KeybindsMenu` and hands it the whole frame until it closes.
 - **`ShareMenu`** — upload flow for the selected world.
 - **`SharedList`** (`Classes/SharedList.mm`, 881 lines) — the online world browser:
   paged list (name/downloads/date columns as cached textures), sort tabs
@@ -176,3 +199,38 @@ them — the ordering in `World::update` is the arbitration.
 - **Caution:** touch-consumption ordering vs. Player, `genColorTable` (changes every
   painted block in every saved world!), texture load/unload pairing across
   menu↔game transitions.
+
+
+## The keybind model (Phase N Stage 5.2)
+
+**Where it lives:** `web/src/seam/Settings_web.mm`, in its own `KEYBINDS` section — a *shared* seam
+file, compiled into both the web and the native trees, so the browser's Keys tab and the engine's
+`KeybindsMenu` are two front-ends over one table. Read that section's header comment before
+changing anything here; the summary:
+
+- **A binding is an integer: the key's USB HID usage ID.** SDL3's `SDL_Scancode` values *are* those
+  IDs, and the browser's `event.code` strings are a 1:1 renaming of the same table. That is what
+  retired the old "keybinds must live in JS because the C settings model stores floats only"
+  exception — an int below 512 is exactly representable in a float and persists as an `NSNumber`.
+  `native/src/seam/Input_native.cpp` carries `static_assert`s on the scancode/HID identity, so an
+  SDL that renumbered would break the build rather than silently rebind every keyboard.
+- **`kKeyNames[]`** is the one place the browser spelling, the HID number and the display label are
+  related. `eden_keybind_code_table()` emits it as JSON for the page (nothing ever passes a string
+  *into* wasm — that would mean exporting `_malloc`/`_free`).
+- **`kKeybinds[]`** is the action table: id, label, group, default primary, a fixed secondary, the
+  continuous/momentary dispatch class, and which hosts implement it (`fullscreen` and `settings`
+  are web-only, and `eden_keybind_native_hidden()` is how the GL screen skips them — the same
+  policy `eden_settings_native_hidden()` applies to settings rows).
+- **These are NOT `kSettings[]` rows.** The stage plan called for a `KIND_KEY` row type inside
+  `Setting`; a keybind carries four fields a float row has no place for, and `min/max/step/def`
+  would all be dead weight. `KIND_KEY` exists as a kind constant for row dispatch, not as a member
+  of `kSettings[]`. `eden_settings_reset_all()` resets both tables.
+- **Conflicts are allowed, deliberately.** Ctrl ships bound to *both* `flyDown` and `crouch`, so a
+  "clear the other binding" rule would fight the shipped configuration on the first rebind. The
+  lookup is therefore an iterator (`eden_keybind_action_after(prev, code)`), and every caller must
+  walk it rather than stop at the first hit.
+- **Gate:** `./build/eden_native --keybind-selftest` asserts both directions of a rebind — that the
+  new key works *and* that the old one has stopped — because a test of only the new key would pass
+  against an input path that still had its hard-coded `switch (sc)` and merely also consulted the
+  model. It measures "stopped" against an unbound control key rather than a fixed epsilon, since a
+  flying player drifts and the drift is a property of the world, not of the binding.

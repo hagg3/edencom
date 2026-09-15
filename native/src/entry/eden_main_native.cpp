@@ -33,9 +33,16 @@
 //                        someone sitting at the keyboard, and that is not a regression test.
 //   --shot[=PREFIX]      opens a REAL WINDOW and writes BMP captures of three screens — the main
 //                        menu, the in-world HUD and the in-game (ESC) panel — as
-//                        PREFIX-menu.bmp / -hud.bmp / -pausemenu.bmp (default prefix eden-shot).
+//                        PREFIX-menu.bmp / -settings.bmp / -keybinds.bmp / -hud.bmp /
+//                        -pausemenu.bmp / -dialog.bmp (default prefix eden-shot).
 //                        The GL UI is native's only UI until Stage 5, so "what does it look like"
 //                        needs an artefact; --smoke only answers "did it draw at all".
+//   --keybind-selftest   Stage 5.2/5.3: the keybind MODEL and the rebind path. Asserts the
+//                        defaults resolve, that rebinding a key really moves the behaviour from
+//                        the old physical key to the new one (both directions checked, which is
+//                        the half a "does the setter store it" test would miss), that a default
+//                        double-binding still fires both of its actions, and that reset restores.
+//                        Headless.
 //   --objc-selftest      Stage 3: this port's own ObjC runtime (Linux/Windows only; macOS uses
 //                        Apple's). Dispatch, ivar layout, super, categories, the empty-base ivar
 //                        bias and the @"literal" layout.
@@ -93,6 +100,8 @@
 #include "../../../Classes/Resources.h"
 #include "../../../Classes/Constants.h"    // CHUNK_SIZE / T_SIZE, for the map-border arithmetic below
 #include "../../../Classes/TerrainGen2.h"  // GSIZE — same, and it is macros only
+#include "../../../Classes/Menu.h"         // Menu::settings, for --shot's keybinds capture
+#include "../../../Classes/SettingsMenu.h" // SettingsMenu::showKeybinds()
 #include "gl_es1_shim.h"   // also gives glGetString (renamed to the shim's guarded form)
 #include "platform_shims.h"
 #include "../eden_app_identity.h"   // Emod is not Eden — see that file
@@ -550,6 +559,17 @@ int run_shot() {
     eden_settings_menu_open_now();
     tick(30);
     capture("settings");
+
+    // Stage 5.3's keybinds screen, reached the way the Keys button reaches it. Shown through
+    // SettingsMenu::showKeybinds() rather than by hit-testing that button: where the button sits
+    // is not what this artefact is for, and a layout change to the settings screen should not be
+    // able to silently stop capturing the keybinds one.
+    if (World::getWorld && World::getWorld->menu && World::getWorld->menu->settings) {
+        World::getWorld->menu->settings->showKeybinds();
+        tick(30);
+        capture("keybinds");
+    }
+
     eden_settings_menu_close();
     tick(15);
 
@@ -1444,6 +1464,163 @@ int run_gamepad_selftest() {
     return g_selftestFailures ? 1 : 0;
 }
 
+// ---------------------------------------------------------------------------------------------
+// --keybind-selftest  (Phase N Stage 5.2/5.3)
+// ---------------------------------------------------------------------------------------------
+// Stage 5.2 moved the keybind map out of `public/eden-keybinds.js` and into the shared C model
+// (web/src/seam/Settings_web.mm). The thing that has to be true afterwards is not "the setter
+// stored a number" — it is that the INPUT PATH reads the model, i.e. that rebinding moves the
+// behaviour off the old key and onto the new one. So this asserts BOTH directions: the new key
+// works AND the old one has stopped. A test that only checked the new key would pass against an
+// Input_native.cpp that still had its hard-coded `switch (sc)` and merely also consulted the
+// model, which is exactly the half-ported state this stage could have landed in.
+//
+// It also asserts the double-binding case, because "one key, two actions" is shipped
+// configuration (Ctrl is flyDown and crouch) and the iterator that honours it
+// (eden_keybind_action_after) is new code with exactly one caller.
+extern "C" {
+int  eden_keybind_count(void);
+int  eden_keybind_index(const char* action);
+int  eden_keybind_get(int i);
+int  eden_keybind_default(int i);
+void eden_keybind_set(int i, int code);
+void eden_keybind_reset_all(void);
+int  eden_keybind_action_after(int prev, int code);
+int  eden_keybind_capture_active(void);
+void eden_keybind_capture_begin(int i);
+int  eden_keybind_capture_feed(int code);
+const char* eden_keybind_code_name(int code);
+}
+
+int run_keybind_selftest() {
+    g_selftestTag = "eden-keybind";
+    g_tickInput = true;
+    const char* name = g_opt.world.empty() ? "keybind-selftest" : g_opt.world.c_str();
+    if (!open_world(name, g_opt.height)) return 1;
+    teleport_for_movement();
+    tick(240);
+
+    char detail[220];
+
+    // --- the model resolves, and its codes are the scancodes this platform reports -------------
+    const int miForward = eden_keybind_index("moveForward");
+    const int miFlyDown = eden_keybind_index("flyDown");
+    const int miCrouch  = eden_keybind_index("crouch");
+    std::snprintf(detail, sizeof(detail), "%d rows; moveForward=%d flyDown=%d crouch=%d",
+                  eden_keybind_count(), miForward, miFlyDown, miCrouch);
+    check(miForward >= 0 && miFlyDown >= 0 && miCrouch >= 0,
+          "the model resolves the actions by name", detail);
+    if (miForward < 0) { std::printf("[eden-keybind] FAILURES (%d)\n", ++g_selftestFailures); return 1; }
+
+    eden_keybind_reset_all();
+    std::snprintf(detail, sizeof(detail), "moveForward default %d (%s), SDL_SCANCODE_W is %d",
+                  eden_keybind_default(miForward), eden_keybind_code_name(eden_keybind_default(miForward)),
+                  (int)SDL_SCANCODE_W);
+    check(eden_keybind_default(miForward) == (int)SDL_SCANCODE_W,
+          "a binding IS the SDL scancode, not a parallel numbering", detail);
+
+    // --- a default double-binding fires both of its actions ------------------------------------
+    {
+        int hits = 0, seen[4] = {-1, -1, -1, -1};
+        for (int mi = eden_keybind_action_after(-1, (int)SDL_SCANCODE_LCTRL);
+             mi >= 0 && hits < 4;
+             mi = eden_keybind_action_after(mi, (int)SDL_SCANCODE_LCTRL))
+            seen[hits++] = mi;
+        std::snprintf(detail, sizeof(detail), "Ctrl -> %d action(s): %d,%d", hits, seen[0], seen[1]);
+        check(hits == 2 && ((seen[0] == miFlyDown && seen[1] == miCrouch) ||
+                            (seen[0] == miCrouch  && seen[1] == miFlyDown)),
+              "one key still drives both flyDown and crouch", detail);
+    }
+
+    // --- the rebind actually moves the behaviour ----------------------------------------------
+    // Same measurement --input-selftest uses (rise clear, walk, measure XZ), reused verbatim so
+    // "did the player move" means the same thing in both — including the retry, since the flake
+    // it retires (spawning face-first into a hill) is a property of the world, not of the test.
+    auto walk_with = [&](SDL_Scancode sc, float* outDist) {
+        rise_until_clear(1800);
+        // SETTLE FIRST. The player is flying by this point (rise_until_clear turns fly on), and
+        // flying has almost no drag — so the velocity left over from the PREVIOUS measurement
+        // carries into the next one. The first version of this test measured 17 blocks of pure
+        // coast and read it as "W still works", which is the wrong conclusion drawn from a real
+        // number: the key was already unbound. 120 idle ticks is where the drift stops changing.
+        tick(120);
+        PlayerState before = player_state();
+        push_key(sc, true);
+        tick(300);
+        push_key(sc, false);
+        tick(10);
+        PlayerState after = player_state();
+        const float dx = after.x - before.x, dz = after.z - before.z;
+        *outDist = std::sqrt(dx * dx + dz * dz);
+    };
+
+    // Establish that the DEFAULT key moves the player at all before rebinding — otherwise a
+    // "T moves, W does not" result below could just as well mean the world is in the way.
+    float distW = 0.0f;
+    walk_with(SDL_SCANCODE_W, &distW);
+    if (distW <= 0.5f) { push_mouse_motion(1800.0f, 0.0f); tick(20); walk_with(SDL_SCANCODE_W, &distW); }
+    std::snprintf(detail, sizeof(detail), "moved %.2f blocks on the default binding", distW);
+    check(distW > 0.5f, "W moves the player before any rebind", detail);
+
+    eden_keybind_set(miForward, (int)SDL_SCANCODE_T);
+    std::snprintf(detail, sizeof(detail), "moveForward -> %d (%s)",
+                  eden_keybind_get(miForward), eden_keybind_code_name(eden_keybind_get(miForward)));
+    check(eden_keybind_get(miForward) == (int)SDL_SCANCODE_T, "the rebind is stored", detail);
+
+    float distT = 0.0f;
+    walk_with(SDL_SCANCODE_T, &distT);
+    std::snprintf(detail, sizeof(detail), "moved %.2f blocks on the NEW binding", distT);
+    check(distT > 0.5f, "T moves the player after the rebind", detail);
+
+    // A CONTROL, not an absolute threshold. "Did not move" is not a number this harness can
+    // assert directly — even settled, a flying player drifts a little, and how much depends on the
+    // world. So measure a key that is bound to NOTHING (P, in no row of the table) and require
+    // the now-unbound W to be no better than it. That is the claim the test actually wants, and
+    // unlike a fixed epsilon it cannot be tuned into passing.
+    float distControl = 0.0f, distWAfter = 0.0f;
+    walk_with(SDL_SCANCODE_P, &distControl);
+    walk_with(SDL_SCANCODE_W, &distWAfter);
+    std::snprintf(detail, sizeof(detail), "W %.2f blocks vs %.2f for an unbound key",
+                  distWAfter, distControl);
+    check(distWAfter <= distControl + 1.0f && distWAfter < distT * 0.25f,
+          "W is no more effective than an unbound key after the rebind", detail);
+
+    // --- capture swallows the key instead of playing it ---------------------------------------
+    // The keybinds screen arms a capture; the very next key must rebind and must NOT also be
+    // dispatched as gameplay. Driven through the model rather than the screen because the screen
+    // needs a window and this mode is headless — the ordering it protects (capture ahead of every
+    // dispatch, Input_native.cpp's KEY_DOWN) is the part that can silently regress.
+    {
+        eden_keybind_capture_begin(miForward);
+        check(eden_keybind_capture_active() == miForward, "capture arms", "");
+        const int consumed = eden_keybind_capture_feed((int)SDL_SCANCODE_Y);
+        std::snprintf(detail, sizeof(detail), "consumed=%d, moveForward now %d (%s)",
+                      consumed, eden_keybind_get(miForward),
+                      eden_keybind_code_name(eden_keybind_get(miForward)));
+        check(consumed != 0 && eden_keybind_get(miForward) == (int)SDL_SCANCODE_Y &&
+              eden_keybind_capture_active() < 0,
+              "a captured key rebinds and is consumed", detail);
+
+        // Escape CANCELS — and must leave the binding alone. This is the one key the screen
+        // deliberately cannot bind to, and getting it wrong strands a player in a modal.
+        eden_keybind_capture_begin(miForward);
+        eden_keybind_capture_feed((int)SDL_SCANCODE_ESCAPE);
+        std::snprintf(detail, sizeof(detail), "moveForward still %d", eden_keybind_get(miForward));
+        check(eden_keybind_get(miForward) == (int)SDL_SCANCODE_Y && eden_keybind_capture_active() < 0,
+              "Escape cancels a capture without rebinding", detail);
+    }
+
+    // --- reset puts it back -------------------------------------------------------------------
+    eden_keybind_reset_all();
+    std::snprintf(detail, sizeof(detail), "moveForward back to %d (%s)",
+                  eden_keybind_get(miForward), eden_keybind_code_name(eden_keybind_get(miForward)));
+    check(eden_keybind_get(miForward) == (int)SDL_SCANCODE_W, "reset restores the defaults", detail);
+
+    std::printf("[eden-keybind] %s (%d failure(s))\n",
+                g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
+    return g_selftestFailures ? 1 : 0;
+}
+
 int run_input_selftest() {
     g_tickInput = true;
     const char* name = g_opt.world.empty() ? "input-selftest" : g_opt.world.c_str();
@@ -2155,6 +2332,7 @@ static int parse_one_arg(const char* a) {
         else if (!std::strcmp(a, "--audio-selftest")) { g_opt.mode = "audio-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--gamepad-selftest")) { g_opt.mode = "gamepad-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--touch-selftest")) { g_opt.mode = "touch-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--keybind-selftest")) { g_opt.mode = "keybind-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--objc-selftest")) { g_opt.mode = "objc-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--save-roundtrip")) g_opt.mode = "save-roundtrip";
         else if (!std::strcmp(a, "--background-selftest")) { g_opt.mode = "background-selftest"; g_opt.headless = true; }
@@ -2352,6 +2530,7 @@ static int eden_main_after_args(int argc, char** argv) {
         else if (!std::strcmp(g_opt.mode, "stage1"))        rc = run_stage1();
         else if (!std::strcmp(g_opt.mode, "smoke"))         rc = run_smoke();
         else if (!std::strcmp(g_opt.mode, "input-selftest")) rc = run_input_selftest();
+        else if (!std::strcmp(g_opt.mode, "keybind-selftest")) rc = run_keybind_selftest();
         else if (!std::strcmp(g_opt.mode, "audio-selftest")) rc = run_audio_selftest();
         else if (!std::strcmp(g_opt.mode, "gamepad-selftest")) rc = run_gamepad_selftest();
         else if (!std::strcmp(g_opt.mode, "touch-selftest")) rc = run_touch_selftest();

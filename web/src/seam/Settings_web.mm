@@ -759,9 +759,12 @@ EDEN_EXPORT int eden_settings_native_hidden(int i) {
     X(92,"Numpad4","Num 4") X(93,"Numpad5","Num 5") X(94,"Numpad6","Num 6") \
     X(95,"Numpad7","Num 7") X(96,"Numpad8","Num 8") X(97,"Numpad9","Num 9") \
     X(98,"Numpad0","Num 0") X(99,"NumpadDecimal","Num .") \
-    X(224,"ControlLeft","L Ctrl") X(225,"ShiftLeft","L Shift") X(226,"AltLeft","L Alt") \
-    X(227,"MetaLeft","L Meta") X(228,"ControlRight","R Ctrl") X(229,"ShiftRight","R Shift") \
-    X(230,"AltRight","R Alt") X(231,"MetaRight","R Meta")
+    /* The modifier labels carry NO SPACE ("LShift", not "L Shift") on purpose: the GL keybinds
+       screen word-wraps a label at its box width, and "also R Shift" is the one string in this
+       table wide enough to wrap and clip itself into illegibility. */ \
+    X(224,"ControlLeft","LCtrl") X(225,"ShiftLeft","LShift") X(226,"AltLeft","LAlt") \
+    X(227,"MetaLeft","LMeta") X(228,"ControlRight","RCtrl") X(229,"ShiftRight","RShift") \
+    X(230,"AltRight","RAlt") X(231,"MetaRight","RMeta")
 
 struct KeyName { int code; const char* name; const char* label; };
 static const KeyName kKeyNames[] = {

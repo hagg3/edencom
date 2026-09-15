@@ -89,6 +89,7 @@ int  eden_keybind_count(void);
 int  eden_keybind_index(const char* action);
 int  eden_keybind_action_after(int prev, int code);
 int  eden_keybind_get(int i);
+int  eden_keybind_capture_feed(int code);
 }
 
 // Classes/Globals.h's point space. The engine lays every HUD and menu element out in it, and it is
@@ -650,6 +651,10 @@ void eden_native_input_handle_event(const SDL_Event& e) {
     switch (e.type) {
         case SDL_EVENT_KEY_DOWN: {
             if (e.key.repeat) return;          // held keys are state, not repeated edges
+            // Stage 5.3: the GL keybinds screen arms the model's one capture slot and the next
+            // key belongs to IT, not to the game. This has to sit ahead of every dispatch below
+            // — including the continuous ones — or binding a key would also walk the player.
+            if (eden_keybind_capture_feed((int)e.key.scancode)) return;
             resolve_model();
             // ITERATE, do not take the first match. "One key, two actions" is shipped
             // configuration (Ctrl is flyDown AND crouch out of the box) and a rebind can create

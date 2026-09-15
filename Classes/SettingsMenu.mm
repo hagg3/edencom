@@ -23,6 +23,7 @@
 
 #import "SettingsMenu.h"
 #import "Graphics.h"
+#import "KeybindsMenu.h"
 #import "Globals.h"
 #import "Util.h"
 #import "World.h"
@@ -142,18 +143,20 @@ SettingsMenu::SettingsMenu(){
 
     m_page=0;
     m_rowsPerPage=SM_ROWS_PER_PAGE;
+    m_keys=new KeybindsMenu();
     m_built=false;
     m_seeded=false;
-    for(int i=0;i<6;i++) m_glyph[i]=NULL;
+    for(int i=0;i<SM_NUM_GLYPH;i++) m_glyph[i]=NULL;
 
 	this->load();
 }
 
 SettingsMenu::~SettingsMenu(){
+    delete m_keys;
     for(size_t i=0;i<m_label.size();i++)    if(m_label[i])    delete m_label[i];
     for(size_t i=0;i<m_value.size();i++)    if(m_value[i])    delete m_value[i];
     for(size_t i=0;i<m_groupHdr.size();i++) if(m_groupHdr[i]) delete m_groupHdr[i];
-    for(int i=0;i<6;i++) if(m_glyph[i]) delete m_glyph[i];
+    for(int i=0;i<SM_NUM_GLYPH;i++) if(m_glyph[i]) delete m_glyph[i];
 }
 
 void SettingsMenu::rebuildValueTex(int si){
@@ -203,6 +206,7 @@ void SettingsMenu::buildTextures(){
     m_glyph[3]=sm_text(">", 32,32,UITextAlignmentCenter,18);
     m_glyph[4]=sm_text("On", 64,32,UITextAlignmentCenter,15);
     m_glyph[5]=sm_text("Off",64,32,UITextAlignmentCenter,15);
+    m_glyph[6]=sm_text("Keys",128,32,UITextAlignmentCenter,15);
 }
 
 void SettingsMenu::layout(){
@@ -217,6 +221,8 @@ void SettingsMenu::layout(){
     rect_save.origin.x=w/2-rect_save.size.width/2; rect_save.origin.y=14;
     rect_prev=ButtonMake(18,14,86,32);
     rect_next=ButtonMake(w-18-86,14,86,32);
+    // Stage 5.3: the keybinds screen's entry point, parked between Save and the next-page arrow.
+    rect_keys=ButtonMake(rect_save.origin.x+rect_save.size.width+10,14,86,32);
 
     float top=h-46.0f;          // just below the "Options" header
     float bottom=56.0f;         // just above the button row
@@ -267,6 +273,9 @@ void SettingsMenu::refreshSeededValues(){
 
 void SettingsMenu::update(float etime){
     (void)etime;
+    // The keybinds screen takes the whole frame while it is up — input included, which is what
+    // keeps the two screens' touch slots (usage_id 3 here, 11 there) from ever contending.
+    if(m_keys&&m_keys->active()){ m_keys->update(etime); return; }
     buildTextures();
     refreshSeededValues();
     layout();
@@ -283,6 +292,7 @@ void SettingsMenu::update(float etime){
             inbox3(touches[i].mx,touches[i].my,&rect_save);
             inbox3(touches[i].mx,touches[i].my,&rect_prev);
             inbox3(touches[i].mx,touches[i].my,&rect_next);
+            inbox3(touches[i].mx,touches[i].my,&rect_keys);
             for(int k=0;k<m_rowsPerPage;k++){
                 inbox3(touches[i].mx,touches[i].my,&m_ctlA[k]);
                 inbox3(touches[i].mx,touches[i].my,&m_ctlB[k]);
@@ -296,6 +306,11 @@ void SettingsMenu::update(float etime){
                 if(m_page>0) m_page--;
             }else if(inbox2(touches[i].mx,touches[i].my,&rect_next)){
                 if((m_page+1)*m_rowsPerPage<visN) m_page++;
+            }else if(inbox2(touches[i].mx,touches[i].my,&rect_keys)){
+                rect_keys.pressed=FALSE;
+                if(m_keys) m_keys->show();
+                touches[i].inuse=0; touches[i].down=M_NONE;
+                return;                       // the child owns the rest of this frame
             }else if(eden_settings_loaded()){
                 for(int k=0;k<m_rowsPerPage;k++){
                     int vi=first+k;
@@ -312,6 +327,7 @@ void SettingsMenu::update(float etime){
                 }
             }
             rect_save.pressed=FALSE; rect_prev.pressed=FALSE; rect_next.pressed=FALSE;
+            rect_keys.pressed=FALSE;
             for(int k=0;k<m_rowsPerPage;k++){ m_ctlA[k].pressed=FALSE; m_ctlB[k].pressed=FALSE; }
             touches[i].inuse=0;
             touches[i].down=M_NONE;
@@ -359,6 +375,10 @@ void SettingsMenu::save(){
     this->load();
 
 }
+void SettingsMenu::showKeybinds(){
+    if(m_keys) m_keys->show();
+}
+
 NSString* SettingsMenu::getNewWorldName(){
 	world_counter++;
 
@@ -369,6 +389,7 @@ NSString* SettingsMenu::getNewWorldName(){
 }
 
 void SettingsMenu::render(){
+    if(m_keys&&m_keys->active()){ m_keys->render(); return; }
     buildTextures();
     refreshSeededValues();
     layout();
@@ -385,6 +406,10 @@ void SettingsMenu::render(){
     // button row
     glColor4f(1,1,1,1);
     Resources::getResources->getMenuTex(MENU_SAVE)->drawButton(rect_save);
+    // "Keys" has no atlas art (every menu texture in this build predates the screen), so it is a
+    // fill plus a rasterised label — the same idiom the pager arrows beside it already use.
+    sm_fill(RectFromButton(rect_keys),0.24f,0.26f,0.32f,1.0f);
+    sm_blit(m_glyph[6],128,32, rect_keys.origin.x+rect_keys.size.width/2, rect_keys.origin.y+rect_keys.size.height/2, true);
     if(m_page>0){
         sm_fill(RectFromButton(rect_prev),0.24f,0.26f,0.32f,1.0f);
         sm_blit(m_glyph[2],32,32, rect_prev.origin.x+rect_prev.size.width/2, rect_prev.origin.y+rect_prev.size.height/2, true);

@@ -278,10 +278,14 @@
   }
 
   // ---------------------------------------------------------------------------------------------
-  // Keys tab (Phase 5, PC controls audit) — not schema-driven, unlike every other tab: the
-  // key->action map is JS-owned localStorage state (window.EdenKeybinds, eden-st.html), NOT part
-  // of the C settings model — see that file's header for why. Only the PRIMARY binding per action
-  // is rebindable here; secondary bindings (arrow keys) are fixed.
+  // Keys tab (Phase 5, PC controls audit; moved onto the C keybind model in Phase N Stage 5.2) —
+  // still not driven by eden_settings_schema() like the other tabs (a keybind carries fields — the
+  // action id, a fixed secondary binding, the continuous/momentary dispatch class — that
+  // kSettings[] rows have no place for, see Settings_web.mm's "WHY THESE ARE NOT kSettings[] ROWS"
+  // comment) but it IS driven by the C model now, via eden_keybinds_schema() and grouped by that
+  // schema's own `group` field rather than a hand-picked order. window.EdenKeybinds
+  // (public/eden-keybinds.js) is the bridge; only the PRIMARY binding per action is rebindable
+  // here, same as before — secondary bindings (arrow keys, R-Ctrl/R-Shift/R-Alt) are fixed.
   // ---------------------------------------------------------------------------------------------
   function keyLabel(code) {
     if (!code) return '—';
@@ -292,10 +296,16 @@
       ControlLeft: 'Ctrl', ControlRight: 'R Ctrl', Space: 'Space', Escape: 'Esc' }[code] || code;
   }
 
+  function keybindsSchema() {
+    if (!ready()) return null;
+    return JSON.parse(utf8(M()._eden_keybinds_schema()));
+  }
+
   function renderKeysBody(pad) {
     var UI = window.EdenUI;
     var KB = window.EdenKeybinds;
-    if (!KB) {
+    var schema = keybindsSchema();
+    if (!KB || !schema) {
       pad.appendChild(UI.listRow({ title: 'Keybinds unavailable' }));
       return;
     }
@@ -304,13 +314,22 @@
     pad.appendChild(UI.el('div', 'eden-section__desc',
       'Click the game world to look around with the mouse. Press Esc to release it.'));
     // Audit row F5 follow-up: the dev console has no other discoverability affordance — it's a
-    // hardcoded key, not part of the KB.actions rebind table below, and its own feature-detect
-    // means it's silently absent on a non-diagnostics build, so only mention it when it's real.
+    // hardcoded key, not part of the rebind table below, and its own feature-detect means it's
+    // silently absent on a non-diagnostics build, so only mention it when it's real.
     if (window.EdenConsole && window.EdenConsole.available()) {
       pad.appendChild(UI.el('div', 'eden-section__desc',
         'Press ` (backtick) to open the dev console.'));
     }
-    KB.actions.forEach(function (action) {
+    // Grouped headings (Movement/Actions/Interface/Hotbar), same convention as the schema-driven
+    // tabs, rather than one flat list — the C table's `group` field is the only place this order
+    // is now decided.
+    var lastGroup = null;
+    schema.forEach(function (row) {
+      if (row.group !== lastGroup) {
+        lastGroup = row.group;
+        pad.appendChild(UI.el('div', 'eden-section__title', row.group));
+      }
+      var action = row.action;
       var btn = UI.button({ size: 'sm', label: keyLabel(KB.primaryCode(action)) });
       btn.addEventListener('click', function () {
         btn.textContent = 'Press a key…';
@@ -321,9 +340,9 @@
           btn.classList.remove('is-active');
         });
       });
-      btn.setAttribute('aria-label', KB.labelFor(action) + ': ' + keyLabel(KB.primaryCode(action)) +
+      btn.setAttribute('aria-label', row.label + ': ' + keyLabel(KB.primaryCode(action)) +
         '. Activate to rebind.');
-      pad.appendChild(UI.listRow({ title: KB.labelFor(action), actions: btn }));
+      pad.appendChild(UI.listRow({ title: row.label, actions: btn }));
     });
 
     var reset = UI.button({
@@ -364,8 +383,12 @@
           return;
         }
         clearTimeout(confirmTimer);
+        // eden_settings_reset_all() resets keybinds too now (Phase N Stage 5.2 folded
+        // eden_keybind_reset_all() into it, Settings_web.mm) — the separate
+        // window.EdenKeybinds.resetDefaults() call this used to make alongside it is redundant
+        // and was removed; EdenKeybinds.resetDefaults stays on the public surface for the Keys
+        // tab's own standalone reset button.
         if (ready()) M()._eden_settings_reset_all();
-        if (window.EdenKeybinds) window.EdenKeybinds.resetDefaults();
         pad.textContent = '';
         renderResetBody(pad);
       },

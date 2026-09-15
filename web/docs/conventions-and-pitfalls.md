@@ -57,11 +57,15 @@ load-bearing (save-before-stream, edit-before-mesh, mesh-before-upload).
    frame. For draw-time state, add an `fprintf` in the shim and rebuild. Before
    trusting any screenshot, prove the loop is actually stepping (hold a move input,
    sample `eden_debug_player_state().pos` twice).
-7. **Settings/keybinds each live in exactly one place.** Engine-backed prefs are one
-   C table (`src/seam/Settings_web.mm`'s `kSettings[]`) rendered generically by
-   `public/eden-settings.js` — add a setting in C, never in JS. Key bindings are the
-   deliberate exception: a JS-owned `localStorage` blob (`window.EdenKeybinds`),
-   because the C settings model stores floats only. See [ui.md](ui.md).
+7. **Settings/keybinds each live in exactly one place, and both are C tables now.**
+   Engine-backed prefs are `src/seam/Settings_web.mm`'s `kSettings[]`, rendered
+   generically by `public/eden-settings.js`. Key bindings were a stated JS-owned
+   exception (a `localStorage` blob under `window.EdenKeybinds`) until Phase N
+   Stage 5.2 (2026-09) retired it: a binding is a USB HID usage ID — the same
+   number SDL3 scancodes and `event.code` strings both refer to — so it fits in a
+   float after all, and now lives in the same file's `kKeybinds[]` table.
+   `public/eden-keybinds.js` is a thin bridge (schema read + the DOM rebind-capture
+   protocol only); add a keybind in C, never in JS. See [ui.md](ui.md).
 8. **`EM_ASM`/`EM_JS` macro bodies can't contain a top-level comma inside a `[...]`
    literal** — the C preprocessor's paren-only balance tracking mis-splits the macro
    argument. Write such JS procedurally (build the array with statements) instead of
