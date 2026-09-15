@@ -553,15 +553,18 @@ jobs:
         working-directory: native
         # FOUR ASSERTIONS, and none of them is "the build succeeded". A bundle that compiles and
         # links can still be uninstallable: the wrong platform in the load command, a deployment
-        # target something quietly raised, a missing Info.plist key, or the 52 MB Eden.eden left
+        # target something quietly raised, a missing Info.plist key, or the world file left
         # outside the .app because the asset step symlinked instead of copying (which is what it
-        # does on every other platform — see the CMake comment).
+        # does on every other platform — see the CMake comment). Stage 4.4: iOS bundles
+        # Eden.eden.gz (~8 MiB), not the 52 MiB raw Eden.eden every other target ships — see the
+        # `if(IOS)` branch in native/CMakeLists.txt and FileManagerHelper.mm's fmh_init().
         run: |
           set -e
           APP=build-ios-device/Emod.app
           test -x "$APP/Emod"            || { echo "::error::no executable in the bundle"; exit 1; }
           test -f "$APP/Info.plist"      || { echo "::error::no Info.plist"; exit 1; }
-          test -f "$APP/Eden.eden"       || { echo "::error::Eden.eden is not inside the .app"; exit 1; }
+          test -f "$APP/Eden.eden.gz"    || { echo "::error::Eden.eden.gz is not inside the .app"; exit 1; }
+          ! test -f "$APP/Eden.eden"     || { echo "::error::raw Eden.eden shipped alongside Eden.eden.gz -- Stage 4.4's whole point was not paying for both"; exit 1; }
           n=$(find "$APP" -type f | wc -l | tr -d ' ')
           [ "$n" -gt 800 ] || { echo "::error::only $n files in the .app; expected ~880"; exit 1; }
           # `-type l` deliberately: a symlink here would point at this runner's filesystem and be
