@@ -1,0 +1,28 @@
+.DS_Store
+
+# Web build output / toolchain (see web/README.md for how to (re)build)
+web/build/
+web/build-rel/
+web/build-st/
+web/emsdk/
+web/dist/
+web/node_modules/
+*.wasm
+*.wasm.map
+*.o
+*.a
+
+# Symlinks (re)created by web/CMakeLists.txt's file(CREATE_LINK ...) at configure time —
+# always absolute-path, tied to whatever machine configured the build, so must never be committed.
+web/public/audio
+web/public/Eden.eden
+
+# Native (CMake) build output — see native/README.md for how to (re)build
+native/build/
+native/build-*/
+
+# Defense in depth: publish-to-edencom.sh never copies these from the private Emod repo,
+# but ignore them here too in case anyone works in this checkout directly.
+.claude/
+CLAUDE.md
+WORKING/
