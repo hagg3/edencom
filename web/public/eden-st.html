@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<!--
+  eden-st.html — the Eden web port's one and only host page, for players and developers alike.
+  Not a debug launcher: this is the real page real players hit, on both build configurations.
+
+  Loads whichever build EDEN_BUILD_DIR (eden-host.js) picks, directly on the browser main thread
+  against a normal <canvas>. That is true of the THREADED build too (audit row 36/C1, pass 63):
+  it is `-pthread`, not PROXY_TO_PTHREAD/OffscreenCanvas, so engine, GL and DOM all stay here and
+  this is the one host page for every configuration. EDEN_THREADED is still OFF by default (audit
+  row A1). `?build=thr` needs a cross-origin-isolated document for its SharedArrayBuffer memory —
+  tools/serve.js sends COOP/COEP directly, and public/eden-coi.js (loaded first, in <head>)
+  synthesises them via the service worker on a host that cannot, falling back to the
+  single-threaded build if neither works.
+
+  SERVE FROM: the web/ directory (so /build-st/eden.js and /build-st/eden.wasm resolve), with
+  tools/serve.js — NOT `python3 -m http.server`, which has neither HTTP byte-range serving (needed
+  by the lazy Eden.eden FS node, docs/save-load.md) nor compression:
+    cd web && node tools/serve.js 8123
+    open http://localhost:8123/public/eden-st.html
+
+  Append `?build=rel` to load build-rel/ (Release: -O2, no DWARF, -sASSERTIONS=0) instead of the
+  default build-st/ (Debug: -O0 -g -gsource-map, EDEN_DIAGNOSTICS=ON). Build it once with:
+    cmake --build build-rel -j8
+  then open http://localhost:8123/public/eden-st.html?build=rel
+
+  WHAT A CORRECT FIRST FRAME LOOKS LIKE: the Eden main menu, fully textured (background art, logo,
+  world-list buttons) — game_mode starts as GAME_MODE_MENU, Graphics::prepareMenu clears to black
+  before the first draw. Selecting or creating a world reaches GAME_MODE_PLAY with a real, saved,
+  streamed voxel world (FileManager/save-load has been real since early porting passes — see
+  ../docs/save-load.md, not a placeholder).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Eden (web) — single-threaded debug</title>
+<!-- Row #21 (perf-audit): PWA installability. manifest.webmanifest + service-worker.js (registered
+     below, at document root scope so it can also cache build-st/build-rel — see that file's header
+     for why it's network-first, never cache-first, and never touches Eden.eden/Range requests). -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#111111">
+<!-- Audit row 36/C1 pass 65: cross-origin isolation for ?build=thr on a host that cannot send
+     COOP/COEP (GitHub Pages), plus the service-worker registration that used to live at the
+     bottom of this file. FIRST script on the page on purpose — it decides whether this document
+     can have SharedArrayBuffer, and on the first threaded visit it reloads the page, so anything
+     that loads ahead of it is bytes thrown away. Everything else waits on EdenCOI.whenSettled()
+     before requesting a build (see the bottom of the inline script). -->
+<script src="eden-coi.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; background: #111; overflow: hidden; }
+  /* CSS here controls the DISPLAY size only. The backing store is no longer fixed: perf-audit
+     item #6 made it dynamic (applyDrawableSize() = this box x min(devicePixelRatio, dpr_cap) x
+     render_scale), so the buffer now matches the display instead of being a 1136x640 buffer
+     upscaled to a HiDPI monitor. The width/height attributes on the element are just the
+     pre-layout starting size. */
+  #eden-canvas {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: 852px; height: 480px;           /* CSS DISPLAY size only (points-ish); backing is 1136x640 */
+    background: #000; touch-action: none;
+    max-width: 100vw; max-height: 100vh;
+  }
+  /* PC controls audit Phase 4 (F9d): every mode sets an INLINE width/height from JS
+     (applyDisplayMode(), below) which overrides the rule above once the runtime is up — the rule
+     here is only the pre-boot placeholder. All three modes compute an ENGINE_ASPECT-preserving
+     box (Fixed capped at 852x480, Fit/Fullscreen capped at the viewport) rather than relying on
+     this rule's plain max-width/max-height, which clamp each axis independently and would
+     distort the aspect ratio on a viewport smaller than 852x480 (touch-input-offset bug, see
+     applyDisplayMode()'s Fixed-mode comment). */
+  /* PC controls audit F3 — crosshair overlay. `left`/`top` are set from JS to the canvas's own
+     center (re-run on resize/fullscreenchange), everything else is fixed here: ~9px arms, 2px
+     gap at centre, ~1.5px stroke, white with a dark outline so it reads against sky and stone
+     alike (see the audit plan's Phase 3 spec). Hidden by default; eden-st.html's rAF loop shows
+     it only when the desktop profile is locked and no menu/picker/panel wants the real cursor.
+     Deliberately NOT scaled by the design system's `--u`: this is an aiming reticle, and it has
+     to stay the same size relative to the SCENE, not to the UI. */
+  #eden-crosshair { position: fixed; width: 0; height: 0; pointer-events: none; z-index: 8; display: none; }
+  #eden-crosshair .arm {
+    position: absolute; background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.85);
+  }
+  #eden-crosshair .arm.top    { width: 1.5px; height: 9px; left: -0.75px; top: -11px; }
+  #eden-crosshair .arm.bottom { width: 1.5px; height: 9px; left: -0.75px; top: 2px; }
+  #eden-crosshair .arm.left   { height: 1.5px; width: 9px; top: -0.75px; left: -11px; }
+  #eden-crosshair .arm.right  { height: 1.5px; width: 9px; top: -0.75px; left: 2px; }
+</style>
+<!-- The design system. Everything below that draws UI (the hotbar strip, the status line, the
+     settings/pause/load-error panels, the rebuilt main menu) styles itself from this one
+     stylesheet — see web/docs/design-system.md. -->
+<link rel="stylesheet" href="eden-ui.css">
+</head>
+<body>
+<!-- width/height ATTRIBUTES = the INITIAL drawing-buffer (backing store) size in PIXELS, read by
+     eden_gl_context_create(0,0) via emscripten_get_canvas_element_size. 1136x640 = retina 2x of
+     the engine's 568x320 points, which is what EAGLView_web::establishScreenMetrics asserts at
+     boot. As of the perf audit's item #6 these are only the pre-layout starting values:
+     applyDrawableSize() (below) takes over as soon as the runtime is up and sizes the buffer from
+     the real CSS box x min(devicePixelRatio, dpr_cap) x render_scale.
+     Keep the id in sync with kCanvasTarget in src/shim/gl/gl_es1_shim.cpp ("#eden-canvas"). -->
+<canvas id="eden-canvas" width="1136" height="640"></canvas>
+<div id="eden-status" class="eden-statusline">Eden web (single-threaded) — loading module…</div>
+
+<!-- The design system's runtime half (public/eden-ui.css is the other half). MUST be first: every
+     UI file below builds its DOM from window.EdenUI's factories, and eden-ui.js also computes the
+     `--u` scale unit that every dimension in the stylesheet is expressed in. eden-icons.js supplies
+     the inline SVG set EdenUI.button() draws from; eden-assets.js hands the menu the engine's own
+     background art out of the preloaded wasm filesystem. See web/docs/design-system.md. -->
+<script src="eden-icons.js"></script>
+<script src="eden-ui.js"></script>
+<script src="eden-assets.js"></script>
+
+<!-- Real loading/progress UI (perf-audit row 11). Loaded FIRST and started at the very top of the
+     inline script below, before Module even exists, so the overlay is up for the whole boot
+     sequence, not just once the runtime is initialised — see eden-loading.js's header. -->
+<script src="eden-loading.js"></script>
+
+<!-- The OPFS persistence backend (ROADMAP Phase C / C2). Loaded BEFORE eden-storage.js, which
+     picks a backend at mount time and needs window.EdenOPFS to already exist to prefer it. Its
+     worker half (eden-opfs-worker.js) is loaded by this file at run time, not by a <script> tag. -->
+<script src="eden-opfs.js"></script>
+
+<!-- Local persistence + the Storage tab (pass 29). Loaded BEFORE the inline script so
+     window.EdenStorage.mountAndSync exists in time to go into Module.preRun below — see
+     eden-storage.js's header for why the populate has to block main(). -->
+<script src="eden-storage.js"></script>
+
+<!-- The settings panel (pass 28). Self-contained; talks only to the C settings model in
+     web/src/seam/Settings_web.mm. Loaded BEFORE the inline script so window.EdenSettings
+     exists by the time the rAF loop and key handlers below reference it. -->
+<script src="eden-settings.js"></script>
+
+<!-- The in-game pause menu (pass 30), replacing the engine's own 4-icon renderMenuScreen. Loaded
+     AFTER eden-settings.js (reuses its injected stylesheet + injectCSS export) and BEFORE the
+     inline script so window.EdenPauseMenu exists by the time the rAF loop below references it. -->
+<script src="eden-pausemenu.js"></script>
+
+<!-- Corrupt/truncated-save recovery dialog (C4). Same load-order reasoning as eden-pausemenu.js
+     above: reuses eden-settings.js's stylesheet, must exist before the rAF loop below polls it. -->
+<script src="eden-loaderror.js"></script>
+
+<!-- "Get Worlds" data layer: fetches the hagg3.github.io/edenarchive static manifest and unzips
+     downloads client-side. Loaded BEFORE eden-menu.js, which is the only thing that calls it. -->
+<script src="eden-worldbrowser.js"></script>
+
+<!-- The rebuilt main menu / Load World / New World screens. An opaque overlay ON TOP of the
+     engine's own GL menu, which keeps running underneath — see eden-menu.js's header, and
+     web/src/seam/Menu_web.mm for why this is an overlay rather than a --wrap. The "Legacy menu"
+     setting turns the overlay off, revealing the original. Same load-order reasoning as above. -->
+<script src="eden-menu.js"></script>
+
+<!-- Gamepad API -> the existing keyboard/mouse input entry points (perf-audit row #24). A pure
+     translator: no new wasm exports, no Classes/Gamepad.mm involvement. Must load before the rAF
+     loop below inits and ticks it. -->
+<script src="eden-gamepad.js"></script>
+
+<!-- Dev console (project-audit-2026-07-30 row F5) — teleport/spawn/world-stats, backtick to
+     open. Feature-detects its EDEN_DIAGNOSTICS-only wasm exports at call time, so it is inert
+     (not just hidden) on a build without them. Self-contained; no tick() to wire in. -->
+<script src="eden-console.js"></script>
+
+<!-- Audit row 28/C5: this file used to be one ~1300-line inline <script> covering host boot,
+     viewport/coordinate-space math, keybind data, the hotbar strip and all DOM input dispatch.
+     Split into five files, in the load order their cross-file dependencies require — each file's
+     own header comment names exactly what it depends on and what it declares for later files;
+     eden-host.js's header explains WHY this ordering is safe (shared top-level script scope) and
+     what the one real constraint is (a file's TOP-LEVEL code must not read another file's
+     not-yet-declared binding — everything gated behind a later event/tick is fine regardless of
+     order). What's left inline below is only genuine boot-sequence glue: constructing `Module`,
+     the first-frame watchdog, the per-frame orchestrator that calls into all five files each tick,
+     and kicking off the eden.js load. -->
+<script src="eden-host.js"></script>
+<script src="eden-viewport.js"></script>
+<script src="eden-keybinds.js"></script>
+<script src="eden-hotbar.js"></script>
+<script src="eden-input.js"></script>
+
+<script>
+  let firstFrameNoted = false;
+
+  // Perf-audit row 11: start the progress overlay as early as possible — before Module exists,
+  // let alone before eden.js's own downloads begin — so nothing between page load and the first
+  // real frame shows a bare black canvas. window.EdenLoading is a no-op-safe API (see its own
+  // file) even if this call somehow ran before eden-loading.js finished evaluating.
+  if (window.EdenLoading) window.EdenLoading.start();
+
+  var Module = {
+    // Our GL shim creates the context itself via emscripten_webgl_create_context("#eden-canvas"),
+    // but Emscripten's GL glue still consults Module.canvas in places; point it at the same
+    // element so nothing goes looking for the default "#canvas".
+    canvas: canvasEl,
+    // eden.wasm self-locates against its own <script src> (scriptDirectory), but the generated
+    // --preload-file package loader does NOT use that path — without an explicit locateFile it
+    // fetches "eden.data" resolved against the PAGE's URL (this page lives in public/, the data
+    // file lives in build-st/ or build-rel/), producing a silent 404 that stalls every run
+    // dependency forever (found by loading this page for real — pass 11 never caught it under
+    // `node eden.js`, which doesn't fetch the package this way at all). Route every bare filename
+    // to whichever build directory the <script src> below actually loaded from.
+    locateFile: (path) => EDEN_BUILD_DIR + (EDEN_ASSET_MAP[path] || path),
+    // Mounts /documents on IndexedDB (world saves) and blocks main() on the initial populate —
+    // see eden-storage.js's header. A run dependency, not a callback off onRuntimeInitialized,
+    // because Menu::loadWorlds reads Documents synchronously during World::World(), which runs
+    // inside main() — by the time onRuntimeInitialized fires that read has already happened.
+    preRun: [() => window.EdenStorage.mountAndSync()],
+    print:    (t) => { console.log(t); },
+    printErr: (t) => {
+      console.warn(t);
+      // Surface the shim's own diagnostics in the on-page status line so a headless/failed
+      // context is visible without opening devtools.
+      if (/\[eden-gl\]/.test(t)) statusEl.textContent = t;
+    },
+    onRuntimeInitialized: () => {
+      statusEl.textContent = 'Eden web (single-threaded) — runtime initialised, main() running.';
+      moduleReady = true; // gates every callIfReady() call across eden-input.js/eden-hotbar.js/etc.
+      window.__edenModuleReady = true; // same gate, for eden-settings.js (a separate file)
+      // Phase 2 (input mode audit): seed Auto-detect from the media-query guess before any real
+      // input has happened. `eden_effective_input_is_touch()` only falls back to this while the
+      // `input_mode` setting is Auto (0) — an explicit Touch/Keyboard+Mouse choice always wins.
+      //
+      // ORDER: this must come BEFORE applyDisplayMode() below, and that is new with audit D1/D4.
+      // The detected profile is what `ui_scale`/`display_layout` resolve against while they sit on
+      // Auto, so seeding it second would derive the whole point space against the wrong profile,
+      // then correct it one macrotask later — a visible re-layout on every touch-device boot.
+      Module._eden_set_detected_touch(window.matchMedia('(pointer: coarse)').matches ? 1 : 0);
+      // ROADMAP Phase M / M5.2: flag the low-memory video preset BEFORE eden_settings_init() runs
+      // (in the rAF loop below via EdenSettings.tick), so DisplayProfile_web.mm's
+      // kProfiles[EDEN_PROFILE_LOWMEM] row seeds dpr_cap/render_scale for a row the player has
+      // never touched. Same "must precede the profile-default seeder" ordering as the line above.
+      Module._eden_set_low_memory(EDEN_LOW_MEMORY ? 1 : 0);
+      // Q2 perf audit: applyDisplayMode() used to run every rAF frame (forced layout read +
+      // style write, forever); now it's event-driven (resize/fullscreenchange/display_mode
+      // change), so it needs one explicit call here to size the canvas for the first frame.
+      // Since D1 it also PUBLISHES the canvas box to the engine (eden_display_set_viewport), and
+      // this callback firing before main() is what makes the metrics right the first time
+      // `World::World()` reads them — see web/docs/execution-flow.md's boot-order section.
+      applyDisplayMode();
+      // ...and once more after main() has run. This callback fires BEFORE main(), and main() ends
+      // up in EAGLView_web's establishScreenMetrics, which asserts the engine's own boot drawable
+      // size — so item #6's dynamic sizing must get the last word, or the canvas stays
+      // at the boot size until the first resize event. A macrotask is the cheapest way to land
+      // after callMain: emscripten_set_main_loop(..., simulate_infinite_loop=true) unwinds out of
+      // main and hands control back to the event loop, so this runs with the engine fully up.
+      setTimeout(applyDisplayMode, 0);
+      // Fly mode defaults OFF (stock behaviour per CLAUDE.md); F toggles it. FLY_MODE is a plain
+      // mutable global set at static-init, so this sticks from here on. Every OTHER preference —
+      // including fly mode from here on — is owned by the C settings model and restored by
+      // eden_settings_init(), which the rAF loop below calls as soon as the World exists.
+      Module._eden_set_fly_mode(0);
+    },
+  };
+
+  // A cheap "are frames actually being produced?" signal for the first-frame judgement, without
+  // needing the C side to report anything: once rAF has ticked a few times past runtime init,
+  // note it. (The engine drives its own emscripten_set_main_loop; this only observes.)
+  function waitForModuleReadyThenMarkReady() {
+    if (moduleReady) { window.EdenLoading.markReady(); return; }
+    requestAnimationFrame(waitForModuleReadyThenMarkReady);
+  }
+
+  function watchFrames(n) {
+    requestAnimationFrame(() => {
+      if (n <= 0) {
+        if (!firstFrameNoted) {
+          firstFrameNoted = true;
+          const prev = statusEl.textContent;
+          statusEl.textContent = prev + '\nrAF alive — expect the TEXTURED Eden menu (retina) here.';
+        }
+        // watchFrames(120) is called unconditionally at page-load time below, NOT gated on
+        // onRuntimeInitialized despite this function's own comment — ~120 rAF frames (~2s) can
+        // easily elapse before a slow/cold boot (still downloading eden.data/Eden.eden) reaches
+        // moduleReady. Hiding the loading overlay on this timer alone would expose the exact bare
+        // black canvas row 11 exists to prevent, so gate EdenLoading.markReady() on moduleReady
+        // too, polling at rAF granularity until it flips true (near-instant on a warm/fast boot,
+        // the loop that actually protects a slow one). markReady() is idempotent, so no extra
+        // flag is needed here.
+        if (window.EdenLoading) waitForModuleReadyThenMarkReady();
+        return;
+      }
+      watchFrames(n - 1);
+    });
+  }
+  watchFrames(120);
+
+  // Poll rather than push: the pickers can also be opened and closed from the engine's own HUD
+  // buttons, which never route through our key handlers. `wantsCursorPrev` makes the re-grab edge
+  // triggered, so a player who deliberately unlocked with Esc is not yanked back into lock.
+  let wantsCursorPrev = true;
+  let lockWasHeldBeforePicker = false;
+  let drawableSeeded = false;   // item #6: see the one-shot inside the loop below
+  let crosshairVisible = null;  // audit row E5: null forces the first frame's write through
+  // Audit row A8: this used to be a SECOND, independent requestAnimationFrame chain
+  // (`(function trackCursorNeed(){ requestAnimationFrame(trackCursorNeed); ... })()`), racing the
+  // engine's own emscripten_set_main_loop-driven rAF with no defined ordering between the two —
+  // a lock-state change from one loop could land before or after the engine tick that reacts to
+  // it, in either order depending on registration order alone. Now it is a plain function invoked
+  // from `Module.__edenFramePost`, called by eden_main.cpp's eden_frame_tick() (via the
+  // eden_frame_post_hook EM_JS export) at the tail of every real engine frame — one scheduler,
+  // deterministic order, same per-frame body as before. The name stays: everything below is still
+  // reasoned about as "does the pointer need to be locked/free/crosshaired this frame", the
+  // movement/UI-tick calls just rode along in the same rAF chain historically.
+  function trackCursorNeed() {
+    if (!moduleReady) return;
+    adaptiveResolutionTick();  // audit row F1: cheap, sample-and-maybe-resize
+    if (jumpPulsePending) { Module._eden_set_jump(0); jumpPulsePending = false; }
+    Module._eden_movement_tick();  // PC controls audit F1: feeds Movement_web.mm's dt EMA
+    // Row #24: must run BEFORE recomputeMove() — the Gamepad API is poll-only, and the stick axes
+    // it records are read by recomputeMove() on the very next line.
+    window.EdenGamepad.tick();
+    // F1 fix requires setSpeed to be RE-CALLED each frame so its frame-rate-normalize factor
+    // stays current (the engine itself only stores the resulting walk_force, not a per-frame
+    // hook) — cheap and idempotent while a movement key is held; a no-op the rest of the time.
+    recomputeMove();
+    Module._eden_ui_tick();  // restores the action mode a picker would otherwise have cleared
+    holdActTick();
+    window.EdenSettings.tick();  // seeds the C settings model; mirrors the menu's Options button
+    // Item #6 one-shot: the settings model only loads once the World exists, which is later than
+    // the boot sizing pass in onRuntimeInitialized — so a RESTORED render_scale/dpr_cap has to be
+    // re-applied the first frame it is available. `drawableSeeded` short-circuits before the wasm
+    // call, so this costs nothing after the first few frames (Q2's no-per-frame-work rule).
+    // Audit D1/D4 widened this from applyDrawableSize() to the full layout pass: a restored
+    // ui_scale/display_layout changes the POINT space, so the canvas's CSS box has to be
+    // re-letterboxed to the new engine aspect, not just re-backed at a new pixel size.
+    if (!drawableSeeded && Module._eden_settings_loaded()) {
+      drawableSeeded = true;
+      applyDisplayMode();
+      // Audit row 17/G1: a customized joystick position is JS/localStorage-owned (like the hotbar
+      // and keybinds), not part of the C settings model — restore it once the World/engine state
+      // eden_joystick_set_origin() writes into actually exists, same gate as applyDisplayMode()
+      // above.
+      window.EdenJoystickCustomize.restoreOnBoot();
+    }
+    window.EdenPauseMenu.tick();  // mirrors hud->inmenu — see eden-pausemenu.js
+    window.EdenLoadError.tick();  // shows once eden_load_failed() flips true — see eden-loaderror.js
+    window.EdenMenu.tick();       // mirrors eden_menu_active() — see eden-menu.js
+    // A modal panel is a "you point at it" screen, same as the block/colour pickers. The rebuilt
+    // main menu counts too: it is an opaque overlay you click, so the pointer must be free and the
+    // crosshair/hotbar must be hidden behind it exactly as they are behind the pause menu.
+    const wants = !!Module._eden_ui_wants_cursor() || window.EdenSettings.isOpen() ||
+      window.EdenPauseMenu.isOpen() || window.EdenLoadError.isOpen() || window.EdenMenu.isOpen();
+    if (wants && document.pointerLockElement === canvasEl) {
+      document.exitPointerLock();
+    } else if (wants) {
+      stopWantingLock();   // a picker/menu opened — give up on any in-flight retry
+    } else if (!wants && wantsCursorPrev && lockWasHeldBeforePicker &&
+               document.pointerLockElement !== canvasEl) {
+      wantLock();
+    }
+    if (wants && !wantsCursorPrev) lockWasHeldBeforePicker = (document.pointerLockElement === canvasEl);
+    wantsCursorPrev = wants;
+    // F3: crosshair only while genuinely locked (implies desktop profile — the touch profile
+    // never requests a lock) and not on a screen you point at.
+    // NOTE: must be 'block', not '' — clearing the inline style falls back to the #eden-crosshair
+    // stylesheet rule itself (display: none), which never shows the crosshair at all.
+    // Audit row E5: this ran unconditionally every frame — a per-frame layout-invalidating style
+    // write even on the (overwhelming majority of) frames where nothing changed. Guard on change.
+    const wantsCrosshair = pointerLocked && !wants && !!Module._eden_get_crosshair() &&
+      !Module._eden_crosshair_hidden_by_mode();
+    if (wantsCrosshair !== crosshairVisible) {
+      crosshairVisible = wantsCrosshair;
+      crosshairEl.style.display = wantsCrosshair ? 'block' : 'none';
+    }
+    updateHotbarStrip(!Module._eden_effective_input_is_touch() && !wants);
+  }
+  Module.__edenFramePost = trackCursorNeed;
+
+  // Q1: load whichever build EDEN_BUILD_DIR picked (see the top of eden-host.js).
+  // eden.js locates eden.wasm relative to its own URL, so this resolves <dir>/eden.wasm
+  // automatically; `async` on a dynamically-inserted script is the default, set explicitly to
+  // match the previous static tag's behaviour.
+  //
+  // Audit row 36/C1 pass 65: gated on EdenCOI.whenSettled() rather than fired immediately. Two
+  // reasons, both about ?build=thr:
+  //   - The threaded build needs a cross-origin-isolated document, and on a host that cannot send
+  //     COOP/COEP (GitHub Pages) eden-coi.js obtains that by installing a service worker and
+  //     RELOADING. Requesting a ~10 MB wasm module into a document that is about to be discarded
+  //     is pure waste, and tearing down a half-initialised runtime mid-boot is worse than waste.
+  //   - Whether isolation actually succeeded is not known until then, and edenSettleBuildDir() is
+  //     what downgrades ?build=thr to the single-threaded build if it did not (fail closed).
+  // whenSettled() fires SYNCHRONOUSLY in every case except the one that ends in a reload, so this
+  // costs the normal single-threaded boot nothing. The EdenCOI-less fallback keeps this page
+  // bootable if eden-coi.js somehow fails to load at all.
+  function edenLoadModule() {
+    edenSettleBuildDir();
+    const edenScript = document.createElement('script');
+    edenScript.async = true;
+    edenScript.src = EDEN_BUILD_DIR + (EDEN_ASSET_MAP['eden.js'] || 'eden.js');
+    document.body.appendChild(edenScript);
+    // ROADMAP Phase M / M5.1: if a threaded tree was what we just appended, start the "did it
+    // actually load?" failsafe — on a device where it never finishes, this is what gets the
+    // player to a playable single-threaded build instead of a permanent "Starting…" screen.
+    edenArmThreadedLoadFailsafe();
+  }
+  if (window.EdenCOI) window.EdenCOI.whenSettled(edenLoadModule); else edenLoadModule();
+
+  // Perf-audit row #21's service-worker registration used to live here. It moved to
+  // public/eden-coi.js (pass 65), which needs to register the same single root-scoped worker
+  // EARLY on the isolation path — having two call sites race to register one worker was the kind
+  // of thing that works until it doesn't.
+</script>
+</body>
+</html>

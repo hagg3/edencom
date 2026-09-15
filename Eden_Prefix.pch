@@ -1,0 +1,24 @@
+//
+// Prefix header for all source files of the 'prototype' target in the 'prototype' project
+//
+
+#import <Availability.h>
+
+#ifndef __IPHONE_3_0
+#warning "This project uses features only available in iPhone SDK 3.0 and later."
+#endif
+
+#ifdef __OBJC__
+#import <Foundation/Foundation.h>
+#import <UIKit/UIKit.h>
+#endif
+
+#ifndef __OPTIMIZE__
+#    define NSLog(...) NSLog(__VA_ARGS__)
+#    define printg(...) printf(__VA_ARGS__)
+#else
+#    define NSLog(...) {}
+#    define printg(...) {}
+#endif
+
+#pragma clang diagnostic ignored "-Wmissing-selector-name"

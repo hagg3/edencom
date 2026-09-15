@@ -1,0 +1,104 @@
+The first thing to do is to wander around the world and explore limits, and look for evidence of how the world is subdivided by the program.
+Vertical Measurement
+By digging and building, you can count the number of blocks and discover the vertical limits. This tells us what to expect when we examine the save files:
+
+Counting blocks above ground: the game allows building 31 blocks above ground level in a "flat" world.
+
+Counting blocks below ground: In a "flat" world there is always one block of "Bedrock"/"Adminium", 15 blocks of Rock, 16 blocks of Dirt, and 1 block of Grass.
+Horizontal Measurements
+When walking around a world in Eden, one occasionally sees a "Loading..." message, and then new parts of the world appear. Often, the "edge" of what is currently in memory is easily visible:
+
+Edge of the world cuts off the suspension bridge.
+The edge is not always in the same place:
+
+Suspension bridge is cut off in a different place.
+In this case, the edge is 16 blocks further to the right in the first picture. In similar situations, I have found that it is always some multiple of 16.
+Another horizontal measurement that is more difficult to show involves lighting (in Eden 1.7, which had shadow effects; Eden 2.0 does not). There are subtle changes in the drawing of shadows that one can see while building. I noticed that when building something long and straight like a wall, lighting changes happen every 16 blocks.
+Evidence for 16x16x16 Blocks
+In Mega City Tokyo (pretty nearly all versions), in a certain place you can find this glitch:
+
+A bottomless glitch block in Mega City Tokyo.
+The first time I found this, I fell into the hole and landed in the street (which is far overhead in this photo). "Falling through the bottom of the world" is also seen in other games of this type.
+I filled in the hole, and counted the blocks:
+
+Floor of the glitch block filled in with glass. The hole is 16x16 blocks in size.
+I also noticed several blocks of strange types and colors hovering in mid-air. There is also a rather distinct flat ceiling. Measuring vertically, we can see that the height of the glitch is also 16 blocks:
+
+The glitch block is 16 blocks high.
+Amount of Map Data in Memory
+By placing a row of blocks and observing from a distance, like this, we can count the distance to all edges of the visible part of the world:
+
+Measuring to the edge of the world
+I have measured the total size of the piece of terrain that is being shown at any given time. This is always a square 192 blocks on each side. In terms of 16×16 chunks, that's a 12×12 arrangement of chunks each of which is 16×16 blocks. (In Eden 2.0, the visible area is 18×18 chunks or 288×288 blocks, which is only 50% bigger in any direction but seems like much more.)
+There are 58 types of blocks in the game, and 55 types of coloring:
+
+All block types and colors in Eden version 1.7
+There are 56 block-types pictured, but in addition there are: a type of grass with "weeds" which cannot be placed, the "Bedrock" or "Adminium" block, the empty space or "air" block, and versions of water and lava that are 1/4, 1/2 and 3/4 the height of a regular block; thus there are 56+3+6 = 65 total types of block. In addition to the 54 colors shown, if you place a block and do not color it, it sometimes looks different. Therefore "original color" counts as a 55th color.
+With 65 blocks and 55 colors there are 3575 combinations. This is too many to store in a single byte, so it's likely the game needs to save two bytes of information per block.
+Combining all the measurements described here, we would expect a new world to have (16 x 16 x 64) x (12 x 12) x 2 bytes of data. This works out to 4718592 bytes.
+Initial Investigation
+Knowing all of the above, I then looked at the save file for a brand-new "flat" world. The data file was 4733088 bytes, which is only a little bigger than the number 4718592 we just computed.
+Furthermore, when making small changes (like digging out one block of grass and replacing it with brick) the save file did not change in size.
+The next thing to do was to look at the data contents with od:
+
+  od -v -t xC data/w3-3.eden
+   0000000  00 00 00 00 ad 09 80 47 33 b3 67 42 7f 02 80 47
+   0000020  00 04 80 47 00 00 58 42 00 04 80 47 d1 65 b2 42
+   0000040  a0 2f 54 00 00 00 00 00 57 6f 72 6c 64 20 33 00
+   0000060  ...
+   0000140  62 36 38 33 ...
+            ...
+   0000260  00 00 00 00 00 00 00 00 00 00 00 00 00 00 0c 00
+   0000300  01 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02
+   0000320  01 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02
+   0000340  01 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02
+  ...
+  
+The first 3008 = 192 bytes include some text in ASCII. I found "57 6f 72 6c 64 20 33", which is "World 3" in ASCII, the name of my world. I also found 32 hexadecimal digits starting with "62 36 38 33 ..." and an unknown purpose (possibly personal, which is why I'm not showing it here).
+Starting at 000003008 is a block of data looking like "01 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02". There are exactly 256 lines of this, ending at 000102778:
+
+   0010260  01 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02
+   0010300  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+   0010320  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+   0010340  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  
+103008 - 3008 is 409610, which is 16×16×16. So we have a 16x16x16 chunk of blocks, and the pattern of 01 followed by 15 copies of 02 makes it look like this is the block of Adminium and 15 blocks of rock at the bottom of the world. The block data is arranged in vertical columns.
+Following this was 4096 bytes of 0's starting at 000103008, then at 000203008 there is 4096 bytes of 3's. Then another 4096 zeros, and then at 000403008 we find 4096 bytes consisting of 256 copies of "08 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00". Then a bunch more zeros, then at 000803008 the whole thing repeats again.
+I came up with the theory that I was indeed looking at chunk data, and that the blocks of 4096 bytes of 0's are the color information. Each 16×16 piece of the world is stored as eight blocks of 16×16×16 = 4096 bytes, for a total of 32768 bytes.
+In order for this to work, there must be a "table of contents" telling where each piece of the map is stored in the data file. This table should contain X and Y coordinates and pointers to file locations, like 000003008 and 000803008. Here is what the end of the file looks like:
+
+  ...
+  25000300  a3 1b 80 47 00 20 04 42 23 d0 7f 47 2d b3 7b b6
+  25000320  00 00 00 00 ab 3a bd 37 ee 65 c5 40 03 00 00 00
+  25000340  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  25000360  00 00 00 00 00 00 00 00 00 00 00 00 6a 13 80 47
+  ...
+  25027560  2a ce d0 bd 00 00 00 00 bd fb c1 bc 23 20 06 40
+  25027600  ff ff ff ff 00 00 00 00 00 00 80 3f 00 00 00 00
+  25027620  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  25027640  02 10 00 00 fd 0f 00 00 c0 00 30 00 00 00 00 00
+  25027660  06 10 00 00 fa 0f 00 00 c0 00 4c 00 00 00 00 00
+  25027700  00 10 00 00 fd 0f 00 00 c0 80 45 00 00 00 00 00
+  25027720  06 10 00 00 01 10 00 00 c0 80 4b 00 00 00 00 00
+  ...
+  25035020  00 10 00 00 fb 0f 00 00 c0 80 1c 00 00 00 00 00
+  25035040
+  
+The rows starting at 250276408 look promising. "c0 00 30 00" is 003000c016, which is 140003008, the beginning of one of the 32768-byte chunk data blocks. "c0 00 4c 00", "c0 80 45 00", etc. also translate into valid chunk addresses. And there were exactly 12×12 = 144 rows of this data. So the other data in the rows, like "02 10" and "fd 0f", must be the X and Y coordinates.
+Looking back at the 192-byte header, we can now see the value: "a0 2f 54 00" which is 00542FA016 = 250276408, the beginning of the chunk pointers section.
+I wrote a simple program to scan this information in and attempt to render it as a plain ASCII text map of the middle of the test world. In the following image, the top is a photo (screen-shot) taken in the game of the middle of my world, with some shapes made out of different types of blocks. The bottom shows my very first map program, displaying that part of the world with ASCII graphics.
+data format verified
+data format verified
+SUCCESS!
+First Real Maps
+Once the format was verified, all that remained was to write a more serious program that scans everything in and generates full-color graphical output. Here is a map of one of my early Eden worlds generated by my program:
+My first Eden map as a JPG image
+My first Eden map as a JPG image
+Here is an overhead view of the same world taken from within the game:
+
+Overhead view of my test world "mrob2". North is to upper-left.
+The trees, clouds, my ice-slides, and other features are easy to see in the map image.
+I spent a while carefully adjusting the colours, and making the program show tall structures as if viewed from a slight angle (using "axonometric projection").
+The program works on almost all of the worlds I've tried. Here's a map of the central part of DJ Asian Tech's "Mega City Tokyo V4" (03/27/2013) :
+DJ Asian Tech'sTokyo
+DJ Asian Tech'sTokyo

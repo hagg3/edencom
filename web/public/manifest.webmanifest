@@ -1,0 +1,17 @@
+{
+  "name": "Eden: World Builder",
+  "short_name": "Eden",
+  "description": "Voxel world builder — walk, mine, and build in a persistent 3D world, in the browser.",
+  "start_url": "eden-st.html",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#111111",
+  "theme_color": "#111111",
+  "orientation": "any",
+  "icons": [
+    { "src": "audio/icons/Icon_57.png", "sizes": "57x57", "type": "image/png" },
+    { "src": "audio/icons/Icon_72.png", "sizes": "72x72", "type": "image/png" },
+    { "src": "audio/icons/Icon_114.png", "sizes": "114x114", "type": "image/png" },
+    { "src": "audio/icons/Icon_144.png", "sizes": "144x144", "type": "image/png" }
+  ]
+}

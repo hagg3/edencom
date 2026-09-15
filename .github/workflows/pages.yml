@@ -1,0 +1,100 @@
+name: Deploy web port to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Classes/**"
+      - "Lighting.mm"
+      - "web/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install emsdk 3.1.74
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.74
+          actions-cache-folder: emsdk-cache
+
+      # Two Release builds ship: the threaded one is what visitors get (?build=thr, cross-origin
+      # isolation synthesised by public/eden-coi.js + service-worker.js on the header-less Pages
+      # host), and the single-threaded one is the fail-closed fallback eden-host.js's
+      # edenSettleBuildDir() drops to (as ../build-st/) when a browser can't be isolated.
+      - name: Configure (Release, single-threaded fallback)
+        working-directory: web
+        run: emcmake cmake -B build-rel -DCMAKE_BUILD_TYPE=Release -DEDEN_THREADED=OFF
+
+      - name: Configure (Release, threaded — the shipped default)
+        working-directory: web
+        run: emcmake cmake -B build-thr -DCMAKE_BUILD_TYPE=Release -DEDEN_THREADED=ON
+
+      - name: Build
+        working-directory: web
+        run: |
+          cmake --build build-rel -j"$(nproc)"
+          cmake --build build-thr -j"$(nproc)"
+
+      - name: Assemble site
+        working-directory: web
+        run: |
+          set -e
+          rm -rf _site
+          mkdir -p _site/public _site/build-rel _site/build-st _site/build-thr
+
+          # Real files, not the absolute-path symlinks CMake just (re)created on this runner.
+          cp -RL public/. _site/public/
+
+          # Registered from eden-st.html as '../service-worker.js', i.e. resolved against the
+          # site root — was missing here entirely (never copied into _site), so every deployed
+          # page load 404'd on it. It now also carries COOP/COEP for the threaded build.
+          cp -f service-worker.js _site/service-worker.js
+
+          # Threaded build -> ?build=thr (../build-thr/).
+          cp -f build-thr/eden.js _site/build-thr/
+          cp -f build-thr/eden.wasm _site/build-thr/
+          [ -f build-thr/eden.data ] && cp -f build-thr/eden.data _site/build-thr/ || true
+
+          # Single-threaded Release -> both ?build=rel (../build-rel/) and the isolation-failed
+          # fallback path (../build-st/). Same bytes, two names.
+          for d in build-rel build-st; do
+            cp -f build-rel/eden.js "_site/$d/"
+            cp -f build-rel/eden.wasm "_site/$d/"
+            [ -f build-rel/eden.data ] && cp -f build-rel/eden.data "_site/$d/" || true
+          done
+
+          cat > _site/index.html <<'EOF'
+          <!doctype html>
+          <meta charset="utf-8">
+          <meta http-equiv="refresh" content="0; url=public/eden-st.html?build=thr">
+          <p>Loading Eden: World Builder… if nothing happens,
+          <a href="public/eden-st.html?build=thr">click here</a>.</p>
+          EOF
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/_site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

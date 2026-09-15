@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  native/ios/Info.plist.in — the iOS app bundle's manifest (Phase N Stage 4.1).
+
+  Configured by native/CMakeLists.txt (@ONLY substitution) because two values differ per build:
+  the deployment target and which platform slice this is. Everything else is fixed, and every key
+  in here is a requirement rather than metadata — see the block comment in native/CMakeLists.txt
+  ("The iOS app bundle") for what each one prevents.
+
+  NOT PRESENT, deliberately: CFBundleIconFiles / an app icon. Eden.xcodeproj's Images.xcassets has
+  the original 2010-2014 icons and launch images, and wiring an asset catalogue needs actool,
+  i.e. a real Xcode build rather than a CMake one. That is Stage 4.6's packaging work; an app with
+  no icon installs and runs.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<!-- Configured, not hard-coded: it must equal the target's OUTPUT_NAME (native/CMakeLists.txt
+	     sets both from EDEN_IOS_EXECUTABLE). A mismatch here is an app that installs and then
+	     fails to launch with nothing useful in the log. -->
+	<key>CFBundleExecutable</key>
+	<string>@EDEN_IOS_EXECUTABLE@</string>
+	<!-- EMOD, NOT EDEN. This is a community fork of the 2.1.1 source release and must be a
+	     distinct application to the OS: a distinct identifier means a distinct container, so it
+	     cannot share a save directory with the shipped game the way the desktop legs did until
+	     2026-09-06 (native/src/eden_app_identity.h). The reverse-DNS is this fork's own
+	     repository, deliberately not edengame.net. -->
+	<key>CFBundleIdentifier</key>
+	<string>io.github.hagg3.emod</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Emod</string>
+	<key>CFBundleDisplayName</key>
+	<string>Emod</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>2.1.1</string>
+	<key>CFBundleVersion</key>
+	<string>2.1.1</string>
+	<key>CFBundleSupportedPlatforms</key>
+	<array>
+		<string>@EDEN_IOS_PLATFORM@</string>
+	</array>
+	<!-- The installer reads THIS, not the Mach-O load command. 12.0 is the stage's whole point:
+	     it is what puts A7/A8 devices (iPad Air 2, iPhone 6) — unreachable for the WebGL-2-only
+	     web build — back in range. -->
+	<key>MinimumOSVersion</key>
+	<string>@EDEN_IOS_MIN_VERSION@</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<!-- 1 = iPhone/iPod touch, 2 = iPad. Both, as the shipped 2.1.1 app was (CLAUDE.md
+	     convention 3: IS_IPAD means "2x UI scale", which is a metric this build derives at
+	     runtime — it is not a separate binary). -->
+	<key>UIDeviceFamily</key>
+	<array>
+		<integer>1</integer>
+		<integer>2</integer>
+	</array>
+	<!-- An EMPTY dict is the documented "plain black, full size" launch screen. Without this key
+	     iOS 14+ letterboxes the app into a 4:3 window on every modern device, which also puts
+	     every touch coordinate in the wrong place. The game draws its own splash. -->
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UIRequiresFullScreen</key>
+	<true/>
+	<key>UIStatusBarHidden</key>
+	<true/>
+	<key>UIViewControllerBasedStatusBarAppearance</key>
+	<false/>
+	<!-- Landscape only, as the original was: the HUD, the menu and the touch layout are all
+	     authored for it. -->
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<!-- opengles-3 is an honest declaration and a floor: this port's renderer is the ES1 -> ES3
+	     translator, and the matrix-palette skinning shaders are `#version 300 es`. A device that
+	     cannot offer ES 3.0 cannot run this build, and saying so in the manifest is better than
+	     failing at context creation. arm64 for the same reason (iOS 11 dropped 32-bit). -->
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>arm64</string>
+		<string>opengles-3</string>
+	</array>
+	<!-- The only way a .eden world gets OFF an iOS device. This pair is what makes
+	     `<container>/Documents` the right save root there (see default_docs() in
+	     native/src/entry/eden_main_native.cpp) — the Files app and Finder both read it. -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+</dict>
+</plist>

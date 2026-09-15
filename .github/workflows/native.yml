@@ -1,0 +1,907 @@
+# .github/workflows/native.yml — Phase N Stage 3.1.
+#
+# WHY THIS FILE IS THE VERIFICATION AND NOT A CONVENIENCE: there is no Linux box and no Windows box
+# and no container runtime on the development Mac, so these runners are the ONLY place the two new
+# platforms are ever built or run. Stage 3's success criteria are written headless-only for exactly
+# that reason — a CI runner has no GL context, so every windowed, visual or gamepad check on
+# Windows and Linux is owed to a human and is NOT claimed here.
+#
+# It also, for the first time, makes "web stays green" machine-enforced rather than a rule someone
+# remembers: the `web` job below runs the same 12 headless suites the project's own gate does.
+#
+# THE JOB ORDER IS THE SAVE-INTERCHANGE TEST, not scheduling. `linux` runs first and publishes a
+# world it wrote; `windows`, `macos` and `web` each LOAD that file and must report the same
+# geometry checksum. That is a stronger statement than comparing bytes — it says the other
+# platform can read it, which is the thing that matters to a player who moves a save between
+# machines — and `interchange` then does the byte comparison on top, in one place.
+name: native
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "Classes/**"
+      - "Lighting.mm"
+      - "cmake/**"
+      - "native/**"
+      - "web/src/**"
+      - "web/CMakeLists.txt"
+      - "web/tools/**"
+      - ".github/workflows/native.yml"
+      - ".github/scripts/**"
+  pull_request:
+  workflow_dispatch: {}
+
+concurrency:
+  group: native-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned, and the SAME on all three platforms — including macOS, where Homebrew happens to ship
+  # exactly this. Stage 3's design is "change one variable per leg"; a version that drifts between
+  # runners would put SDL back into the set of variables.
+  SDL_VERSION: "3.4.12"
+  # CI runners have neither a display nor a sound card. SDL's dummy backends make that explicit
+  # rather than letting each selftest discover it as a device-open failure; the decoders, the
+  # mixer bookkeeping and the event pump all still run for real.
+  SDL_VIDEO_DRIVER: dummy
+  SDL_AUDIO_DRIVER: dummy
+  # The figures Stage 1's criteria are stated in come out of the eden_debug_* probes, which are
+  # OFF in Release unless asked for — the same build-relwdiag combination the web side uses.
+  EDEN_CMAKE_FLAGS: "-DCMAKE_BUILD_TYPE=Release -DEDEN_DIAGNOSTICS=ON"
+
+jobs:
+  # =============================================================================================
+  # Linux — the ELF control. First leg, deliberately: it reuses the web port's ObjC runtime and
+  # Foundation shim UNMODIFIED, so it changes exactly one variable against the proven web build
+  # (pointer width) before Windows changes three (object format, CRT, `long` width).
+  # =============================================================================================
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang lld ninja-build cmake gdb zlib1g-dev libgl1-mesa-dev \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
+            libxfixes-dev libxss-dev libxtst-dev libwayland-dev libxkbcommon-dev \
+            libasound2-dev libpulse-dev libudev-dev
+
+      - name: Cache SDL3
+        id: sdl-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/sdl3-prefix
+          key: sdl3-${{ env.SDL_VERSION }}-ubuntu-latest
+
+      - name: Build SDL3 from source
+        if: steps.sdl-cache.outputs.cache-hit != 'true'
+        run: |
+          # Ubuntu 24.04 has no libsdl3-dev (SDL3 arrived in 25.04), and a distro package would in
+          # any case pin a different version per runner image. Source-building the pinned tag is
+          # what keeps SDL out of the variable set.
+          git clone --depth 1 --branch "release-${SDL_VERSION}" https://github.com/libsdl-org/SDL.git /tmp/SDL
+          cmake -S /tmp/SDL -B /tmp/SDL/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/sdl3-prefix" \
+            -DSDL_STATIC=OFF -DSDL_TEST_LIBRARY=OFF
+          cmake --build /tmp/SDL/build --parallel
+          cmake --install /tmp/SDL/build
+
+      - name: Configure
+        working-directory: native
+        env:
+          CC: clang
+          CXX: clang++
+        run: cmake -B build -G Ninja $EDEN_CMAKE_FLAGS -DCMAKE_PREFIX_PATH="$HOME/sdl3-prefix"
+
+      - name: Build
+        working-directory: native
+        run: cmake --build build --parallel
+
+      - name: Gates — boot, ObjC runtime, geometry, selftests, save round-trip
+        working-directory: native
+        # One step, one helper, a backtrace on any crash. See .github/scripts/run-gate.sh for why
+        # the obvious `binary | tee log` shape cannot report a segfault.
+        run: |
+          set -e
+          . ../.github/scripts/run-gate.sh
+          export LD_LIBRARY_PATH=$HOME/sdl3-prefix/lib
+          B=./build/eden_native
+
+          run_gate "boot (--p1-gate)" $B --p1-gate
+
+          # The stage's single most load-bearing check, and the reason this mode exists: this
+          # port's own hand-written GNU-ABI Objective-C runtime, at 64-bit widths, on ELF. macOS
+          # never runs it (Apple's libobjc), and every way it can be wrong is silent.
+          run_gate "ObjC runtime self-test" $B --objc-selftest
+
+          # A FRESH --docs PER RUN, and this is not hygiene. --stage1 creates-or-LOADS a world by
+          # name, so a 64z save left by the previous command is silently reused by the 256z one and
+          # reported under the phase name "world256" with 64z geometry. Reproduced on the dev Mac
+          # while writing this workflow; check-stage1.py names it as the first thing to rule out.
+          rm -rf docs64 docs256 && mkdir -p docs64 docs256
+          run_gate "geometry 64z"  $B --headless --stage1 --docs="$PWD/docs64"
+          run_gate "geometry 256z" $B --headless --stage1 --height=256 --docs="$PWD/docs256"
+          python3 ../.github/scripts/check-stage1.py \
+            gate-geometry-64z.log gate-geometry-256z.log
+
+          run_gate "input selftest"   $B --input-selftest
+          run_gate "gamepad selftest" $B --gamepad-selftest
+          # Stage 4.3: SDL finger events at the engine's own reported HUD rect. Not iOS-only —
+          # the translator is shared, so every platform gets to prove it still routes.
+          run_gate "touch selftest"   $B --touch-selftest
+          run_gate "audio selftest"   $B --audio-selftest
+          run_gate "background selftest" $B --background-selftest --world=bg --docs="$PWD/bg-docs"
+
+          # The stage's leak obligation. The shim Foundation runs outside Emscripten on this leg
+          # for the first time and this runtime's object_dispose() has no .cxx_destruct, so a shim
+          # class holding a C++ ivar leaks silently unless it wrote a -dealloc. The web side proves
+          # this with headless-alloc-leak-probe / --torture=same64, neither of which can drive a
+          # native binary; --leak-probe is the same measurement in the same statistic.
+          rm -rf leak-docs && mkdir -p leak-docs
+          run_gate "leak probe (torture, same 64z)" $B --leak-probe --docs="$PWD/leak-docs"
+
+          rm -rf ci-docs && mkdir -p ci-docs
+          run_gate "save round-trip" $B --headless --save-roundtrip --world=ci --docs="$PWD/ci-docs"
+
+          # THE WORLD FILE IS NOT NAMED AFTER THE WORLD. This engine gives every world a random
+          # 40-character filename and keeps the display name inside the header — so the artifact
+          # has to be found, not assumed. (Assuming `ci.eden` is how the first version of this
+          # workflow uploaded a path that does not exist.)
+          mkdir -p publish
+          cp "$(ls -S ci-docs/*.eden | head -1)" publish/world-linux.eden
+
+          # ...and PUBLISH THE CHECKSUM OF LOADING IT, which is what turns the other platforms'
+          # "read the world Linux wrote" gates into assertions instead of gestures. Loading a fixed
+          # file is reproducible (verified: the same file loaded twice gives the same geom), unlike
+          # CREATING one, so this number is a legitimate cross-platform constant.
+          #
+          # `--world=ci` is load-bearing: --stage1 creates-or-loads BY DISPLAY NAME, and the world
+          # in ci-docs is called "ci". Without it the run creates a brand-new "stage1" world beside
+          # the imported one and checksums that instead — which is what the windows and macos
+          # crossload gates were doing, undetected, because they only grepped for the WORD
+          # "checksum".
+          run_gate "crossload self" $B --headless --stage1 --world=ci --docs="$PWD/ci-docs"
+          sed -n 's/.*"geom":"\([0-9a-f]*\)".*/\1/p' gate-crossload-self.log | head -1 \
+            > publish/world-linux.geom
+          test -s publish/world-linux.geom
+          echo "linux loads its own world as geom $(cat publish/world-linux.geom)"
+          ls -l publish
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: world-linux
+          # Both files: the world, and the geometry checksum Linux gets from loading it. The other
+          # three jobs assert against that number.
+          path: native/publish/world-linux.*
+          if-no-files-found: error
+
+  # =============================================================================================
+  # Windows — the point of the stage. MSYS2's CLANG64 environment IS an LLVM-mingw toolchain
+  # (target x86_64-w64-windows-gnu), which is the plan's measured choice: `cl.exe` has no
+  # Objective-C at all, and the MSVC ABI segfaults clang on `@finally` in ObjC++, needs a ~150-LOC
+  # pthread shim and has no <dirent.h>. MSYS2 rather than the bare llvm-mingw tarball because zlib
+  # is a hard requirement here (Classes/zpipe.c) and MSYS2 packages it.
+  # =============================================================================================
+  windows:
+    runs-on: windows-latest
+    needs: linux
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANG64
+          update: true
+          install: >-
+            git
+            mingw-w64-clang-x86_64-clang
+            mingw-w64-clang-x86_64-cmake
+            mingw-w64-clang-x86_64-ninja
+            mingw-w64-clang-x86_64-zlib
+            mingw-w64-clang-x86_64-gdb
+
+      - name: Cache SDL3
+        id: sdl-cache
+        uses: actions/cache@v4
+        with:
+          path: C:\sdl3-prefix
+          key: sdl3-${{ env.SDL_VERSION }}-windows-clang64
+
+      - name: Build SDL3 from source
+        if: steps.sdl-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "release-${SDL_VERSION}" https://github.com/libsdl-org/SDL.git /tmp/SDL
+          cmake -S /tmp/SDL -B /tmp/SDL/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/c/sdl3-prefix \
+            -DSDL_STATIC=OFF -DSDL_TEST_LIBRARY=OFF
+          cmake --build /tmp/SDL/build --parallel
+          cmake --install /tmp/SDL/build
+
+      - name: Configure
+        working-directory: native
+        run: cmake -B build -G Ninja $EDEN_CMAKE_FLAGS -DCMAKE_PREFIX_PATH=/c/sdl3-prefix
+
+      - name: Build
+        working-directory: native
+        # `-- -k 0` — keep going after the first error and report EVERY one. Not a style choice:
+        # this runner is the only place Windows ever compiles, ninja stops at the first failure by
+        # default, and each round trip costs five minutes plus a push. One build that lists four
+        # errors is four iterations saved. The step still fails, because cmake still returns
+        # ninja's status.
+        run: cmake --build build --parallel -- -k 0
+
+      - name: Gates — boot, ObjC runtime, geometry, selftests, leak probe
+        working-directory: native
+        # THE SAME HELPER THE LINUX JOB USES, and for a stronger reason than symmetry: this runner
+        # is the only place Windows ever runs, so a crash has to be diagnosable from the log alone.
+        # `./eden.exe … | tee log` reports TEE's exit status, so the first version of these steps
+        # turned a segfault into "check-stage1.py found no checksum line"; run-gate.sh captures the
+        # binary's own status and re-runs a signal death under gdb for a backtrace in the same job.
+        # (That is what mingw-w64-clang-x86_64-gdb is in the package list for.)
+        run: |
+          set -e
+          . ../.github/scripts/run-gate.sh
+          export PATH="/c/sdl3-prefix/bin:$PATH"
+          B=./build/eden_native.exe
+
+          run_gate "boot (--p1-gate)" $B --p1-gate
+
+          # The whole Windows risk in one command: this port's own GNU-ABI Objective-C runtime,
+          # lowered to COFF, dispatching real message sends with LLP64 struct layouts.
+          run_gate "ObjC runtime self-test" $B --objc-selftest
+
+          rm -rf docs64 docs256 && mkdir -p docs64 docs256
+          run_gate "geometry 64z"  $B --headless --stage1 --docs="$PWD/docs64"
+          run_gate "geometry 256z" $B --headless --stage1 --height=256 --docs="$PWD/docs256"
+          python ../.github/scripts/check-stage1.py \
+            gate-geometry-64z.log gate-geometry-256z.log
+
+          run_gate "input selftest"   $B --input-selftest
+          run_gate "gamepad selftest" $B --gamepad-selftest
+          # Stage 4.3: SDL finger events at the engine's own reported HUD rect. Not iOS-only —
+          # the translator is shared, so every platform gets to prove it still routes.
+          run_gate "touch selftest"   $B --touch-selftest
+          run_gate "audio selftest"   $B --audio-selftest
+          run_gate "background selftest" $B --background-selftest --world=bg --docs="$PWD/bg-docs"
+
+          # See the Linux job for why the leak probe is a stage obligation. Windows has the one
+          # honest gap in the statistic — the mingw CRT publishes no live-bytes figure, so
+          # HeapProbe_native.cpp reports process commit charge in that slot. It answers "is this
+          # flat" at least as well; read the absolute number as a trend, not as bytes.
+          rm -rf leak-docs && mkdir -p leak-docs
+          run_gate "leak probe (torture, same 64z)" $B --leak-probe --docs="$PWD/leak-docs"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: world-linux
+          path: native/from-linux
+
+      - name: Gate — read the world Linux wrote
+        working-directory: native
+        # CRITERION 4, AND UNTIL NOW IT WAS NOT CHECKED. Dropping the foreign save in and running
+        # --stage1 with no --world created a NEW world called "stage1" beside it and checksummed
+        # that; `grep -q checksum` then passed on a run that never opened Linux's file. Now it asks
+        # for the world by its display name AND requires the geometry to equal what Linux got from
+        # the same bytes — the one comparison that can only pass if the file really was read.
+        run: |
+          set -e
+          . ../.github/scripts/run-gate.sh
+          export PATH="/c/sdl3-prefix/bin:$PATH"
+          rm -rf ci-docs && mkdir -p ci-docs
+          cp from-linux/world-linux.eden ci-docs/
+          run_gate "crossload" ./build/eden_native.exe --headless --stage1 --world=ci \
+            --docs="$PWD/ci-docs"
+          want=$(cat from-linux/world-linux.geom)
+          got=$(sed -n 's/.*"geom":"\([0-9a-f]*\)".*/\1/p' gate-crossload.log | head -1)
+          echo "linux wrote it as $want; windows read it as $got"
+          [ -n "$got" ] && [ "$want" = "$got" ] || {
+            echo "::error::windows read Linux's world as '$got', linux reads it as '$want'"; exit 1; }
+
+      - name: Gate — save round-trip, and publish this platform's world
+        working-directory: native
+        run: |
+          export PATH="/c/sdl3-prefix/bin:$PATH"
+          mkdir -p own-docs
+          ./build/eden_native.exe --headless --save-roundtrip --world=ci --docs="$PWD/own-docs"
+          mkdir -p publish && cp "$(ls -S own-docs/*.eden | head -1)" publish/world-windows.eden
+          ls -l publish
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: world-windows
+          path: native/publish/world-windows.eden
+          if-no-files-found: error
+
+      # -----------------------------------------------------------------------------------------
+      # 3.7 — packaging. A PORTABLE ZIP, unsigned, and that is a recommendation the plan makes
+      # explicitly rather than a corner cut: code signing is a paid certificate and a distribution
+      # decision, MSIX is a store decision, and neither is on the path to "it plays". A zip you
+      # unpack and double-click is also what the modding audience this build exists for wants.
+      #
+      # Layout is the one native/README.md documents and the one the ENGINE assumes: a flat
+      # directory of assets beside the executable, because the shipped iOS app's bundle was flat
+      # (Xcode's Copy-Bundle-Resources phase flattens media/) and Classes/World.mm's LoadModels()
+      # still fopen()s bare basenames against the bundle root.
+      # -----------------------------------------------------------------------------------------
+      - name: Package a portable zip
+        working-directory: native
+        run: |
+          set -e
+          rm -rf dist && mkdir dist
+          cp build/eden_native.exe dist/eden.exe
+
+          # THE ASSETS, AND `-type l` IS THE POINT. This used to say `-type f` on the strength of
+          # "COPY_ON_ERROR already fell back to real copies, because symlinks need Developer Mode"
+          # -- written before this job had ever run. It is not true on a GitHub Windows runner:
+          # CMake's file(CREATE_LINK ... SYMBOLIC) succeeds there, so every asset beside the
+          # executable is a LINK, `find -type f` matched none of them, and the zip shipped with
+          # four files in it and no error. `cp -L` then copies what each one points at.
+          find build -maxdepth 1 \( -type f -o -type l \) \
+            \( -name '*.png' -o -name '*.pod' -o -name '*.caf' -o -name '*.wav' \
+               -o -name '*.aif' -o -name '*.mp3' -o -name '*.eden' \) -exec cp -L {} dist/ \;
+
+          # SDL3, plus the runtime this toolchain links against. `ldd` on the built exe is the
+          # source of truth rather than a hand-listed set of DLL names: it reports what THIS binary
+          # actually needs, so a toolchain change cannot silently ship an unrunnable zip.
+          #
+          # The filter is now "exists, and is not a Windows system DLL" rather than a whitelist of
+          # /clang64|/mingw64|/sdl3-prefix directory names. That whitelist is what dropped SDL3.dll:
+          # it lives outside the MSYS root (C:\sdl3-prefix), so ldd reports it in a spelling the
+          # pattern did not match -- and the zip shipped without the one library the port is a
+          # client of.
+          ldd build/eden_native.exe | awk '{print $3}' | while read -r dll; do
+            [ -f "$dll" ] || continue
+            case "$dll" in
+              /c/[Ww][Ii][Nn][Dd][Oo][Ww][Ss]/*|[Cc]:[/\\][Ww][Ii][Nn][Dd][Oo][Ww][Ss][/\\]*) continue ;;
+            esac
+            cp -f "$dll" dist/
+          done
+
+          # ...and ASSERT the two things a silent miss above would leave behind. Both of these
+          # failures shipped a zip that looked fine in the log and could not start.
+          test -f dist/SDL3.dll || { echo "::error::SDL3.dll is not in the package"; exit 1; }
+          test -f dist/Eden.eden || { echo "::error::Eden.eden is not in the package"; exit 1; }
+          n=$(find dist -type f | wc -l)
+          [ "$n" -gt 800 ] || { echo "::error::only $n files in the package; expected ~880"; exit 1; }
+          ls -l dist | head -20
+          echo "assets: $n files, $(du -sh dist | cut -f1)"
+
+      - name: Smoke-test the packaged zip contents
+        working-directory: native/dist
+        # The package is worthless if it does not run from its own directory with nothing else on
+        # PATH. This is the only check that covers the DLL collection above, and it is the closest
+        # thing this workflow has to "a player unzipped it and double-clicked".
+        #
+        # `$PWD` is deliberately NOT on PATH: it is an MSYS path (/d/a/...) and the Windows loader
+        # does not read those, so putting it there proved nothing. It does not need to be — Windows
+        # searches the executable's own directory FIRST for its imports, which is exactly the
+        # property a portable zip depends on. /usr/bin alone is the "nothing else available" part.
+        run: PATH="/usr/bin" ./eden.exe --p1-gate
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eden-windows-x64-portable
+          path: native/dist
+          if-no-files-found: error
+
+  # =============================================================================================
+  # macOS — NOT a new platform, and that is the job's purpose. It reproduces the checksums this
+  # repository already records from the development machine, which is what proves the WORKFLOW
+  # rather than only the two new legs. If macOS goes red here and green locally, the harness is
+  # wrong; if both go red, the code is.
+  # =============================================================================================
+  macos:
+    runs-on: macos-latest
+    needs: linux
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SDL3
+        run: brew install sdl3
+
+      - name: Configure and build
+        working-directory: native
+        run: |
+          cmake -B build $EDEN_CMAKE_FLAGS
+          cmake --build build --parallel
+
+      - name: Gate — boot, checksums, selftests
+        working-directory: native
+        run: |
+          ./build/eden_native --p1-gate
+          rm -rf docs64 docs256 && mkdir -p docs64 docs256
+          ./build/eden_native --headless --stage1 --docs="$PWD/docs64"                2>&1 | tee stage1-64.log
+          ./build/eden_native --headless --stage1 --height=256 --docs="$PWD/docs256"  2>&1 | tee stage1-256.log
+          python3 ../.github/scripts/check-stage1.py stage1-64.log stage1-256.log
+          ./build/eden_native --input-selftest
+          ./build/eden_native --gamepad-selftest
+          ./build/eden_native --touch-selftest
+          ./build/eden_native --audio-selftest
+          ./build/eden_native --background-selftest --world=bg --docs="$PWD/bg-docs"
+          rm -rf leak-docs && mkdir -p leak-docs
+          ./build/eden_native --leak-probe --docs="$PWD/leak-docs"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: world-linux
+          path: native/from-linux
+
+      - name: Gate — read the world Linux wrote
+        working-directory: native
+        # See the Windows job's copy of this note: without --world=ci this created a second world
+        # and checksummed that, and without comparing the geom the gate could not tell.
+        run: |
+          set -e
+          . ../.github/scripts/run-gate.sh
+          rm -rf ci-docs && mkdir -p ci-docs
+          cp from-linux/world-linux.eden ci-docs/
+          run_gate "crossload" ./build/eden_native --headless --stage1 --world=ci \
+            --docs="$PWD/ci-docs"
+          want=$(cat from-linux/world-linux.geom)
+          got=$(sed -n 's/.*"geom":"\([0-9a-f]*\)".*/\1/p' gate-crossload.log | head -1)
+          echo "linux wrote it as $want; macos read it as $got"
+          [ -n "$got" ] && [ "$want" = "$got" ] || {
+            echo "::error::macos read Linux's world as '$got', linux reads it as '$want'"; exit 1; }
+
+      - name: Gate — save round-trip, and publish this platform's world
+        working-directory: native
+        run: |
+          mkdir -p own-docs
+          ./build/eden_native --headless --save-roundtrip --world=ci --docs="$PWD/own-docs"
+          mkdir -p publish && cp "$(ls -S own-docs/*.eden | head -1)" publish/world-macos.eden
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: world-macos
+          path: native/publish/world-macos.eden
+          if-no-files-found: error
+
+  # =============================================================================================
+  # iOS — THE PLATFORM PHASE N EXISTS FOR (Stage 4.1).
+  #
+  # iOS 12 cannot run the web build at all: that build needs WebGL 2, i.e. Safari 15, i.e. iOS 15.
+  # Natively the same devices (A7 and up) are in range, and this job is where that claim stops
+  # being an argument. It does three things a laptop cannot do on its own — build the DEVICE slice
+  # (this machine has Command Line Tools and no iOS SDK), build the SIMULATOR slice, and RUN the
+  # simulator one — and it asserts values rather than exit codes, because `simctl launch` reports
+  # its own status and not the app's.
+  #
+  # WHAT IT CANNOT CLAIM, and this is the same boundary the Linux and Windows jobs have: no
+  # runner has a GPU-backed iOS device. Criterion 1 (a real iOS 12 device), criterion 3 (64z under
+  # 300 MB on an iPad Air 2) and criterion 5 (touch play) are owed to a human with hardware. What
+  # is machine-checked here is criterion 2 (geometry byte-identical to the other four targets),
+  # criterion 4 (save-on-background, on the platform whose UIKit delivery rule is the reason
+  # SDL_AddEventWatch is used at all) and save interchange with the world Linux wrote.
+  # =============================================================================================
+  ios:
+    runs-on: macos-latest
+    needs: linux
+    # A SIMULATOR LAUNCH CAN HANG, and the default job timeout is six hours. `simctl launch`
+    # waits for the app to exit, and an app that neither exits nor prints looks exactly like a
+    # slow one — cap the whole job rather than guess per step. A green run is ~12 minutes, most
+    # of it building SDL3 twice.
+    timeout-minutes: 45
+    env:
+      # 12.0 is the stage's whole point, not a compatibility gesture — see native/CMakeLists.txt's
+      # iOS block. It is asserted below out of the built binary's own load command, because a
+      # deployment target that silently got raised is exactly the kind of regression that only
+      # shows up as "it will not install on my iPad".
+      EDEN_IOS_MIN: "12.0"
+      EDEN_BUNDLE_ID: "io.github.hagg3.emod"   # Emod, not Eden — native/src/eden_app_identity.h
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          echo "iphoneos SDK        $(xcrun --sdk iphoneos --show-sdk-version)"
+          echo "iphonesimulator SDK $(xcrun --sdk iphonesimulator --show-sdk-version)"
+
+      - name: Cache SDL3 (both iOS slices)
+        id: sdl-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/sdl3-ios
+          key: sdl3-${{ env.SDL_VERSION }}-ios-1
+
+      - name: Build SDL3 for iOS
+        if: steps.sdl-cache.outputs.cache-hit != 'true'
+        # STATIC, and that is the one place this leg's SDL differs from the desktop legs'. A dylib
+        # inside an .app has to be embedded, re-signed and declared, and each of those fails on a
+        # device rather than in CI; a static SDL is one binary with nothing to embed. Both slices,
+        # because a simulator build and a device build cannot share a library.
+        run: |
+          set -e
+          git clone --depth 1 --branch "release-${SDL_VERSION}" https://github.com/libsdl-org/SDL.git /tmp/SDL
+          for slice in iphoneos iphonesimulator; do
+            cmake -S /tmp/SDL -B "/tmp/SDL/build-$slice" \
+              -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=$slice \
+              -DCMAKE_OSX_ARCHITECTURES=arm64 \
+              -DCMAKE_OSX_DEPLOYMENT_TARGET="$EDEN_IOS_MIN" \
+              -DCMAKE_BUILD_TYPE=Release -DSDL_SHARED=OFF -DSDL_STATIC=ON \
+              -DSDL_TEST_LIBRARY=OFF \
+              -DCMAKE_INSTALL_PREFIX="$HOME/sdl3-ios/$slice"
+            cmake --build "/tmp/SDL/build-$slice" --parallel
+            cmake --install "/tmp/SDL/build-$slice"
+          done
+
+      - name: Build the device slice (arm64, unsigned)
+        working-directory: native
+        run: |
+          set -e
+          # SDL3_DIR RATHER THAN CMAKE_PREFIX_PATH, and it is not a preference: cross-compiling
+          # for iOS puts CMake in root-path mode (CMAKE_FIND_ROOT_PATH = the SDK,
+          # CMAKE_FIND_ROOT_PATH_MODE_PACKAGE = ONLY), so find_package IGNORES CMAKE_PREFIX_PATH
+          # entirely and reports "could not find a package configuration file provided by SDL3"
+          # while the file sits exactly where the prefix says. Naming the config directory is the
+          # one form that is not subject to that mode.
+          cmake -B build-ios-device $EDEN_CMAKE_FLAGS \
+            -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="$EDEN_IOS_MIN" \
+            -DSDL3_DIR="$HOME/sdl3-ios/iphoneos/lib/cmake/SDL3"
+          cmake --build build-ios-device --parallel
+
+      - name: Gate — the device .app is what it claims to be
+        working-directory: native
+        # FOUR ASSERTIONS, and none of them is "the build succeeded". A bundle that compiles and
+        # links can still be uninstallable: the wrong platform in the load command, a deployment
+        # target something quietly raised, a missing Info.plist key, or the 52 MB Eden.eden left
+        # outside the .app because the asset step symlinked instead of copying (which is what it
+        # does on every other platform — see the CMake comment).
+        run: |
+          set -e
+          APP=build-ios-device/Emod.app
+          test -x "$APP/Emod"            || { echo "::error::no executable in the bundle"; exit 1; }
+          test -f "$APP/Info.plist"      || { echo "::error::no Info.plist"; exit 1; }
+          test -f "$APP/Eden.eden"       || { echo "::error::Eden.eden is not inside the .app"; exit 1; }
+          n=$(find "$APP" -type f | wc -l | tr -d ' ')
+          [ "$n" -gt 800 ] || { echo "::error::only $n files in the .app; expected ~880"; exit 1; }
+          # `-type l` deliberately: a symlink here would point at this runner's filesystem and be
+          # dangling on any device. Zero is the only acceptable count.
+          links=$(find "$APP" -type l | wc -l | tr -d ' ')
+          [ "$links" = "0" ] || { echo "::error::$links symlink(s) inside the .app"; exit 1; }
+          # CFBundleExecutable must name a file that exists, or the app installs and then fails to
+          # launch with nothing useful in the log. Both come from EDEN_IOS_EXECUTABLE in CMake;
+          # this is the assertion that they still agree.
+          exe=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Info.plist")
+          test -x "$APP/$exe" || { echo "::error::CFBundleExecutable is '$exe' and there is no such executable"; exit 1; }
+          vtool -show-build "$APP/$exe" | tee vtool-device.txt
+          grep -Eqi 'platform +(2|ios)$' vtool-device.txt || {
+            echo "::error::the device binary is not built for iOS"; cat vtool-device.txt; exit 1; }
+          grep -Eq "minos +${EDEN_IOS_MIN}$" vtool-device.txt || {
+            echo "::error::deployment target is not ${EDEN_IOS_MIN}"; cat vtool-device.txt; exit 1; }
+          /usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :UIRequiredDeviceCapabilities' "$APP/Info.plist"
+          echo "device .app: $n files, $(du -sh "$APP" | cut -f1)"
+
+      - name: Package an unsigned .ipa
+        working-directory: native
+        # AN .ipa IS A ZIP WITH `Payload/<App>.app/` IN IT — that is the whole format, and it is
+        # why this step is four lines rather than a signing pipeline.
+        #
+        # WHY CI MAKES IT AND NOT THE TESTER: a GitHub artifact zip does not dependably carry the
+        # unix mode bits, and an app whose executable has lost +x will not launch. A zip we build
+        # here stores its own modes, and GitHub wrapping that zip in another one is harmless.
+        #
+        # **IT IS UNSIGNED, DELIBERATELY.** Signing needs a certificate and a provisioning profile,
+        # i.e. secrets and an Apple developer account, and the way this build actually reaches a
+        # device is a tool that re-signs it with the tester's own Apple ID (Sideloadly, AltStore/
+        # SideStore) or one that does not care (TrollStore). Those all take an unsigned .ipa.
+        # See native/README.md for the install routes and their iOS-version limits.
+        run: |
+          set -e
+          rm -rf ipa && mkdir -p ipa/Payload
+          cp -R build-ios-device/Emod.app ipa/Payload/
+          (cd ipa && zip -qry ../Emod-unsigned.ipa Payload)
+          # Assert the shape rather than trust the copy: a Payload/ with the executable in it, and
+          # a plausible size. An .ipa that unzips to nothing is indistinguishable from a good one
+          # until someone tries to install it.
+          unzip -l Emod-unsigned.ipa | grep -q 'Payload/Emod.app/Emod' || {
+            echo "::error::the .ipa has no Payload/Emod.app/Emod"; exit 1; }
+          n=$(unzip -l Emod-unsigned.ipa | tail -1 | awk '{print $2}')
+          [ "$n" -gt 800 ] || { echo "::error::only $n entries in the .ipa"; exit 1; }
+          echo "Emod-unsigned.ipa: $n entries, $(du -h Emod-unsigned.ipa | cut -f1)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Emod-ios-unsigned-ipa
+          path: native/Emod-unsigned.ipa
+          if-no-files-found: error
+
+      - name: Build the simulator slice
+        working-directory: native
+        run: |
+          set -e
+          cmake -B build-ios-sim $EDEN_CMAKE_FLAGS \
+            -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphonesimulator \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="$EDEN_IOS_MIN" \
+            -DSDL3_DIR="$HOME/sdl3-ios/iphonesimulator/lib/cmake/SDL3"
+          cmake --build build-ios-sim --parallel
+
+      - name: Boot a simulator and install
+        id: sim
+        run: |
+          set -e
+          UDID=$(python3 .github/scripts/pick-simulator.py)
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" native/build-ios-sim/Emod.app
+          xcrun simctl get_app_container "$UDID" "$EDEN_BUNDLE_ID" data
+
+      - name: Gates — boot and geometry, in the simulator
+        # THREE THINGS HERE ARE NOT THE OBVIOUS SHAPE, and each of them is a first-run failure of
+        # this job rather than caution:
+        #
+        # 1. **EDEN_LOG, not the console.** The first run booted the app fine — 874 bundle assets
+        #    decoded, three [eden-p1] ticks, glErr=0 — and then hung for seven minutes, because
+        #    returning from main() does not end an iOS process (SDL's UIKit delegate goes back to
+        #    the run loop). That is fixed in the harness, but the lesson stands: an app's stdout
+        #    reaches a pty only while something holds the other end, and on a real device there is
+        #    no pty at all. The harness writes its own log into the app container; this reads it.
+        # 2. **A hard alarm around every launch**, so a hang costs five minutes and still leaves a
+        #    log rather than burning the job. macOS runners have no coreutils `timeout`;
+        #    `perl -e alarm` is the portable equivalent.
+        # 3. **64z only.** The 256z checksum is already claimed by four targets and it is the one
+        #    that writes a gigabyte-scale world onto a runner's disk. Criterion 3 — the number this
+        #    whole stage exists for — is a 64z figure anyway.
+        #
+        # EDEN_ARGS rather than trailing argv for reason (1) again: on a device the app is launched
+        # by a tap and there is no argv. `simctl` forwards SIMCTL_CHILD_*.
+        run: |
+          set -e
+          UDID=${{ steps.sim.outputs.udid }}
+          DATA=$(xcrun simctl get_app_container "$UDID" "$EDEN_BUNDLE_ID" data)
+          echo "container: $DATA"
+          launch() {
+            out="$1"; shift
+            rm -f "$DATA/$out"
+            SIMCTL_CHILD_EDEN_ARGS="$*" \
+            SIMCTL_CHILD_EDEN_LOG="$DATA/$out" \
+            SIMCTL_CHILD_SDL_VIDEO_DRIVER=dummy \
+            SIMCTL_CHILD_SDL_AUDIO_DRIVER=dummy \
+              perl -e 'alarm 300; exec @ARGV' \
+              xcrun simctl launch --console-pty --terminate-running-process \
+              "$UDID" "$EDEN_BUNDLE_ID" || echo "(launch returned $? — the log is the truth)"
+            cp "$DATA/$out" "$out" 2>/dev/null || echo "::warning::no $out was written at all"
+            tail -3 "$out" 2>/dev/null || true
+          }
+
+          launch p1.log --p1-gate
+          ticks=$(grep -c 'eden-p1. tick' p1.log || true)
+          [ "$ticks" -ge 3 ] || {
+            echo "::error::the app produced $ticks engine ticks in the simulator"
+            cat p1.log 2>/dev/null; exit 1; }
+
+          launch stage1-64.log --headless --stage1 --world=ios64
+          python3 .github/scripts/check-stage1.py stage1-64.log
+
+          # (the touch gate moved below — it needs a real window, so it cannot use `launch`,
+          #  which sets the dummy video driver)
+
+      - name: Gate — the ES 3.0 renderer actually draws (windowed, in the simulator)
+        # THE ONLY PLACE THIS PORT'S SHADERS ARE COMPILED BY A GLES DRIVER. Everything else in
+        # this job is headless, and headless means every GL call no-ops behind the shim's context
+        # guard — a `#version 330 core` preamble handed to a GLES driver would pass every other
+        # gate here and produce a black screen on a device.
+        #
+        # `--smoke` opens a real window, draws a world frame, then re-draws WITHOUT presenting and
+        # reads the centre 64x64 back. Draw counts alone cannot tell "drew the world" from "drew
+        # the world with a shader that failed to link", which is exactly what a dialect mistake
+        # produces; the readback can. No dummy video driver here, for obvious reasons.
+        #
+        # WHAT THE FIRST GREEN RUN ACTUALLY REPORTED, so nobody reads more into this gate than it
+        # carries: `OpenGL ES 3.0 APPLE-23.1.1` / **`Apple Software Renderer`**, world frame
+        # draws=15 (macOS on an M2: 126), centre readback 4096/4096 non-black at **mean luma
+        # 255.0** — i.e. a uniformly white centre, against 145.3 for the real scene on macOS. The
+        # runner is a VM with no GPU and 90 frames of software rasterisation is not enough for the
+        # world to stream in. So this proves THE PIPELINE RUNS — an ES 3.0 context is created, both
+        # shader programs compile and link under the ES dialect, draws are issued, glErr is 0 and
+        # pixels come back — and it does NOT prove the frame looks right. That is criterion 5 and
+        # it is owed to a human with a device.
+        #
+        # If it ever fails for want of a context rather than for a real reason, say so here and
+        # move the check to that device pass — do not weaken the assertion.
+        run: |
+          set -e
+          UDID=${{ steps.sim.outputs.udid }}
+          DATA=$(xcrun simctl get_app_container "$UDID" "$EDEN_BUNDLE_ID" data)
+          rm -f "$DATA/smoke.log"
+          SIMCTL_CHILD_EDEN_ARGS="--smoke --frames=90 --world=iossmoke" \
+          SIMCTL_CHILD_EDEN_LOG="$DATA/smoke.log" \
+            perl -e 'alarm 300; exec @ARGV' \
+            xcrun simctl launch --console-pty --terminate-running-process \
+            "$UDID" "$EDEN_BUNDLE_ID" || true
+          cp "$DATA/smoke.log" smoke.log 2>/dev/null || true
+          grep -E 'eden-smoke. (GL_VERSION|GL_RENDERER|world frame|centre)' smoke.log || true
+          d=$(sed -n 's/.*world frame: draws=\([0-9]*\).*/\1/p' smoke.log | head -1)
+          nb=$(sed -n 's/.*readback: \([0-9]*\)\/[0-9]* non-black.*/\1/p' smoke.log | head -1)
+          [ -n "$d" ] && [ "$d" -gt 0 ] || {
+            echo "::error::the world frame issued no draw calls under GLES"; cat smoke.log; exit 1; }
+          [ -n "$nb" ] && [ "$nb" -gt 0 ] || {
+            echo "::error::$d draw calls and the pixels are black — suspect the shader dialect"; exit 1; }
+          echo "GLES draws=$d, non-black centre pixels=$nb"
+
+      - name: Gate — touch through the letterbox (windowed, in the simulator)
+        # THE REGRESSION TEST FOR THE FIRST DEVICE PASS'S BUG, and it has to be WINDOWED: headless
+        # has no letterbox, so the mapping under test degenerates to the identity and the gate
+        # proves nothing. On iOS the window is the device screen and the touch profile pins the
+        # classic 16:9 layout, so on any non-16:9 device the box is letterboxed — which is the
+        # configuration an iPad Air 2 reported as "switches don't respond to touch at all".
+        #
+        # The test taps the engine's OWN reported `rmenu` rect, inverted through the letterbox the
+        # renderer is actually using. If the translator and the fit ever disagree, the tap lands on
+        # a bar and this fails.
+        run: |
+          set -e
+          UDID=${{ steps.sim.outputs.udid }}
+          DATA=$(xcrun simctl get_app_container "$UDID" "$EDEN_BUNDLE_ID" data)
+          rm -f "$DATA/touch.log"
+          SIMCTL_CHILD_EDEN_ARGS="--touch-selftest --world=iostouch" \
+          SIMCTL_CHILD_EDEN_LOG="$DATA/touch.log" \
+            perl -e 'alarm 300; exec @ARGV' \
+            xcrun simctl launch --console-pty --terminate-running-process \
+            "$UDID" "$EDEN_BUNDLE_ID" || true
+          cp "$DATA/touch.log" touch.log 2>/dev/null || true
+          grep -E 'eden-display|eden-gl. letterbox|eden-touch' touch.log || true
+          grep -q 'eden-touch. ALL PASS' touch.log || {
+            echo "::error::--touch-selftest did not pass in the simulator"; cat touch.log; exit 1; }
+
+      - name: Gate — save-on-background, on the platform it was written for
+        # Stage 4.2 wired SDL_EVENT_WILL_ENTER_BACKGROUND through SDL_AddEventWatch() because
+        # <SDL_events.h> REQUIRES it there: iOS delivers that event synchronously from inside
+        # UIKit's applicationDidEnterBackground: and the main loop may never reach SDL_PollEvent
+        # again. Every other platform runs that code path as a formality. This is the one that
+        # exercises it with a real UIApplication in the process.
+        run: |
+          set -e
+          UDID=${{ steps.sim.outputs.udid }}
+          DATA=$(xcrun simctl get_app_container "$UDID" "$EDEN_BUNDLE_ID" data)
+          rm -f "$DATA/background.log"
+          SIMCTL_CHILD_EDEN_ARGS="--background-selftest --world=iosbg" \
+          SIMCTL_CHILD_EDEN_LOG="$DATA/background.log" \
+          SIMCTL_CHILD_SDL_VIDEO_DRIVER=dummy SIMCTL_CHILD_SDL_AUDIO_DRIVER=dummy \
+            perl -e 'alarm 300; exec @ARGV' \
+            xcrun simctl launch --console-pty --terminate-running-process \
+            "$UDID" "$EDEN_BUNDLE_ID" || true
+          cp "$DATA/background.log" background.log 2>/dev/null || true
+          grep -q 'eden-background. ALL PASS' background.log || {
+            echo "::error::--background-selftest did not pass in the simulator"; exit 1; }
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: world-linux
+          path: native/from-linux
+
+      - name: Gate — read the world Linux wrote
+        # The fifth target on the same bytes. See the Windows job's copy of this note for why the
+        # comparison is against Linux's OWN checksum for the file rather than a grep for the word.
+        run: |
+          set -e
+          UDID=${{ steps.sim.outputs.udid }}
+          DATA=$(xcrun simctl get_app_container "$UDID" "$EDEN_BUNDLE_ID" data)
+          mkdir -p "$DATA/Documents"
+          cp native/from-linux/world-linux.eden "$DATA/Documents/"
+          SIMCTL_CHILD_EDEN_ARGS="--headless --stage1 --world=ci" \
+          SIMCTL_CHILD_EDEN_LOG="$DATA/crossload.log" \
+          SIMCTL_CHILD_SDL_VIDEO_DRIVER=dummy SIMCTL_CHILD_SDL_AUDIO_DRIVER=dummy \
+            perl -e 'alarm 300; exec @ARGV' \
+            xcrun simctl launch --console-pty --terminate-running-process \
+            "$UDID" "$EDEN_BUNDLE_ID" || true
+          cp "$DATA/crossload.log" crossload.log 2>/dev/null || true
+          want=$(cat native/from-linux/world-linux.geom)
+          got=$(sed -n 's/.*"geom":"\([0-9a-f]*\)".*/\1/p' crossload.log | head -1)
+          echo "linux wrote it as $want; ios read it as $got"
+          [ -n "$got" ] && [ "$want" = "$got" ] || {
+            echo "::error::ios read Linux's world as '$got', linux reads it as '$want'"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eden-ios-device-app
+          path: native/build-ios-device/Emod.app
+          if-no-files-found: error
+
+  # =============================================================================================
+  # Web — the constraint that binds every stage of Phase N ("web stays green and unmoved"),
+  # enforced by a machine for the first time. Same suites, same order, no test changes.
+  # =============================================================================================
+  web:
+    runs-on: ubuntu-latest
+    needs: linux
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.74
+          actions-cache-folder: emsdk-cache
+
+      - name: Configure and build
+        working-directory: web
+        run: |
+          emcmake cmake -B build-st -DCMAKE_BUILD_TYPE=Debug
+          emcmake cmake -B build-rel -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-st  -j"$(nproc)"
+          cmake --build build-rel -j"$(nproc)"
+
+      - name: The gate
+        working-directory: web
+        run: |
+          set -e
+          node tools/headless-p1-gate.js build-st
+          for t in headless-menu-flow-test headless-lazy-world-test headless-save-roundtrip-test \
+                   headless-recolor-test headless-display-profile-test headless-shim-selftest \
+                   headless-256z-test headless-save-trailer-test headless-save-inplace-test \
+                   headless-256z-authoring-test headless-256z-convert-crosscheck \
+                   headless-opfs-mirror-test headless-save-on-background-test; do
+            echo "--- $t"
+            node "tools/$t.js" build-st/eden.js
+          done
+          node tools/eden-convert-test.js
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: world-linux
+          path: web/from-linux
+
+      - name: Gate — read the world Linux wrote
+        working-directory: web
+        # The other half of Stage 1's interchange claim, on a platform that has never run this
+        # engine's file writer: a world written by the ELF build, meshed by the wasm build. Unlike
+        # the two native crossloads, this one always did open the imported file — the tool finds it
+        # by FILE name — but it printed its checksum without comparing it to anything. Now it must
+        # equal the number Linux published for the same bytes.
+        run: |
+          set -e
+          node tools/headless-mesh-checksum.js build-st/eden.js \
+            --import=from-linux/world-linux.eden 2>&1 | tee crossload.log
+          want=$(cat from-linux/world-linux.geom)
+          got=$(sed -n 's/.*"geom":"\([0-9a-f]*\)".*/\1/p' crossload.log | head -1)
+          echo "linux wrote it as $want; web read it as $got"
+          [ -n "$got" ] && [ "$want" = "$got" ] || {
+            echo "::error::web read Linux's world as '$got', linux reads it as '$want'"; exit 1; }
+
+  # =============================================================================================
+  # Byte comparison, on top of the three cross-loads above. Kept separate and non-fatal-by-design
+  # in exactly one respect: a DIFFERENCE here is reported loudly but the loads are what the
+  # criterion is about. If the bytes do differ, the diff's offset is the thing worth knowing, so
+  # print it rather than only failing.
+  # =============================================================================================
+  interchange:
+    runs-on: ubuntu-latest
+    needs: [linux, windows, macos]
+    steps:
+      # This job used to download only the three artifacts, because a `cmp` needs nothing else.
+      # It now runs a script from the repo.
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: world-linux,   path: w/linux }
+      - uses: actions/download-artifact@v4
+        with: { name: world-windows, path: w/windows }
+      - uses: actions/download-artifact@v4
+        with: { name: world-macos,   path: w/macos }
+      - name: Compare the three worlds
+        # See .github/scripts/compare-worlds.py for what this can and cannot claim. Short version:
+        # each job creates its OWN world, so the header's random-spawn fields and a small part of
+        # the simulated column data are legitimately not reproducible — measured at 142 of 44,976
+        # bytes between two runs of the SAME binary on ONE machine. What it asserts is what is
+        # invariant and what actually decides whether a file loads: size, level_seed,
+        # directory_offset, version, and the ColumnIndex directory byte for byte.
+        #
+        # The interchange CLAIM is not made here. It is made by the three "read the world Linux
+        # wrote" gates, which now require each platform to reproduce Linux's own geometry checksum
+        # from Linux's bytes.
+        run: |
+          ls -l w/*/*.eden
+          sha256sum w/*/*.eden
+          python3 .github/scripts/compare-worlds.py \
+            w/linux/world-linux.eden w/windows/world-windows.eden w/macos/world-macos.eden

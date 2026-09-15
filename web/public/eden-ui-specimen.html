@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<!--
+  eden-ui-specimen.html — every component in the Eden: Community Edition design system, on one
+  page, with no wasm module and no engine.
+
+  WHY THIS EXISTS: the design system's components are otherwise only reachable by booting a ~55 MB
+  wasm build and navigating to the right screen, which makes "did that CSS change break the pressed
+  state?" a two-minute question. This page answers it in a reload. It is also the thing to open when
+  adding a component — if the new thing doesn't sit comfortably next to what's already here, it
+  isn't part of this system yet.
+
+  SERVE FROM: web/ (same as eden-st.html)
+    python3 -m http.server 8123
+    open http://localhost:8123/public/eden-ui-specimen.html
+
+  NOT INCLUDED: the main-menu background art, the wordmark and the three home-tile icons. Those are
+  the engine's own textures, read out of the preloaded wasm filesystem by eden-assets.js (see
+  web/docs/design-system.md "Assets") — there is no module here, so the tiles below render with a
+  placeholder box where the art goes.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Eden design system — specimen</title>
+<link rel="stylesheet" href="eden-ui.css">
+<style>
+  /* Page furniture only. Nothing here is part of the design system — it is the gallery wall, not
+     the paintings. The dark ground is deliberate: it is what the real screens sit on. */
+  html, body { margin: 0; background: #2a2530; color: var(--eden-gray-150); }
+  body { font-family: var(--eden-font-body); padding: calc(20 * var(--u)); }
+  h1 { font-family: var(--eden-font-display); font-size: calc(44 * var(--u)); margin: 0 0 .2em;
+       color: #fff; text-shadow: calc(2 * var(--u)) calc(2 * var(--u)) 0 #000; }
+  h2 { font-family: var(--eden-font-display); font-size: calc(28 * var(--u)); margin: 1.4em 0 .4em;
+       color: #fff; border-bottom: 1px solid rgba(255,255,255,.15); padding-bottom: .2em; }
+  .note { max-width: 70ch; font-size: 13px; line-height: 1.5; opacity: .75; margin: 0 0 1em; }
+  .row { display: flex; flex-wrap: wrap; gap: calc(10 * var(--u)); align-items: flex-end;
+         margin-bottom: calc(14 * var(--u)); }
+  .swatches { display: flex; flex-wrap: wrap; gap: 8px; }
+  .sw { width: 96px; font-size: 10px; text-align: center; }
+  .sw i { display: block; height: 44px; box-shadow: inset 0 0 0 1px rgba(255,255,255,.25); }
+  .stage { position: relative; height: calc(360 * var(--u)); display: flex;
+           align-items: stretch; justify-content: center; padding: var(--eden-gutter);
+           background: #6b2f6b; box-sizing: border-box; margin-bottom: calc(14 * var(--u)); }
+  .iconwall { display: flex; flex-wrap: wrap; gap: 6px; }
+  .iconwall figure { margin: 0; width: 78px; text-align: center; font-size: 9px; opacity: .8; }
+  .iconwall .eden-icon { width: 30px; height: 30px; margin: 0 auto 4px; color: #fff; }
+</style>
+</head>
+<body>
+<h1>Eden design system</h1>
+<p class="note">
+  Every component in <code>eden-ui.css</code>, built with <code>window.EdenUI</code>'s factories —
+  the same code paths the real screens use. Resize the window to watch <code>--u</code> rescale the
+  whole system. See <a href="../docs/design-system.md" style="color:var(--eden-green-100)">web/docs/design-system.md</a>.
+</p>
+
+<div id="out"></div>
+
+<script src="eden-icons.js"></script>
+<script src="eden-ui.js"></script>
+<script>
+(function () {
+  var UI = window.EdenUI;
+  var out = document.getElementById('out');
+
+  function h2(text) { var n = document.createElement('h2'); n.textContent = text; out.appendChild(n); return n; }
+  function note(text) { var n = document.createElement('p'); n.className = 'note'; n.textContent = text; out.appendChild(n); }
+  function row(nodes) {
+    var r = UI.el('div', 'row');
+    nodes.forEach(function (n) { if (n) r.appendChild(n); });
+    out.appendChild(r);
+    return r;
+  }
+
+  // --- colour ---------------------------------------------------------------------------------
+  h2('Colour');
+  note('Neutral chrome, plus one accent with exactly two jobs: the "on"/positive state, and nothing else. ' +
+       'Red is a system addition for destructive actions — the mockups have none.');
+  var wall = UI.el('div', 'swatches');
+  ['--eden-white','--eden-gray-50','--eden-gray-150','--eden-gray-200','--eden-gray-300',
+   '--eden-gray-500','--eden-gray-650','--eden-gray-700','--eden-gray-900',
+   '--eden-green-100','--eden-green-500','--eden-green-700','--eden-green-play',
+   '--eden-red-100','--eden-red-500'].forEach(function (v) {
+    var s = UI.el('div', 'sw');
+    var box = UI.el('i');
+    box.style.background = 'var(' + v + ')';
+    s.appendChild(box);
+    s.appendChild(document.createTextNode(v.replace('--eden-', '')));
+    wall.appendChild(s);
+  });
+  out.appendChild(wall);
+
+  // --- type -----------------------------------------------------------------------------------
+  h2('Type');
+  note('Two faces. Jersey 10 (pixel) carries every piece of UI chrome; the platform sans appears ' +
+       'only in real descriptive sentences. That split is unusual — the "body" face is the rarer one.');
+  var typeBox = UI.el('div', 'eden-content');
+  typeBox.style.maxWidth = 'calc(620 * var(--u))';
+  var typePad = UI.el('div', 'eden-content__pad');
+  [['display-md 32u', 'var(--eden-text-display-md)'],
+   ['display-sm 22u', 'var(--eden-text-display-sm)']].forEach(function (p) {
+    var d = UI.el('div', null, 'The quick brown fox — ' + p[0]);
+    d.style.cssText = 'font-family:var(--eden-font-display);font-size:' + p[1] +
+      ';color:var(--eden-text);text-shadow:var(--eden-text-shadow-raised);line-height:1.1;';
+    typePad.appendChild(d);
+  });
+  var body = UI.el('div', 'eden-listrow__desc', 'Body sans, used only for prose like this: ' +
+    '"Take damage from creatures, explosions and lava."');
+  typePad.appendChild(body);
+  typeBox.appendChild(typePad);
+  out.appendChild(typeBox);
+
+  // --- buttons --------------------------------------------------------------------------------
+  h2('Buttons — one engine, six presets');
+  note('Hover lightens the gradient almost imperceptibly. Press is a real state change: flat fill, ' +
+       'solid border, inset shadow, and the label inverts to light-on-black-shadow. "Selected" uses ' +
+       'that same pressed visual — which is why the segmented control and tab rail need no components of their own.');
+  row([
+    UI.button({ size: 'sm', label: 'Back' }),
+    UI.button({ size: 'sm', label: 'Load' }),
+    UI.button({ size: 'sm', tone: 'positive', icon: 'play', label: 'Play' }),
+    UI.button({ size: 'square', label: 'i', ariaLabel: 'Info' }),
+    UI.button({ size: 'md', icon: 'settings', label: 'Settings' }),
+    UI.button({ size: 'md', tone: 'danger', icon: 'trash-2', label: 'Delete' }),
+    UI.button({ size: 'tab', icon: 'wrench', ariaLabel: 'Gameplay' }),
+  ]);
+  var pressed = UI.button({ size: 'md', label: 'Selected / pressed' });
+  pressed.classList.add('is-active');
+  row([
+    pressed,
+    UI.button({ size: 'md', label: 'Disabled', disabled: true }),
+    UI.button({ size: 'md', label: 'Placeholder', icon: 'download', placeholder: true,
+                placeholderNote: 'Not implemented yet' }),
+    UI.button({ size: 'tab', icon: 'trees', ariaLabel: 'Disabled tab', disabled: true }),
+  ]);
+  note('Placeholder ≠ disabled, and the difference is whether there is anything to say. Placeholder ' +
+       'keeps solid chrome and stays focusable, with a visually-hidden explanation. Disabled is ' +
+       'genuinely inert — no hover, no press, skipped by Tab — for controls that should just read ' +
+       'as switched off (the New World screen’s third generator tab).');
+
+  // --- home tiles -----------------------------------------------------------------------------
+  h2('Home tiles');
+  note('The 160u main-menu tile. Art on top, label beneath, both inside the button. The art is the ' +
+       'one raster exception in the system — it comes out of the wasm filesystem, so it is a ' +
+       'placeholder box here.');
+  function fakeArt() {
+    var d = UI.el('div');
+    d.style.cssText = 'width:calc(72 * var(--u));height:calc(72 * var(--u));' +
+      'box-shadow:inset 0 0 0 calc(2 * var(--u)) var(--eden-gray-500);' +
+      'display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--eden-gray-500);';
+    d.textContent = 'art';
+    return d;
+  }
+  row([
+    UI.button({ size: 'lg', label: 'New World', art: fakeArt() }),
+    UI.button({ size: 'lg', label: 'Load World', art: fakeArt() }),
+    UI.button({ size: 'lg', label: 'Get Worlds', art: fakeArt(), placeholder: true,
+                placeholderNote: 'Online world browser is not available in this build' }),
+  ]);
+
+  // --- form controls --------------------------------------------------------------------------
+  h2('Form controls');
+  note('Anything you set a value in is SUNKEN — the inset shadow points inward, the visual opposite ' +
+       'of a raised control. The toggle is a real checkbox at zero opacity over two painted halves, ' +
+       'which is what keeps keyboard and screen-reader behaviour for free.');
+  var field = UI.el('input', 'eden-field');
+  field.type = 'text';
+  field.placeholder = 'Enter text...';
+  field.style.maxWidth = 'calc(320 * var(--u))';
+  field.setAttribute('aria-label', 'Example text field');
+  var slider = UI.el('input', 'eden-slider');
+  slider.type = 'range'; slider.min = 0; slider.max = 100; slider.value = 60;
+  slider.setAttribute('aria-label', 'Example slider');
+  var radioOn = UI.el('button', 'eden-radio');
+  radioOn.setAttribute('role', 'radio'); radioOn.setAttribute('aria-checked', 'true');
+  radioOn.setAttribute('aria-label', 'Selected radio');
+  var radioOff = UI.el('button', 'eden-radio');
+  radioOff.setAttribute('role', 'radio'); radioOff.setAttribute('aria-checked', 'false');
+  radioOff.setAttribute('aria-label', 'Unselected radio');
+  row([field]);
+  row([
+    UI.toggle({ checked: true, ariaLabel: 'Toggle on' }),
+    UI.toggle({ checked: false, ariaLabel: 'Toggle off' }),
+    UI.toggle({ checked: false, disabled: true, ariaLabel: 'Toggle disabled' }),
+    radioOn, radioOff,
+  ]);
+  row([slider, UI.el('span', 'eden-value', '60%')]);
+
+  var prog = UI.el('div', 'eden-progress');
+  prog.style.maxWidth = 'calc(320 * var(--u))';
+  var fill = UI.el('div', 'eden-progress__fill');
+  fill.style.width = '62%';
+  prog.appendChild(fill);
+  row([prog]);
+
+  // --- icons ----------------------------------------------------------------------------------
+  h2('Icons');
+  note('Lucide (ISC), inlined as path data — no CDN, no sprite sheet. They inherit currentColor, ' +
+       'which is what makes them invert with a button\'s pressed state. Stroke weight 2.4, heavier ' +
+       'than Lucide\'s default, to sit next to 2–3px keylines without looking spindly.');
+  var iw = UI.el('div', 'iconwall');
+  window.EdenIcons.names().forEach(function (n) {
+    var f = document.createElement('figure');
+    f.appendChild(UI.icon(n));
+    f.appendChild(document.createTextNode(n));
+    iw.appendChild(f);
+  });
+  out.appendChild(iw);
+
+  // --- window ---------------------------------------------------------------------------------
+  h2('Window');
+  note('The surface every screen except the main menu is built on. Fluid: it fills its container ' +
+       'less the gutter, and its content box scrolls. The stage below is a fixed height so the page ' +
+       'stays scrollable — in the real app the container is the viewport.');
+  var stage = UI.el('div', 'stage');
+  var win = UI.window({ title: 'Gameplay Settings', rail: true, railLabel: 'Sections',
+                        onBack: function () {} });
+  [['wrench','Gameplay'],['volume-2','Audio'],['gamepad-2','Controls'],['monitor','Video'],
+   ['sliders-horizontal','Interface'],['flask-conical','Experiments'],['keyboard','Keys'],
+   ['hard-drive','Storage']].forEach(function (t, i) {
+    var tab = UI.button({ size: 'tab', icon: t[0], ariaLabel: t[1], title: t[1] });
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('aria-selected', i === 0 ? 'true' : 'false');
+    win.rail.appendChild(tab);
+  });
+  UI.syncRailTabIndex(win.rail);
+  win.actions.appendChild(UI.button({ size: 'sm', tone: 'positive', icon: 'play', label: 'Play' }));
+  var pad = UI.el('div', 'eden-content__pad');
+  pad.appendChild(UI.listRow({ title: 'Health', desc: 'Take damage from falls, fire and creatures.',
+    actions: UI.toggle({ checked: true, ariaLabel: 'Health' }) }));
+  pad.appendChild(UI.listRow({ title: 'Auto-jump', desc: 'Step up single blocks automatically.',
+    actions: UI.toggle({ checked: true, ariaLabel: 'Auto-jump' }) }));
+  pad.appendChild(UI.listRow({ title: 'Creatures', desc: 'Spawn and render wildlife. Off is faster.',
+    actions: UI.toggle({ checked: false, ariaLabel: 'Creatures' }) }));
+  var muted = UI.listRow({ title: 'Hostile creatures', desc: 'Spawn and render Chargers and Stalkers.',
+    muted: true, actions: UI.toggle({ checked: false, disabled: true, ariaLabel: 'Hostile creatures' }) });
+  pad.appendChild(muted);
+  var sel = UI.listRow({ title: 'World 5', sub: 'Jul 25, 2026 02:59 PM   64z', selectable: true,
+    selected: true, actions: [UI.button({ size: 'square', label: 'i', ariaLabel: 'Info',
+      placeholder: true, placeholderNote: 'Not implemented yet' }), UI.button({ size: 'sm', label: 'Load' })] });
+  pad.appendChild(sel);
+  // Enough filler to prove the scrollbar tracks real content.
+  for (var i = 0; i < 8; i++) {
+    pad.appendChild(UI.listRow({ title: 'Filler row ' + (i + 1),
+      desc: 'Here so the scrollbar has something to scroll.',
+      actions: UI.button({ size: 'sm', label: 'Do it' }) }));
+  }
+  win.content.appendChild(pad);
+  stage.appendChild(win.root);
+  out.appendChild(stage);
+
+  // --- dialog ---------------------------------------------------------------------------------
+  h2('Dialog');
+  note('The one variant that opts out of filling the screen: it sizes to its content and centres. ' +
+       'Used by the load-failure alert and delete confirmation. The in-game menu adds ' +
+       '`--fit`, which drops the 460u cap too and shrink-wraps to its content, plus ' +
+       '`.eden-stack--left` + `.eden-stack--grid` to left-align icon and label into two columns.');
+  var stage2 = UI.el('div', 'stage');
+  // Tall enough to show the whole dialog: `.eden-window--dialog` sizes to content but is still
+  // capped at `max-height:100%`, so a short stage would clip it and misrepresent the component.
+  stage2.style.height = 'calc(420 * var(--u))';
+  var dlg = UI.window({ title: 'Menu', variant: 'dialog', className: 'eden-window--fit', scrollbar: false });
+  var stack = UI.el('div', 'eden-stack eden-stack--left eden-stack--grid');
+  stack.appendChild(UI.button({ size: 'md', tone: 'positive', icon: 'play', label: 'Resume' }));
+  stack.appendChild(UI.button({ size: 'md', icon: 'save', label: 'Save Game' }));
+  stack.appendChild(UI.button({ size: 'md', icon: 'home', label: 'Warp Home' }));
+  stack.appendChild(UI.button({ size: 'md', icon: 'camera', label: 'Take Photo' }));
+  stack.appendChild(UI.button({ size: 'md', icon: 'settings', label: 'Settings' }));
+  stack.appendChild(UI.button({ size: 'md', tone: 'danger', icon: 'log-out', label: 'Quit to Menu' }));
+  dlg.content.appendChild(stack);
+  stage2.appendChild(dlg.root);
+  out.appendChild(stage2);
+
+  // --- in-game chrome -------------------------------------------------------------------------
+  h2('In-game chrome');
+  note('The two surfaces that sit over the rendered world rather than on a panel, so they invert ' +
+       'the palette: dark chrome, light text, same bevel mechanics.');
+  var chrome = UI.el('div');
+  // Both children are fixed to viewport-relative positions in the real game (the toast near the
+  // top, the hotbar at the bottom); here they are absolute inside this box, so it needs enough
+  // height to keep them from overlapping.
+  chrome.style.cssText = 'position:relative;height:calc(170 * var(--u));background:#4a7a3a;' +
+    'margin-bottom:calc(14 * var(--u));overflow:hidden;';
+  var hb = UI.el('div', 'eden-hotbar');
+  hb.style.position = 'absolute';
+  [2,3,8,7,13,14,4,58,72].forEach(function (t, i) {
+    var slot = UI.el('div', 'eden-hotbar__slot');
+    if (i === 0) slot.classList.add('is-active');
+    slot.appendChild(UI.el('span', 'eden-hotbar__num', String(i + 1)));
+    slot.appendChild(UI.el('span', null, String(t)));
+    hb.appendChild(slot);
+  });
+  chrome.appendChild(hb);
+  var toast = UI.el('div', 'eden-toast', 'Fly mode ON');
+  toast.style.position = 'absolute';
+  chrome.appendChild(toast);
+  out.appendChild(chrome);
+})();
+</script>
+</body>
+</html>

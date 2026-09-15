@@ -1,0 +1,1850 @@
+//
+//  Resources.m
+//  prototype
+//
+//  Created by Ari Ronen on 10/13/10.
+//  Copyright 2010 __MyCompanyName__. All rights reserved.
+//
+
+#import "Resources.h"
+#import "glu.h"
+#import "Vector.h"
+#import "CDAudioManager.h"
+#import "SimpleAudioEngine.h"
+#import "World.h"
+
+
+
+
+
+
+
+
+
+#define NUM_SONGS 6
+Resources* Resources::getResources=NULL;
+static const char* songFiles[NUM_SONGS]={
+    "Eden_1.mp3",
+    "Eden_2.mp3",
+    "Eden_3.mp3",
+    "Eden_4.mp3",
+    "Eden_5.mp3",
+    "Eden_6.mp3",
+
+};
+
+#define NUM_TITLE_SONGS 2
+static const char* titleSongFiles[NUM_TITLE_SONGS]={
+    "Eden_title.mp3",
+    "Eden_title_2011.mp3",
+};
+
+static const char* ambientFiles[NUM_AMBIENT]={
+
+[AMBIENT_UNDERWATER]="ambience_underwater.wav",
+[AMBIENT_RIVER]="ambience_river.wav",
+[AMBIENT_LAVA]="ambience_lava.wav",
+[AMBIENT_SKYHIGH]="ambience_skyhigh.wav",
+[AMBIENT_CAVE]="ambience_cave.wav",
+[AMBIENT_OPEN]="ambience_open.wav",
+// PORT FIX (Phase N Stage 2): was "ambience_open.mp3", which has never existed — the shipped
+// grasslands bed is media/new_sound/grasslands_ambience.mp3, and "ambience_open" is the name of
+// the .wav one row up. So AMBIENT_GRASSLANDS, the bed for ordinary daytime open terrain and
+// therefore the one a player hears most, resolved to nothing and played silence. Two sibling
+// names were broken the other way round and were fixed by renaming the ASSET rather than this
+// table (the table's spelling was the sensible one): "reverlands_ambience.mp3" ->
+// riverlands_ambience.mp3, and " mountain_grass_badlands_ambience.mp3" (leading space) ->
+// mountain_grass_badlands_ambience.mp3. All three were dead on the web build too — the manifest
+// there is keyed by basename, so a name with no file behind it simply resolves to null.
+[AMBIENT_GRASSLANDS]="grasslands_ambience.mp3",
+[AMBIENT_BEACH]="beach_ambience.mp3",
+[AMBIENT_GRASSBADLANDS]="mountain_grass_badlands_ambience.mp3",
+[AMBIENT_MARSHBADLANDS]="river_marsh_badlands_ambience.mp3",
+[AMBIENT_RIVERLANDS]="riverlands_ambience.mp3",
+[AMBIENT_PYRAMID]="pyramid_ambience.mp3",
+[AMBIENT_OASIS]="oasis_ambience.mp3",
+[AMBIENT_NIGHT]="night_time_ambience.mp3",
+[AMBIENT_MOUNTAIN]="mountain_ambience.mp3",
+[AMBIENT_LAVABADLANDS] ="lava_marsh_badlands_ambience.mp3",
+[AMBIENT_SNOWMOUNTAIN]="snow_mountain_ambience.mp3",
+    
+};
+/*S_LADDER=0,
+S_VINE=1,
+S_BOUNCE=2,
+S_LAND_SOFT=3,
+S_LAND_HARD=4,
+S_PAINT_BLOCK=5,
+S_LAVA_BURN=6,
+S_ICE_LOOP=7,
+S_EXPLOOSION=8,
+S_BUILD_WOOD=9,
+S_BUILD_WATER=10,
+S_BUILD_STONE=11,
+S_BUILD_LEAVES=12,
+S_BUILD_LAVA=13,
+S_BUILD_GLASS=14,
+S_BUILD_DIRT=15,
+S_BUILD_GENERIC=16,
+S_BREAK_WOOD=17,
+S_BREAK_WATER=18,
+S_BREAK_STONE=19,
+S_BREAK_LEAVES=20,
+S_BREAK_LAVA=21,
+S_BREAK_DIRT=22,
+S_ATTEMPT_FIRE=23,
+S_SPLASH_BIG=24,
+S_SPLASH_SMALL=25,
+S_FOOTSTEPS_HARD=26,
+S_FOOTSTEPS_SOFT=27,
+S_SWOOSH=28,
+S_FIRE_SUCCEED=29,
+S_EXPLOSION=30,
+S_CREATURE_VANISH=31,
+S_CREATURE_PICKEDUP=32,
+S_FLAMELOOP=33,
+S_CAMERA=34,
+S_JUMP=35,*/
+
+#define MAX_VARIATIONS2 8
+
+int lasteffectplayed=-1;;
+static int sfxNumVariations[NUM_SOUNDS]={  
+    [S_LADDER]=4,
+    [S_VINE]=4,
+    [S_BOUNCE]=1,
+    [S_LAND_SOFT]=3,
+    [S_LAND_HARD]=3,
+    [S_PAINT_BLOCK ]=3,
+    [ S_LAVA_BURN]=4,
+    [ S_ICE_LOOP]=1,
+    [ S_EXPLODE]=8,
+    [ S_BUILD_WOOD]=4,
+    [ S_BUILD_WATER]=4,
+    [ S_BUILD_STONE]=4,
+    [ S_BUILD_LEAVES]=4,
+    [ S_BUILD_LAVA]=4,
+    [ S_BUILD_GLASS]=4,
+    [ S_BUILD_DIRT]=4,
+    [ S_BUILD_GENERIC]=4,
+    [ S_BREAK_GENERIC]=4,
+    [ S_BREAK_WOOD]=4,
+    [ S_BREAK_WATER]=4,
+    [S_BREAK_STONE ]=4,
+    [  S_BREAK_LEAVES]=4,
+    [  S_BREAK_LAVA]=4,
+    [  S_BREAK_DIRT]=4,
+     [ S_BREAK_GLASS]=4,
+    [  S_ATTEMPT_FIRE]=3,
+    [  S_SPLASH_BIG]=4,
+    [S_SPLASH_SMALL ]=4,
+    [   S_FOOTSTEPS_HARD]=6,
+    [   S_FOOTSTEPS_SOFT]=6,
+    [   S_SWOOSH]=3,
+    [   S_FIRE_SUCCEED]=3,
+   
+    [   S_CREATURE_VANISH]=5,
+    [   S_CREATURE_PICKEDUP]=1,
+    [   S_FLAMELOOP]=1,
+    [   S_CAMERA]=1,
+    
+    [S_HIT]=3,
+    [S_DOOR_OPEN]=1,
+    [S_DOOR_CLOSED]=1,
+    [S_FIREWORK_EXPLODE]=5,
+    [S_FIREWORK_FUSE]=1,
+    [S_FIREWORK_LIFTOFF]=3,
+    [S_TREASURE_PICKUP]=1,
+    [S_TREASURE_PLACE]=1,
+    [S_DEATH_BY_CREATURE]=3,
+    [S_DEATH_BY_LAVA]=3,
+    [S_DEATH_BY_TNT]=3,
+    [S_BUILD_METAL]=1,
+    [S_BUILD_LIGHT]=1,
+    [S_CHANGE_LIGHT]=1,
+    [S_ENTER_PORTAL]=4,
+    [S_GOOP_EXPLODE]=1,
+    [S_METAL_DESTROY]=1,
+    [S_MENU_BUTTON_PRESS]=4,
+    [S_MENU_BUTTON_RELEASE]=4,
+    [S_SKY_CHANGE_DARK_TO_LIGHT]=1,
+    [S_SKY_CHANGE_LIGHT_TO_DARK]=1,
+    [S_SKY_PAINTING]=1,
+    [S_WARP_HOME_ACTIVATED]=1,
+    [S_WARP_HOME_LOCATION_SET]=1,
+    [S_WORLD_SAVED]=1,
+    [S_EXIT_WORLD]=1,
+    [S_SWITCH_TOGGLE_ON]=1,
+    [S_SWITCH_TOGGLE_OFF]=1,
+    [S_ICE_LOOP_SLOW]=2,
+    [S_ICE_LOOP_MEDIUM]=2,
+    [S_ICE_LOOP_FAST]=2,
+    [S_ICE_TURN]=2,
+    [S_JOYSTICK_BEGIN]=1,
+    [S_JOYSTICK_RELEASE]=1,
+    [S_JUMP_BUTTON_PRESS]=1,
+    [S_JUMP_BUTTON_RELEASE]=1,
+    [S_MODE_SELECTION]=3,
+
+};
+static const char* soundFiles[NUM_SOUNDS][MAX_VARIATIONS2]={
+	[S_LADDER]={"wood_ladder_1_v2.caf","wood_ladder_2_v2.caf","wood_ladder_3_v2.caf","wood_ladder_4_v2.caf"},
+    [S_VINE]={"vine_ladder_1_v2.caf","vine_ladder_2_v2.caf","vine_ladder_3_v2.caf","vine_ladder_4_v2.caf"},
+    [S_BOUNCE]={"trampoline_block_bounce_sound.mp3"},
+    [S_LAND_SOFT]={"player_land_soft_1_v2.caf","player_land_soft_2_v2.caf","player_land_soft_3_v2.caf","land_soft_4_v2.caf"},
+    [S_LAND_HARD]={"player_land_hard_1.caf","player_land_hard_2_v2.caf","player_land_hard_3_v2.caf","land_hard_4_v2.caf"},
+    [S_PAINT_BLOCK]={"paint_block_1.caf","paint_block_2_v2.caf","paint_block_3.caf","paint_block_4.caf"},
+     [S_LAVA_BURN]={"lava_burn_1_v2.caf","lava_burn_2_v2.caf","lava_burn_3_v2.caf","lava_burn_4_v2.caf"},
+    [S_EXPLODE]={"explosion.caf","explosion_2.caf","explosion_3.caf","explosion_4.caf","explosion_1_v2.caf","explosion_2_v2.caf","explosion_3_v2.caf","explosion_4_v2.caf"},
+    [S_BREAK_WOOD]={"block_break_wood_1_v2.caf","block_break_wood_2_v2.caf","block_break_wood_3_v2.caf","block_break_wood_4_v2.caf"},
+    [S_BREAK_WATER]={"block_break_water_1_v2.caf","block_break_water_2_v2.caf","block_break_water_3_v2.caf","block_break_water_4_v2.caf"},
+    [S_BREAK_STONE]={"block_break_stone_1.caf","block_break_stone_2.caf","block_break_stone_3.caf","block_break_stone_4.caf"},
+    [S_BREAK_LEAVES]={"block break_leaves_1.caf","block break_leaves_2.caf","block break_leaves_3.caf","block break_leaves_4.caf"},
+    [S_BREAK_LAVA]={"block_break_lava_1_v2.caf","block_break_lava_2_v2.caf","block_break_lava_3_v2.caf","block_break_lava_4_v2.caf"},
+    [S_BREAK_DIRT]={"block_break_dirt_1.caf","block_break_dirt_2.caf","block_break_dirt_3.caf","block_break_dirt_4.caf"},
+    [S_BREAK_GLASS]={"block_break_glass_1.caf","block_break_glass_2.caf","block_break_glass_3.caf","block_break_glass_4.caf"},
+    [S_BREAK_GENERIC]={"block_break_generic_1_v2.caf","block_break_generic_2_v2.caf","block_break_generic_3_v2.caf","block_break_generic_4_v2.caf"},
+    [S_BUILD_WOOD]={"block_build_wood_1.caf","block_build_wood_2.caf","block_build_wood_3.caf","block_build_wood_4.caf"},
+    [S_BUILD_WATER]={"block_build_water_1.caf","block_build_water_2.caf","block_build_water_3.caf","block_build_water_4.caf"},
+    [S_BUILD_STONE]={"block_build_stone_1.caf","block_build_stone_2.caf","block_build_stone_3.caf","block_build_stone_4.caf"},
+    [S_BUILD_LEAVES]={"block_build_leaves_1.caf","block_build_leaves_2.caf","block_build_leaves_3.caf","block_build_leaves_4.caf"},
+    [S_BUILD_LAVA]={"block_build_lava_1.caf","block_build_lava_2.caf","block_build_lava_3.caf","block_build_lava_4.caf"},
+    [S_BUILD_GLASS]={"block_build_glass_1.caf","block_build_glass_2.caf","block_build_glass_3.caf","block_build_glass_4.caf"},
+    [S_BUILD_DIRT]={"block_build_dirt_1.caf","block_build_dirt_2.caf","block_build_dirt_3.caf","block_build_dirt_4.caf"},
+    [S_BUILD_GENERIC]={"block_build_generic_1.caf","block_build_generic_2.caf","block_build_generic_3.caf","block_build_generic_4.caf"},
+    [S_ATTEMPT_FIRE]={"matchlight.caf","attempt_fire.caf","attempt_fire_v2.caf"},
+    [S_SPLASH_SMALL]={"water_splash_small_1.caf","water_splash_small_2.caf","water_splash_small_3.caf","water_splash_small_4.caf"},
+    [S_SPLASH_BIG]={"water_splash_big_1.caf","water_splash_big_2.caf","water_splash_big_3.caf","water_splash_big_4.caf"},
+    [S_FOOTSTEPS_HARD]={"player_footsteps_hard_1.caf","player_footsteps_hard_2.caf","player_footsteps_hard_3.caf","player_footsteps_hard_4.caf","player_footsteps_hard_5.caf","player_footsteps_hard_6.caf"},
+    [S_FOOTSTEPS_SOFT]={"player_footsteps_grass_1.caf","player_footsteps_grass_2.caf","player_footsteps_grass_3.caf","player_footsteps_grass_4.caf","player_footsteps_grass_5.caf","player_footsteps_grass_6.caf"},
+    [S_SWOOSH]={"menu_transition_1.caf","menu_transition_2.caf","menu_transition_3.caf","menu_transition_4.caf"},
+    [S_FIRE_SUCCEED]={"fire_succeed_1.caf","fire_succeed_2.caf","fire_succeed_3.caf","menu_transition_4.caf"},
+    [S_CREATURE_VANISH]={"creature_destruction_01.mp3","creature_destruction_02.mp3","creature_destruction_03.mp3","creature_destruction_04.mp3","creature_destruction_05.mp3"},
+    [S_CREATURE_PICKEDUP]={"creature_pickedup.caf","creature_pickedup_2.caf","creature_pickedup_3.caf","creature_pickedup_4.caf"},
+    [S_FLAMELOOP]={"fire_loop.caf","x_2.caf","x_3.caf","x_4.caf"},
+    [S_ICE_LOOP]={"ice_slide.wav","x_2.caf","x_3.caf","x_4.caf"},
+
+    [S_CAMERA]={"Grab.aif","x_2.caf","x_3.caf","x_4.caf"},
+    [S_HIT]={"player_hit_1.caf","player_hit_2.caf","player_hit_3.caf"},
+    [S_DOOR_OPEN]={"door_open.mp3"},
+    [S_DOOR_CLOSED]={"door_close.mp3"},
+    [S_FIREWORK_EXPLODE]={"firework_explode.mp3","firework_explode_02.mp3","firework_explode_03.mp3","firework_explode_04.mp3","firework_explode_05.mp3"},
+    [S_FIREWORK_FUSE]={"firework_fuse.mp3"},
+    [S_FIREWORK_LIFTOFF]={"firework_liftoff.mp3","firework_liftoff_02.mp3","firework_liftoff_03.mp3"},
+    [S_TREASURE_PICKUP]={"treasure_cube_pickup.mp3"},
+    [S_TREASURE_PLACE]={"treasure_cube_place.mp3"},
+    [S_DEATH_BY_CREATURE]={"death_by_creature_01.mp3","death_by_creature_02.mp3","death_by_creature_03.mp3"},
+    [S_DEATH_BY_LAVA]={"death_by_lava_01.mp3","death_by_lava_02.mp3","death_by_lava_03.mp3"},
+    [S_DEATH_BY_TNT]={"death_by_tnt_01.mp3","death_by_tnt_02.mp3","death_by_tnt_03.mp3"},
+    [S_BUILD_METAL]={"metal_block_place.mp3"},
+    [S_BUILD_LIGHT]={"place_electric_light.mp3"},
+    [S_CHANGE_LIGHT]={"change_electric_light_color.mp3"},
+    [S_ENTER_PORTAL]={"go_through_portal_01.mp3","go_through_portal_02.mp3","go_through_portal_03.mp3","go_through_portal_04.mp3"},
+    [S_GOOP_EXPLODE]={"tnt_paint_bomb_explode.mp3"},
+    [S_METAL_DESTROY]={"metal_block_destroy.mp3"},
+    [S_MENU_BUTTON_PRESS]={"menu_button_press_02.mp3","menu_button_press_03.mp3","menu_button_press_04.mp3","menu_button_press_05.mp3"},
+    [S_MENU_BUTTON_RELEASE]={"menu_button_release_02.mp3","menu_button_release_03.mp3","menu_button_release_04.mp3","menu_button_release_05.mp3"},
+    [S_SKY_CHANGE_DARK_TO_LIGHT]={"sky_color change_dark_to_light.mp3"},
+    [S_SKY_CHANGE_LIGHT_TO_DARK]={"sky_color change_light_to_dark.mp3"},
+    [S_SKY_PAINTING]={"sky_painting.mp3"},
+    [S_WARP_HOME_ACTIVATED]={"warp_home_activated.mp3"},
+    [S_WARP_HOME_LOCATION_SET]={"warp_home_location_set.mp3"},
+    [S_WORLD_SAVED]={"world_saved.mp3"},
+    [S_EXIT_WORLD]={"exit_world.mp3"},
+    [S_SWITCH_TOGGLE_ON]={"menu_button_press_01.mp3"},
+    [S_SWITCH_TOGGLE_OFF]={"menu_button_release_01.mp3"},
+    [S_ICE_LOOP_SLOW]={"ice_slide_loop_slow.caf","ice_slide_loop_slow_v2.caf"},
+    [S_ICE_LOOP_MEDIUM]={"ice_slide_loop_medium.caf","ice_slide_loop_medium_v2.caf"},
+    [S_ICE_LOOP_FAST]={"ice_slide_loop_fast.caf","ice_slide_loop_fast_v2.caf"},
+    [S_ICE_TURN]={"ice_slide_turn_1.caf","ice_slide_turn_2.caf"},
+    [S_JOYSTICK_BEGIN]={"joystick_begin.mp3"},
+    [S_JOYSTICK_RELEASE]={"joystick_release.mp3"},
+    [S_JUMP_BUTTON_PRESS]={"jump_button_press.mp3"},
+    [S_JUMP_BUTTON_RELEASE]={"jump_button_release.mp3"},
+    [S_MODE_SELECTION]={"mode_selection_1.caf","mode_selection_2.caf","mode_selection_3.caf"},
+
+};
+
+
+#define NUM_VO_ACTIONS 10
+
+#define VO_WALKING 9
+#define VO_STRETCHING 1
+#define VO_SCARED 2
+#define VO_RELIEVED 3
+#define VO_APPROACH 4
+#define VO_ONFIRE 5
+#define VO_IDLE 6
+#define VO_HIT 7
+#define VO_EXCITED 8
+#define VO_ANGRY 0
+
+#define MAX_VARIATIONS 5
+static const char* voFiles[NUM_CREATURES][NUM_VO_ACTIONS][MAX_VARIATIONS]={
+	[M_STUMPY][VO_WALKING]={"Stumpy_Walking_1.caf","Stumpy_Walking_2.caf","Stumpy_Walking_3.caf","Stumpy_Walking_4.caf","Stumpy_Walking_5.caf"},
+    [M_STUMPY][VO_STRETCHING]={"Stumpy_Stretching_1.caf","Stumpy_Stretching_2.caf","Stumpy_Stretching_3.caf","Stumpy_Stretching_4.caf","Stumpy_Stretching_5.caf"},
+    [M_STUMPY][VO_SCARED]={"Stumpy_Scared_1.caf","Stumpy_Scared_2.caf","Stumpy_Scared_3.caf","Stumpy_Scared_4.caf","Stumpy_Scared_5.caf"},
+    [M_STUMPY][VO_RELIEVED]={"Stumpy_Relieved_1.caf","Stumpy_Relieved_2.caf","Stumpy_Relieved_3.caf","Stumpy_Relieved_4.caf","Stumpy_Relieved_5.caf"},
+    [M_STUMPY][VO_APPROACH]={"Stumpy_PlayerApproaches_1.caf","Stumpy_PlayerApproaches_2.caf","Stumpy_PlayerApproaches_3.caf","Stumpy_PlayerApproaches_4.caf","Stumpy_PlayerApproaches_5.caf"},
+    [M_STUMPY][VO_ONFIRE]={"Stumpy_OnFire_1.caf","Stumpy_OnFire_2.caf","Stumpy_OnFire_3.caf","Stumpy_OnFire_4.caf","Stumpy_OnFire_5.caf"},
+    [M_STUMPY][VO_IDLE]={"Stumpy_Idle_1.caf","Stumpy_Idle_2.caf","Stumpy_Idle_3.caf","Stumpy_Idle_4.caf","Stumpy_Idle_5.caf"},
+    [M_STUMPY][VO_HIT]={"Stumpy_Hit_1.caf","Stumpy_Hit_2.caf","Stumpy_Hit_3.caf","Stumpy_Hit_4.caf","Stumpy_Hit_5.caf"},
+    [M_STUMPY][VO_EXCITED]={"Stumpy_Excited_1.caf","Stumpy_Excited_2.caf","Stumpy_Excited_3.caf","Stumpy_Excited_4.caf","Stumpy_Excited_5.caf"},
+    [M_STUMPY][VO_ANGRY]={"Stumpy_Angry_1.caf","Stumpy_Angry_2.caf","Stumpy_Angry_3.caf","Stumpy_Angry_4.caf","Stumpy_Angry_5.caf"},    
+    
+    [M_MOOF][VO_WALKING]={"Moof_Walking_1.caf","Moof_Walking_2.caf","Moof_Walking_3.caf","Moof_Walking_4.caf","Moof_Walking_5.caf"},
+    [M_MOOF][VO_STRETCHING]={"Moof_Stretching_1.caf","Moof_Stretching_2.caf","Moof_Stretching_3.caf","Moof_Stretching_4.caf","Moof_Stretching_5.caf"},
+    [M_MOOF][VO_SCARED]={"Moof_Scared_1.caf","Moof_Scared_2.caf","Moof_Scared_3.caf","Moof_Scared_4.caf","Moof_Scared_5.caf"},
+    [M_MOOF][VO_RELIEVED]={"Moof_Relieved_1.caf","Moof_Relieved_2.caf","Moof_Relieved_3.caf","Moof_Relieved_4.caf","Moof_Relieved_5.caf"},
+    [M_MOOF][VO_APPROACH]={"Moof_PlayerApproaches_1.caf","Moof_PlayerApproaches_2.caf","Moof_PlayerApproaches_3.caf","Moof_PlayerApproaches_4.caf","Moof_PlayerApproaches_5.caf"},
+    [M_MOOF][VO_ONFIRE]={"Moof_OnFire_1.caf","Moof_OnFire_2.caf","Moof_OnFire_3.caf","Moof_OnFire_4.caf","Moof_OnFire_5.caf"},
+    [M_MOOF][VO_IDLE]={"Moof_Idle_1.caf","Moof_Idle_2.caf","Moof_Idle_3.caf","Moof_Idle_4.caf","Moof_Idle_5.caf"},
+    [M_MOOF][VO_HIT]={"Moof_Hit_1.caf","Moof_Hit_2.caf","Moof_Hit_3.caf","Moof_Hit_4.caf","Moof_Hit_5.caf"},
+    [M_MOOF][VO_EXCITED]={"Moof_Excited_1.caf","Moof_Excited_2.caf","Moof_Excited_3.caf","Moof_Excited_4.caf","Moof_Excited_5.caf"},
+    [M_MOOF][VO_ANGRY]={"Moof_Angry_1.caf","Moof_Angry_2.caf","Moof_Angry_3.caf","Moof_Angry_4.caf","Moof_Angry_5.caf"},   
+    
+    [M_NERGLE][VO_WALKING]={"Nergle_Walking_1.caf","Nergle_Walking_2.caf","Nergle_Walking_3.caf","Nergle_Walking_4.caf","Nergle_Walking_5.caf"},
+    [M_NERGLE][VO_STRETCHING]={"Nergle_Stretching_1.caf","Nergle_Stretching_2.caf","Nergle_Stretching_3.caf","Nergle_Stretching_4.caf","Nergle_Stretching_5.caf"},
+    [M_NERGLE][VO_SCARED]={"Nergle_Scared_1.caf","Nergle_Scared_2.caf","Nergle_Scared_3.caf","Nergle_Scared_4.caf","Nergle_Scared_5.caf"},
+    [M_NERGLE][VO_RELIEVED]={"Nergle_Relieved_1.caf","Nergle_Relieved_2.caf","Nergle_Relieved_3.caf","Nergle_Relieved_4.caf","Nergle_Relieved_5.caf"},
+    [M_NERGLE][VO_APPROACH]={"Nergle_PlayerApproaches_1.caf","Nergle_PlayerApproaches_2.caf","Nergle_PlayerApproaches_3.caf","Nergle_PlayerApproaches_4.caf","Nergle_PlayerApproaches_5.caf"},
+    [M_NERGLE][VO_ONFIRE]={"Nergle_OnFire_1.caf","Nergle_OnFire_2.caf","Nergle_OnFire_3.caf","Nergle_OnFire_4.caf","Nergle_OnFire_5.caf"},
+    [M_NERGLE][VO_IDLE]={"Nergle_Idle_1.caf","Nergle_Idle_2.caf","Nergle_Idle_3.caf","Nergle_Idle_4.caf","Nergle_Idle_5.caf"},
+    [M_NERGLE][VO_HIT]={"Nergle_Hit_1.caf","Nergle_Hit_2.caf","Nergle_Hit_3.caf","Nergle_Hit_4.caf","Nergle_Hit_5.caf"},
+    [M_NERGLE][VO_EXCITED]={"Nergle_Excited_1.caf","Nergle_Excited_2.caf","Nergle_Excited_3.caf","Nergle_Excited_4.caf","Nergle_Excited_5.caf"},
+    [M_NERGLE][VO_ANGRY]={"Nergle_Angry_1.caf","Nergle_Angry_2.caf","Nergle_Angry_3.caf","Nergle_Angry_4.caf","Nergle_Angry_5.caf"},   
+    
+    [M_GREEN][VO_WALKING]={"Green_Walking_1.caf","Green_Walking_2.caf","Green_Walking_3.caf","Green_Walking_4.caf","Green_Walking_5.caf"},
+    [M_GREEN][VO_STRETCHING]={"Green_Stretching_1.caf","Green_Stretching_2.caf","Green_Stretching_3.caf","Green_Stretching_4.caf","Green_Stretching_5.caf"},
+    [M_GREEN][VO_SCARED]={"Green_Scared_1.caf","Green_Scared_2.caf","Green_Scared_3.caf","Green_Scared_4.caf","Green_Scared_5.caf"},
+    [M_GREEN][VO_RELIEVED]={"Green_Relieved_1.caf","Green_Relieved_2.caf","Green_Relieved_3.caf","Green_Relieved_4.caf","Green_Relieved_5.caf"},
+    [M_GREEN][VO_APPROACH]={"Green_PlayerApproaches_1.caf","Green_PlayerApproaches_2.caf","Green_PlayerApproaches_3.caf","Green_PlayerApproaches_4.caf","Green_PlayerApproaches_5.caf"},
+    [M_GREEN][VO_ONFIRE]={"Green_OnFire_1.caf","Green_OnFire_2.caf","Green_OnFire_3.caf","Green_OnFire_4.caf","Green_OnFire_5.caf"},
+    [M_GREEN][VO_IDLE]={"Green_Idle_1.caf","Green_Idle_2.caf","Green_Idle_3.caf","Green_Idle_4.caf","Green_Idle_5.caf"},
+    [M_GREEN][VO_HIT]={"Green_Hit_1.caf","Green_Hit_2.caf","Green_Hit_3.caf","Green_Hit_4.caf","Green_Hit_5.caf"},
+    [M_GREEN][VO_EXCITED]={"Green_Excited_1.caf","Green_Excited_2.caf","Green_Excited_3.caf","Green_Excited_4.caf","Green_Excited_5.caf"},
+    [M_GREEN][VO_ANGRY]={"Green_Angry_1.caf","Green_Angry_2.caf","Green_Angry_3.caf","Green_Angry_4.caf","Green_Angry_5.caf"},   
+    
+    [M_BATTY][VO_WALKING]={"Batty_Walking_1.caf","Batty_Walking_2.caf","Batty_Walking_3.caf","Batty_Walking_4.caf","Batty_Walking_5.caf"},
+    [M_BATTY][VO_STRETCHING]={"Batty_Stretching_1.caf","Batty_Stretching_2.caf","Batty_Stretching_3.caf","Batty_Stretching_4.caf","Batty_Stretching_5.caf"},
+    [M_BATTY][VO_SCARED]={"Batty_Scared_1.caf","Batty_Scared_2.caf","Batty_Scared_3.caf","Batty_Scared_4.caf","Batty_Scared_5.caf"},
+    [M_BATTY][VO_RELIEVED]={"Batty_Relieved_1.caf","Batty_Relieved_2.caf","Batty_Relieved_3.caf","Batty_Relieved_4.caf","Batty_Relieved_5.caf"},
+    [M_BATTY][VO_APPROACH]={"Batty_PlayerApproaches_1.caf","Batty_PlayerApproaches_2.caf","Batty_PlayerApproaches_3.caf","Batty_PlayerApproaches_4.caf","Batty_PlayerApproaches_5.caf"},
+    [M_BATTY][VO_ONFIRE]={"Batty_OnFire_1.caf","Batty_OnFire_2.caf","Batty_OnFire_3.caf","Batty_OnFire_4.caf","Batty_OnFire_5.caf"},
+    [M_BATTY][VO_IDLE]={"Batty_Idle_1.caf","Batty_Idle_2.caf","Batty_Idle_3.caf","Batty_Idle_4.caf","Batty_Idle_5.caf"},
+    [M_BATTY][VO_HIT]={"Batty_Hit_1.caf","Batty_Hit_2.caf","Batty_Hit_3.caf","Batty_Hit_4.caf","Batty_Hit_5.caf"},
+    [M_BATTY][VO_EXCITED]={"Batty_Excited_1.caf","Batty_Excited_2.caf","Batty_Excited_3.caf","Batty_Excited_4.caf","Batty_Excited_5.caf"},
+    [M_BATTY][VO_ANGRY]={"Batty_Angry_1.caf","Batty_Angry_2.caf","Batty_Angry_3.caf","Batty_Angry_4.caf","Batty_Angry_5.caf"},
+    
+    
+    [M_STALKER][VO_WALKING]={"Moof_Walking_1.caf","Moof_Walking_2.caf","Moof_Walking_3.caf","Moof_Walking_4.caf","Moof_Walking_5.caf"},
+   [M_STALKER][VO_STRETCHING]={"Moof_Stretching_1.caf","Moof_Stretching_2.caf","Moof_Stretching_3.caf","Moof_Stretching_4.caf","Moof_Stretching_5.caf"},
+    [M_STALKER][VO_SCARED]={"Moof_Scared_1.caf","Moof_Scared_2.caf","Moof_Scared_3.caf","Moof_Scared_4.caf","Moof_Scared_5.caf"},
+   [M_STALKER][VO_RELIEVED]={"Moof_Relieved_1.caf","Moof_Relieved_2.caf","Moof_Relieved_3.caf","Moof_Relieved_4.caf","Moof_Relieved_5.caf"},
+    [M_STALKER][VO_APPROACH]={"Moof_PlayerApproaches_1.caf","Moof_PlayerApproaches_2.caf","Moof_PlayerApproaches_3.caf","Moof_PlayerApproaches_4.caf","Moof_PlayerApproaches_5.caf"},
+    [M_STALKER][VO_ONFIRE]={"creature_lit_on_fire_01.mp3","creature_lit_on_fire_02.mp3","creature_lit_on_fire_03.mp3"},
+    [M_STALKER][VO_IDLE]={"creature_idle_01.mp3","creature_idle_02.mp3","creature_idle_03.mp3"},
+    [M_STALKER][VO_HIT]={"creature_angry_hit_01.mp3","creature_angry_hit_02.mp3","creature_angry_hit_03.mp3"},
+    [M_STALKER][VO_EXCITED]={"creature_aggro_01.mp3","creature_aggro_02.mp3","creature_aggro_03.mp3"},
+    [M_STALKER][VO_ANGRY]={"creature_angry_charge_01.mp3","creature_angry_charge_02.mp3","creature_angry_charge_03.mp3"},
+    
+    
+    [M_CHARGER][VO_WALKING]={"Moof_Walking_1.caf","Moof_Walking_2.caf","Moof_Walking_3.caf","Moof_Walking_4.caf","Moof_Walking_5.caf"},
+    [M_CHARGER][VO_STRETCHING]={"Moof_Stretching_1.caf","Moof_Stretching_2.caf","Moof_Stretching_3.caf","Moof_Stretching_4.caf","Moof_Stretching_5.caf"},
+    [M_CHARGER][VO_SCARED]={"Moof_Scared_1.caf","Moof_Scared_2.caf","Moof_Scared_3.caf","Moof_Scared_4.caf","Moof_Scared_5.caf"},
+    [M_CHARGER][VO_RELIEVED]={"Moof_Relieved_1.caf","Moof_Relieved_2.caf","Moof_Relieved_3.caf","Moof_Relieved_4.caf","Moof_Relieved_5.caf"},
+    [M_CHARGER][VO_APPROACH]={"Moof_PlayerApproaches_1.caf","Moof_PlayerApproaches_2.caf","Moof_PlayerApproaches_3.caf","Moof_PlayerApproaches_4.caf","Moof_PlayerApproaches_5.caf"},
+    [M_CHARGER][VO_ONFIRE]={"creature_lit_on_fire_01.mp3","creature_lit_on_fire_02.mp3","creature_lit_on_fire_03.mp3"},
+    [M_CHARGER][VO_IDLE]={"creature_idle_01.mp3","creature_idle_02.mp3","creature_idle_03.mp3"},
+    [M_CHARGER][VO_HIT]={"creature_angry_hit_01.mp3","creature_angry_hit_02.mp3","creature_angry_hit_03.mp3"},
+    [M_CHARGER][VO_EXCITED]={"creature_aggro_01.mp3","creature_aggro_02.mp3","creature_aggro_03.mp3"},
+    [M_CHARGER][VO_ANGRY]={"creature_angry_charge_01.mp3","creature_angry_charge_02.mp3","creature_angry_charge_03.mp3"},
+    
+    
+    };
+static int voNumVariations[NUM_CREATURES][NUM_VO_ACTIONS]={  
+        [M_STUMPY][VO_WALKING]=5,
+        [M_STUMPY][VO_STRETCHING]=3,
+        [M_STUMPY][VO_SCARED]=5,
+        [M_STUMPY][VO_RELIEVED]=5,
+        [M_STUMPY][VO_APPROACH]=5,
+        [M_STUMPY][VO_ONFIRE]=5,
+        [M_STUMPY][VO_IDLE]=5,
+        [M_STUMPY][VO_HIT]=5,
+        [M_STUMPY][VO_EXCITED]=5,
+        [M_STUMPY][VO_ANGRY]=5,   
+    
+    [M_NERGLE][VO_WALKING]=3,
+    [M_NERGLE][VO_STRETCHING]=2,
+    [M_NERGLE][VO_SCARED]=5,
+    [M_NERGLE][VO_RELIEVED]=5,
+    [M_NERGLE][VO_APPROACH]=5,
+    [M_NERGLE][VO_ONFIRE]=5,
+    [M_NERGLE][VO_IDLE]=5,
+    [M_NERGLE][VO_HIT]=5,
+    [M_NERGLE][VO_EXCITED]=5,
+    [M_NERGLE][VO_ANGRY]=5,  
+    
+    [M_MOOF][VO_WALKING]=5,
+    [M_MOOF][VO_STRETCHING]=2,
+    [M_MOOF][VO_SCARED]=5,
+    [M_MOOF][VO_RELIEVED]=5,
+    [M_MOOF][VO_APPROACH]=5,
+    [M_MOOF][VO_ONFIRE]=5,
+    [M_MOOF][VO_IDLE]=5,
+    [M_MOOF][VO_HIT]=5,
+    [M_MOOF][VO_EXCITED]=5,
+    [M_MOOF][VO_ANGRY]=5,  
+    
+    [M_GREEN][VO_WALKING]=2,
+    [M_GREEN][VO_STRETCHING]=3,
+    [M_GREEN][VO_SCARED]=5,
+    [M_GREEN][VO_RELIEVED]=5,
+    [M_GREEN][VO_APPROACH]=5,
+    [M_GREEN][VO_ONFIRE]=5,
+    [M_GREEN][VO_IDLE]=5,
+    [M_GREEN][VO_HIT]=5,
+    [M_GREEN][VO_EXCITED]=5,
+    [M_GREEN][VO_ANGRY]=5,  
+    
+    [M_BATTY][VO_WALKING]=3,
+    [M_BATTY][VO_STRETCHING]=2,
+    [M_BATTY][VO_SCARED]=5,
+    [M_BATTY][VO_RELIEVED]=5,
+    [M_BATTY][VO_APPROACH]=5,
+    [M_BATTY][VO_ONFIRE]=5,
+    [M_BATTY][VO_IDLE]=5,
+    [M_BATTY][VO_HIT]=5,
+    [M_BATTY][VO_EXCITED]=5,
+    [M_BATTY][VO_ANGRY]=5,
+    
+    [M_CHARGER][VO_WALKING]=3,
+    [M_CHARGER][VO_STRETCHING]=2,
+    [M_CHARGER][VO_SCARED]=3,
+    [M_CHARGER][VO_RELIEVED]=3,
+    [M_CHARGER][VO_APPROACH]=3,
+    [M_CHARGER][VO_ONFIRE]=3,
+    [M_CHARGER][VO_IDLE]=3,
+    [M_CHARGER][VO_HIT]=3,
+    [M_CHARGER][VO_EXCITED]=3,
+    [M_CHARGER][VO_ANGRY]=3,
+    
+    [M_STALKER][VO_WALKING]=3,
+    [M_STALKER][VO_STRETCHING]=2,
+    [M_STALKER][VO_SCARED]=3,
+    [M_STALKER][VO_RELIEVED]=3,
+    [M_STALKER][VO_APPROACH]=3,
+    [M_STALKER][VO_ONFIRE]=3,
+    [M_STALKER][VO_IDLE]=3,
+    [M_STALKER][VO_HIT]=3,
+    [M_STALKER][VO_EXCITED]=3,
+    [M_STALKER][VO_ANGRY]=3,
+}
+
+;
+
+static int voLastVariation[NUM_CREATURES][NUM_VO_ACTIONS];
+static int sfxLastVariation[NUM_SOUNDS];
+typedef struct{
+	Texture2D* tex;
+    int color;
+    int model_type;
+    int state;
+}CTexture;
+UIImage* storedSkins[5][2];
+UIImage* storedMasks[5][2];
+UIImage* storedDoor;
+UIImage* storedDoorMask;
+UIImage* storedPaint;
+UIImage* storedPaintMask;
+UIImage* storedCube;
+UIImage* storedCubeMask;
+UIImage* storedFlowerico;
+UIImage* storedFlowericoMask;
+UIImage* storedDoorico;
+UIImage* storedDooricoMask;
+UIImage* storedPortalico;
+UIImage* storedPortalicoMask;
+CocosDenshion::SimpleAudioEngine*  audio;
+
+#define SKIN_CACHE_SIZE 200
+CTexture skin_cache[SKIN_CACHE_SIZE];
+
+Texture2D* door_cache[100];
+
+Texture2D* paint_cache;
+int paint_cache_color;
+Texture2D* build_cache;
+int build_cache_color;
+int build_cache_type;
+
+void clearSkinCache(){
+    if(paint_cache){
+        delete paint_cache;
+        
+        
+    }
+    paint_cache=NULL;
+    paint_cache_color=0;
+    if(build_cache){
+        delete build_cache;
+        
+        
+       
+    }
+    build_cache=NULL;
+    build_cache_color=0;
+    build_cache_type=0;
+    for(int i=0;i<100;i++){
+        if(i<100){
+            if(door_cache[i]){
+                delete door_cache[i];
+                
+                
+                
+            }
+            door_cache[i]=NULL;
+        }
+    }
+    for(int i=0;i<SKIN_CACHE_SIZE;i++){
+        if(skin_cache[i].tex){
+            delete skin_cache[i].tex;
+            
+        }
+        skin_cache[i].tex=NULL;
+    }
+}
+extern Vector colorTable[256];
+/*
+ UIImage* storedCube;
+ UIImage* storedCubeMask;
+ UIImage* storedFlowerico;
+ UIImage* storedFlowericoMask;
+ UIImage* storedDoorico;
+ UIImage* storedDooricoMask;
+ UIImage* storedPortalico;
+ UIImage* storedPortalicoMask;
+ */
+Texture2D* Resources::getPaintedTex(int type,int color){
+   
+    if(color==0||(type==TYPE_GOLDEN_CUBE&&color==20)){
+        int tid;
+        if(type==TYPE_FLOWER){
+            tid=ICO_FLOWER_ICO;
+        }else if(type==TYPE_GOLDEN_CUBE){
+            tid=ICO_GOLDCUBE;
+        }else if(type==TYPE_PORTAL_TOP){
+            tid=ICO_PORTAL2;
+        }else if(type==TYPE_DOOR_TOP){
+            tid=ICO_DOOR2;
+        }
+        return getTex(tid);
+    }else if(build_cache!=NULL&&build_cache_color==color&&build_cache_type==type){
+        return build_cache;
+    }
+    if(build_cache!=NULL){
+        delete build_cache;
+        build_cache=NULL;
+    }
+    build_cache_color=color;
+    build_cache_type=type;
+    UIImage* ui1;
+    UIImage* ui2;
+    if(type==TYPE_FLOWER){
+        ui1=storedFlowerico;
+        ui2=storedFlowericoMask;
+        
+    }else if(type==TYPE_GOLDEN_CUBE){
+        ui1=storedCube;
+        ui2=storedCubeMask;
+    }else if(type==TYPE_PORTAL_TOP){
+        ui1=storedPortalico;
+        ui2=storedPortalicoMask;
+    }else if(type==TYPE_DOOR_TOP){
+        ui1=storedDoorico;
+        ui2=storedDooricoMask;
+    }
+    
+    CGImageRef img=[ui2 CGImage];
+    CGImageRef img2=[ui1 CGImage];
+    Vector clr=colorTable[color];
+    int rgba= ((int)(255*clr.z)<<24) | ((int)(255*clr.y)<<16) | ((int)(255*clr.x) <<8)  | 0xFF;
+    UIImage* uiImage2=[UIImage imageWithCGImage:ManipulateImagePixelData(img2,img,rgba)];
+    //UIImage* uiImage2=[UIImage imageWithCGImage:ManipulateImagePixelData2(img,rgba,1)];
+    build_cache = new Texture2D([uiImage2 CGImage],[uiImage2 imageOrientation],FALSE,kTexture2DPixelFormat_Automatic,FALSE);
+    
+    //[uiImage2 release];
+    printg("initing build texture ;o");
+    return build_cache;
+}
+
+
+Texture2D* Resources::getPaintTex(int color){
+    if(color==0)return getTex(ICO_PAINT);
+    
+    
+    if(paint_cache!=NULL&&color==paint_cache_color)return paint_cache;
+    
+    if(paint_cache!=NULL){
+        
+        delete paint_cache;
+        paint_cache=NULL;
+    }
+    
+    paint_cache_color=color;
+        CGImageRef img=[storedPaintMask CGImage];
+        CGImageRef img2=[storedPaint CGImage];
+        Vector clr=colorTable[color];
+        int rgba= ((int)(255*clr.z)<<24) | ((int)(255*clr.y)<<16) | ((int)(255*clr.x) <<8)  | 0xFF;
+        UIImage* uiImage2=[UIImage imageWithCGImage:ManipulateImagePixelData(img2,img,rgba)];
+        //UIImage* uiImage2=[UIImage imageWithCGImage:ManipulateImagePixelData2(img,rgba,1)];
+        paint_cache =
+        new Texture2D([uiImage2 CGImage],[uiImage2 imageOrientation],FALSE,kTexture2DPixelFormat_Automatic,FALSE);
+     //[uiImage2 release];
+    printg("initing paint texture ;o");
+        return paint_cache;
+    
+    
+    
+}
+int Resources::getDoorTex(int color){
+    if(color==0)color=25;
+    if(door_cache[color]!=NULL){
+        
+        return door_cache[color]->name;
+    }
+    else{
+       
+        CGImageRef img=[storedDoorMask CGImage];
+         CGImageRef img2=[storedDoor CGImage];
+        Vector clr=colorTable[color];
+        int rgba= ((int)(255*clr.z)<<24) | ((int)(255*clr.y)<<16) | ((int)(255*clr.x) <<8)  | 0xFF;
+        UIImage* uiImage2=[UIImage imageWithCGImage:ManipulateImagePixelData(img2,img,rgba)];
+        //UIImage* uiImage2=[UIImage imageWithCGImage:ManipulateImagePixelData2(img,rgba,1)];
+        door_cache[color] =
+       new Texture2D([uiImage2 CGImage],[uiImage2 imageOrientation],FALSE,kTexture2DPixelFormat_Automatic,FALSE);
+       //  [uiImage2 release];
+        printg("initing texture ;o");
+        return door_cache[color]->name;
+    }
+    
+    return getTex(ICO_DOOR)->name;
+}
+int Resources::getSkin(int model_type,int color,int state){
+    for(int i=0;i<SKIN_CACHE_SIZE;i++){
+        if(skin_cache[i].tex!=NULL&&skin_cache[i].model_type==model_type&&skin_cache[i].color==color&&skin_cache[i].state==state){
+            return skin_cache[i].tex->name;
+        }
+    }
+    
+    int cidx=-1;
+    for(int i=0;i<SKIN_CACHE_SIZE;i++){
+        if(skin_cache[i].tex==NULL){
+            cidx=i;
+            break;
+        }
+    }
+    if(cidx==-1){
+        cidx=randi(SKIN_CACHE_SIZE);
+        if(skin_cache[cidx].tex){
+            delete skin_cache[cidx].tex;
+            
+        }
+        skin_cache[cidx].tex=NULL;
+    }
+    
+    
+  //  extern UIImage* storeMask;
+    CGImageRef img=[storedMasks[model_type][1-state] CGImage];
+    CGImageRef img2=[storedSkins[model_type][state] CGImage];
+    
+    Vector clr=colorTable[color];
+    int rgba= ((int)(255*clr.z)<<24) | ((int)(255*clr.y)<<16) | ((int)(255*clr.x) <<8)  | 0xFF;
+    UIImage* uiImage2=[UIImage imageWithCGImage:ManipulateImagePixelData(img2,img,rgba)];
+    skin_cache[cidx].tex =
+    new Texture2D([uiImage2 CGImage],[uiImage2 imageOrientation],FALSE,kTexture2DPixelFormat_Automatic,FALSE);
+    // [uiImage2 release];
+    skin_cache[cidx].model_type=model_type;
+    skin_cache[cidx].color=color;
+    skin_cache[cidx].state=state;
+    
+    printg("storing skin in cache idx: %d\n",cidx);
+    return skin_cache[cidx].tex->name;
+}
+
+void Resources::voSound(int action,int type,Vector location){
+    if(!playsound)return;
+   
+    
+    
+    float distance=v_length2(v_sub(location,World::getWorld->player->pos));
+    float distance_fade=12.0f;
+    if(distance<distance_fade*distance_fade){
+       // distance=sqrtf(distance);
+        int variation;
+        //type=M_STUMPY;
+        variation=arc4random()%voNumVariations[type][action];
+        if(variation==voLastVariation[type][action])
+            variation=(voLastVariation[type][action]+1)%voNumVariations[type][action];
+        voLastVariation[type][action]=variation;
+        distance_fade=sqrtf(distance_fade);
+        //float vol=(distance_fade-sqrtf(sqrtf(distance)))/(distance_fade);
+        //audio->playEffect(voFiles[type][action][variation],FALSE,1.0f,0.0f,vol*1.4f);
+        audio->playEffect(voFiles[type][action][variation]);
+    }
+ 
+    
+}
+
+void Resources::loadGameAssets(){
+    if(LOW_MEM_DEVICE){
+        loadGameTextures();
+    }
+  /*
+   for(int i=0;i<NUM_SOUNDS;i++){
+        for(int j=0;j<sfxNumVariations[i];j++)
+        [[SimpleAudioEngine sharedEngine] preloadEffect:soundFiles[i][j]];
+    }*/
+    /*
+    if(CREATURES_ON)
+    for(int i=0;i<NUM_CREATURES;i++){
+        for(int j=0;j<NUM_VO_ACTIONS;j++){
+            for(int k=0;k<voNumVariations[i][j];k++){
+               
+                    [[SimpleAudioEngine sharedEngine] preloadEffect:voFiles[i][j][k]];
+                
+            }
+        }
+    }*/
+}
+void Resources::unloadGameAssets(){
+    if(LOW_MEM_DEVICE){
+        unloadGameTextures();
+    }
+   // [World::getWorld->terrain deallocateMemory];
+    for(int i=0;i<NUM_SOUNDS;i++)
+         for(int j=0;j<sfxNumVariations[i];j++)
+        audio->unloadEffect(soundFiles[i][j]);
+    
+    if(CREATURES_ON)
+    for(int i=0;i<NUM_CREATURES;i++){
+        for(int j=0;j<NUM_VO_ACTIONS;j++){
+            for(int k=0;k<voNumVariations[i][j];k++){
+              
+                    audio->unloadEffect(voFiles[i][j][k]);
+               
+            }
+        }
+    }
+}
+
+
+bool firstframe=FALSE;
+int Resources::playSound(int soundid){
+    
+	if(playsound&&!firstframe&&soundid!=lasteffectplayed){
+		lasteffectplayed=soundid;
+		if(soundid==S_LAND_SOFT||soundid==S_LAND_HARD||soundid==S_BOUNCE||soundid==S_LAVA_BURN){
+			if(landingEffectTimer>0)
+				return 0;
+			landingEffectTimer=.3;
+		}
+        
+        int variation;
+        //type=M_STUMPY;
+        if(soundid==S_FOOTSTEPS_HARD||soundid==S_FOOTSTEPS_SOFT||soundid==S_LADDER||soundid==S_VINE)
+            variation=(sfxLastVariation[soundid]+1)%sfxNumVariations[soundid];
+        else{
+        variation=arc4random()%sfxNumVariations[soundid];
+        if(variation==sfxLastVariation[soundid])
+            variation=(sfxLastVariation[soundid]+1)%sfxNumVariations[soundid];
+        }
+        sfxLastVariation[soundid]=variation;
+        
+        
+        
+        return audio->playEffect(soundFiles[soundid][variation], FALSE);
+       // return [[SimpleAudioEngine sharedEngine] playEffect:soundFiles[soundid][variation] loop:FALSE];
+	}
+
+
+	return 0;
+}
+// For continuous effects that need a real looping voice (bLoop=TRUE) rather than playSound's
+// one-shot dedup/landing-timer machinery — used by the ice-slide loop, which is retriggered only
+// on entering/leaving ice rather than every frame (see Player::move).
+int Resources::playLoopedSound(int soundid){
+    if(!playsound)return 0;
+    int variation=arc4random()%sfxNumVariations[soundid];
+    return audio->playEffect(soundFiles[soundid][variation], TRUE);
+}
+extern int flamecount;
+void Resources::soundEventBed(int actionid){
+   /* if(actionid==AMBIENT_OPEN){
+        actionid+=flamecount;
+        if(actionid>=NUM_AMBIENT){actionid=AMBIENT_OPEN;
+            flamecount=0;
+        }
+    }*/
+    soundEventBed(actionid,World::getWorld->player->pos);
+}
+// Bed layer: exactly one of {underwater, sky-high, cave, open, the 11 biome ambiences} at a time,
+// crossfading between them — this is the original soundEvent's priority-chain logic, moved onto
+// its own channel (audio->playAmbience(0,...)) so it no longer fights the proximity layer or music.
+static int target_bed;
+static BOOL songisplaying=FALSE;
+static int current_bed=TYPE_NONE;
+static float bedvolume=2.0f;
+static float bedtargetvolume=0;
+// Music (channel 0) keeps its own separate fade pair, untouched by this split — still stepped
+// and pushed via setBackgroundMusicVolume in Resources::update, same as before.
+static float bkgvolume=2.0f;
+static float bkgtargetvolume=0;
+
+void Resources::soundEventBed(int actionid,Vector location){
+    if(!playmusic||World::getWorld->game_mode!=GAME_MODE_PLAY)return;
+    if(actionid>=-1&&actionid<NUM_AMBIENT){
+        target_bed=actionid;
+    }
+    if(target_bed!=current_bed){
+        bedtargetvolume=0.0f;
+    }
+    if(target_bed!=current_bed&&(bedvolume==0||target_bed==AMBIENT_UNDERWATER)){
+        float distance=sqrtf(v_length2(v_sub(location,World::getWorld->player->pos)));
+        float distance_fade=12.0f;
+
+        if(distance>distance_fade)distance=distance_fade;
+        bedtargetvolume=2.0f*(distance_fade-distance)/distance_fade;
+        if(target_bed!=AMBIENT_RIVER&&target_bed!=AMBIENT_OPEN)
+            bedtargetvolume*=2;
+        //printg("ambient triggered:%d\n",target_bed);
+        current_bed=target_bed;
+        audio->stopAmbience(0);
+        if(target_bed!=AMBIENT_NONE)
+    audio->playAmbience(0,ambientFiles[target_bed],TRUE);
+    }else if(target_bed==current_bed){
+        float distance=sqrtf(v_length2(v_sub(location,World::getWorld->player->pos)));
+        float distance_fade=12.0f;
+         if(distance>distance_fade)distance=distance_fade;
+        bedtargetvolume=2.0f*(distance_fade-distance)/distance_fade;
+        if(target_bed!=AMBIENT_RIVER&&target_bed!=AMBIENT_OPEN&&target_bed<6)
+            bedtargetvolume*=2;
+        if(target_bed>=6||target_bed==AMBIENT_OPEN){
+            bedtargetvolume*=.35f;
+            if(target_bed==AMBIENT_OASIS){
+                bedtargetvolume*=.2f;
+
+            }
+        }
+    }
+
+}
+
+void Resources::soundEventProximity(int actionid){
+    soundEventProximity(actionid,World::getWorld->player->pos);
+}
+// Proximity layer: water/lava adjacency only (AMBIENT_RIVER/AMBIENT_LAVA/AMBIENT_NONE), same
+// distance-fade math as the bed layer but independent of it — fades in near a water/lava block
+// and out when not, regardless of what the bed layer is doing.
+static int target_prox;
+static int current_prox=TYPE_NONE;
+static float proxvolume=2.0f;
+static float proxtargetvolume=0;
+
+void Resources::soundEventProximity(int actionid,Vector location){
+    if(!playmusic||World::getWorld->game_mode!=GAME_MODE_PLAY)return;
+    if(actionid>=-1&&actionid<NUM_AMBIENT){
+        target_prox=actionid;
+    }
+    if(target_prox!=current_prox){
+        proxtargetvolume=0.0f;
+    }
+    if(target_prox!=current_prox&&proxvolume==0){
+        float distance=sqrtf(v_length2(v_sub(location,World::getWorld->player->pos)));
+        float distance_fade=12.0f;
+
+        if(distance>distance_fade)distance=distance_fade;
+        proxtargetvolume=2.0f*(distance_fade-distance)/distance_fade;
+        if(target_prox!=AMBIENT_RIVER&&target_prox!=AMBIENT_OPEN)
+            proxtargetvolume*=2;
+        current_prox=target_prox;
+        audio->stopAmbience(1);
+        if(target_prox!=AMBIENT_NONE)
+    audio->playAmbience(1,ambientFiles[target_prox],TRUE);
+    }else if(target_prox==current_prox){
+        float distance=sqrtf(v_length2(v_sub(location,World::getWorld->player->pos)));
+        float distance_fade=12.0f;
+         if(distance>distance_fade)distance=distance_fade;
+        proxtargetvolume=2.0f*(distance_fade-distance)/distance_fade;
+        if(target_prox!=AMBIENT_RIVER&&target_prox!=AMBIENT_OPEN&&target_prox<6)
+            proxtargetvolume*=2;
+    }
+
+}
+// Two more independent proximity channels (2=portal, 3=treasure cube), same distance-fade shape as
+// the water/lava proximity layer above but simpler: always the same single file, so there's no
+// target-vs-current index to track, just an on/off plus a fade in Resources::update.
+static float portalvolume=0,portaltargetvolume=0;
+static BOOL portalplaying=FALSE,portalwanted=FALSE;
+void Resources::soundEventPortalProximity(BOOL active,Vector location){
+    if(!playmusic||World::getWorld->game_mode!=GAME_MODE_PLAY){active=FALSE;}
+    portalwanted=active;
+    if(active){
+        float distance=sqrtf(v_length2(v_sub(location,World::getWorld->player->pos)));
+        float distance_fade=15.0f;
+        if(distance>distance_fade)distance=distance_fade;
+        portaltargetvolume=(distance_fade-distance)/distance_fade;
+        if(!portalplaying){
+            audio->playAmbience(2,"ambience_nearby_portal.mp3",TRUE);
+            portalplaying=TRUE;
+        }
+    }else{
+        portaltargetvolume=0;
+    }
+}
+static float treasurevolume=0,treasuretargetvolume=0;
+static BOOL treasureplaying=FALSE,treasurewanted=FALSE;
+void Resources::soundEventTreasureProximity(BOOL active,Vector location){
+    if(!playmusic||World::getWorld->game_mode!=GAME_MODE_PLAY){active=FALSE;}
+    treasurewanted=active;
+    if(active){
+        float distance=sqrtf(v_length2(v_sub(location,World::getWorld->player->pos)));
+        float distance_fade=15.0f;
+        if(distance>distance_fade)distance=distance_fade;
+        treasuretargetvolume=(distance_fade-distance)/distance_fade;
+        if(!treasureplaying){
+            audio->playAmbience(3,"ambience_nearby_treasure_cube.mp3",TRUE);
+            treasureplaying=TRUE;
+        }
+    }else{
+        treasuretargetvolume=0;
+    }
+}
+#define NS_BURN 1000
+static float burnin[NS_BURN]={};
+static int sidx=0;
+extern BOOL SUPPORTS_OGL2;
+
+
+Resources::Resources(){
+    audio=CocosDenshion::SimpleAudioEngine::sharedEngine();
+   	landingEffectTimer=0;
+	//textures=[[NSMutableArray alloc] init];
+	//menutextures=[[NSMutableArray alloc] init];
+    textures.clear();
+    menutextures.clear();
+	
+	if(!SUPPORTS_OGL2||LOW_MEM_DEVICE){
+        for(int i=0;i<NUM_CREATURES;i++){
+            for(int j=0;j<NUM_VO_ACTIONS;j++){
+                if(voNumVariations[i][j]>3) voNumVariations[i][j]=3;
+            }
+        }
+	}
+	
+    for(int i=0;i<SKIN_CACHE_SIZE;i++){
+        skin_cache[i].tex=NULL;
+    }
+    for(int i=0;i<100;i++){
+        door_cache[i]=NULL;
+    }
+    paint_cache=NULL;
+    paint_cache_color=0;
+    
+    build_cache=NULL;
+    build_cache_color=0;
+    build_cache_type=0;
+    
+    csbkg=new Texture2D(@"colorpick_background.png" ,FALSE);
+    
+    if(!LOW_MEM_DEVICE){
+        loadGameTextures();
+    }
+   
+    
+	loadMenuTextures();
+	
+	atlas=new Texture2D(@"atlas.png" ,TRUE ,kTexture2DPixelFormat_RGB565 ,TRUE);
+    atlas2=new Texture2D(@"atlas2.png",TRUE,kTexture2DPixelFormat_RGBA8888,TRUE);
+	//[textures addObject:atlas];
+    
+	
+	burnSoundTimer=playing=-1;
+   
+	//[[CDAudioManager sharedManager] setMode:kAMM_FxPlusMusicIfNoOtherAudio];
+	
+	audio->setBackgroundMusicVolume(1.0);
+	
+	
+	
+	
+}
+static int lasttitlesongplayed=-1;
+static BOOL titlesongisplaying=FALSE;
+
+void Resources::playMenuTune(){
+	if(playmusic){
+		 audio->stopBackgroundMusic();
+        int song=arc4random()%NUM_TITLE_SONGS;
+        if(song==lasttitlesongplayed)song=(song+1)%NUM_TITLE_SONGS;
+        lasttitlesongplayed=song;
+        audio->playBackgroundMusic(titleSongFiles[song],false);
+        titlesongisplaying=TRUE;
+
+        bkgvolume=1.0f;
+        bkgtargetvolume=1.0f;
+	}
+
+}
+
+void Resources::stopMenuTune(){
+     bkgtargetvolume=0.0f;
+    audio->stopBackgroundMusic();
+
+     // Hard-stop rather than just resetting the target/current state ints: Resources::update's
+     // game_mode!=GAME_MODE_PLAY fade-to-silence-then-stop only fires stopAmbience once a channel's
+     // volume has actually reached 0, which may not have happened yet by the time a new game starts
+     // (stopMenuTune runs once, immediately, not spread across frames) -- resetting current_bed to
+     // AMBIENT_NONE first would make that check never fire, leaving the channel playing forever.
+     if(current_bed!=AMBIENT_NONE)audio->stopAmbience(0);
+     current_bed=target_bed=AMBIENT_NONE;
+     bedvolume=bedtargetvolume=0;
+     if(current_prox!=AMBIENT_NONE)audio->stopAmbience(1);
+     current_prox=target_prox=AMBIENT_NONE;
+     proxvolume=proxtargetvolume=0;
+     titlesongisplaying=FALSE;
+
+     if(portalplaying){audio->stopAmbience(2);portalplaying=FALSE;}
+     portalwanted=FALSE;portalvolume=portaltargetvolume=0;
+     if(treasureplaying){audio->stopAmbience(3);treasureplaying=FALSE;}
+     treasurewanted=FALSE;treasurevolume=treasuretargetvolume=0;
+
+}
+void Resources::loadMenuTextures(){
+	Texture2D* temp=
+		  new Texture2D(@"menu_autojump.png" , FALSE);
+    
+    menutextures.push_back(temp);
+	
+   	temp=
+		  new Texture2D(@"eden_menu_header.png" , FALSE);
+   
+	menutextures.push_back(temp);
+	temp=
+		  new Texture2D(@"arrow_left.png" , FALSE);
+	menutextures.push_back(temp);
+	temp=
+		  new Texture2D(@"arrow_right.png" , FALSE);
+	menutextures.push_back(temp);
+	temp=
+		  new Texture2D(@"create_world.png" , FALSE);
+	menutextures.push_back(temp);
+	temp=
+		  new Texture2D(@"delete_world.png" , FALSE);
+	menutextures.push_back(temp);
+	temp=
+		  new Texture2D(@"share_world.png" , FALSE);
+	menutextures.push_back(temp);
+	temp=
+		  new Texture2D(@"ground.png" , FALSE);
+	menutextures.push_back(temp);
+	temp=
+		  new Texture2D(@"world_selected.png" , FALSE);
+	menutextures.push_back(temp);
+	temp=
+		  new Texture2D(@"world_unselected.png" , FALSE);
+	menutextures.push_back(temp);
+	temp=
+		  new Texture2D(@"load_world.png" , FALSE);
+	menutextures.push_back(temp);
+	temp=
+		  new Texture2D(@"options.png" , FALSE);
+	menutextures.push_back(temp);
+	
+	temp=
+		  new Texture2D(@"arrow_up.png" , FALSE);
+	menutextures.push_back(temp);	
+	temp=
+		  new Texture2D(@"arrow_down.png" , FALSE);
+	menutextures.push_back(temp);
+	temp=
+		  new Texture2D(@"back.png" , FALSE);
+	menutextures.push_back(temp);	
+	temp=
+		  new Texture2D(@"menu_shared_worlds.png" , FALSE);
+	menutextures.push_back(temp);	
+	temp=
+		  new Texture2D(@"cloud_SM.png" , FALSE);
+	menutextures.push_back(temp);	
+	temp=
+		  new Texture2D(@"menu_cancel.png" , FALSE);
+	menutextures.push_back(temp);
+	temp=
+		  new Texture2D(@"menu_health.png" , FALSE);
+	menutextures.push_back(temp);
+	temp=
+		  new Texture2D(@"menu_music.png" , FALSE);
+	menutextures.push_back(temp);
+	temp=
+		  new Texture2D(@"menu_off.png" , FALSE);
+	menutextures.push_back(temp);
+	temp=
+		  new Texture2D(@"menu_on.png" , FALSE);
+	menutextures.push_back(temp);
+	temp=
+		  new Texture2D(@"menu_options.png" , FALSE);
+	menutextures.push_back(temp);
+	temp=
+		  new Texture2D(@"menu_save.png" , FALSE);
+	menutextures.push_back(temp);
+	temp=
+		  new Texture2D(@"menu_send.png" , FALSE);
+	menutextures.push_back(temp);
+	temp=
+		  new Texture2D(@"menu_sound_effects.png" , FALSE);
+	menutextures.push_back(temp);
+	temp=
+		  new Texture2D(@"menu_text_box.png" , FALSE);
+	menutextures.push_back(temp);
+	
+	temp=
+		  new Texture2D(@"sky.png" , FALSE);
+	menutextures.push_back(temp);
+	temp=
+		  new Texture2D(@"pinwheel.png" , FALSE);
+	menutextures.push_back(temp);
+	temp=
+		  new Texture2D(@"mountains.png" , FALSE);
+	menutextures.push_back(temp);
+    temp=
+		  new Texture2D(@"menu_text_load.png" , FALSE);
+	menutextures.push_back(temp);
+    temp=
+		  new Texture2D(@"menu_text_back.png" , FALSE);
+	menutextures.push_back(temp);
+    temp=
+		  new Texture2D(@"cloud_MD.png" , FALSE);
+	menutextures.push_back(temp);
+    temp=
+		  new Texture2D(@"cloud_LG.png" , FALSE);
+	menutextures.push_back(temp);
+    
+	temp=
+		  new Texture2D(@"shared_world_selected.png" , FALSE);
+	menutextures.push_back(temp);
+	temp=
+		  new Texture2D(@"shared_world_unselected.png" , FALSE);
+	menutextures.push_back(temp);
+    
+    temp=
+		  new Texture2D(@"menu_fast.png" , FALSE);
+	menutextures.push_back(temp);
+	temp=
+		  new Texture2D(@"menu_best.png" , FALSE);
+	menutextures.push_back(temp);
+	temp=
+		  new Texture2D(@"menu_creatures.png" , FALSE);
+	menutextures.push_back(temp);
+	
+    temp=new Texture2D(@"treelayerleft.png" , FALSE);
+	menutextures.push_back(temp);
+    
+    temp=new Texture2D(@"treelayerright.png" , FALSE);
+	menutextures.push_back(temp);
+    
+    temp= new Texture2D(@"report_flag.png" , FALSE);
+    menutextures.push_back(temp);
+	
+}
+static float cuetimer=0;
+
+void Resources::unloadMenuTextures(){
+    cuetimer=0;
+   
+	while(menutextures.size()>0){
+        Texture2D* t=menutextures.back();
+        delete t;
+        menutextures.pop_back();
+	}
+	
+}
+
+void Resources::unloadGameTextures(){
+    if(!LOW_MEM_DEVICE){
+        return;
+    }
+    while(textures.size()>0){
+        Texture2D* t=textures.back();
+        if(t!=csbkg){
+            delete t;
+        }
+        textures.pop_back();
+    }
+}
+
+void Resources::loadGameTextures(){
+    clearSkinCache();
+   
+    
+    Texture2D* temp;
+  
+    temp=
+          new Texture2D(@"moof_icon.png",FALSE);
+    
+    textures.push_back(temp);
+    temp=
+          new Texture2D(@"build.png",FALSE);
+    textures.push_back(temp);
+    temp=
+          new Texture2D(@"destroy.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"burn.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"save.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"cancel.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"home.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"jump.png",FALSE);
+    textures.push_back(temp);
+    
+    
+    
+    temp=
+          new Texture2D(@"smoke_tex.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"analog_top.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"analog_bottom.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"camera.png",FALSE);
+    textures.push_back(temp);
+    
+    
+    temp=
+          new Texture2D(@"block_border.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"block_background.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=csbkg;
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"palette.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"block_border_pressed.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"color_border_pressed.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"color_border.png",FALSE);
+    textures.push_back(temp);
+    temp=
+          new Texture2D(@"sky_box.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"triangle_border_pressed.png",FALSE);
+    textures.push_back(temp);
+    temp=
+          new Texture2D(@"triangle_border.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"build2.png",FALSE);
+    textures.push_back(temp);
+    temp=
+          new Texture2D(@"build3.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"destroy_active.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"paint_active.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"build2_active.png",FALSE);
+    textures.push_back(temp);
+    temp=
+          new Texture2D(@"build3_active.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"burn_active.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"jump_depressed.png",FALSE);
+    textures.push_back(temp);
+    
+    
+    extern int storedSkinCounter;
+    extern int realStoredSkinCounter;
+    realStoredSkinCounter=0;
+    storedSkinCounter=0;
+    
+    temp=
+          new Texture2D(@"Moof_Default.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"Moof_Rage.png",FALSE);
+    textures.push_back(temp);
+    temp=
+          new Texture2D(@"Moof_Blink.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"Batty_Default.png",FALSE);
+    textures.push_back(temp);
+    temp=
+          new Texture2D(@"Batty_Rage.png",FALSE);
+    textures.push_back(temp);
+    temp=
+          new Texture2D(@"Batty_Blink.png",FALSE);
+    textures.push_back(temp);
+    
+    
+    temp=
+          new Texture2D(@"Green_Default.png",FALSE);
+    textures.push_back(temp);
+    temp=
+          new Texture2D(@"Green_Rage.png",FALSE);
+    textures.push_back(temp);
+    temp=
+          new Texture2D(@"Green_Blink.png",FALSE);
+    textures.push_back(temp);
+    
+    
+    temp=
+          new Texture2D(@"Nergle_Default.png",FALSE);
+    textures.push_back(temp);
+    temp=
+          new Texture2D(@"Nergle_Rage.png",FALSE);
+    textures.push_back(temp);
+    temp=
+          new Texture2D(@"Nergle_Blink.png",FALSE);
+    textures.push_back(temp);
+    
+    
+    temp=
+          new Texture2D(@"Stumpy_Default.png",FALSE);
+    textures.push_back(temp);
+    temp=
+          new Texture2D(@"Stumpy_Rage.png",FALSE);
+    textures.push_back(temp);
+    temp=
+          new Texture2D(@"Stumpy_Blink.png",FALSE);
+    textures.push_back(temp);
+    
+    
+    temp=
+          new Texture2D(@"shadow.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"menu_icon.png",FALSE);
+    textures.push_back(temp);
+    temp=
+          new Texture2D(@"door.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"sky_box_bw.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"golden_cube.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"golden_cube_bw.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"door_mask.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"flower_tex.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"portal.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"sphere_map.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"build2_top.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"buildplus.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"uisave.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"uihome.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"uiphoto.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"uiexit.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"portal_twirl.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"build3_top.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"blocktoggle1.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"blocktoggle2.png",FALSE);
+    textures.push_back(temp);
+    
+    
+    temp=
+          new Texture2D(@"flower_icon.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"block_border2.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"block_border_pressed2.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"triangle_border2.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"triangle_border_pressed2.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"build_under2.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"build_over2.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"build2_active2.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"build2_under2.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"build3_top2.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"build3_active2.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"digits.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"goldcube_icon.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"portal_icon2.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"door_icon2.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"Charger_Default.png",FALSE);
+    textures.push_back(temp);
+    temp=
+          new Texture2D(@"Charger_Rage.png",FALSE);
+    textures.push_back(temp);
+    temp=
+          new Texture2D(@"Charger_Blink.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+          new Texture2D(@"Stalker_Default.png",FALSE);
+    textures.push_back(temp);
+    temp=
+          new Texture2D(@"Stalker_Default.png",FALSE);
+    textures.push_back(temp);
+    temp=
+          new Texture2D(@"Stalker_Blink.png",FALSE);
+    textures.push_back(temp);
+    temp=
+          new Texture2D(@"Moof_DefaultMASK.png",FALSE);
+    textures.push_back(temp);
+    if(LOW_MEM_DEVICE){
+    temp=
+          new Texture2D(@"Flame_256.png",FALSE);
+    textures.push_back(temp);
+        
+    }else{
+        temp=
+              new Texture2D(@"Flame_512.png",FALSE);
+        textures.push_back(temp);
+        
+    }
+    
+    temp=new Texture2D(@"text_numbers.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=new Texture2D(@"paint_mask.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=new Texture2D(@"goldcube_icon_mask.png",FALSE);
+    textures.push_back(temp);
+    temp=new Texture2D(@"flower_icon_mask.png",FALSE);
+    textures.push_back(temp);
+    temp=new Texture2D(@"door_icon2_mask.png",FALSE);
+    textures.push_back(temp);
+    temp=new Texture2D(@"portal_icon2_mask.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=new Texture2D(@"goldcube_icon_active.png",FALSE);
+    textures.push_back(temp);
+    temp=new Texture2D(@"flower_icon_active.png",FALSE);
+    textures.push_back(temp);
+    temp=new Texture2D(@"door_icon2_active.png",FALSE);
+    textures.push_back(temp);
+    temp=new Texture2D(@"portal_icon2_active.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+    new Texture2D(@"block_border_active.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=
+    new Texture2D(@"triangle_border_active.png",FALSE);
+    textures.push_back(temp);
+    //////////MASKS
+    extern int storedMaskCounter;
+    storedMaskCounter=0;
+    
+    temp=new Texture2D(@"Moof_BlinkMASK.png",FALSE);
+    textures.push_back(temp);
+    temp=new Texture2D(@"Moof_DefaultMASK.png",FALSE);
+    textures.push_back(temp);
+    temp=new Texture2D(@"Batty_BlinkMASK.png",FALSE);
+    textures.push_back(temp);
+    temp=new Texture2D(@"Batty_DefaultMASK.png",FALSE);
+    textures.push_back(temp);
+    temp=new Texture2D(@"Green_BlinkMASK.png",FALSE);
+    textures.push_back(temp);
+    temp=new Texture2D(@"Green_DefaultMASK.png",FALSE);
+    textures.push_back(temp);
+    
+    temp=new Texture2D(@"Nergle_BlinkMASK.png",FALSE);
+    textures.push_back(temp);
+    temp=new Texture2D(@"Nergle_DefaultMASK.png",FALSE);
+    textures.push_back(temp);
+    temp=new Texture2D(@"Stumpy_BlinkMASK.png",FALSE);
+    textures.push_back(temp);
+    temp=new Texture2D(@"Stumpy_DefaultMASK.png",FALSE);
+    textures.push_back(temp);
+    
+   
+}
+
+int Resources::startedBurn(float length){
+   
+	if(burnSoundTimer<length){
+		burnSoundTimer=length;
+	}
+	sidx=(sidx+1)%NS_BURN;
+	burnin[sidx]=length;
+	
+	return sidx;
+	
+}
+void Resources::endBurnId(int idx){
+	if(idx<0||idx>=NS_BURN)return;
+	burnin[idx]=-1;
+	float max=-1;
+	for(int i=0;i<NS_BURN;i++){
+		if(burnin[i]>max)
+			max=burnin[i];
+	}
+	burnSoundTimer=max;
+	
+	if(max<=0){
+		endBurn();
+	}
+	
+}
+void Resources::stopSound(int soundId){
+    audio->stopEffect(soundId);
+}
+void Resources::endBurn(){
+	audio->stopEffect(burn_id);
+	playing=burnSoundTimer=0;
+}
+
+#define FADE_SPEED .1f
+#define TIME_BETWEEN_SONGS (60*5)
+static int lastsongplayed=-1;
+
+
+void Resources::update(float etime){
+    lasteffectplayed=-1;
+    if(playmusic){
+        
+           
+        if(bkgvolume<bkgtargetvolume){
+            bkgvolume+=FADE_SPEED;
+            if(bkgvolume>bkgtargetvolume)
+                bkgvolume=bkgtargetvolume;
+           
+          
+        }else if(bkgvolume>bkgtargetvolume){
+            bkgvolume-=FADE_SPEED;
+            if(bkgvolume<bkgtargetvolume)
+                bkgvolume=bkgtargetvolume;
+            
+        }
+        if(World::getWorld->game_mode==GAME_MODE_MENU){
+            if(titlesongisplaying&&!audio->isBackgroundMusicPlaying()){
+                playMenuTune();
+            }
+        }
+        if(songisplaying){
+            if(!audio->isBackgroundMusicPlaying()){
+                songisplaying=FALSE;
+                cuetimer=0;
+            }
+        }else{
+            cuetimer+=etime;
+            if(cuetimer>TIME_BETWEEN_SONGS){
+                cuetimer=0;
+                int song=arc4random()%NUM_SONGS;
+                if(song==lastsongplayed)song=(song+1)%NUM_SONGS;
+                lastsongplayed=song;
+                audio->stopBackgroundMusic();
+                audio->playBackgroundMusic(songFiles[song]);
+                
+                bkgvolume=1.0f;
+                bkgtargetvolume=1.0f;
+                songisplaying=TRUE;
+            }
+        }
+        if(audio->getBackgroundMusicVolume()!=bkgvolume)  //crash tally: 1
+          audio->setBackgroundMusicVolume(bkgvolume);
+
+        // All four ambience layers' triggers (soundEventBed/Proximity/Portal/TreasureProximity)
+        // early-return without stopping anything once game_mode leaves GAME_MODE_PLAY -- there's no
+        // call site left to un-set them once Player::update stops running (world unloaded on the
+        // way to the menu), so without this, whatever was last playing (e.g. night ambience) kept
+        // looping forever into the menu. Force every target to 0 here instead, and once a channel
+        // has actually faded to silence, stop it and clear its "still playing" state so a later
+        // return to play mode starts clean.
+        if(World::getWorld->game_mode!=GAME_MODE_PLAY){
+            bedtargetvolume=0;
+            proxtargetvolume=0;
+            portaltargetvolume=0;
+            treasuretargetvolume=0;
+            if(bedvolume==0&&current_bed!=AMBIENT_NONE){
+                audio->stopAmbience(0);
+                current_bed=target_bed=AMBIENT_NONE;
+            }
+            if(proxvolume==0&&current_prox!=AMBIENT_NONE){
+                audio->stopAmbience(1);
+                current_prox=target_prox=AMBIENT_NONE;
+            }
+            if(portalvolume==0&&portalplaying){
+                audio->stopAmbience(2);
+                portalplaying=FALSE;
+            }
+            if(treasurevolume==0&&treasureplaying){
+                audio->stopAmbience(3);
+                treasureplaying=FALSE;
+            }
+        }
+
+        if(bedvolume<bedtargetvolume){
+            bedvolume+=FADE_SPEED;
+            if(bedvolume>bedtargetvolume)
+                bedvolume=bedtargetvolume;
+        }else if(bedvolume>bedtargetvolume){
+            bedvolume-=FADE_SPEED;
+            if(bedvolume<bedtargetvolume)
+                bedvolume=bedtargetvolume;
+        }
+        audio->setAmbienceFade(0,bedvolume);
+
+        if(proxvolume<proxtargetvolume){
+            proxvolume+=FADE_SPEED;
+            if(proxvolume>proxtargetvolume)
+                proxvolume=proxtargetvolume;
+        }else if(proxvolume>proxtargetvolume){
+            proxvolume-=FADE_SPEED;
+            if(proxvolume<proxtargetvolume)
+                proxvolume=proxtargetvolume;
+        }
+        audio->setAmbienceFade(1,proxvolume);
+
+        if(portalvolume<portaltargetvolume){
+            portalvolume+=FADE_SPEED;
+            if(portalvolume>portaltargetvolume)
+                portalvolume=portaltargetvolume;
+        }else if(portalvolume>portaltargetvolume){
+            portalvolume-=FADE_SPEED;
+            if(portalvolume<portaltargetvolume)
+                portalvolume=portaltargetvolume;
+        }
+        audio->setAmbienceFade(2,portalvolume);
+        if(portalvolume==0&&portalplaying&&!portalwanted){
+            audio->stopAmbience(2);
+            portalplaying=FALSE;
+        }
+
+        if(treasurevolume<treasuretargetvolume){
+            treasurevolume+=FADE_SPEED;
+            if(treasurevolume>treasuretargetvolume)
+                treasurevolume=treasuretargetvolume;
+        }else if(treasurevolume>treasuretargetvolume){
+            treasurevolume-=FADE_SPEED;
+            if(treasurevolume<treasuretargetvolume)
+                treasurevolume=treasuretargetvolume;
+        }
+        audio->setAmbienceFade(3,treasurevolume);
+        if(treasurevolume==0&&treasureplaying&&!treasurewanted){
+            audio->stopAmbience(3);
+            treasureplaying=FALSE;
+        }
+
+    }
+    // printg("volume:%f\n",[[SimpleAudioEngine sharedEngine] backgroundMusicVolume]);
+    //fadetimer+=etime;
+    //float volume=1-(sinf(fadetimer)+1.0f)/2.0f;
+    //[[SimpleAudioEngine sharedEngine] setBackgroundMusicVolume:volume];
+	for(int i=0;i<NS_BURN;i++){
+		burnin[i]-=etime;
+	}
+	playing-=etime;
+	landingEffectTimer-=etime;
+	if(burnSoundTimer>0){
+		burnSoundTimer-=etime;
+		
+		if(burnSoundTimer<0){
+           
+			audio->stopEffect(burn_id);
+		}else{
+				if(playing<0)
+				{
+					
+					burn_id=playSound(S_FLAMELOOP);
+					playing=10;
+				}
+			
+		}
+	}
+	
+}
+
+Texture2D* Resources::getTex(int idx){
+    if(idx==ICO_COLOR_SELECT_BACKGROUND){
+       return csbkg;
+    }
+	return textures[idx];
+}
+
+Texture2D* Resources::getMenuTex(int idx){
+	
+	return menutextures[idx];
+}
+CGPoint Resources::getBlockTex(int type){
+	if(type<0||type>31)type=0;
+	CGPoint p;	
+	
+    p.x=(double)type/32.0f;
+    p.y=(double)1.0f/32.0f-.00001f;
+	//p.x=(32.0f/1024.0f)*type+0.5f/1024.0f;
+	//p.y=(32.0f/1024.0f-1.0f/1024.0f);
+	
+	return p;
+}
+
+CGPoint Resources::getBlockTexShort(int type){
+	if(type<0||type>31)type=0;
+	CGPoint p;	
+	
+    p.x=type;
+    p.y=1;
+	//p.x=(32.0f/1024.0f)*type+0.5f/1024.0f;
+	//p.y=(32.0f/1024.0f-1.0f/1024.0f);
+	
+	return p;
+}
+Resources::~Resources(){
+    while(menutextures.size()>0){
+        Texture2D* t=menutextures.back();
+        delete t;
+        menutextures.pop_back();
+    }
+    while(textures.size()>0){
+        Texture2D* t=textures.back();
+        delete t;
+        textures.pop_back();
+    }
+
+	
+	//[sound release];
+
+}
+
+
+

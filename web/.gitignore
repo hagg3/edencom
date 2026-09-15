@@ -1,0 +1,35 @@
+# Build output
+/build/
+/build-rel/
+/build-st/
+# -DEDEN_THREADED=ON, audit row 36/C1 — see WORKING/c1-threaded-build-handoff.md
+/build-thr/
+# scratch -O2 build with EDEN_DIAGNOSTICS=ON, used by tools/headless-mesh-burst-probe*.js
+/build-relwdiag/
+# same, plus -DEDEN_THREADED=ON — the A/B baseline for B3 off-thread meshing
+/build-relthr/
+# ROADMAP Phase M / M0 — scratch trees with -sMAXIMUM_MEMORY=512MB, driven by tools/browser-memory-probe.js
+/build-relwdiag-cap512/
+/build-relthr-cap512/
+# ROADMAP Phase M / M6 — -DEDEN_ALLOC_TRACE=ON scratch tree (src/seam/AllocTrace_web.c interposes
+# malloc/free); driven by tools/headless-alloc-leak-probe.js
+/build-alloctrace/
+/dist/
+*.wasm
+*.wasm.map
+*.o
+*.a
+
+# Emscripten SDK (if vendored locally)
+/emsdk/
+
+# Node
+/node_modules/
+
+# Symlinks (re)created by CMakeLists.txt's file(CREATE_LINK ...) at configure time — always
+# absolute-path, tied to whatever machine configured the build, so must never be committed.
+/public/audio
+/public/Eden.eden
+
+# OS
+.DS_Store
