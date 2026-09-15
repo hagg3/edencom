@@ -10,6 +10,7 @@
 #import "Util.h"
 #import "World.h"
 #include <cstdio>
+#include <cstring>
 
 extern float SCREEN_WIDTH;
 extern float SCREEN_HEIGHT;
