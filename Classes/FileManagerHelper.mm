@@ -7,6 +7,7 @@
 //
 
 #import "FileManagerHelper.h"
+#include "F3Timing.h"
 #import "FileManager.h"
 #import "FileArchive.h"
 #import "World.h"
@@ -351,7 +352,8 @@ void fmh_readColumnFromDefault(int cx,int cz){
 	hashmap_get(indexes,n, (any_t*)&colIndex);
 
 	if(colIndex==NULL){
-        ter->tgen->generateEmptyColumn(cx,cz);
+        { F3Scope _f3(&g_f3.gen_ms); g_f3.cols_empty++;
+        ter->tgen->generateEmptyColumn(cx,cz); }
         return;
     }
 
@@ -359,7 +361,14 @@ void fmh_readColumnFromDefault(int cx,int cz){
     int status[CHUNKS_PER_COLUMN_MAX];
     const int bands=fmh_defaultBandCount();
     for(int i=0;i<CHUNKS_PER_COLUMN_MAX;i++){lens[i]=0;status[i]=0;}
-    if(!fmh_readColumnRawFromDefault(cx,cz,fmh_raw,lens))return;
+    g_f3.cols_def++;
+    double _t0=f3_now();
+    BOOL _ok=fmh_readColumnRawFromDefault(cx,cz,fmh_raw,lens);
+    double _t1=f3_now(); g_f3.rd_ms+=_t1-_t0;
+    for(int i=0;i<bands;i++)g_f3.rd_bytes+=lens[i]+2;
+    if(!_ok)return;
     fmh_decodeColumnBands(fmh_raw,lens,bands,fmh_blocks,fmh_colors,status);
+    double _t2=f3_now(); g_f3.dec_ms+=_t2-_t1;
     fmh_publishColumnFromDefault(cx,cz,fmh_blocks,fmh_colors,bands,status);
+    g_f3.pub_ms+=f3_now()-_t2;
 }

@@ -11,6 +11,7 @@
 #import "Model.h"
 #import "EAGLView.h"
 #import "Globals.h"
+#include "F3Timing.h"
 #import "TerrainGen2.h"
 
 #import "Alert.h"
@@ -495,7 +496,50 @@ World::~World(){
 	//[[UIDevice currentDevice] endGeneratingDeviceOrientationNotifications];
 	
 }
+// F3 (TEMPORARY): env-gated Mac-baseline driver, F3_DRIVE="<world display name>". Opens the world,
+// then 3x { Warp Home (E1), emulated straight walk of 160 blocks -x at 15 blocks/s (E2) } and exits.
+// Not used on the device (a human walks there). Part of WORKING/f3-timing-hooks.patch, never committed.
+extern "C" {
+int   eden_menu_world_count(void);
+const char* eden_menu_world_name(int index);
+void  eden_menu_select(int index);
+int   eden_menu_play(void);
+}
+static void f3_drive(World* w){
+    static const char* nm=getenv("F3_DRIVE");
+    if(!nm)return;
+    static int phase=0,wait=0,rep=0; static float y0=0,x0=0,z0=0;
+    if(wait>0){wait--;return;}
+    if(g_f3.active&&phase!=4)return;
+    switch(phase){
+    case 0:{ // open world from the menu
+        int idx=-1;
+        for(int i=0;i<eden_menu_world_count();i++)if(!strcmp(eden_menu_world_name(i),nm)){idx=i;break;}
+        if(idx<0){fprintf(stderr,"[F3] drive: world '%s' not found\n",nm);exit(2);}
+        eden_menu_select(idx);
+        if(eden_menu_play()!=1){fprintf(stderr,"[F3] drive: play refused\n");exit(2);}
+        phase=1; wait=600; break; }
+    case 1: // settle after load (first load is not an event)
+        if(w->game_mode!=GAME_MODE_PLAY||!w->terrain->loaded){wait=30;break;}
+        fprintf(stderr,"[F3] drive: in world '%s', starting rep %d\n",nm,rep+1);
+        phase=2; break;
+    case 2: // E1
+        w->terrain->warpToHome(); phase=3; wait=300; break;
+    case 3: // E2: walk
+        x0=w->player->pos.x; y0=62.0f; z0=w->player->pos.z; phase=4; break;
+    case 4:
+        w->player->pos=MakeVector(w->player->pos.x-0.25f,y0,z0); w->player->vel=MakeVector(0,0,0);
+        if(x0-w->player->pos.x>=160.0f){phase=5; wait=600;}
+        break;
+    case 5:
+        if(++rep>=3){fprintf(stderr,"[F3] drive: done\n");fflush(stderr);exit(0);}
+        phase=2; break;
+    }
+}
+
 BOOL World::update(float etime){
+    f3_frame_begin();
+    f3_drive(this);
     if(JUST_TERRAIN_GEN){
         return FALSE;
     }

@@ -137,7 +137,9 @@ the `rt*` boundary that `prepareVBO()` already was:
 - **Two kill switches, both intentional.** Without `EDEN_THREADED` every `mp_*` entry point compiles
   to a no-op and `mp_dispatch()` always answers "mesh it yourself" — the stock path, byte for byte.
   And "no free job slot → mesh inline" means a pool size of 0 disables the feature without removing
-  it.
+  it. **Only web's threaded trees (`-DEDEN_THREADED=ON`: `build-thr`, `relthr`) define it.** No native target does, iOS
+  included (checked 2026-10-03), so on native every mesh and every column decode runs inline on the
+  main thread, even though native links real pthreads.
 - The same pool also **decodes streamed columns** off-thread. `fmh_readColumnFromDefault` is split
   into a main-thread raw read, a **pure** `fmh_decodeColumnBands()` (RLE run-expansion + the
   `CC(x,z,y)`↔`CC(y,z,x)` band transpose) that a worker runs, and a main-thread publish that

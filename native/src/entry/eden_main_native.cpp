@@ -193,6 +193,8 @@ const char* eden_debug_world_format(void);
 const char* eden_debug_heap(void);
 void  eden_debug_heap_reset_peak(void);
 void  eden_native_apply_display_mode(void);   // src/seam/DisplayMode_native.cpp
+void  eden_live_commands_init(const char* path);   // src/seam/LiveCommands_native.mm (diagnostics)
+void  eden_live_commands_tick(void);
 }
 
 extern float SCREEN_WIDTH;
@@ -220,6 +222,7 @@ struct Options {
     std::string docs;
     std::string bundle;
     std::string shot;                    // --shot=PREFIX: file prefix for --shot's captures
+    std::string liveCmds;                // --live-cmds=FILE: see src/seam/LiveCommands_native.mm
 };
 
 Options g_opt;
@@ -672,6 +675,7 @@ void teleport_for_movement();
 void rise_until_clear(int maxFrames);
 void check_clear_of_map_border(const char* what);
 
+extern "C" void eden_set_fly_mode(int);
 int run_touch_selftest() {
     g_selftestTag = "eden-touch";
     g_tickInput = true;
@@ -972,6 +976,42 @@ int run_touch_selftest() {
                           "(fly-mode 0.995 damping)", first, last, peak);
             check(peak <= first * 1.02f && last < first * 0.9f,
                   "lifting the finger stops driving the player", detail);
+
+
+            // --- and WITHOUT fly mode: a held stick walks ---
+            // Everything above flies (rise_until_clear), so until N.4.7 this gate never walked, and
+            // "fly is fine, walking barely moves" reached a device. On a stone runway built in open
+            // air, because the map centre is ponds and hills and a walk into water or a hillside
+            // is not a question about input. Fixed 1/60 s etime: the engine's walk speed depends
+            // on its tick rate (per-tick ground friction), so a wall-clock run would assert on
+            // whatever rate this machine's vsync happens to give the harness. The tick rate the
+            // REAL loop feeds the engine is the interactive loop's pacing, not this gate's.
+            eden_set_fly_mode(0);
+            g_app->viewController.setFixedEtime(1.0f / 60.0f);
+            const int ry = g_opt.height - 14;
+            const float wx = (float)(4096 * CHUNK_SIZE) + 0.5f, wz = (float)(4096 * CHUNK_SIZE) + 0.5f;
+            eden_console_teleport(wx, (float)ry + 3.0f, wz);
+            tick(60);
+            for (int x = -20; x <= 20; ++x)      // square, so a yaw nudged by a stray host mouse
+                for (int z = -20; z <= 20; ++z) {    // still walks on stone
+                    eden_console_setblock((int)wx + x, (int)wz + z, ry, 2 /*TYPE_STONE*/);
+                    for (int y = 1; y <= 4; ++y) eden_console_setblock((int)wx + x, (int)wz + z, ry + y, 0);
+                }
+            eden_console_teleport(wx, (float)ry + 2.5f, wz);
+            tick(120);
+            const PlayerState w0 = player_state();
+            push_finger_id(12, SDL_EVENT_FINGER_DOWN, snx, sny);
+            tick(120);
+            const PlayerState w1 = player_state();
+            push_finger_id(12, SDL_EVENT_FINGER_UP, snx, sny);
+            tick(30);
+            g_app->viewController.setFixedEtime(0.0f);
+            eden_set_fly_mode(1);
+            const float dw = std::sqrt((w1.x - w0.x) * (w1.x - w0.x) + (w1.z - w0.z) * (w1.z - w0.z));
+            std::snprintf(detail, sizeof(detail),
+                          "%.2f blocks in 2 s of engine time on flat stone (~7.3 expected), dy %.2f",
+                          dw, w1.y - w0.y);
+            check(dw > 4.0f && std::fabs(w1.y - w0.y) < 0.5f, "a held stick walks with fly OFF", detail);
         }
     }
 
@@ -2358,6 +2398,7 @@ static int parse_one_arg(const char* a) {
         else if (starts_with(a, "--cycles="))         g_opt.cycles = atoi(a + 9);
         else if (starts_with(a, "--docs="))           g_opt.docs = a + 7;
         else if (starts_with(a, "--bundle="))         g_opt.bundle = a + 9;
+        else if (starts_with(a, "--live-cmds="))      g_opt.liveCmds = a + 12;
         else if (starts_with(a, "--at=")) {
             if (sscanf(a + 5, "%f,%f,%f", &g_opt.at[0], &g_opt.at[1], &g_opt.at[2]) == 3)
                 g_opt.haveAt = true;
@@ -2541,32 +2582,59 @@ static int eden_main_after_args(int argc, char** argv) {
         else if (!std::strcmp(g_opt.mode, "leak-probe"))    rc = run_leak_probe();
     } else {
         // Interactive. The frame-rate cap is the same setting the web build's frame gate reads
-        // (Settings_web.mm's eden_get_fps_cap), applied the same way: it decides whether the frame
-        // DRAWS, never whether update runs — audit row A4, where skipping the whole tick dropped
-        // input on capped frames.
-        double lastRenderMs = 0.0;
+        // (Settings_web.mm's eden_get_fps_cap), but it is applied as PACING — sleep until the next
+        // frame is due, then update and draw together — and not as web's "skip the draw, still run
+        // update" gate. Web can afford that gate because rAF only fires at the display rate, so a
+        // skipped draw still leaves one engine tick per display frame. This loop has no rAF: until
+        // 2026-09-25 it ran `drawFrame(false)` + SDL_Delay(1) on every capped iteration, i.e. ~540
+        // engine ticks/s against 58 draws/s under the touch profile's default 60 fps cap. The engine
+        // cannot tick that fast (N.4.7, "walking barely moves on iOS"): ground friction is
+        // per-TICK (Player.mm, vel*=.90), so walk speed falls with the tick rate, and positions
+        // near the map centre are float32 at ~65536 where one ULP is 1/128 block — a 1.8 ms tick's
+        // walking step is below half of that and `pos += vel*etime` rounds to no movement at all.
+        // Fly mode (0.995 damping, far higher speed) cleared the ULP, which is why only walking died.
+        //
+        // Audit row A4 (skipping the whole tick dropped input on capped frames) does not come back:
+        // nothing is skipped. Events that arrive while we sleep stay in SDL's queue and are pumped
+        // into the same tick they would have reached anyway. Paced to a fixed deadline schedule, not
+        // "interval since the last frame", so the average rate is the cap exactly; the slack lets a
+        // frame start a little early (the vsync-blocking swap absorbs it) so that a cap equal to the
+        // display rate never sleeps past a vsync and halves the frame rate.
+        constexpr double kPaceSlackMs = 2.0;
+        double nextFrameMs = 0.0;
+#if defined(EDEN_DIAGNOSTICS)
+        if (!g_opt.liveCmds.empty()) eden_live_commands_init(g_opt.liveCmds.c_str());
+#endif
         while (g_running) {
+            const int capFps = eden_get_fps_cap();
+            if (capFps > 0) {
+                const double interval = 1000.0 / (double)capFps;
+                const double now = eden_platform_now_ms();
+                // First frame, a cap change, or a stall (a slow load, a backgrounded app): restart
+                // the schedule rather than rushing frames out to catch up.
+                if (nextFrameMs == 0.0 || now - nextFrameMs > interval || nextFrameMs - now > interval)
+                    nextFrameMs = now;
+                const double wait = nextFrameMs - now - kPaceSlackMs;
+                if (wait > 0.0) SDL_DelayPrecise((Uint64)(wait * 1e6));
+                nextFrameMs += interval;
+            } else {
+                nextFrameMs = 0.0;
+            }
             pump_events();
             if (!g_app) break;
             settings_pump();
-            bool renderThisFrame = true;
-            const int capFps = eden_get_fps_cap();
-            if (capFps > 0) {
-                const double now = eden_platform_now_ms();
-                const double minInterval = 1000.0 / (double)capFps;
-                if (lastRenderMs != 0.0 && now - lastRenderMs < minInterval) renderThisFrame = false;
-                else lastRenderMs = now;
-            }
             // BEFORE drawFrame: World::update() is what consumes the queued touches, so input
             // pushed after it would land a frame late — the same ordering public/eden-input.js
             // gets by running inside the rAF callback ahead of the engine tick.
             eden_native_input_tick();
-            if (g_app->viewController.isAnimating()) g_app->viewController.drawFrame(renderThisFrame);
+#if defined(EDEN_DIAGNOSTICS)
+            eden_live_commands_tick();
+#endif
+            if (g_app->viewController.isAnimating()) g_app->viewController.drawFrame(true);
             // AFTER the tick that queued this frame's sounds, so a sound fired now is bound to
             // the device in the same frame rather than the next one.
             eden_native_audio_tick();
             eden_heap_pressure_tick();
-            if (!renderThisFrame) SDL_Delay(1);   // vsync only blocks on frames that swap
         }
     }
 

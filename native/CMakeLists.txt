@@ -406,6 +406,8 @@ if(EDEN_DIAGNOSTICS)
   list(APPEND EDEN_SHARED_SEAM
     "${EDEN_WEB_DIR}/src/seam/DebugState_web.mm"
     "${EDEN_WEB_DIR}/src/seam/DevConsole_web.mm")
+  # --live-cmds=<file>: DevConsole's commands for an interactive native session, fed from a file.
+  list(APPEND EDEN_NATIVE_SOURCES src/seam/LiveCommands_native.mm)
   if(APPLE)
     # NOT objc_selftest.mm: it exists to exercise web/src/shim/objc/objc_runtime.cpp's dispatch,
     # ivar layout, super and category merging. Apple's runtime needs no such proof from us.

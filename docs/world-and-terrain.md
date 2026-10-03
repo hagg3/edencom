@@ -200,8 +200,16 @@ Doors and portals are *stored* as voxels but *rendered and animated* as extracte
 1. Compute desired window origin `m_chunkOffset* = player.pos/16 - T_RADIUS`.
 2. For each of the 18×18 ground-level chunk slots, compare `pbounds` with the desired
    absolute coordinates → count stale slots.
-3. If `count > 140` (player crossed roughly a chunk boundary): a two-frame hysteresis
-   (`hit_load_counter`) shows the "Loading" status bar, then:
+3. If `count > 140`: a two-frame hysteresis
+   (`hit_load_counter`) shows the "Loading" status bar, then the steps below run. **Walking does not
+   stream column by column.** Crossing one chunk boundary makes only 18 slots stale, and the
+   `count ≤ 140` branch does nothing. Stale far-edge slots stay drawn at their old positions, outside
+   the view distance, until more than 140 have built up. A straight walk therefore reloads every
+   **8 chunk rows (128 blocks)**, about 144 columns in one go. A diagonal walk reloads after about
+   5 chunks, about 155 columns. At 256z that is ~18 MB of column reads per reload (~4.5 MB at 64z).
+   A **warp** takes a different path: `warpToPoint`/`warpToHome` → `saveWorld(Vector)` +
+   `loadTerrain`, which reads all 324 columns synchronously. (Corrected 2026-10-03 by the `.emod`
+   F.2 code read. This line used to say "player crossed roughly a chunk boundary".)
    - `fm->saveWorld()` (flush modified columns **before** they get overwritten!),
    - update `fm->chunkOffsetX/Z` (the render-origin rebase),
    - `updateLightingBegin()` (zero the light array; the *recompute* is deferred, below),

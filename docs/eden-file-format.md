@@ -306,6 +306,36 @@ block**, the adversarial case for the derived-size logic above. Regenerate them 
 `#[cfg(test)]` in that project's `src-tauri/src/worldgen.rs` calling `generate_flat_chunk` /
 `generate_natural_world` + `write_world_file`; nothing in this repo can produce one.
 
+## Compressibility and band occupancy (measured 2026-10-03)
+
+The `.emod` Phase 0 study measured real worlds against this format with
+`web/tools/eden-format-measure.py`. The tool is read-only, and its `--corrupt-gate` proves the
+round-trip check can fail. Raw results: `WORKING/emod-format-phase0-f1-results-2026-10-03.md`. Plan and
+recommendation: `WORKING/emod-format-phase0-f2-plan-2026-10-03.md`. The facts that outlive the study:
+
+- **A column is ~99% redundant whatever its height.** Per-column zstd level 3 averages 460–494 B per
+  column on three real worlds: a 64z flat city, a 256z New Dawn world and a 256z NewFormat world. That
+  is 1.4% of a 32 KB record and 0.4% of a 128 KB one. zstd-19 averages 306–339 B, zlib-6 423–555 B,
+  lz4 1,034–1,686 B. The largest specimen (3.79 GB, 30,299 columns) totals 14.3 MB under zstd-3.
+  Whole-file xz reaches 0.2–0.6% of file size, which is the "~90% smaller" players see when they
+  zip a world, and it is a lower bound. Per-column compression costs only ~1.6–2.2× whole-file
+  compression and keeps random access.
+- **256z worlds are mostly 64z content in a 256z container.** Bands 4–15 are all-air in **100%** of
+  Diane's columns and **99.6%** of Quarry's; the outliers reach bands 5–11. Across all bands, 80–86%
+  of a 256z world's bands are all-air, against 17.9% for the 64z city. One consequence:
+  `eden-convert.js --to-64` is lossless for most real 256z worlds, but check its destroyed-block
+  count, never assume it.
+- **"All-air" must test all 8,192 bytes of a band, not just the 4,096 type bytes.** Real files
+  contain bands whose types are all `TYPE_NONE` but whose paint plane is non-zero (16 in the city,
+  28 in Quarry). Anything that elides or skips "empty" bands on disk by checking types alone will
+  drop paint.
+- **Eliding all-air bands is a runtime lever, not a size lever.** Elision alone leaves 14–82% of raw,
+  and elision on top of zstd-3 saves less than 1%, because zstd already collapses zero runs. What
+  skipping empty bands saves is reading, decoding, allocating, meshing and lighting them.
+- **Pristine default-map columns are common.** In a seed-333333 world, 97.4% of columns were
+  byte-identical to the bundled map: bands 0–3 equal, 4–15 air. That world was nearly untouched,
+  so treat the figure as a best case.
+
 ## Auxiliary files
 - `<world>.png` in Documents — preview screenshot (taken by the HUD camera mode),
   uploaded alongside the world when sharing; MD5 stored in the header.

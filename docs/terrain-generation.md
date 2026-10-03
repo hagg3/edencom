@@ -56,7 +56,12 @@ Painting the sky (paint tool aimed at the sky) calls `paintSky` which edits
 - `generateColumn(cx, cz, bgthread)` — despite the dead noise-based branches
   (`FALSE&&LEVEL_SEED!=0`), the live code path is the flat recipe: bedrock at y=0,
   stone to y=15, dirt to y=31, grass cap at y=32
-  (`TerrainGenerator.mm:210-239`). Reuses the chunk objects in the table
+  (`TerrainGenerator.mm:210-239`). Those heights are `T_HEIGHT/4` and `T_HEIGHT/2`, so **in a 256z
+  world the slab is 128 tall**: stone to y=63, dirt to y=127, grass at y=128. That is 8 occupied
+  bands rather than 4, for every unsaved column of a non-default-seed 256z world. A default-seed
+  256z world instead gets the bundled map's 4 bands with air above them. The function also `memset`s
+  `CHUNKS_PER_COLUMN`×32³ bytes of scratch twice per column, ~1 MB at 256z. (Noted 2026-10-03, `.emod`
+  F.2; read from the code, not observed in play.) Reuses the chunk objects in the table
   (`resetForReuse` + `setBounds`), copies types into `blockarray`, `addChunk` marks
   meshes dirty.
 - `generateEmptyColumn` — same bookkeeping, all air; used beyond the default world's

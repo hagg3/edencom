@@ -145,7 +145,18 @@ nothing (direct copy); `render` applies pitch/yaw rotations then translates by
 - `findWorldCoords` mutates GL matrix state (loads identity into MODELVIEW) — call it
   only outside the render passes.
 - Physics is frame-rate-dependent in places despite `etime` (forces tuned at 60 fps;
-  the 1/20 s clamp in `World::update` is the guard).
+  the 1/20 s clamp in `World::update` is the guard). That clamp guards only the *slow*
+  side. **The fast side has no guard, and walking dies there** (measured 2026-09-25, N.4.7):
+  ground friction is per-tick (`vel.x/z *= .90`) while acceleration is `etime`-scaled, so
+  steady walk speed is ≈ `9 · 35 · etime` under the `max_walk_speed` clamp. On flat stone
+  with the stick at full forward that came to 3.6 u/s at 60 ticks/s, 2.6 at 120 and 1.7 at 240.
+  At ~540 ticks/s it was **exactly 0**: positions near the map centre are float32 at ≈ 65536,
+  where one ULP is 1/128 block, and a sub-half-ULP `pos += vel*etime` rounds to no movement
+  (`vel` stays non-zero, so nothing looks stuck). Fly mode (`*= .995`, ×10 speed) clears the
+  ULP, which is why "fly works, walking doesn't" means *tick rate*, not touch delivery or
+  `onground` (that read 120/120 throughout). A host must feed the engine **one tick per
+  displayed frame**. Web gets that free from rAF; native's loop now paces to its fps cap
+  (`eden_main_native.cpp`, interactive loop) instead of running update-without-draw.
 - `Player::test` uses `hud->blocktype` implicitly — it tests the *candidate* block
   shape, not a generic cube.
 
