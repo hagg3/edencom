@@ -7,7 +7,6 @@
 //
 
 #import "Lighting.h"
-#include "F3Timing.h"
 #import "Terrain.h"
 extern Vector8* lightarray;
 extern block8* blockarray;
@@ -60,7 +59,6 @@ static void sweepLightingColumn(int cx,int cz){
             for(int x=chunk->pbounds[0];x<CHUNK_SIZE+chunk->pbounds[0];x++){
                 for(int z=chunk->pbounds[2];z<CHUNK_SIZE+chunk->pbounds[2];z++){
                     if(getLandc(x,z,y)==TYPE_LIGHTBOX){
-                        g_f3.lightboxes++;
                         addlight(x,z,y,1.0f,colorTable[getColorc(x,z,y)]);
                         World::getWorld->terrain->refreshChunksInRadius(x,z,y,LIGHT_RADIUS);
                     }

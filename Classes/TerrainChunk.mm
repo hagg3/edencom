@@ -7,7 +7,6 @@
 //
 
 #import "TerrainChunk.h"
-#include "F3Timing.h"
 
 #import "Liquids.h"
 #import "Terrain.h"
@@ -1579,7 +1578,6 @@ int TerrainChunk::rebuild2(){   //here be dragons//
 // re-spec here is no less safe than the per-frame glBufferData render() already does on elementBuffer.
 static void chunkUploadArray(GLuint* name,int* capBytes,const void* data,int bytes){
     if(bytes<=0)return;
-    g_f3.up_bytes+=bytes;
     if(*name==0){
         glGenBuffers(1,name);
         if(*name==0)return;
@@ -2121,7 +2119,6 @@ int TerrainChunk::render(){
        //     glBufferSubData(GL_ELEMENT_ARRAY_BUFFER,0,sizeof(unsigned short)*n,rtindices);
         //else
             glBufferData(GL_ELEMENT_ARRAY_BUFFER,sizeof(unsigned short)*n,rtindices,GL_STATIC_DRAW);
-        g_f3.up_bytes+=sizeof(unsigned short)*n;
         rtvis_vertices=n;
         
     }

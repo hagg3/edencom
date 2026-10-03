@@ -7,7 +7,6 @@
 //
 
 #import "FileManager.h"
-#include "F3Timing.h"
 #import "hashmap.h"
 #import "Util.h"
 #import "Terrain.h"
@@ -732,7 +731,6 @@ void FileManager::recoverInterruptedSave(NSString* file_name){
 }
 void FileManager::saveWorld(Vector warp){
     //[TestFlight passCheckpoint:[NSString stringWithFormat:@"header_size:%d",(int)sizeof(WorldFileHeader)]];
-    F3Scope _f3save(&g_f3.save_ms); g_f3.save_calls++;
     printf("sizeof(WFH)=%d",(int)sizeof(WorldFileHeader));
 	World::getWorld->terrain->endDynamics(TRUE);
 	//[World::getWorld->terrain updateAllImportantChunks];
@@ -806,7 +804,6 @@ void FileManager::saveWorld(Vector warp){
 	BOOL existed=[fm fileExistsAtPath:file_name];
 	BOOL inPlace=FALSE;
 	unsigned long long existing=existed?fileByteLength(file_name):0;
-	g_f3.save_file_mb=existing/1048576.0; g_f3.save_inplace=(existed&&existing>=g_save_inplace_threshold)?1:0;
 	if(existed&&existing>=g_save_inplace_threshold){
 		if(!beginSaveJournal(file_name,existing,sfh->directory_offset)){
 			// Bail rather than fall through to the copy path: a file this big is exactly the one
@@ -927,7 +924,6 @@ void FileManager::saveWorld(Vector warp){
             TerrainChunk* chunk=ter->chunkTable[threeToOne(x,0,z)];
             
             if(chunk->pbounds[1]==0){
-                g_f3.save_cols++;
                 this->saveColumn(chunk->pbounds[0]/CHUNK_SIZE
                                   ,chunk->pbounds[2]/CHUNK_SIZE);
                 
@@ -1485,8 +1481,7 @@ void FileManager::readColumn(int cx,int cz,NSFileHandle* rcfile){
             
             return;
      }else{
-         { F3Scope _f3(&g_f3.gen_ms); g_f3.cols_gen++;
-         ter->tgen->generateColumn(cx,cz,FALSE); }
+         ter->tgen->generateColumn(cx,cz,FALSE);
       		return;
      }
 	}
@@ -1496,7 +1491,6 @@ void FileManager::readColumn(int cx,int cz,NSFileHandle* rcfile){
 	//cz-=chunkOffsetZ;
 	
 	 NSAutoreleasePool * pool = [[NSAutoreleasePool alloc] init];   
-	double _f3rc0=f3_now(); double _f3rd=0; g_f3.cols_dir++;
 	TerrainChunk* chunk=NULL;
 	//int oldcx,oldcz;
 	/*if(ter.oldChunkMap!=NULL){
@@ -1549,7 +1543,7 @@ void FileManager::readColumn(int cx,int cz,NSFileHandle* rcfile){
         else 
             printg("attempting to load col from file for bgthread\n");
 */
-		{ double _t=f3_now(); [rcfile seekToFileOffset:colIndex->chunk_offset]; _f3rd+=f3_now()-_t; }
+		[rcfile seekToFileOffset:colIndex->chunk_offset];
         TerrainChunk* columns[CHUNKS_PER_COLUMN_MAX];
         // How many bands this record really holds. Normally all of them; a column recorded in
         // shortSpans is physically shorter than SIZEOF_COLUMN (see deriveColumnSpans) and the
@@ -1650,13 +1644,11 @@ void FileManager::readColumn(int cx,int cz,NSFileHandle* rcfile){
                 
                  
              }else if(cy<bandsInFile){
-                 double _t=f3_now();
                  NSData* data=[rcfile readDataOfLength:(CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE*sizeof(block8))];
                  [data getBytes:chunk->pblocks length:(CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE*sizeof(block8))];
 
                  NSData* data2=[rcfile readDataOfLength:(CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE*sizeof(color8))];
                  [data2 getBytes:chunk->pcolors length:(CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE*sizeof(color8))];
-                 _f3rd+=f3_now()-_t; g_f3.rd_bytes+=2*CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE;
              }else{
                  // Band the file does not contain (short record) -- air, not a neighbour's bytes.
                  memset(chunk->pblocks,0,CHUNK_SIZE3*sizeof(block8));
@@ -1691,7 +1683,7 @@ void FileManager::readColumn(int cx,int cz,NSFileHandle* rcfile){
 	}
     
     [pool release];
-    g_f3.rd_ms+=_f3rd; g_f3.pub_ms+=(f3_now()-_f3rc0)-_f3rd;
+    
 	
 }
 std::string fullPathForFilename(const char* fn){

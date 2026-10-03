@@ -18,7 +18,6 @@
 // Repo-root Lighting.h is the built one (Eden.xcodeproj / web CMake); the Classes/ copy next to
 // this file is a stale snapshot with no prototypes, hence these explicit decls.
 void calculateLighting();
-#include "F3Timing.h"
 BOOL calculateLightingSlice();
 void calculateLightingSliceReset();
 
@@ -375,8 +374,7 @@ static BOOL bulk_reload_meshing=FALSE;
 void updateLightingBegin(){
     if(LOW_MEM_DEVICE)return;
     update_lighting=TRUE;
-    { F3Scope _f3(&g_f3.lit_begin_ms); g_f3.lit_begin_calls++;
-    memset(lightarray,0,sizeof(Vector8)*T_SIZE*T_SIZE*T_HEIGHT); }
+    memset(lightarray,0,sizeof(Vector8)*T_SIZE*T_SIZE*T_HEIGHT);
     calculateLightingSliceReset();   // restart the sliced sweep from column 0
 }
 
@@ -453,7 +451,6 @@ void Terrain::warpToPoint(float x,float z,float y){
 	pp.z=(z+.5f);
 	pp.y=(y+1);
 	//World::getWorld->player.pos=pp;
-    f3_begin("E1");
     World::getWorld->fm->saveWorld(pp);
 	unloadTerrain(FALSE);
     
@@ -468,7 +465,6 @@ void Terrain::warpToHome(){
 	pp.z=(home.z+.5f);
 	pp.y=(home.y+1);
 	//World::getWorld->player.pos=pp;
-    f3_begin("E1");
 	World::getWorld->fm->saveWorld(pp);
 	unloadTerrain(FALSE);
     
@@ -2344,7 +2340,6 @@ void Terrain::prepareAndLoadGeometry(){
                 if(hit_load_counter>=2){
                     hit_load_counter=0;
                     World::getWorld->hud->sb->clear();
-                    f3_begin("E2");
                     World::getWorld->fm->saveWorld();
 
                     World::getWorld->fm->chunkOffsetX=m_chunkOffsetX;
@@ -2602,14 +2597,7 @@ void Terrain::prepareAndLoadGeometry(){
                    if(bulk_reload_active&&mp_dispatch(rebuildList[i],rebuildList[i]->idxn))
                        continue;
               
-                   double _f3m0=f3_now();
-                   int _f3r=rebuildList[i]->rebuild2();
-                   { double _d=f3_now()-_f3m0;
-                     if(rebuildList[i]->n_vertices+rebuildList[i]->n_vertices2==0){g_f3.mesh_e_n++;g_f3.mesh_e_ms+=_d;}
-                     else{g_f3.mesh_ne_n++;g_f3.mesh_ne_ms+=_d;}
-                     if(g_f3.mesh_first<0)g_f3.mesh_first=g_f3.frames;
-                     g_f3.mesh_last=g_f3.frames; }
-                   if(_f3r==-1){
+                   if(rebuildList[i]->rebuild2()==-1){
                     //    chunksToUpdate[rebuildList[i].idxn]=TRUE;
                      //   columnsToUpdate[rebuildList[i].idxn/CHUNKS_PER_COLUMN]=TRUE;
                        printg("fail update on chunk: %d    bounds %d %d %d   rebuildCounter: %d\n",i,rebuildList[i]->pbounds[0],rebuildList[i]->pbounds[1],rebuildList[i]->pbounds[2],rebuildList[i]->rebuildCounter);
@@ -2637,13 +2625,8 @@ void Terrain::prepareAndLoadGeometry(){
         // ~80ms (256z) frame per teleport/warp -- the actual 256z bulk-reload spike (the chunk
         // mesh budget was already height-scaled). calculateLightingSlice does a budgeted strip of
         // columns per frame and returns TRUE only once the whole window is swept.
-        double _f3l0=f3_now();
-        BOOL _f3ld=calculateLightingSlice();
-        g_f3.lit_slice_ms+=f3_now()-_f3l0; g_f3.lit_slice_calls++;
-        if(_f3ld){
+        if(calculateLightingSlice())
             update_lighting=FALSE;
-            g_f3.lit_done_frame=(int)g_f3.frames;
-        }
         // hit_load_counter=0;
     }
 
@@ -2652,24 +2635,6 @@ void Terrain::prepareAndLoadGeometry(){
     
     
     
-}
-// F3: end-of-frame bookkeeping. An event is over once the window is resident, nothing is dirty,
-// nothing is waiting on upload, and the lighting sweep has returned TRUE. 1800-frame safety cap.
-static void f3_frameEnd(bool loaded){
-    if(!g_f3.active)return;
-    g_f3.frames++;
-    if(!loaded)return;
-    if(bulk_reload_active||bulk_reload_meshing||update_lighting){
-        if(g_f3.frames>=1800)f3_end(true);
-        return;
-    }
-    const int n=CHUNKS_PER_SIDE*CHUNKS_PER_SIDE*CHUNKS_PER_COLUMN;
-    for(int i=0;i<n;i++)
-        if(chunksToUpdate[i]||chunksToUpdateImmediatley[i]){
-            if(g_f3.frames>=1800)f3_end(true);
-            return;
-        }
-    f3_end(false);
 }
 void Terrain::updateAllImportantChunks(){
 	double start_time=-[start timeIntervalSinceNow];
@@ -2698,8 +2663,7 @@ void Terrain::updateAllImportantChunks(){
                     
                     if(chunk){
                         
-                        { F3Scope _f3(&g_f3.up_ms); g_f3.up_n++;
-                        chunk->prepareVBO(); }
+                        chunk->prepareVBO();
                         count++;
                         
                     }
@@ -2740,7 +2704,6 @@ void Terrain::updateAllImportantChunks(){
   //  NSLog(@"chunk updates: %d  etime: %f  etime/count: %f\n",count,etime,etime/count);
 	
     }
-    f3_frameEnd(loaded);
    
     
 }
