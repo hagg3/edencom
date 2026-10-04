@@ -233,6 +233,7 @@ const char* eden_debug_alloc(void) {
 int g_eden_mem_trace = 0;
 extern "C" const char* eden_debug_gl_buffer_bytes(void);   // gl_fixed_function.cpp
 extern "C" const char* eden_debug_gl_tex_bytes(void);
+static void eden_tex_probe_totals(const char* where);   // --mem-trace=2, below
 
 #if defined(__APPLE__)
 static const char* eden_vm_tag_name(unsigned tag) {
@@ -410,6 +411,127 @@ extern "C" void eden_mem_trace(const char* where) {
 #else
     std::printf("[eden-mem] %s %s\n", where, eden_debug_heap());
 #endif
+    if (g_eden_mem_trace >= 2) eden_tex_probe_totals(where);
+}
+
+// ---- N.4.9 step 2: --mem-trace=2, per texture and per frame ----------------------------------
+//
+// The level-1 trace put 192 MB of IOAccelerator on 44.8 MB of nominal uploads on the iPad Air 2
+// (1.0x on the Mac) and a further +80 MB on the first menu frames with no new uploads. This says
+// which step of an upload the multiplier lives in. The shim calls eden_tex_probe() around every
+// glTexImage2D: phase 0 before it, 1 after it, 2 after glGenerateMipmap (+ the --tex-exp=flush
+// glFlush if on), 3 after a glFinish the probe issues itself. Each phase reads the footprint, the
+// graphics ledger and the IOAccelerator/IOSurface dirty bytes of a region walk, and phase 3 prints
+// one `[eden-tex]` line of deltas. Running totals are printed at every eden_mem_trace() point, and
+// eden_mem_trace_frame() samples the first kFrameSamples presented frames.
+//
+// The glFinish changes what it measures (a driver that defers work until a flush is made to do it
+// per texture), so the totals of a level-2 run are NOT the level-1 run's numbers; compare them to
+// a level-1 run and to the --tex-exp=flush run, which flushes without probing.
+#if defined(__APPLE__)
+struct TexSnap { int64_t fp = 0, gfx = 0, ioa = 0, ios = 0; };
+static TexSnap tex_snap() {
+    TexSnap t;
+    task_vm_info_data_t vi;
+    std::memset(&vi, 0, sizeof(vi));
+    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+    if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &count) != KERN_SUCCESS) return t;
+    t.fp = (int64_t)vi.phys_footprint;
+    t.gfx = vi.ledger_tag_graphics_footprint + vi.ledger_tag_graphics_footprint_compressed;
+    const uint64_t page = (uint64_t)vi.page_size ? (uint64_t)vi.page_size : 4096;
+    vm_address_t addr = 0;
+    natural_t depth = 0;
+    for (;;) {
+        vm_size_t size = 0;
+        vm_region_submap_info_data_64_t info;
+        mach_msg_type_number_t icount = VM_REGION_SUBMAP_INFO_COUNT_64;
+        if (vm_region_recurse_64(mach_task_self(), &addr, &size, &depth,
+                                 (vm_region_recurse_info_t)&info, &icount) != KERN_SUCCESS) break;
+        if (info.is_submap) { ++depth; continue; }
+        const int64_t d = ((int64_t)info.pages_dirtied + (int64_t)info.pages_swapped_out) * (int64_t)page;
+#ifdef VM_MEMORY_IOACCELERATOR
+        if (info.user_tag == VM_MEMORY_IOACCELERATOR) t.ioa += d;
+#endif
+#ifdef VM_MEMORY_IOSURFACE
+        if (info.user_tag == VM_MEMORY_IOSURFACE) t.ios += d;
+#endif
+        addr += size;
+    }
+    return t;
+}
+
+static TexSnap g_tex_at[4];
+static TexSnap g_tex_sum[3];          // per step: image, mip(+flush), finish
+static unsigned g_tex_n = 0;
+static unsigned long long g_tex_nominal = 0;
+
+static void eden_tex_probe(int phase, const char* label, int w, int h, unsigned format,
+                           unsigned type, int mips) {
+    if (phase < 0 || phase > 3) return;
+    g_tex_at[phase] = tex_snap();
+    if (phase != 3) return;
+    const double KB = 1024.0;
+    unsigned long long bpp = 4;
+    if (type == 0x8363 /*5_6_5*/ || type == 0x8033 /*4_4_4_4*/ || type == 0x8034 /*5_5_5_1*/) bpp = 2;
+    else if (format == 0x1906 /*ALPHA*/ || format == 0x1909 /*LUMINANCE*/) bpp = 1;
+    else if (format == 0x190A /*LUMINANCE_ALPHA*/) bpp = 2;
+    unsigned long long nominal = (unsigned long long)w * (unsigned long long)h * bpp;
+    if (mips) nominal = nominal * 4 / 3;
+    g_tex_nominal += nominal;
+    ++g_tex_n;
+    TexSnap d[3];
+    for (int i = 0; i < 3; ++i) {
+        d[i].fp = g_tex_at[i + 1].fp - g_tex_at[i].fp;
+        d[i].gfx = g_tex_at[i + 1].gfx - g_tex_at[i].gfx;
+        d[i].ioa = g_tex_at[i + 1].ioa - g_tex_at[i].ioa;
+        d[i].ios = g_tex_at[i + 1].ios - g_tex_at[i].ios;
+        g_tex_sum[i].fp += d[i].fp; g_tex_sum[i].gfx += d[i].gfx;
+        g_tex_sum[i].ioa += d[i].ioa; g_tex_sum[i].ios += d[i].ios;
+    }
+    const int64_t tot = g_tex_at[3].ioa - g_tex_at[0].ioa;
+    const char* base = label ? std::strrchr(label, '/') : nullptr;
+    base = base ? base + 1 : (label ? label : "?");
+    std::printf("[eden-tex] #%u %-28s %4dx%-4d fmt 0x%04x/0x%04x mip %d nominal %7.1f KB | "
+                "teximage fp %+8.1f gfx %+8.1f ioa %+8.1f | mipgen fp %+8.1f gfx %+8.1f ioa %+8.1f | "
+                "finish fp %+8.1f gfx %+8.1f ioa %+8.1f | ioa/nominal %.2f\n",
+                g_tex_n, base, w, h, format, type, mips, nominal / KB,
+                d[0].fp / KB, d[0].gfx / KB, d[0].ioa / KB, d[1].fp / KB, d[1].gfx / KB, d[1].ioa / KB,
+                d[2].fp / KB, d[2].gfx / KB, d[2].ioa / KB, nominal ? (double)tot / (double)nominal : 0.0);
+    std::fflush(stdout);
+}
+
+static void eden_tex_probe_totals(const char* where) {
+    const double MB = 1048576.0;
+    std::printf("[eden-tex] totals at %-18s %u uploads, nominal %.1f MB | teximage fp %+.1f gfx %+.1f "
+                "ioa %+.1f | mipgen fp %+.1f gfx %+.1f ioa %+.1f | finish fp %+.1f gfx %+.1f ioa %+.1f MB\n",
+                where, g_tex_n, g_tex_nominal / MB, g_tex_sum[0].fp / MB, g_tex_sum[0].gfx / MB,
+                g_tex_sum[0].ioa / MB, g_tex_sum[1].fp / MB, g_tex_sum[1].gfx / MB, g_tex_sum[1].ioa / MB,
+                g_tex_sum[2].fp / MB, g_tex_sum[2].gfx / MB, g_tex_sum[2].ioa / MB);
+    std::fflush(stdout);
+}
+#else
+static void eden_tex_probe_totals(const char*) {}
+#endif
+
+void eden_gl_set_tex_probe(void (*fn)(int, const char*, int, int, unsigned, unsigned, int));
+
+// Called once from argument parsing, after g_eden_mem_trace is final.
+void eden_mem_trace_install(void) {
+#if defined(__APPLE__)
+    if (g_eden_mem_trace >= 2) eden_gl_set_tex_probe(eden_tex_probe);
+#endif
+}
+
+// Called after every present (gl_context_native.cpp). The first kFrameSamples presented frames
+// get a full eden_mem_trace() each: where the level-1 run's +80 MB between `world-constructed` and
+// `menu` appears, frame by frame.
+void eden_mem_trace_frame(void) {
+    static const int kFrameSamples = 12;
+    static int n = 0;
+    if (g_eden_mem_trace < 2 || n >= kFrameSamples) return;
+    char where[32];
+    std::snprintf(where, sizeof(where), "frame %d presented", n++);
+    eden_mem_trace(where);
 }
 
 }  // extern "C"

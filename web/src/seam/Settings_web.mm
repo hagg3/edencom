@@ -123,7 +123,14 @@ static const Setting kSettings[] = {
   // computes (CSS box x min(devicePixelRatio, dpr_cap) x render_scale). Neither touches the
   // engine's 568x320 POINT space; see eden_set_drawable_size() in the GL shim.
   // Defaults reproduce "as sharp as the display allows, no supersampling": cap 2x, scale 100%.
+#if defined(EDEN_PLATFORM_IOS)
+  // iOS offers no 125% (N.4.11b): on an iPad Air 2 it took the footprint 372 -> 601 MB, kept 564 MB
+  // after going back to 100%, and bought nothing (the device is not fill-bound). max 2 makes
+  // eden_settings_set() clamp to 100%; eden_get_render_scale_pct() reads a stored 3 as 100%.
+  { "render_scale",      "Render scale",      "Video",     KIND_ENUM,   -1,             0,   2,   1,   2,  "Internal resolution. Lower is faster and softer; 100% matches the screen.", "50%,75%,100%" },
+#else
   { "render_scale",      "Render scale",      "Video",     KIND_ENUM,   -1,             0,   3,   1,   2,  "Internal resolution. Lower is faster and softer; 100% matches the window.", "50%,75%,100%,125%" },
+#endif
   { "dpr_cap",           "Max pixel ratio",   "Video",     KIND_ENUM,   -1,             0,   2,   1,   2,  "Upper limit on the display's pixel density. Lower it if the frame rate suffers.", "1x,1.5x,2x" },
   // Row #14: an opt-in frame-rate ceiling, mainly for thermal/battery on touch devices (a voxel
   // game at an uncapped rAF is a thermal-throttle machine there — perf-audit §4b). Uncapped is the
@@ -618,6 +625,9 @@ EDEN_EXPORT
 int eden_get_render_scale_pct(void) {
     static const int kPct[] = {50, 75, 100, 125};
     int i = (int)lroundf(eden_render_scale);
+#if defined(EDEN_PLATFORM_IOS)
+    if (i == 3) return 100;   // 125% is not offered on iOS (see the kSettings[] row)
+#endif
     if (i < 0 || i >= (int)(sizeof(kPct) / sizeof(kPct[0]))) return 100;
     return kPct[i];
 }

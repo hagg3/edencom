@@ -296,6 +296,8 @@ bool g_tickInput = false;
 // its file-scope initialiser instead of its declared default.
 bool set_render_scale_pct(int pct);   // --render-scale, defined beside run_scale_probe()
 extern "C" int g_eden_mem_trace;           // HeapProbe_native.cpp, --mem-trace (N.4.9)
+extern "C" void eden_mem_trace_install(void);   // HeapProbe_native.cpp, --mem-trace=2
+extern "C" void eden_gl_set_tex_experiments(int bits);   // gl_fixed_function.cpp, --tex-exp=
 extern "C" void eden_mem_trace(const char* where);
 void settings_pump() {
     if (!eden_settings_loaded()) eden_settings_init();
@@ -675,7 +677,11 @@ int run_scale_probe() {
     if (g_opt.haveAt) eden_console_teleport(g_opt.at[0], g_opt.at[1], g_opt.at[2]);
     tick(g_opt.frames);                       // let the window fill before timing anything
     SDL_GL_SetSwapInterval(0);
+#if defined(EDEN_PLATFORM_IOS)
+    const int kScales[] = {100, 75, 50, 100};   // no 125% on iOS (Settings_web.mm, N.4.11b)
+#else
     const int kScales[] = {100, 75, 50, 125, 100};
+#endif
     const int kTimed = 240;
     for (int pct : kScales) {
         if (!set_render_scale_pct(pct)) return 1;
@@ -2695,6 +2701,25 @@ static int parse_one_arg(const char* a) {
         else if (starts_with(a, "--render-scale="))   g_opt.renderScalePct = atoi(a + 15);
         else if (!std::strcmp(a, "--scale-probe"))    g_opt.mode = "scale-probe";
         else if (!std::strcmp(a, "--mem-trace"))      g_eden_mem_trace = 1;
+        else if (starts_with(a, "--mem-trace="))      g_eden_mem_trace = atoi(a + 12);
+        else if (starts_with(a, "--tex-exp=")) {
+            // N.4.9 texture experiments (gl_fixed_function.cpp): comma list of nomips, storage,
+            // flush. Diagnostics for a device A/B; none of them is a default.
+            int bits = 0;
+            for (const char* p = a + 10; *p; ) {
+                const char* e = std::strchr(p, ',');
+                const size_t n = e ? (size_t)(e - p) : std::strlen(p);
+                if (n == 6 && !std::strncmp(p, "nomips", 6))       bits |= 1;
+                else if (n == 7 && !std::strncmp(p, "storage", 7)) bits |= 2;
+                else if (n == 5 && !std::strncmp(p, "flush", 5))   bits |= 4;
+                else { std::fprintf(stderr, "eden: unknown --tex-exp entry in '%s'\n", a); return 2; }
+                p += n; if (*p == ',') ++p;
+            }
+#if !defined(EDEN_PLATFORM_IOS)
+            if (bits & 2) std::fprintf(stderr, "eden: --tex-exp=storage is ES 3.0 (iOS) only; ignored here\n");
+#endif
+            eden_gl_set_tex_experiments(bits);
+        }
         else if (starts_with(a, "--at=")) {
             if (sscanf(a + 5, "%f,%f,%f", &g_opt.at[0], &g_opt.at[1], &g_opt.at[2]) == 3)
                 g_opt.haveAt = true;
@@ -2798,6 +2823,7 @@ static int eden_main_after_args(int argc, char** argv) {
     // preferred: World::World() -> Graphics::initGraphics() issues real glGenBuffers/glBufferData
     // during construction. A failure here is NOT fatal — the shim's context guard keeps the whole
     // engine running headless, which is exactly what the scripted modes want.
+    eden_mem_trace_install();
     eden_mem_trace("boot");
     eden_gl_context_create(g_opt.winW, g_opt.winH);
 

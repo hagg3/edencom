@@ -101,8 +101,11 @@ SDL_Window* eden_native_gl_window(void) { return g_window; }
 static bool g_present_enabled = true;
 void eden_native_gl_set_present(int on) { g_present_enabled = (on != 0); }
 
+void eden_mem_trace_frame(void);   // HeapProbe_native.cpp: --mem-trace=2's first-frames samples
+
 void eden_native_gl_present(void) {
     if (g_window && g_present_enabled) SDL_GL_SwapWindow(g_window);
+    eden_mem_trace_frame();
 }
 
 int eden_gl_have_context(void) { return g_gl != nullptr ? 1 : 0; }

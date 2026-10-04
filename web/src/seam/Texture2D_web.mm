@@ -83,6 +83,16 @@
 // changes.
 static const int kMaxTextureSize_Eden = 1024;
 
+// Diagnostic-only: the per-texture decode line below (and, since N.4.9, the shim's per-texture
+// memory probe, via eden_gl_debug_tex_label) is far more useful with a filename on it, but
+// initFromImage has no path (its other caller is the recolor pipeline, which has no file at
+// all). initFromPath parks the name it is working on here for the duration of the call. Not
+// thread-safe and does not need to be — CLAUDE.md convention #4, all of this runs on the one
+// thread that owns GL. The two text constructors park "<text>" here the same way.
+static const char* g_decodeLabel = "<CGImage>";
+
+extern "C" void eden_gl_debug_tex_label(const char* label);   // gl_fixed_function.cpp (N.4.9)
+
 // =============================================================================================
 // initData — UNCHANGED FROM THE ENGINE. This constructor pair takes already-decoded raw pixels
 // and is inline in the unmodified Texture2D.h... except initData() itself (the actual GL upload)
@@ -110,6 +120,7 @@ void Texture2D::initData(const void* data, Texture2DPixelFormat pixelFormat, int
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     }
 
+    eden_gl_debug_tex_label(g_decodeLabel);   // N.4.9 probe only; the one port line in this function
     switch (pixelFormat) {
         case kTexture2DPixelFormat_RGBA8888:
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
@@ -234,13 +245,6 @@ int EdenRoundDimension(int v, BOOL sizeToFit) {
 }
 
 }  // namespace
-
-// Diagnostic-only: the per-texture decode line below is far more useful with a filename on it,
-// but initFromImage has no path (its other caller is the recolor pipeline, which has no file at
-// all). initFromPath parks the name it is working on here for the duration of the call. Not
-// thread-safe and does not need to be — CLAUDE.md convention #4, all of this runs on the one
-// thread that owns GL.
-static const char* g_decodeLabel = "<CGImage>";
 
 // Real since audit row 11 (A5) — this used to be an empty stub, and everything downstream of it
 // (paint icon, painted build icons, doors, creature skins) drew nothing as a result.
@@ -471,7 +475,9 @@ void Texture2D::initFromString(NSString* string, CGSize dimensions, UITextAlignm
     unsigned char* data = (unsigned char*)calloc((size_t)width * height * 4, 1);
     eden_rasterize_text_rgba([string UTF8String], width, height, [font pointSize], (int)alignment, data);
 
+    g_decodeLabel = "<text>";
     initData(data, kTexture2DPixelFormat_RGBA8888, width, height, dimensions, FALSE);
+    g_decodeLabel = "<CGImage>";
     free(data);
 }
 Texture2D::Texture2D(NSString* string, CGSize dimensions, UITextAlignment alignment, UIFont* font) {
@@ -521,7 +527,9 @@ Texture2D::Texture2D(NSString* string, CGSize dimensions, UITextAlignment alignm
             memcpy(data + (size_t)y * potW * 4, raster + (size_t)y * W * 4, (size_t)W * 4);
         free(raster);
     }
+    g_decodeLabel = "<text>";
     initData(data, kTexture2DPixelFormat_RGBA8888, potW, potH, CGSizeMake(W, H), FALSE);
+    g_decodeLabel = "<CGImage>";
     free(data);
     _density = density;
 }

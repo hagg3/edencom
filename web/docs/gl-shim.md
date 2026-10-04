@@ -145,6 +145,25 @@ would make every particle `1/scale` times too big on screen. `g_point_px_scale`
 coefficients by `scale²` on upload: `size / sqrt((a + b·d + c·d²)/s²)` is `size · s`, with no shader
 change. It is exactly 1 on web and at 100%, where the uploaded values are bit-identical to before.
 
+## Texture uploads: the mip flag, the counter, the N.4.9 probe and experiments
+ES1's `GL_GENERATE_MIPMAP` is a texture *parameter*; GLES2+ has only `glGenerateMipmap()` after the
+upload, so `eden_gl_glTexParameteri` records it as a one-shot flag and `eden_gl_glTexImage2D` acts on
+it. Stock `Texture2D::initData` sets it on **every** texture (both of its branches), so every texture
+the engine uploads, HUD art and text included, carries a mip chain. `g_tex_upload_bytes` counts
+level 0 × 4/3 for those (`eden_debug_gl_tex_bytes()`).
+
+For N.4.9 (2026-10-04) the upload has two diagnostic hooks, both off by default:
+- **`g_tex_probe`** (native `--mem-trace=2`): called before the upload, after `glTexImage2D`, after
+  `glGenerateMipmap`, and after a `glFinish` it issues itself; `HeapProbe_native.cpp` turns that into
+  one `[eden-tex]` line of deltas per texture. `Texture2D_web.mm` names the asset through
+  `eden_gl_debug_tex_label()` (`<text>` for rasterised labels).
+- **`g_tex_exp`** (native `--tex-exp=`): `nomips` drops the mip flag and rewrites any `*_MIPMAP_*` min
+  filter to `GL_LINEAR` (without that the texture is incomplete and samples black); `storage`
+  allocates with `glTexStorage2D` at the exact level count and fills level 0 with `glTexSubImage2D`
+  (ES 3.0 only, so iOS only; LUMINANCE/ALPHA uploads have no sized ES3 format and take the ordinary
+  path); `flush` issues `glFlush()` after each upload. They exist so one device install can measure
+  each candidate fix as a separate launch.
+
 ## Debugging note
 See [conventions-and-pitfalls.md](conventions-and-pitfalls.md) #6 — Chrome-extension
 GL introspection tools don't see the real draw-time state; add an `fprintf` in the

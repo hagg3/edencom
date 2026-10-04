@@ -1,4 +1,4 @@
-// gl_loader_native.cpp — resolves the 70 desktop-GL entry points gl_loader_native.h declares.
+// gl_loader_native.cpp — resolves the 72 desktop-GL entry points gl_loader_native.h declares.
 // Phase N Stage 3.2 (WORKING/phase-n-stage3plus-plan-2026-09-05.md). Non-Apple targets only;
 // macOS links <OpenGL/gl3.h>'s symbols statically and never compiles this file.
 //

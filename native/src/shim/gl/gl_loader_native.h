@@ -15,7 +15,7 @@
 //
 //     nm -u  $(find native/build/CMakeFiles -name '*.o') | grep -oE '^_gl[A-Za-z0-9]+'
 //     nm -g --defined-only <same> | grep -oE ' _gl[A-Za-z0-9]+$'
-//     comm -23 <undefined> <defined>          # -> exactly the 70 below
+//     comm -23 <undefined> <defined>          # -> exactly the 72 below
 //
 // — so it cannot silently disagree with what the shim actually calls. Re-run that after adding a
 // GL call and add the new name here; the failure mode if you forget is a link error naming the
@@ -81,6 +81,8 @@
                                                 const void *indices))                            \
   X(void,           glEnable,                  (GLenum cap))                                     \
   X(void,           glEnableVertexAttribArray, (GLuint index))                                   \
+  X(void,           glFinish,                  (void))                                           \
+  X(void,           glFlush,                   (void))                                           \
   X(void,           glFramebufferRenderbuffer, (GLenum target, GLenum attachment, GLenum renderbuffertarget, GLuint renderbuffer)) \
   X(void,           glFrontFace,               (GLenum mode))                                    \
   X(void,           glGenBuffers,              (GLsizei n, GLuint *buffers))                     \
@@ -150,7 +152,7 @@ EDEN_GL_ENTRY_POINTS(EDEN_GL_DECLARE)
 
 // Resolves every pointer above through SDL_GL_GetProcAddress. MUST be called with a current GL
 // context — on Windows `wglGetProcAddress` returns NULL without one, so calling this too early
-// yields a loader that "succeeds" with 70 null pointers on some drivers and fails cleanly on
+// yields a loader that "succeeds" with 72 null pointers on some drivers and fails cleanly on
 // others. gl_context_native.cpp calls it immediately after SDL_GL_MakeCurrent and nowhere else.
 //
 // Returns the number of entry points that did NOT resolve, and prints each missing name. Zero is
@@ -214,6 +216,8 @@ enum { EDEN_GL_ENTRY_POINT_COUNT = 0 EDEN_GL_ENTRY_POINTS(EDEN_GL_COUNT_ONE) };
 #define glDrawElements             eden_glfp_glDrawElements
 #define glEnable                   eden_glfp_glEnable
 #define glEnableVertexAttribArray  eden_glfp_glEnableVertexAttribArray
+#define glFinish                   eden_glfp_glFinish
+#define glFlush                    eden_glfp_glFlush
 #define glFramebufferRenderbuffer  eden_glfp_glFramebufferRenderbuffer
 #define glFrontFace                eden_glfp_glFrontFace
 #define glGenBuffers               eden_glfp_glGenBuffers

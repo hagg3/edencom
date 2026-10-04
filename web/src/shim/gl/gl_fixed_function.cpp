@@ -831,20 +831,74 @@ bool g_pending_generate_mipmap = false;
 // so for "what did start-up upload" it is the number. Read by eden_debug_gl_tex_bytes() below.
 unsigned long long g_tex_upload_bytes = 0;
 unsigned g_tex_uploads = 0;
+
+// N.4.9 per-texture probe and texture experiments (diagnostics; all off by default, and the
+// default path below is byte-for-byte the one before them).
+//  - g_tex_probe: set by native --mem-trace=2 (HeapProbe_native.cpp). Called around each upload
+//    with phase 0 = before glTexImage2D, 1 = after it, 2 = after glGenerateMipmap, 3 = after a
+//    glFinish the probe itself issues — so the run that probes is not the run that measures the
+//    total, and that is why the experiments below exist as separate switches.
+//  - g_tex_exp (native --tex-exp=): EDEN_TEX_EXP_NOMIPS never builds a mip chain (any *_MIPMAP_*
+//    min filter becomes GL_LINEAR, else the texture is incomplete and samples black);
+//    EDEN_TEX_EXP_STORAGE allocates with glTexStorage2D (immutable, exact level count) and fills
+//    level 0 with glTexSubImage2D — ES 3.0 only, so iOS only; EDEN_TEX_EXP_FLUSH issues a
+//    glFlush after every upload so the driver can retire whatever it stages them in.
+//  - g_tex_label: the asset name Texture2D_web.mm is uploading, for the probe's line only.
+enum { EDEN_TEX_EXP_NOMIPS = 1, EDEN_TEX_EXP_STORAGE = 2, EDEN_TEX_EXP_FLUSH = 4 };
+void (*g_tex_probe)(int phase, const char* label, int w, int h, unsigned format, unsigned type,
+                    int mips) = nullptr;
+int g_tex_exp = 0;
+const char* g_tex_label = nullptr;
 }
+extern "C" void eden_gl_set_tex_probe(void (*fn)(int, const char*, int, int, unsigned, unsigned, int)) {
+    g_tex_probe = fn;
+}
+extern "C" void eden_gl_set_tex_experiments(int bits) { g_tex_exp = bits; }
+extern "C" int eden_gl_tex_experiments(void) { return g_tex_exp; }
+extern "C" void eden_gl_debug_tex_label(const char* label) { g_tex_label = label; }
+
 void eden_gl_glTexParameteri(GLenum target, GLenum pname, GLint param) {
     if (pname == GL_GENERATE_MIPMAP) {
-        g_pending_generate_mipmap = (param != 0);
+        g_pending_generate_mipmap = (param != 0) && !(g_tex_exp & EDEN_TEX_EXP_NOMIPS);
         return; // no GLES2 equivalent enum to forward — see comment above
     }
+    if ((g_tex_exp & EDEN_TEX_EXP_NOMIPS) && pname == GL_TEXTURE_MIN_FILTER &&
+        param != GL_NEAREST && param != GL_LINEAR) param = GL_LINEAR;
     if (eden_gl_have_context()) { glTexParameteri(target, pname, param); return; }
     eden_gl_warn_once();
 }
+
+#if defined(EDEN_PLATFORM_IOS)
+// EDEN_TEX_EXP_STORAGE: the sized internal format for an unsized ES upload, or 0 when ES 3.0 has
+// none (LUMINANCE / ALPHA / LUMINANCE_ALPHA), in which case the upload takes the ordinary path.
+static GLenum eden_tex_sized_format(GLenum format, GLenum type) {
+    if (format == GL_RGBA && type == GL_UNSIGNED_BYTE) return GL_RGBA8;
+    if (format == GL_RGBA && type == GL_UNSIGNED_SHORT_4_4_4_4) return GL_RGBA4;
+    if (format == GL_RGBA && type == GL_UNSIGNED_SHORT_5_5_5_1) return GL_RGB5_A1;
+    if (format == GL_RGB && type == GL_UNSIGNED_SHORT_5_6_5) return GL_RGB565;
+    if (format == GL_RGB && type == GL_UNSIGNED_BYTE) return GL_RGB8;
+    return 0;
+}
+#endif
 void eden_gl_glTexImage2D(GLenum target, GLint level, GLint internalformat, GLsizei width,
                           GLsizei height, GLint border, GLenum format, GLenum type,
                           const void* pixels) {
     if (eden_gl_have_context()) {
+        const int mips = (g_pending_generate_mipmap && level == 0) ? 1 : 0;
+        if (g_tex_probe) g_tex_probe(0, g_tex_label, width, height, format, type, mips);
+#if defined(EDEN_PLATFORM_IOS)
+        GLenum sized = 0;
+        if ((g_tex_exp & EDEN_TEX_EXP_STORAGE) && level == 0 && border == 0)
+            sized = eden_tex_sized_format(format, type);
+        if (sized) {
+            GLsizei levels = 1;
+            if (mips) for (GLsizei m = width > height ? width : height; m > 1; m >>= 1) ++levels;
+            glTexStorage2D(target, levels, sized, width, height);
+            if (pixels) glTexSubImage2D(target, 0, 0, 0, width, height, format, type, pixels);
+        } else
+#endif
         glTexImage2D(target, level, internalformat, width, height, border, format, type, pixels);
+        if (g_tex_probe) g_tex_probe(1, g_tex_label, width, height, format, type, mips);
         {
             unsigned long long bpp = 4;
             if (type == GL_UNSIGNED_SHORT_5_6_5 || type == GL_UNSIGNED_SHORT_4_4_4_4 ||
@@ -858,6 +912,12 @@ void eden_gl_glTexImage2D(GLenum target, GLint level, GLint internalformat, GLsi
         }
         if (g_pending_generate_mipmap && level == 0) glGenerateMipmap(target);
         g_pending_generate_mipmap = false;
+        if (g_tex_exp & EDEN_TEX_EXP_FLUSH) glFlush();
+        if (g_tex_probe) {
+            g_tex_probe(2, g_tex_label, width, height, format, type, mips);
+            glFinish();
+            g_tex_probe(3, g_tex_label, width, height, format, type, mips);
+        }
         return;
     }
     eden_gl_warn_once();
