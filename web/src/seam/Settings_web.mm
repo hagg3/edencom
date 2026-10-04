@@ -694,14 +694,17 @@ EDEN_EXPORT const char* eden_settings_enum_label(int i, int j) {
 }
 
 // Rows whose effect is not wired on native yet — the GL screen skips these rather than show a
-// control that does nothing (render scale / DPR / UI scale / layout are the web drawable and
-// point-space knobs; input_mode is DOM detection; legacy_menu is the DOM-vs-GL switch that is
-// forced on here anyway).
+// control that does nothing (DPR / UI scale / layout are the web drawable and point-space knobs;
+// input_mode is DOM detection; legacy_menu is the DOM-vs-GL switch that is forced on here anyway).
+// render_scale is shown since N.4.11: native renders the 3D pass at it (gl_context_native.cpp's
+// eden_scene_pass_begin). dpr_cap stays hidden on purpose: it would be a second knob for the same
+// thing, and the touch profile seeds it at 1.5x, which would silently drop a 2x iPad to 75%
+// before anyone has measured what that buys (N.4.11 asks for the device fps number first).
 EDEN_EXPORT int eden_settings_native_hidden(int i) {
     const Setting* s = eden_row(i);
     if (!s) return 1;
     static const char* const kHidden[] = {
-        "render_scale", "dpr_cap", "display_mode", "ui_scale",
+        "dpr_cap", "display_mode", "ui_scale",
         "display_layout", "input_mode", "legacy_menu",
     };
     for (const char* h : kHidden) if (std::strcmp(s->key, h) == 0) return 1;

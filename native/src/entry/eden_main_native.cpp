@@ -244,6 +244,7 @@ struct Options {
     std::string bundle;
     std::string shot;                    // --shot=PREFIX: file prefix for --shot's captures
     std::string liveCmds;                // --live-cmds=FILE: see src/seam/LiveCommands_native.mm
+    int  renderScalePct = 0;             // --render-scale=50|75|100|125: 0 leaves the setting alone
 };
 
 Options g_opt;
@@ -292,8 +293,19 @@ bool g_tickInput = false;
 // the World is built by the app delegate but the menu's SettingsMenu is not reachable on the
 // first frame, and a single early call is a silent no-op that leaves every port-owned setting at
 // its file-scope initialiser instead of its declared default.
+bool set_render_scale_pct(int pct);   // --render-scale, defined beside run_scale_probe()
+extern "C" int g_eden_mem_trace;           // HeapProbe_native.cpp, --mem-trace (N.4.9)
+extern "C" void eden_mem_trace(const char* where);
 void settings_pump() {
     if (!eden_settings_loaded()) eden_settings_init();
+    // --render-scale=N is applied the first frame the model has loaded (before then a write would
+    // be overwritten by the stored value). It is an ordinary settings write, so it persists the
+    // way a player's choice in the Settings screen would.
+    static bool scaleApplied = false;
+    if (!scaleApplied && g_opt.renderScalePct > 0 && eden_settings_loaded()) {
+        scaleApplied = true;
+        set_render_scale_pct(g_opt.renderScalePct);
+    }
 }
 
 void tick(int n) {
@@ -335,6 +347,7 @@ int game_mode() {
 
 void report(const char* phase) {
     std::printf("[eden-stage1] %s.mem %s\n", phase, eden_debug_heap());
+    eden_mem_trace(phase);
     std::printf("[eden-stage1] %s.geometry %s\n", phase, eden_debug_terrain_geometry());
     std::printf("[eden-stage1] %s.checksum %s\n", phase, eden_debug_mesh_checksum());
     std::printf("[eden-stage1] %s.chunkstate %s\n", phase, eden_debug_chunk_state());
@@ -414,6 +427,7 @@ int run_stage1() {
     // process that has not finished starting.
     tick(g_opt.frames / 4);
     std::printf("[eden-stage1] menu.mem %s\n", eden_debug_heap());
+    eden_mem_trace("menu");
     std::fflush(stdout);
 
     // Phase 2 — a world.
@@ -429,6 +443,7 @@ int run_stage1() {
     if (!quit_to_menu()) return 1;
     tick(g_opt.frames / 4);
     std::printf("[eden-stage1] menu2.mem %s\n", eden_debug_heap());
+    eden_mem_trace("menu2");
     std::fflush(stdout);
     return 0;
 }
@@ -619,6 +634,71 @@ int run_shot() {
     ::showAlertWarpHome();
     tick(20);
     capture("dialog");
+    return 0;
+}
+
+// ---------------------------------------------------------------------------------------------
+// --render-scale / --scale-probe  (ROADMAP N.4.11, the native render-resolution setting)
+// ---------------------------------------------------------------------------------------------
+// The setting is an ENUM row in Settings_web.mm (index into 50/75/100/125%), so a percentage is
+// mapped to its option index here rather than written raw. Returns false for a percentage the row
+// does not offer, which the caller reports instead of silently rendering at 100%.
+extern "C" int eden_settings_count(void);
+extern "C" const char* eden_settings_key(int i);
+extern "C" void eden_settings_set(int i, float v);
+extern "C" int eden_get_render_scale_pct(void);
+bool set_render_scale_pct(int pct) {
+    static const int kPct[] = {50, 75, 100, 125};
+    int opt = -1;
+    for (int j = 0; j < 4; ++j) if (kPct[j] == pct) opt = j;
+    if (opt < 0) { std::fprintf(stderr, "[eden-scale] %d%% is not an option (50/75/100/125)\n", pct); return false; }
+    for (int i = 0; i < eden_settings_count(); ++i) {
+        if (std::strcmp(eden_settings_key(i), "render_scale") == 0) {
+            eden_settings_set(i, (float)opt);
+            return eden_get_render_scale_pct() == pct;
+        }
+    }
+    return false;
+}
+
+// Opens a world, then for each scale: settles, takes a --shot-style capture, and times frames.
+// THE TIMING IS CPU+GPU PER FRAME, NOT PRESENT-PACED: swap interval is set to 0 for the probe and
+// every frame ends in a 1-pixel glReadPixels, which cannot return until the GPU has finished the
+// frame. That is what makes the scales comparable on a device whose present would otherwise
+// quantise everything to 16.7 ms steps. The number to read is the median ("p50"); "fps" is
+// 1000/p50, i.e. what the frame would allow, not what vsync would show. The capture is the
+// on-screen check that the HUD stays sharp while the world softens.
+int run_scale_probe() {
+    const char* name = g_opt.world.empty() ? "scale-probe" : g_opt.world.c_str();
+    if (!open_world(name, g_opt.height)) return 1;
+    if (g_opt.haveAt) eden_console_teleport(g_opt.at[0], g_opt.at[1], g_opt.at[2]);
+    tick(g_opt.frames);                       // let the window fill before timing anything
+    SDL_GL_SetSwapInterval(0);
+    const int kScales[] = {100, 75, 50, 125, 100};
+    const int kTimed = 240;
+    for (int pct : kScales) {
+        if (!set_render_scale_pct(pct)) return 1;
+        tick(30);
+        char label[32];
+        std::snprintf(label, sizeof(label), "scale%d", pct);
+        capture(label);
+        std::vector<double> ms;
+        ms.reserve(kTimed);
+        unsigned char px[4];
+        for (int i = 0; i < kTimed; ++i) {
+            const Uint64 t0 = SDL_GetTicksNS();
+            tick(1);
+            eden_gl_glReadPixels(0, 0, 1, 1, 0x1908, 0x1401, px);   // GL_RGBA, GL_UNSIGNED_BYTE
+            ms.push_back((double)(SDL_GetTicksNS() - t0) / 1e6);
+        }
+        std::sort(ms.begin(), ms.end());
+        const double p50 = ms[ms.size() / 2], p90 = ms[ms.size() * 9 / 10];
+        int dw = 0, dh = 0;
+        eden_gl_context_get_drawable_size(&dw, &dh);
+        std::printf("[eden-scale] %3d%%  scene %4dx%-4d  p50 %6.2f ms  p90 %6.2f ms  (%5.1f fps)  mem %s\n",
+                    pct, dw * pct / 100, dh * pct / 100, p50, p90, 1000.0 / p50, eden_debug_heap());
+    }
+    SDL_GL_SetSwapInterval(1);
     return 0;
 }
 
@@ -2611,6 +2691,9 @@ static int parse_one_arg(const char* a) {
         else if (starts_with(a, "--docs="))           g_opt.docs = a + 7;
         else if (starts_with(a, "--bundle="))         g_opt.bundle = a + 9;
         else if (starts_with(a, "--live-cmds="))      g_opt.liveCmds = a + 12;
+        else if (starts_with(a, "--render-scale="))   g_opt.renderScalePct = atoi(a + 15);
+        else if (!std::strcmp(a, "--scale-probe"))    g_opt.mode = "scale-probe";
+        else if (!std::strcmp(a, "--mem-trace"))      g_eden_mem_trace = 1;
         else if (starts_with(a, "--at=")) {
             if (sscanf(a + 5, "%f,%f,%f", &g_opt.at[0], &g_opt.at[1], &g_opt.at[2]) == 3)
                 g_opt.haveAt = true;
@@ -2714,10 +2797,12 @@ static int eden_main_after_args(int argc, char** argv) {
     // preferred: World::World() -> Graphics::initGraphics() issues real glGenBuffers/glBufferData
     // during construction. A failure here is NOT fatal — the shim's context guard keeps the whole
     // engine running headless, which is exactly what the scripted modes want.
+    eden_mem_trace("boot");
     eden_gl_context_create(g_opt.winW, g_opt.winH);
 
     eden_native::eden_seam_main();
     g_app = eden_native::eden_seam_get_app_delegate();
+    eden_mem_trace("world-constructed");
     eden_native_input_init(eden_native_gl_window());
 
     // Must be BEFORE any world is meshed: prepareVBO() fingerprints a chunk only if this is on at
@@ -2793,6 +2878,7 @@ static int eden_main_after_args(int argc, char** argv) {
         else if (!std::strcmp(g_opt.mode, "save-roundtrip")) rc = run_save_roundtrip();
         else if (!std::strcmp(g_opt.mode, "background-selftest")) rc = run_background_selftest();
         else if (!std::strcmp(g_opt.mode, "shot"))          rc = run_shot();
+        else if (!std::strcmp(g_opt.mode, "scale-probe"))   rc = run_scale_probe();
         else if (!std::strcmp(g_opt.mode, "leak-probe"))    rc = run_leak_probe();
     } else {
         // Interactive. The frame-rate cap is the same setting the web build's frame gate reads

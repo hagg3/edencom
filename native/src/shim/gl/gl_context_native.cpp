@@ -86,6 +86,8 @@ using namespace eden_gl_shim;
 
 extern "C" {
 
+void eden_mem_trace(const char* where);   // HeapProbe_native.cpp (N.4.9), no-op without --mem-trace
+
 void eden_native_gl_set_headless(int on) { g_headless = (on != 0); }
 
 SDL_Window* eden_native_gl_window(void) { return g_window; }
@@ -186,12 +188,14 @@ int eden_gl_context_create(int drawable_width, int drawable_height) {
 #else
                                    SDL_WINDOW_RESIZABLE;
 #endif
+    eden_mem_trace("gl:video-up");
     g_window = SDL_CreateWindow(EDEN_APP_WINDOW_TITLE, w, h, kFlags);
     if (!g_window) {
         std::fprintf(stderr, "[eden-gl] SDL_CreateWindow failed: %s\n", SDL_GetError());
         return 0;
     }
 
+    eden_mem_trace("gl:window");
     g_gl = SDL_GL_CreateContext(g_window);
     if (!g_gl) {
         std::fprintf(stderr, "[eden-gl] SDL_GL_CreateContext failed: %s\n", SDL_GetError());
@@ -244,6 +248,7 @@ int eden_gl_context_create(int drawable_width, int drawable_height) {
     // answer rather than an error.
     eden_apply_viewport();
 
+    eden_mem_trace("gl:context");
     std::fprintf(stderr, "[eden-gl] %s context live (%dx%d px) — %s / GLSL %s\n",
                  EDEN_GL_CONTEXT_KIND,
                  g_drawable_w, g_drawable_h,
@@ -252,8 +257,11 @@ int eden_gl_context_create(int drawable_width, int drawable_height) {
     return 1;
 }
 
+static void eden_scene_fbo_release(void);   // N.4.11, below
+
 void eden_gl_context_destroy(void) {
     if (!g_gl) return;
+    eden_scene_fbo_release();   // while the context that owns it is still current
     if (g_global_vao) { glDeleteVertexArrays(1, &g_global_vao); g_global_vao = 0; }
     SDL_GL_DestroyContext(g_gl);
     g_gl = nullptr;
@@ -311,6 +319,121 @@ void eden_set_drawable_size(int width, int height) {
 void eden_gl_context_bind_default_framebuffer(void) {
     if (!eden_gl_have_context()) return;
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    eden_apply_viewport();
+}
+
+// ---- N.4.11: the scene pass at its own resolution -------------------------------------------
+//
+// THE DESIGN POINT. The drawable is the display's full pixel density (2048x1536 on an iPad Air 2,
+// which stock Eden never rendered at), and the A8X pays for every one of those pixels in fill
+// rate. Shrinking the DRAWABLE would be the one-line way to trade sharpness for frame rate, and is
+// exactly what web does, but on native it would drag the UI down with it: eden_ui_raster_density()
+// follows the drawable, so a 50% drawable is N.4.8's 1.8x-magnified text all over again. So only
+// the 3D pass moves. eden_scene_pass_begin() points it at an offscreen colour+depth framebuffer
+// of (letterbox box x scale); eden_scene_pass_end() upscales that into the box with one linear
+// blit and puts the window's framebuffer back, and the HUD/menus/dialogs then draw at full
+// density on top. At 100% neither call touches GL: no framebuffer is created, no blit happens,
+// and the frame is the one this port has always drawn.
+//
+// THE WINDOW'S FRAMEBUFFER IS NOT ALWAYS 0. On iOS, SDL's UIKit view draws into a framebuffer
+// object of its own and the system presents its renderbuffer; binding 0 there would send the HUD
+// nowhere. So _begin reads GL_FRAMEBUFFER_BINDING and _end restores exactly that.
+//
+// WHAT ELSE A SCALED PASS CHANGES, and what was checked:
+//   * picking: Util.mm's findWorldCoords unprojects against kPickViewport, the engine's POINT
+//     space, never the real viewport, so a smaller framebuffer cannot misaim a tap;
+//   * point sprites (smoke, fire, debris) are sized in framebuffer pixels, so the draw path scales
+//     them by g_point_px_scale (gl_fixed_function.cpp) to keep their size on screen;
+//   * the camera-mode screenshot (Util.mm glReadPixels) and --shot both read the window's
+//     framebuffer after the blit, so they see the composited frame;
+//   * the HUD runs with depth testing off (Graphics::beginHud), so the window framebuffer's depth
+//     no longer receiving the scene's depth changes nothing it draws.
+// Lines (glLineWidth) are not compensated: core profile and ES 3 draw them 1 px wide anyway.
+static GLuint g_scene_fbo = 0, g_scene_color = 0, g_scene_depth = 0;
+static int    g_scene_fbo_w = 0, g_scene_fbo_h = 0;
+static GLint  g_scene_prev_fbo = 0;
+static bool   g_scene_active = false;
+static bool   g_scene_failed = false;   // an incomplete FBO once: stop trying, draw at 100%
+
+extern "C" int eden_get_render_scale_pct(void);   // Settings_web.mm (both targets compile it)
+
+static void eden_scene_fbo_release(void) {
+    if (g_scene_fbo)   { glDeleteFramebuffers(1, &g_scene_fbo);    g_scene_fbo = 0; }
+    if (g_scene_color) { glDeleteRenderbuffers(1, &g_scene_color); g_scene_color = 0; }
+    if (g_scene_depth) { glDeleteRenderbuffers(1, &g_scene_depth); g_scene_depth = 0; }
+    g_scene_fbo_w = g_scene_fbo_h = 0;
+}
+
+// The size the scene renders at for a given box and percentage, clamped to what the GPU will
+// allocate (125% of a 5K window is past most GL_MAX_RENDERBUFFER_SIZEs) and to at least 1 px.
+static void eden_scene_size(int pct, int* w, int* h) {
+    GLint maxrb = 4096;
+    glGetIntegerv(GL_MAX_RENDERBUFFER_SIZE, &maxrb);
+    int sw = (int)((long)g_drawable_w * pct / 100);
+    int sh = (int)((long)g_drawable_h * pct / 100);
+    if (sw > maxrb || sh > maxrb) {
+        const float k = (float)maxrb / (float)(sw > sh ? sw : sh);
+        sw = (int)(sw * k); sh = (int)(sh * k);
+    }
+    *w = sw < 1 ? 1 : sw;
+    *h = sh < 1 ? 1 : sh;
+}
+
+void eden_scene_pass_begin(void) {
+    g_scene_active = false;
+    if (!eden_gl_have_context() || g_scene_failed) return;
+    const int pct = eden_get_render_scale_pct();
+    if (pct == 100 || g_drawable_w <= 0 || g_drawable_h <= 0) {
+        // Back at 100%: give the memory back rather than keep an idle second framebuffer.
+        if (g_scene_fbo) eden_scene_fbo_release();
+        return;
+    }
+    int w, h;
+    eden_scene_size(pct, &w, &h);
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &g_scene_prev_fbo);
+    if (!g_scene_fbo || w != g_scene_fbo_w || h != g_scene_fbo_h) {
+        eden_scene_fbo_release();
+        glGenFramebuffers(1, &g_scene_fbo);
+        glGenRenderbuffers(1, &g_scene_color);
+        glGenRenderbuffers(1, &g_scene_depth);
+        glBindFramebuffer(GL_FRAMEBUFFER, g_scene_fbo);
+        glBindRenderbuffer(GL_RENDERBUFFER, g_scene_color);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, w, h);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, g_scene_color);
+        glBindRenderbuffer(GL_RENDERBUFFER, g_scene_depth);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, g_scene_depth);
+        glBindRenderbuffer(GL_RENDERBUFFER, 0);
+        const GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        if (status != GL_FRAMEBUFFER_COMPLETE) {
+            std::fprintf(stderr, "[eden-gl] scene framebuffer %dx%d incomplete (0x%x); rendering "
+                                 "the scene at 100%% from now on.\n", w, h, (unsigned)status);
+            eden_scene_fbo_release();
+            glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)g_scene_prev_fbo);
+            g_scene_failed = true;
+            return;
+        }
+        g_scene_fbo_w = w; g_scene_fbo_h = h;
+        std::fprintf(stderr, "[eden-gl] scene pass at %d%%: %dx%d px, upscaled into %dx%d.\n",
+                     pct, w, h, g_drawable_w, g_drawable_h);
+    } else {
+        glBindFramebuffer(GL_FRAMEBUFFER, g_scene_fbo);
+    }
+    glViewport(0, 0, w, h);
+    g_point_px_scale = (float)w / (float)g_drawable_w;
+    g_scene_active = true;
+}
+
+void eden_scene_pass_end(void) {
+    if (!g_scene_active) return;
+    g_scene_active = false;
+    g_point_px_scale = 1.0f;
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, g_scene_fbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)g_scene_prev_fbo);
+    glBlitFramebuffer(0, 0, g_scene_fbo_w, g_scene_fbo_h,
+                      g_vp_x, g_vp_y, g_vp_x + g_drawable_w, g_vp_y + g_drawable_h,
+                      GL_COLOR_BUFFER_BIT, GL_LINEAR);
+    glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)g_scene_prev_fbo);
     eden_apply_viewport();
 }
 

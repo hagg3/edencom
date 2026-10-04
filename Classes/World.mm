@@ -31,6 +31,11 @@ extern "C" int eden_load_failed(void);
 // uses, so the JS recovery dialog can point the player at Settings -> Storage -> "Convert to 64z".
 extern "C" int eden_low_memory(void);
 extern "C" void eden_report_load_failure(const char* world_file_name, const char* reason);
+// Port hook (GL shim, gl_es1_shim.h) — ROADMAP N.4.11. Brackets the play-mode 3D pass so native
+// can render it at the `render_scale` setting and upscale it under a full-density HUD. No-ops on
+// web (the page scales the whole canvas) and at 100%.
+extern "C" void eden_scene_pass_begin(void);
+extern "C" void eden_scene_pass_end(void);
 
 //@synthesize cam, terrain, player, hud,fm/*,FLIPPED*/,effects,realtime,bestGraphics,doneLoading;
 //@synthesize game_mode,menu;
@@ -613,6 +618,7 @@ void World::renderFrame(BOOL draw){
        // [[World getWorld] loadWorld:menu.selected_world->file_name];	
 		menu->render();
 	}else if(game_mode==GAME_MODE_PLAY){
+        eden_scene_pass_begin(); //render-scale: the 3D pass may draw offscreen at its own resolution
         Graphics::prepareScene();
 		
         
@@ -639,6 +645,7 @@ void World::renderFrame(BOOL draw){
         player->render();
 				
          glPopMatrix();
+        eden_scene_pass_end(); //upscale the 3D pass; the hud draws at full resolution
 		hud->render(); //render hud last
 
 	}

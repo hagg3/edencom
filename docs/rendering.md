@@ -258,6 +258,21 @@ The sky is not a skybox mesh — it's screen-space ortho quads (`Texture2D::draw
 drawn *between* pass 1 and pass 2 at near-far depth, with a colored/B&W crossfade
 state machine for sky-color regions (`Terrain.mm:3073-3170`).
 
+### Scene-pass bracket (modified from stock, 2026-10-04, ROADMAP N.4.11)
+
+`World::renderFrame`'s play-mode branch now calls `eden_scene_pass_begin()` before
+`Graphics::prepareScene()` and `eden_scene_pass_end()` just before `hud->render()`. Everything
+between them (sky, terrain passes 1 and 2, creatures, effects, fireworks, the player's selection
+outline) is the **3D pass**; the HUD, menus and `GLDialog` come after it. Both are port hooks in the
+GL shim (`gl_es1_shim.h`): on web they are no-ops (the page scales the whole canvas by
+`render_scale`), and on native at 100% they are no-ops too. At any other `render_scale` the native
+shim (`native/src/shim/gl/gl_context_native.cpp`) points the 3D pass at an offscreen colour+depth
+framebuffer of drawable × scale and blits it, linearly filtered, into the letterbox box at `_end`,
+so the 2D UI still draws at full density. Point-sprite sizes are compensated for the scale; picking
+is unaffected (it unprojects against the fixed point-space viewport). Anything new that belongs to
+the world must draw *before* `_end`, and anything that is UI must draw *after* it, or it renders at
+the wrong resolution.
+
 ## Camera (`Camera.mm`)
 First-person: position = player pos (eye offset), yaw/pitch from touch-look. `render()`
 builds the modelview (rotate, then translate by `-(pos - chunkOffset*16)`); `render2()`

@@ -173,8 +173,10 @@ them — the ordering in `World::update` is the arbitration.
   accessors) — toggles, `[-] value [+]` range steppers and `[<] label [>]` enum cyclers, labels
   rasterised with `stb_truetype`. **On web this code does not run**: `Settings_web.mm` `--wrap`s
   `SettingsMenu::update/render` to no-ops (the DOM panel owns settings there). Rows whose effect
-  is web-only (`render_scale`, `dpr_cap`, `ui_scale`, `display_mode`, `display_layout`,
-  `input_mode`, `legacy_menu`) are hidden via `eden_settings_native_hidden()`.
+  is web-only (`dpr_cap`, `ui_scale`, `display_mode`, `display_layout`, `input_mode`,
+  `legacy_menu`) are hidden via `eden_settings_native_hidden()`. `render_scale` was on that list
+  until N.4.11 (2026-10-04); native now renders the 3D pass at it (see rendering.md, "Scene-pass
+  bracket"), so the Video page shows it.
   **Stage 5.3 added a "Keys" button** to its bottom row (beside Save/prev/next), which shows
   `KeybindsMenu` and hands it the whole frame until it closes.
 - **`ShareMenu`** — upload flow for the selected world.

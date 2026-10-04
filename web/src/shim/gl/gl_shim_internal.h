@@ -15,6 +15,11 @@ namespace eden_gl_shim {
 // engine-point-space rect GL_VIEWPORT actually answers with).
 extern GLint g_viewport[4];
 extern GLint kPickViewport[4];
+// Pixels-per-drawable-pixel of the framebuffer currently being drawn into: 1 everywhere except
+// inside a scaled native scene pass (gl_context_native.cpp, N.4.11), where it is render_scale.
+// ES1 point sizes are in framebuffer pixels, so the draw path multiplies them by this to keep
+// particles the same size on screen at every render scale. Never changes on web.
+extern float g_point_px_scale;
 }  // namespace eden_gl_shim
 
 // Defined in gl_fixed_function.cpp (GROUP 2d, the draw path); gl_context_web.cpp calls it on

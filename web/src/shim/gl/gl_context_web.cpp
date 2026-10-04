@@ -262,5 +262,11 @@ void eden_gl_context_bind_default_framebuffer(void) {
     g_viewport[2] = g_drawable_w; g_viewport[3] = g_drawable_h;
 }
 
+// N.4.11: the page already applies render_scale to the whole canvas (CSS box x min(dpr, dpr_cap)
+// x render_scale), so the scene pass has nothing to redirect here. gl_context_native.cpp is the
+// twin that does the work. See gl_es1_shim.h.
+void eden_scene_pass_begin(void) {}
+void eden_scene_pass_end(void) {}
+
 
 } // extern "C"

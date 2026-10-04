@@ -281,6 +281,10 @@ GLint g_viewport[4] = {0, 0, 0, 0};  // shared with gl_context_web.cpp, see gl_s
 // the POINT space, never the real drawable.
 GLint kPickViewport[4] = {0, 0, 1136, 640};  // shared, see gl_shim_internal.h
 
+// Point-size multiplier for a scaled native scene pass (N.4.11); 1 everywhere else, always 1 on
+// web. Shared, see gl_shim_internal.h; applied in the draw path's point-attenuation upload.
+float g_point_px_scale = 1.0f;
+
 
 } // namespace eden_gl_shim
 
@@ -822,6 +826,11 @@ void eden_gl_glDeleteBuffers(GLsizei n, const GLuint* buffers) {
 // Texture2D.mm's initData is the only glTexImage2D caller in the whole engine).
 namespace {
 bool g_pending_generate_mipmap = false;
+// N.4.9: cumulative texture upload bytes (level-0 size, x4/3 when a mip chain is generated). Not a
+// live figure, since deletes are not matched to sizes; the engine almost never deletes a texture,
+// so for "what did start-up upload" it is the number. Read by eden_debug_gl_tex_bytes() below.
+unsigned long long g_tex_upload_bytes = 0;
+unsigned g_tex_uploads = 0;
 }
 void eden_gl_glTexParameteri(GLenum target, GLenum pname, GLint param) {
     if (pname == GL_GENERATE_MIPMAP) {
@@ -836,6 +845,17 @@ void eden_gl_glTexImage2D(GLenum target, GLint level, GLint internalformat, GLsi
                           const void* pixels) {
     if (eden_gl_have_context()) {
         glTexImage2D(target, level, internalformat, width, height, border, format, type, pixels);
+        {
+            unsigned long long bpp = 4;
+            if (type == GL_UNSIGNED_SHORT_5_6_5 || type == GL_UNSIGNED_SHORT_4_4_4_4 ||
+                type == GL_UNSIGNED_SHORT_5_5_5_1) bpp = 2;
+            else if (format == GL_ALPHA || format == GL_LUMINANCE) bpp = 1;
+            else if (format == GL_LUMINANCE_ALPHA) bpp = 2;
+            unsigned long long b = (unsigned long long)width * (unsigned long long)height * bpp;
+            if (g_pending_generate_mipmap && level == 0) b = b * 4 / 3;
+            g_tex_upload_bytes += b;
+            g_tex_uploads++;
+        }
         if (g_pending_generate_mipmap && level == 0) glGenerateMipmap(target);
         g_pending_generate_mipmap = false;
         return;
@@ -1734,7 +1754,16 @@ static void eden_gl_apply_uniforms(GLenum mode) {
                g_arrays[ATTR_POINTSIZE].enabled ? 1.0f : 0.0f);
     EDEN_SET1F(g_uniCache.pointSize, g_uni.pointSize,
                g_pointSizeMax > 0.0f ? g_pointSizeMax : 1.0f);
-    EDEN_SETFV(g_uniCache.pointAtten, g_uni.pointAtten, g_pointDistanceAttenuation, 3);
+    // Point size in a scaled scene pass (N.4.11): gl_PointSize = size / sqrt(a + b*d + c*d^2), so
+    // dividing all three coefficients by s^2 multiplies the size by s with no shader change. At
+    // s == 1 the factor is exactly 1.0f and the uploaded values are bit-identical to before.
+    {
+        const float k = 1.0f / (g_point_px_scale * g_point_px_scale);
+        const GLfloat atten[3] = { g_pointDistanceAttenuation[0] * k,
+                                   g_pointDistanceAttenuation[1] * k,
+                                   g_pointDistanceAttenuation[2] * k };
+        EDEN_SETFV(g_uniCache.pointAtten, g_uni.pointAtten, atten, 3);
+    }
 
     // Sampler unit: constant for the program's life (see the skin path's identical note).
     if (force) { glUniform1i(g_uni.tex, 0); stat_issued(); } else stat_elided();
@@ -1902,6 +1931,14 @@ const char* eden_debug_gl_buffer_bytes(void) {
         g_glbuf_count, (unsigned long long)g_glbuf_bytes,
         g_glbuf_peakCount, (unsigned long long)g_glbuf_peakBytes,
         g_glbuf_creates, g_glbuf_deletes);
+    return buf;
+}
+
+// N.4.9: what the texture uploads add up to (see g_tex_upload_bytes).
+extern "C" EDEN_GL_EXPORT
+const char* eden_debug_gl_tex_bytes(void) {
+    static char buf[96];
+    std::snprintf(buf, sizeof(buf), "{\"uploads\":%u,\"bytes\":%llu}", g_tex_uploads, g_tex_upload_bytes);
     return buf;
 }
 

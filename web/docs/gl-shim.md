@@ -137,6 +137,14 @@ like plain colored squares instead of a smoke/ember sprite." Fix: the gate now a
 gl_PointCoord, u_pointSprite)` UV selection. Both `glDrawArrays`/`glDrawElements` pass their real
 `mode` into `eden_gl_apply_uniforms(mode)` already, so no call-site change was needed.
 
+**Point sizes follow the framebuffer, so a scaled scene pass compensates (N.4.11, 2026-10-04).**
+ES1 point sizes are in framebuffer pixels. Native can render the 3D pass into a smaller (or larger)
+offscreen framebuffer and upscale it (`eden_scene_pass_begin/end`, `gl_context_native.cpp`), which
+would make every particle `1/scale` times too big on screen. `g_point_px_scale`
+(`gl_shim_internal.h`) carries the scale into the draw path, which divides the three attenuation
+coefficients by `scale²` on upload: `size / sqrt((a + b·d + c·d²)/s²)` is `size · s`, with no shader
+change. It is exactly 1 on web and at 100%, where the uploaded values are bit-identical to before.
+
 ## Debugging note
 See [conventions-and-pitfalls.md](conventions-and-pitfalls.md) #6 — Chrome-extension
 GL introspection tools don't see the real draw-time state; add an `fprintf` in the

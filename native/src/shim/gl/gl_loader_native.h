@@ -15,7 +15,7 @@
 //
 //     nm -u  $(find native/build/CMakeFiles -name '*.o') | grep -oE '^_gl[A-Za-z0-9]+'
 //     nm -g --defined-only <same> | grep -oE ' _gl[A-Za-z0-9]+$'
-//     comm -23 <undefined> <defined>          # -> exactly the 61 below
+//     comm -23 <undefined> <defined>          # -> exactly the 70 below
 //
 // — so it cannot silently disagree with what the shim actually calls. Re-run that after adding a
 // GL call and add the new name here; the failure mode if you forget is a link error naming the
@@ -47,13 +47,16 @@
   X(void,           glBindAttribLocation,      (GLuint program, GLuint index, const GLchar *name))\
   X(void,           glBindBuffer,              (GLenum target, GLuint buffer))                   \
   X(void,           glBindFramebuffer,         (GLenum target, GLuint framebuffer))              \
+  X(void,           glBindRenderbuffer,        (GLenum target, GLuint renderbuffer)) \
   X(void,           glBindTexture,             (GLenum target, GLuint texture))                  \
   X(void,           glBindVertexArray,         (GLuint array))                                   \
   X(void,           glBlendFunc,               (GLenum sfactor, GLenum dfactor))                 \
+  X(void,           glBlitFramebuffer,         (GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1, GLint dstX0, GLint dstY0, GLint dstX1, GLint dstY1, GLbitfield mask, GLenum filter)) \
   X(void,           glBufferData,              (GLenum target, GLsizeiptr size, const void *data, \
                                                 GLenum usage))                                   \
   X(void,           glBufferSubData,           (GLenum target, GLintptr offset, GLsizeiptr size, \
                                                 const void *data))                               \
+  X(GLenum,         glCheckFramebufferStatus,  (GLenum target)) \
   X(void,           glClear,                   (GLbitfield mask))                                \
   X(void,           glClearColor,              (GLfloat r, GLfloat g, GLfloat b, GLfloat a))     \
   X(void,           glCompileShader,           (GLuint shader))                                  \
@@ -64,7 +67,9 @@
   X(GLuint,         glCreateShader,            (GLenum type))                                    \
   X(void,           glCullFace,                (GLenum mode))                                    \
   X(void,           glDeleteBuffers,           (GLsizei n, const GLuint *buffers))               \
+  X(void,           glDeleteFramebuffers,      (GLsizei n, const GLuint *framebuffers)) \
   X(void,           glDeleteProgram,           (GLuint program))                                 \
+  X(void,           glDeleteRenderbuffers,     (GLsizei n, const GLuint *renderbuffers)) \
   X(void,           glDeleteShader,            (GLuint shader))                                  \
   X(void,           glDeleteTextures,          (GLsizei n, const GLuint *textures))              \
   X(void,           glDeleteVertexArrays,      (GLsizei n, const GLuint *arrays))                \
@@ -76,8 +81,11 @@
                                                 const void *indices))                            \
   X(void,           glEnable,                  (GLenum cap))                                     \
   X(void,           glEnableVertexAttribArray, (GLuint index))                                   \
+  X(void,           glFramebufferRenderbuffer, (GLenum target, GLenum attachment, GLenum renderbuffertarget, GLuint renderbuffer)) \
   X(void,           glFrontFace,               (GLenum mode))                                    \
   X(void,           glGenBuffers,              (GLsizei n, GLuint *buffers))                     \
+  X(void,           glGenFramebuffers,         (GLsizei n, GLuint *framebuffers)) \
+  X(void,           glGenRenderbuffers,        (GLsizei n, GLuint *renderbuffers)) \
   X(void,           glGenerateMipmap,          (GLenum target))                                  \
   X(void,           glGenTextures,             (GLsizei n, GLuint *textures))                    \
   X(void,           glGenVertexArrays,         (GLsizei n, GLuint *arrays))                      \
@@ -99,6 +107,7 @@
   X(void,           glPolygonOffset,           (GLfloat factor, GLfloat units))                  \
   X(void,           glReadPixels,              (GLint x, GLint y, GLsizei width, GLsizei height, \
                                                 GLenum format, GLenum type, void *pixels))       \
+  X(void,           glRenderbufferStorage,     (GLenum target, GLenum internalformat, GLsizei width, GLsizei height)) \
   X(void,           glShaderSource,            (GLuint shader, GLsizei count,                    \
                                                 const GLchar *const *string, const GLint *length))\
   X(void,           glTexImage2D,              (GLenum target, GLint level, GLint internalformat,\
@@ -141,7 +150,7 @@ EDEN_GL_ENTRY_POINTS(EDEN_GL_DECLARE)
 
 // Resolves every pointer above through SDL_GL_GetProcAddress. MUST be called with a current GL
 // context — on Windows `wglGetProcAddress` returns NULL without one, so calling this too early
-// yields a loader that "succeeds" with 61 null pointers on some drivers and fails cleanly on
+// yields a loader that "succeeds" with 70 null pointers on some drivers and fails cleanly on
 // others. gl_context_native.cpp calls it immediately after SDL_GL_MakeCurrent and nowhere else.
 //
 // Returns the number of entry points that did NOT resolve, and prints each missing name. Zero is
@@ -176,11 +185,14 @@ enum { EDEN_GL_ENTRY_POINT_COUNT = 0 EDEN_GL_ENTRY_POINTS(EDEN_GL_COUNT_ONE) };
 #define glBindAttribLocation       eden_glfp_glBindAttribLocation
 #define glBindBuffer               eden_glfp_glBindBuffer
 #define glBindFramebuffer          eden_glfp_glBindFramebuffer
+#define glBindRenderbuffer         eden_glfp_glBindRenderbuffer
 #define glBindTexture              eden_glfp_glBindTexture
 #define glBindVertexArray          eden_glfp_glBindVertexArray
 #define glBlendFunc                eden_glfp_glBlendFunc
+#define glBlitFramebuffer          eden_glfp_glBlitFramebuffer
 #define glBufferData               eden_glfp_glBufferData
 #define glBufferSubData            eden_glfp_glBufferSubData
+#define glCheckFramebufferStatus   eden_glfp_glCheckFramebufferStatus
 #define glClear                    eden_glfp_glClear
 #define glClearColor               eden_glfp_glClearColor
 #define glCompileShader            eden_glfp_glCompileShader
@@ -189,7 +201,9 @@ enum { EDEN_GL_ENTRY_POINT_COUNT = 0 EDEN_GL_ENTRY_POINTS(EDEN_GL_COUNT_ONE) };
 #define glCreateShader             eden_glfp_glCreateShader
 #define glCullFace                 eden_glfp_glCullFace
 #define glDeleteBuffers            eden_glfp_glDeleteBuffers
+#define glDeleteFramebuffers       eden_glfp_glDeleteFramebuffers
 #define glDeleteProgram            eden_glfp_glDeleteProgram
+#define glDeleteRenderbuffers      eden_glfp_glDeleteRenderbuffers
 #define glDeleteShader             eden_glfp_glDeleteShader
 #define glDeleteTextures           eden_glfp_glDeleteTextures
 #define glDeleteVertexArrays       eden_glfp_glDeleteVertexArrays
@@ -200,8 +214,11 @@ enum { EDEN_GL_ENTRY_POINT_COUNT = 0 EDEN_GL_ENTRY_POINTS(EDEN_GL_COUNT_ONE) };
 #define glDrawElements             eden_glfp_glDrawElements
 #define glEnable                   eden_glfp_glEnable
 #define glEnableVertexAttribArray  eden_glfp_glEnableVertexAttribArray
+#define glFramebufferRenderbuffer  eden_glfp_glFramebufferRenderbuffer
 #define glFrontFace                eden_glfp_glFrontFace
 #define glGenBuffers               eden_glfp_glGenBuffers
+#define glGenFramebuffers          eden_glfp_glGenFramebuffers
+#define glGenRenderbuffers         eden_glfp_glGenRenderbuffers
 #define glGenerateMipmap           eden_glfp_glGenerateMipmap
 #define glGenTextures              eden_glfp_glGenTextures
 #define glGenVertexArrays          eden_glfp_glGenVertexArrays
@@ -220,6 +237,7 @@ enum { EDEN_GL_ENTRY_POINT_COUNT = 0 EDEN_GL_ENTRY_POINTS(EDEN_GL_COUNT_ONE) };
 #define glPixelStorei              eden_glfp_glPixelStorei
 #define glPolygonOffset            eden_glfp_glPolygonOffset
 #define glReadPixels               eden_glfp_glReadPixels
+#define glRenderbufferStorage      eden_glfp_glRenderbufferStorage
 #define glShaderSource             eden_glfp_glShaderSource
 #define glTexImage2D               eden_glfp_glTexImage2D
 #define glTexParameterf            eden_glfp_glTexParameterf

@@ -257,6 +257,16 @@ void eden_gl_set_pick_viewport(int width, int height);
 void eden_gl_context_set_drawable_size(int width, int height);
 // Binds the default framebuffer + full-drawable viewport. EAGLView_web -setFramebuffer.
 void eden_gl_context_bind_default_framebuffer(void);
+// The 3D pass's render resolution (ROADMAP N.4.11). World::renderFrame brackets the play-mode
+// world pass (sky, terrain, models, effects, player) with these two calls and draws the HUD after
+// _end. NATIVE: when the `render_scale` setting is not 100%, _begin redirects the pass into an
+// offscreen colour+depth framebuffer of drawable x scale and _end upscales it into the letterbox box
+// with a linear blit, so the 2D UI that follows still draws at the drawable's full density (N.4.8's
+// text raster would go soft again if the drawable itself shrank). At 100% both are no-ops and the
+// pass draws straight into the window, exactly as before. WEB: both are no-ops, because the page
+// already applies render_scale to the whole canvas (eden-st.html's drawable sizing).
+void eden_scene_pass_begin(void);
+void eden_scene_pass_end(void);
 
 // ---------------------------------------------------------------------------------------
 // Exports for the host page (perf-audit items #4/#5/#6). All three are EMSCRIPTEN_KEEPALIVE
