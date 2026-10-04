@@ -744,6 +744,12 @@ jobs:
         # The test taps the engine's OWN reported `rmenu` rect, inverted through the letterbox the
         # renderer is actually using. If the translator and the fit ever disagree, the tap lands on
         # a bar and this fails.
+        #
+        # 600 s, not the 300 every other launch here gets (CI.1, 2026-10-04): this is the one
+        # windowed gate that runs hundreds of ticks under the runner's SOFTWARE rasteriser at the
+        # simulator's full 2736x1260. It took 264 s before N.4.7 added the fly-off walk check and
+        # 331 s after it; every failure since was the alarm killing that last check mid-run, with
+        # every check before it PASS. Locally 3.6 s, on the iPad Air 2 29 s.
         run: |
           set -e
           UDID=${{ steps.sim.outputs.udid }}
@@ -751,7 +757,7 @@ jobs:
           rm -f "$DATA/touch.log"
           SIMCTL_CHILD_EDEN_ARGS="--touch-selftest --world=iostouch" \
           SIMCTL_CHILD_EDEN_LOG="$DATA/touch.log" \
-            perl -e 'alarm 300; exec @ARGV' \
+            perl -e 'alarm 600; exec @ARGV' \
             xcrun simctl launch --console-pty --terminate-running-process \
             "$UDID" "$EDEN_BUNDLE_ID" || true
           cp "$DATA/touch.log" touch.log 2>/dev/null || true
