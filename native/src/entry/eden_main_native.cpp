@@ -2480,6 +2480,7 @@ bool starts_with(const char* s, const char* p) { return std::strncmp(s, p, std::
 // real command line still wins on the desktop. In CI it arrives as SIMCTL_CHILD_EDEN_ARGS.
 static int parse_one_arg(const char* a);
 static int eden_main_after_args(int argc, char** argv);
+static int parse_arg_string(const char* text);
 
 int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
@@ -2523,14 +2524,46 @@ int main(int argc, char** argv) {
     }
     if (const char* extra = getenv("EDEN_ARGS")) {
         std::fprintf(stderr, "[eden] EDEN_ARGS=%s\n", extra);
-        std::string acc;
-        for (const char* p = extra; ; ++p) {
-            if (*p && !std::isspace((unsigned char)*p)) { acc += *p; continue; }
-            if (!acc.empty()) { if (int rc = parse_one_arg(acc.c_str())) return rc; acc.clear(); }
-            if (!*p) break;
+        if (int rc = parse_arg_string(extra)) return rc;
+    }
+#if defined(EDEN_PLATFORM_IOS)
+    // THE ONE-SHOT ARGS FILE (2026-10-04) — EDEN_ARGS for a device driven over SSH. A SpringBoard
+    // launch (`uiopen --bundleid`) carries no environment, so `Documents/eden-args.txt` is the only
+    // way to put a jailbroken iPad into `--shot` or a selftest without Xcode. It is RENAMED to
+    // eden-args.last.txt before it is parsed, so it applies to exactly one launch: a leftover file
+    // must never trap the next home-screen tap in a harness mode. Parsed after EDEN_ARGS, same parser.
+    {
+        const std::string d = g_opt.docs.empty() ? default_docs() : g_opt.docs;
+        const std::string f = d + "/eden-args.txt", used = d + "/eden-args.last.txt";
+        if (std::rename(f.c_str(), used.c_str()) == 0) {
+            std::string text;
+            if (FILE* fp = std::fopen(used.c_str(), "r")) {
+                char buf[1024];
+                size_t n;
+                while ((n = std::fread(buf, 1, sizeof(buf), fp)) > 0) text.append(buf, n);
+                std::fclose(fp);
+            }
+            std::fprintf(stderr, "[eden] eden-args.txt=%s\n", text.c_str());
+            if (int rc = parse_arg_string(text.c_str())) return rc;
+            // --shot's captures land beside the log, where scp can reach them; the app's cwd
+            // is not writable.
+            if (g_opt.mode && !std::strcmp(g_opt.mode, "shot") && g_opt.shot.empty())
+                g_opt.shot = d + "/eden-shot";
         }
     }
+#endif
     return eden_main_after_args(argc, argv);
+}
+
+// Whitespace-separated options, each parsed exactly as one argv entry.
+static int parse_arg_string(const char* text) {
+    std::string acc;
+    for (const char* p = text; ; ++p) {
+        if (*p && !std::isspace((unsigned char)*p)) { acc += *p; continue; }
+        if (!acc.empty()) { if (int rc = parse_one_arg(acc.c_str())) return rc; acc.clear(); }
+        if (!*p) break;
+    }
+    return 0;
 }
 
 // The body of the loop above, verbatim from when it was one. Split out only so argv and EDEN_ARGS
