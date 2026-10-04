@@ -143,6 +143,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <algorithm>
 #include <vector>
 #include <cmath>
 #include <sys/stat.h>
