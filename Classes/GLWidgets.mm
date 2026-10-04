@@ -23,6 +23,7 @@
 
 extern float SCREEN_WIDTH;
 extern float SCREEN_HEIGHT;
+extern "C" float eden_ui_raster_density(void);   // web/src/seam/DisplayProfile_web.mm
 
 namespace GLW {
 
@@ -205,11 +206,14 @@ void Label::set(const char* text, float pt, UITextAlignment align, float maxWidt
     // and GLDialog both carry a comment about). Sized in PIXELS, which is pt * scale.
     m_texW = potAtLeast((int)std::ceil(widest * glyph * s) + 16);
     m_texH = potAtLeast((int)std::ceil(pt * s * 1.6f));
+    // N.4.8: rasterised at the drawable's real density (texels per ortho unit), so text is 1:1
+    // on device pixels instead of magnified through NEAREST. Layout above stays in ortho units.
+    const float density = eden_ui_raster_density();
 
     for (size_t i = 0; i < lines.size(); i++) {
         m_lines.push_back(new Texture2D([NSString stringWithUTF8String:lines[i].c_str()],
                                         CGSizeMake(m_texW, m_texH), align,
-                                        [UIFont systemFontOfSize:pt * s]));
+                                        [UIFont systemFontOfSize:pt * s], density));
     }
 }
 

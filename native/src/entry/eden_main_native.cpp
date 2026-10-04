@@ -70,6 +70,20 @@
 //                        legs specifically: the shim Foundation runs outside Emscripten there for
 //                        the first time, and this runtime frees objects without .cxx_destruct.
 //   --height=64|256      world height for a newly created world (default 64).
+//   --empty-shortcut=0   Stage R / R.2's A/B lever: 0 restores the pre-R.2 mesh scheduling (all-air
+//                        chunks scanned and counted against the bulk-reload budget). Default 1.
+//   --read-budget-bands=0  Stage R / R.2b's A/B lever: 0 restores the stock column-read budget
+//                        (BULK_RELOAD_CHUNK_BUDGET/CHUNKS_PER_COLUMN columns a frame) instead of
+//                        counting a landed column by its occupied bands. Default 1.
+//   --empty-bit-selftest R.2: places a block in an all-air chunk and removes it again, asserting the
+//                        empty bit follows both transitions and the block really meshes.
+//   --light-selftest     R.3: lightbox place/repaint/break (incl. saturation, the y clip and the
+//                        toroidal seam) through the engine's own edit paths, light hash per step.
+//   --light-selfcheck    R.3: also keep the stock dense light array, written by the stock code,
+//                        and report voxels where it and the brick store disagree (`.light`'s
+//                        `mismatch`, must be 0). --light-selftest asserts it when present.
+//   --empty-selfcheck    R.2's stale-bit check: rebuild2() scans the chunks the empty bit lets it
+//                        skip and counts any that were not empty. Reported on `.chunkstate`.
 //   --world=NAME         world display name to create or reuse (default depends on the mode).
 //   --at=X,Y,Z           teleport target. FIXED BY DEFAULT AND THAT MATTERS: a new world spawns
 //                        the player tens of columns away each run, and chunk contents differ by
@@ -188,6 +202,13 @@ void        eden_native_gl_get_letterbox(int* x, int* y, int* w, int* h);
 struct SDL_Window;
 SDL_Window* eden_native_gl_window(void);
 const char* eden_debug_mesh_checksum(void);
+const char* eden_debug_chunk_state(void);
+const char* eden_debug_light_state(void);
+int   eden_debug_light_edit(int op, int x, int z, int y, int color);
+void  eden_debug_set_light_selfcheck(int on);
+void  eden_debug_set_empty_selfcheck(int on);
+long long eden_debug_chunk_empty(int x, int z, int y);
+int   eden_console_getblock(int x, int z, int y);
 void  eden_debug_set_mesh_checksum(int on);
 const char* eden_debug_world_format(void);
 const char* eden_debug_heap(void);
@@ -316,6 +337,8 @@ void report(const char* phase) {
     std::printf("[eden-stage1] %s.mem %s\n", phase, eden_debug_heap());
     std::printf("[eden-stage1] %s.geometry %s\n", phase, eden_debug_terrain_geometry());
     std::printf("[eden-stage1] %s.checksum %s\n", phase, eden_debug_mesh_checksum());
+    std::printf("[eden-stage1] %s.chunkstate %s\n", phase, eden_debug_chunk_state());
+    std::printf("[eden-stage1] %s.light %s\n", phase, eden_debug_light_state());
     std::printf("[eden-stage1] %s.format %s\n", phase, eden_debug_world_format());
     std::fflush(stdout);
 }
@@ -676,6 +699,156 @@ void rise_until_clear(int maxFrames);
 void check_clear_of_map_border(const char* what);
 
 extern "C" void eden_set_fly_mode(int);
+// ---------------------------------------------------------------------------------------------
+// --empty-bit-selftest  (Stage R / R.2, the per-chunk empty bit)
+// ---------------------------------------------------------------------------------------------
+// --stage1 proves the shortcut changes nothing on a world nobody edits. This covers the two
+// transitions an edit makes, through the same Terrain::updateChunks entry point a build/mine
+// reaches: a block placed in an all-air chunk must clear the bit BEFORE the next mesh decision
+// (else rebuild2() skips the scan and the block is invisible), and the chunk must rejoin the
+// shortcut once it is air again (rebuild2()'s scan refreshes the bit; setLand never sets it).
+int run_empty_bit_selftest() {
+    g_selftestTag = "eden-empty";
+    // NOT --empty-selfcheck's mode: that runs the full scan on a chunk the bit calls empty, which
+    // would mesh the block below even with a stale bit and make the test pass vacuously.
+    const char* name = g_opt.world.empty() ? "empty-bit-selftest" : g_opt.world.c_str();
+    if (!open_world(name, g_opt.height)) return 1;
+    eden_console_teleport(g_opt.at[0], g_opt.at[1], g_opt.at[2]);
+    tick(g_opt.frames / 2);
+
+    // Top band of the window, a few blocks off the player: air on the bundled map at any height.
+    // Off the player's REAL position -- the default --at is clamped to the map corner (see the
+    // default-origin comment in eden_main_after_args), so --at itself is not where it lands.
+    const PlayerState ps = player_state();
+    const int x = (int)ps.x + 5, z = (int)ps.z + 5, y = g_opt.height - 3;
+    char d[256];
+    auto st = [&] { return eden_debug_chunk_empty(x, z, y); };
+    long long s0 = st();
+    std::snprintf(d, sizeof(d), "chunk at (%d,%d,%d): probe %lld", x, z, y, s0);
+    check(s0 >= 0 && (s0 & 3) == 3, "target chunk is air and marked empty", d);
+    if (s0 < 0 || (s0 & 3) != 3) {
+        std::printf("[eden-empty] FAILURES (%d failure(s))\n", g_selftestFailures);
+        return 1;
+    }
+
+    eden_console_setblock(x, z, y, 2 /* TYPE_STONE */);
+    long long s1 = st();
+    std::snprintf(d, sizeof(d), "probe %lld", s1);
+    check((s1 & 3) == 0, "placing a block clears the bit at once", d);
+    tick(30);
+    long long s2 = st();
+    std::snprintf(d, sizeof(d), "getblock %d, vertices %lld -> %lld",
+                  eden_console_getblock(x, z, y), s0 >> 2, s2 >> 2);
+    check(eden_console_getblock(x, z, y) == 2 && (s2 >> 2) > (s0 >> 2),
+          "the placed block meshes (vertices grew)", d);
+
+    eden_console_setblock(x, z, y, 0);
+    tick(30);
+    long long s3 = st();
+    std::snprintf(d, sizeof(d), "probe %lld, vertices %lld", s3, s3 >> 2);
+    check((s3 & 3) == 3 && (s3 >> 2) == (s0 >> 2), "removing it re-marks the chunk empty", d);
+
+    const char* cs = eden_debug_chunk_state();
+    const char* k1 = std::strstr(cs, "\"stale\":");
+    const char* k2 = std::strstr(cs, "\"selfcheck_stale\":");
+    check(k1 && atoi(k1 + 8) == 0 && k2 && atoi(k2 + 18) == 0,
+          "window audit: no stale bits, self-check clean", cs);
+
+    std::printf("[eden-empty] %s (%d failure(s))\n",
+                g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
+    return g_selftestFailures ? 1 : 0;
+}
+
+// ---------------------------------------------------------------------------------------------
+// --light-selftest  (Stage R / R.3, the light store)
+// ---------------------------------------------------------------------------------------------
+// --stage1's `.light` hash covers the sweep on load. This covers what the sweep never does: the
+// edit paths (buildBlock's +1 splat, destroyBlock's and paintBlock's -1, which subtracts and
+// clamps at 0), saturation at 255 (five overlapping lightboxes), the y clip at the top and bottom
+// of the window, and the toroidal seam (a light whose radius wraps from index T_SIZE-1 to 0 on both
+// axes). Every step prints the light hash, so a run against the old dense array is the reference
+// for a run against anything else; the run is also self-checking: after everything is removed
+// and a fresh sweep runs, the light must be exactly what the world had before the test touched it.
+int run_light_selftest() {
+    g_selftestTag = "eden-light";
+    const char* name = g_opt.world.empty() ? "light-selftest" : g_opt.world.c_str();
+    if (!open_world(name, g_opt.height)) return 1;
+    eden_console_teleport(g_opt.at[0], g_opt.at[1], g_opt.at[2]);
+    tick(g_opt.frames / 2);
+
+    auto field = [](const char* js, const char* key) -> long long {
+        const char* k = std::strstr(js, key);
+        return k ? atoll(k + std::strlen(key)) : -1;
+    };
+    auto hashOf = [](const char* js) {
+        const char* k = std::strstr(js, "\"hash\":\"");
+        return k ? std::string(k + 8, 16) : std::string();
+    };
+    auto settle = [&] {
+        for (int i = 0; i < 600 && field(eden_debug_light_state(), "\"pending\":") != 0; i++) tick(1);
+    };
+    int step = 0;
+    auto show = [&](const char* what) {
+        const char* js = eden_debug_light_state();
+        std::printf("[eden-light] step %d %-22s %s\n", step++, what, js);
+        std::fflush(stdout);
+        char d[64];
+        std::snprintf(d, sizeof(d), "mismatch %lld", field(js, "\"mismatch\":"));
+        if (std::strstr(js, "\"mismatch\":"))
+            check(field(js, "\"mismatch\":") == 0, "self-check: the store matches the dense mirror", d);
+        return std::string(js);
+    };
+
+    settle();
+    const std::string s0 = show("baseline");
+    // Anchors off the player's REAL position (see --empty-bit-selftest for why not --at).
+    const PlayerState ps = player_state();
+    const int px = (int)ps.x, pz = (int)ps.z, H = g_opt.height;
+    // The seam: world x with x % T_SIZE == T_SIZE-2 (g_offcx is a multiple of T_SIZE), nearest the
+    // player, so x-5..x+5 covers toroidal indices T_SIZE-7..T_SIZE-1 and 0..3. Same for z with 1.
+    int xs = px - px % T_SIZE + T_SIZE - 2; if (xs - px > T_SIZE / 2) xs -= T_SIZE;
+    int zs = pz - pz % T_SIZE + 1;          if (zs - pz > T_SIZE / 2) zs -= T_SIZE;
+    if (pz - zs > T_SIZE / 2) zs += T_SIZE;
+    const int yt = H - 3;
+    struct P { int x, z, y; };
+    const P A{xs, zs, yt}, B{xs + 1, zs, yt}, C{xs - 1, zs, yt}, D{xs, zs + 1, yt}, E{xs, zs, yt - 1};
+    const P F{px + 3, pz + 3, 2};
+
+    eden_debug_light_edit(0, A.x, A.z, A.y, 0);
+    const std::string s1 = show("place A (seam, top)");
+    check(hashOf(s1.c_str()) != hashOf(s0.c_str()) && field(s1.c_str(), "\"lit\":") > field(s0.c_str(), "\"lit\":"),
+          "placing a lightbox adds light", s1.c_str());
+    for (const P& p : {B, C, D, E}) eden_debug_light_edit(0, p.x, p.z, p.y, 0);
+    show("place B-E (saturate)");
+    eden_debug_light_edit(0, F.x, F.z, F.y, 5);
+    show("place F (bottom clip)");
+    eden_debug_light_edit(2, A.x, A.z, A.y, 12);
+    show("repaint A");
+    eden_debug_light_edit(1, B.x, B.z, B.y, 0);
+    eden_debug_light_edit(1, C.x, C.z, C.y, 0);
+    show("break B, C");
+    for (const P& p : {A, D, E, F}) eden_debug_light_edit(1, p.x, p.z, p.y, 0);
+    show("break A, D, E, F");
+    tick(30);
+    eden_debug_light_edit(3, 0, 0, 0, 0);
+    settle();
+    const std::string s7 = show("fresh sweep");
+    check(hashOf(s7.c_str()) == hashOf(s0.c_str()), "after a fresh sweep the light is the pre-test light", s7.c_str());
+#if 1   // R.3: the sparse store's promises (would fail against the dense array, by design)
+    {
+        const long long dense = 3LL * T_SIZE * T_SIZE * H;
+        const long long b = field(s7.c_str(), "\"bytes\":");
+        char d[96];
+        std::snprintf(d, sizeof(d), "%lld bytes held vs %lld dense", b, dense);
+        check(b >= 0 && b * 8 < dense, "the store holds well under 1/8 of the dense array", d);
+    }
+#endif
+
+    std::printf("[eden-light] %s (%d failure(s))\n",
+                g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
+    return g_selftestFailures ? 1 : 0;
+}
+
 int run_touch_selftest() {
     g_selftestTag = "eden-touch";
     g_tickInput = true;
@@ -2372,6 +2545,8 @@ static int parse_one_arg(const char* a) {
         else if (!std::strcmp(a, "--audio-selftest")) { g_opt.mode = "audio-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--gamepad-selftest")) { g_opt.mode = "gamepad-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--touch-selftest")) { g_opt.mode = "touch-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--empty-bit-selftest")) { g_opt.mode = "empty-bit-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--light-selftest")) { g_opt.mode = "light-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--keybind-selftest")) { g_opt.mode = "keybind-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--objc-selftest")) { g_opt.mode = "objc-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--save-roundtrip")) g_opt.mode = "save-roundtrip";
@@ -2379,6 +2554,10 @@ static int parse_one_arg(const char* a) {
         else if (!std::strcmp(a, "--shot"))           g_opt.mode = "shot";
         else if (starts_with(a, "--shot="))           { g_opt.mode = "shot"; g_opt.shot = a + 7; }
         else if (starts_with(a, "--height="))         g_opt.height = atoi(a + 9);
+        else if (starts_with(a, "--empty-shortcut=")) { extern bool g_empty_shortcut; g_empty_shortcut = atoi(a + 17) != 0; }
+        else if (std::strcmp(a, "--empty-selfcheck") == 0) eden_debug_set_empty_selfcheck(1);
+        else if (std::strcmp(a, "--light-selfcheck") == 0) eden_debug_set_light_selfcheck(1);
+        else if (starts_with(a, "--read-budget-bands=")) { extern bool g_read_budget_bands; g_read_budget_bands = atoi(a + 20) != 0; }
         else if (starts_with(a, "--world="))          g_opt.world = a + 8;
         else if (starts_with(a, "--frames="))         g_opt.frames = atoi(a + 9);
         else if (!std::strcmp(a, "--touch-profile")) g_opt.touchProfile = true;
@@ -2575,6 +2754,8 @@ static int eden_main_after_args(int argc, char** argv) {
         else if (!std::strcmp(g_opt.mode, "audio-selftest")) rc = run_audio_selftest();
         else if (!std::strcmp(g_opt.mode, "gamepad-selftest")) rc = run_gamepad_selftest();
         else if (!std::strcmp(g_opt.mode, "touch-selftest")) rc = run_touch_selftest();
+        else if (!std::strcmp(g_opt.mode, "empty-bit-selftest")) rc = run_empty_bit_selftest();
+        else if (!std::strcmp(g_opt.mode, "light-selftest")) rc = run_light_selftest();
         else if (!std::strcmp(g_opt.mode, "objc-selftest")) rc = run_objc_selftest();
         else if (!std::strcmp(g_opt.mode, "save-roundtrip")) rc = run_save_roundtrip();
         else if (!std::strcmp(g_opt.mode, "background-selftest")) rc = run_background_selftest();

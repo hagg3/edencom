@@ -23,6 +23,16 @@ EDEN_MESH_TLS static int v_idx=0;
 EDEN_MESH_TLS static int v_idx2=0;
 static Terrain* ter;
 
+// Stage R / R.2: the empty-chunk shortcut (TerrainChunk.h, typesEmpty). g_empty_shortcut is the
+// kill switch and the A/B lever: FALSE restores the old scheduling exactly (the bit is still kept,
+// nothing reads it). g_empty_selfcheck makes rebuild2() run the full scan on a chunk the bit calls
+// empty and count the ones that were not (must stay 0). Both written only by diagnostics exports
+// (web/src/seam/DebugState_web.mm) and read only on the main thread.
+bool g_empty_shortcut = true;
+bool g_empty_selfcheck = false;
+int  g_empty_selfcheck_runs = 0;
+int  g_empty_selfcheck_stale = 0;
+
 // ---- off-thread meshing hooks (TerrainChunk.h notes 2 and 3). All NULL = stock behaviour. -----
 EDEN_MESH_TLS static const block8* t_mesh_blocks=NULL;
 EDEN_MESH_TLS static const color8* t_mesh_colors=NULL;
@@ -98,6 +108,7 @@ void TerrainChunk::resetForReuse(){
     rtnum_objects=0;
     rtobjects=NULL;
     rtn_vertices=0;
+    typesEmpty=FALSE;   // R.2: "not known" until Terrain::addChunk sees what lands in it
    
     
 }
@@ -114,6 +125,7 @@ TerrainChunk::TerrainChunk(const int* boundz,Terrain* terrain){
     objects=NULL;
     needsVBO=FALSE;
     modified=FALSE;
+    typesEmpty=FALSE;   // R.2: "not known" until Terrain::addChunk sees what lands in it
  //   memset(sblocks,0,sizeof(SmallBlock*)*CHUNK_SIZE3);
     
     memset(pcolors,0,sizeof(color8)*CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE);
@@ -318,6 +330,19 @@ int TerrainChunk::rebuild2(){   //here be dragons//
    // self.rtnum_objects=self.rtn_vertices=self.rtn_vertices2=0;
 	clearMeshes();
     memset(hasBlocky,0,sizeof(bool)*CHUNK_SIZE);
+    // Stage R / R.2: an all-air chunk takes the "return early 1" below without the 4096-voxel scan.
+    // Everything above has already run, so the chunk is left exactly as the scan would leave it --
+    // needsVBO=TRUE, has_light=FALSE, num_objects=0 (clearMeshes), clearOldVerticesOnly=TRUE, and
+    // the vertex counts zeroed -- because on an all-zero type plane the scan sets nothing. It sits
+    // ahead of BOTH mesher passes, so their counting/fill agreement is not involved. Main thread
+    // only: a worker meshes a snapshot (t_mesh_blocks) the bit does not describe.
+    // g_empty_selfcheck runs the scan anyway and counts a bit that was wrong.
+    const bool emptyShortcut=g_empty_shortcut&&!t_mesh_blocks&&typesEmpty;
+    if(emptyShortcut&&!g_empty_selfcheck){
+        clearOldVerticesOnly=TRUE;
+        return 0;
+    }
+    if(emptyShortcut)g_empty_selfcheck_runs++;
    /* memset(lighting,0,sizeof(Vector)*CHUNK_SIZE);
     for(int y=0;y<CHUNK_SIZE;y++){
         for(int x=0;x<CHUNK_SIZE;x++){
@@ -424,10 +449,18 @@ int TerrainChunk::rebuild2(){   //here be dragons//
 			
 		}
 	}
+    // R.2: the scan just read every type, so it can refresh the bit -- this is how a chunk dug back
+    // to all air rejoins the shortcut (setLand never sets the bit). Not on a worker's snapshot.
+    if(!t_mesh_blocks)typesEmpty=!hasAnything;
+    if(emptyShortcut&&hasAnything){
+        g_empty_selfcheck_stale++;
+        printg("R.2 empty-bit self-check: chunk at %d %d %d was marked empty and is not\n",
+               pbounds[0],pbounds[1],pbounds[2]);
+    }
     if(!hasAnything){//printg("return early 1\n");
          //printg("im gonna clear some old vertices\n");
         clearOldVerticesOnly=TRUE;
-        
+
         return 0;}
     hasAnything=FALSE;
     memset(face_visibility,0,sizeof(int)*CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE);
@@ -1883,6 +1916,7 @@ void TerrainChunk::setLand(int x,int z,int y,int type){
 	}else{		
         
 		pblocks[x*CHUNK_SIZE*CHUNK_SIZE+z*CHUNK_SIZE+y]=type;
+        if(type)typesEmpty=FALSE;    // R.2 (TerrainChunk.h): never leave an empty bit on a block
         tc_noteChunkWritten(this);   // B3 Stage 2: invalidates an in-flight worker mesh
 		ter->setLand(x+pbounds[0] ,z+pbounds[2] ,y+pbounds[1] ,type ,FALSE);
 	}

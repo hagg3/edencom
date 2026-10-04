@@ -57,7 +57,9 @@ y≈250, 2026-08-06:
 | wasm heap | 96 MB | 128 MB | **413 MB** |
 
 The per-world arrays account for ~95 MB of that (`blockarray` 5.4 → 21.5 MB, `lightarray`
-15.9 → 63.7 MB, 1296 → 5184 chunk objects at 8 KB each); the rest is **mesh** memory, which
+15.9 → 63.7 MB, 1296 → 5184 chunk objects at 8 KB each; **the light part is gone since Stage R /
+R.3, 2026-10-03**: the light field is a sparse brick store now, ~0.1–0.2 MB on a world with a few
+lightboxes, so a 256z world's arrays are ~66 MB, not ~130); the rest is **mesh** memory, which
 scales with how much solid terrain there actually is, not with the height alone — a tall world
 that is mostly air costs much less (the flat 256z specimen sits at 248 MB). `-sINITIAL_MEMORY`
 stays at 96 MB (audit row E1's conclusion is unchanged): growth is on, and over-reserving would
@@ -127,14 +129,17 @@ Each `TerrainChunk` (`TerrainChunk.h`) owns:
 - `StaticObject* objects` — extracted door/portal/golden-cube/flower instances.
 - `modified` flag — set on any edit; drives incremental saving.
 
-`Vector8* lightarray` (RGB byte per voxel, same toroidal indexing) holds the colored
-point-light field; see [lighting-liquids-effects.md](lighting-liquids-effects.md).
-Skipped entirely on `LOW_MEM_DEVICE`.
+The colored point-light field (RGB byte per voxel, same toroidal indexing) was stock's dense
+`Vector8* lightarray`; since Stage R / R.3 (2026-10-03) it is `lightbricks`, one optional 12 KB
+brick per toroidal chunk slot, allocated only where a lightbox's light lands and never freed during
+play; see [lighting-liquids-effects.md](lighting-liquids-effects.md). Skipped entirely on
+`LOW_MEM_DEVICE`.
 
 ### Memory budget
-blockarray ≈ 5.3 MB, chunk blocks+colors ≈ 10.6 MB, lightarray ≈ 15.9 MB, plus
-transient meshes. This is why `LOW_MEM_DEVICE` (< ~300 MB RAM) drops the light field
-and loads synchronously.
+blockarray ≈ 5.3 MB, chunk blocks+colors ≈ 10.6 MB, plus transient meshes (64z). Stock also had
+lightarray ≈ 15.9 MB, which is why `LOW_MEM_DEVICE` (< ~300 MB RAM) drops the light field and loads
+synchronously; with R.3's brick store the light costs ~12 KB per lit chunk, so that carve-out now
+saves almost nothing (and it turns colored lighting off; do not wire it up on native "for memory").
 
 ## Reading and writing blocks (`Terrain.mm`)
 
@@ -212,7 +217,8 @@ Doors and portals are *stored* as voxels but *rendered and animated* as extracte
    F.2 code read. This line used to say "player crossed roughly a chunk boundary".)
    - `fm->saveWorld()` (flush modified columns **before** they get overwritten!),
    - update `fm->chunkOffsetX/Z` (the render-origin rebase),
-   - `updateLightingBegin()` (zero the light array; the *recompute* is deferred, below),
+   - `updateLightingBegin()` (zero the light; the *recompute* is deferred, below. Since R.3 this
+     zeroes only the lit bricks, where it was a 16 / 64 MB memset),
    - **frame-budgeted from here on** (modified from stock, 2026-08-13 — the whole reload used
      to happen inside this one call, a measured 104–131 ms main-thread block on a teleport or a
      Warp Home): `bulk_reload_active` latches, and each frame spends
@@ -222,6 +228,20 @@ Doors and portals are *stored* as voxels but *rendered and animated* as extracte
      in chunks rather than columns so it stays flat at 256z, where a column is 4× the bytes and
      4× the mesh work. The file handle is reopened per slice, because an autosave in between
      renames a `.savetmp` over it.
+     **Since Stage R / R.2b (2026-10-03) a landed column is charged its *occupied* chunks**
+     (non-`typesEmpty` bands, at least 1), not `CHUNKS_PER_COLUMN`, and a frame reads at most the 64z
+     column count (`BULK_RELOAD_CHUNK_BUDGET/4` = 24). Emptiness is only known after the read, so the
+     column that crosses the budget still lands. A worker-decoded column (threaded web) is charged
+     `fmh_defaultBandCount()`, the bundled map's band count. 64z is unchanged (the cap is the old
+     budget); a 256z column of 64z-shaped terrain now costs what the 64z column costs, so the reload
+     reads ~24 columns a frame instead of 6. **What grows is bytes per frame at 256z** (`.eden` stores
+     an air band as 8 KB of zeros), up to 4×: ~3 MB a frame. Mac, F.3 hooks, same binary A/B, medians
+     of 3: 144-column walk reload (E2) **27 → 10 frames, 361 → 213 ms**, the same 10 frames as 64z;
+     the E2 worst frame went 28 → 40 ms (per rep 28.6/14.6/27.8 → 39.9/39.8/29.8), which is 64z's own
+     spread with identical scheduling (40.3/39.5/26.7). Warps (E1) are unchanged: they read
+     synchronously in `loadWorld`. On cold flash (F.3: ~70 MB/s at 256z) 3 MB is ~45 ms, so whether
+     the worst frame is acceptable on a device is ROADMAP R.4's call. `g_read_budget_bands` (native
+     `--read-budget-bands=0`) restores the stock count.
    - when every column has landed *and* the meshing they dirtied has drained:
      `addMoreCreaturesIfNeeded()`, `loaded_new_terrain`, and the lighting recompute
      (`update_lighting` → `calculateLightingSlice()` at the tail of the same pass —
@@ -229,6 +249,15 @@ Doors and portals are *stored* as voxels but *rendered and animated* as extracte
      O(window volume) and was a ~20 ms / ~80 ms (64z / 256z) unbudgeted stall here,
      the real 256z reload spike; it now sweeps a strip of columns per frame and
      `update_lighting` stays set until the sweep reports done).
+   - **Measured on an iPad Air 2 (F.3, 2026-10-03; `WORKING/emod-format-phase0-f3-results-2026-10-03.md`):**
+     the same 144-column reload takes ~15 engine frames at 64z and **69 at 256z** (48 mesh-span + 21
+     sweep). (R.1, R.2 and R.2b since cut it to 10 frames on the Mac, the same as 64z; see the read-budget note above and the mesh-budget note under item 4.) The extra mesh frames exist because the 96-chunk budget counts an all-air chunk as a full
+     unit: 12 more bands per column × ~200 columns is ~2400 empty chunks, each ~11 µs on the A8X (4 µs on a
+     Mac) to "mesh". A non-empty chunk costs the same ~0.41 ms at both heights, so the 256z premium is
+     scheduling and empty-chunk overhead, not meshing work. Reading is a minor share (14% of a warp's
+     premium) except on the first touch of new territory, which reads at ~40–70 MB/s cold against
+     330–430 MB/s warm; that is the only cost a smaller on-disk format would remove. A Warp Home's worst
+     frame (the synchronous 324-column `loadWorld`) is 289–397 ms at 64z and 438–542 ms at 256z.
 4. Drain dirty lists → `rebuild2()` each chunk → queue VBO uploads. **Since 2026-08-27 the chunks
    dirtied by a bulk reload are meshed on worker threads instead** (`Classes/MeshPool.{h,mm}`) —
    edits, explosions, fire and the initial load still mesh inline in this pass. The rule that
@@ -242,6 +271,33 @@ Doors and portals are *stored* as voxels but *rendered and animated* as extracte
    four lateral neighbours** have all streamed in, because `rebuild2()` reads one block across
    each side face and meshing early just builds geometry for data about to be replaced; and the
    same 96-chunk budget caps the pass, reusing the deferral the `list_max` guard already had.
+   **Since Stage R / R.2 (2026-10-03) an all-air chunk (`typesEmpty`) does not count against that
+   budget, and stays inline instead of going to a mesh worker.** `rebuild2()` returns for it before
+   the scan, so it costs next to nothing. A chunk over budget is left dirty and the walk continues
+   (it used to stop there), so all-air chunks further on still clear in the same frame.
+   `num` still counts every chunk against `list_max`. R.2 left the column-**read** budget alone (a
+   column's emptiness is not known until it has been read), so 256z reloads then sat on it: 144
+   columns ÷ 6 per frame = 24 frames. R.2b (item 3 above) counts the read in occupied chunks too.
+   `--empty-shortcut=0` (native) restores the old mesh scheduling for an A/B.
+
+   **The per-chunk empty bit (`TerrainChunk::typesEmpty`, R.2).** TRUE only if every `pblocks`
+   byte is known to be 0; FALSE means "not known". It is about **types only**: paint on air does
+   not mesh, and `rebuild2()`'s own empty test has always ignored `pcolors`. (`.emod`'s planned
+   `band_mask` is about storage and counts paint too. Seeding this bit from it is still safe,
+   because "band empty" implies "types all air"; a band with paint on air just stays FALSE, which is
+   the conservative answer.) Writers of `pblocks` and how each keeps it
+   true:
+   - `Terrain::addChunk` recomputes it from the voxels (a word-at-a-time OR, ~0.1 µs). **Every
+     column landing ends there after `pblocks` is final**: `FileManager::readColumn` (all
+     band branches, including the RLE one that can leave a band short and the memset for bands the
+     file lacks), `fmh_publishColumnFromDefault` (also via `MeshPool`'s decode publish), and every
+     `TerrainGenerator` column (`setLandt` writes before its `addChunk`).
+   - `Terrain::setLand(...,chunkToo)` and `TerrainChunk::setLand` clear it on a non-zero write,
+     before the next mesh decision. A write of air leaves it alone; the `rebuild2()` scan that
+     the edit triggers sets it again if the chunk is now all air.
+   - The constructor and `resetForReuse()` set FALSE until `addChunk` says otherwise.
+   - Anything new that writes `pblocks` owes one of these. `eden_debug_chunk_state()` reports
+     `stale` (the bit says empty, the voxels disagree: dropped geometry) and must read 0.
    The neighbourhood test means each chunk is meshed exactly once per reload — 1296 rebuilds and
    107 ms of mesh CPU per burst, against 1949 and 144 ms for a test that asked only about the
    column itself (`tools/headless-mesh-burst-probe.js`, same-session A/B).
@@ -260,7 +316,7 @@ useless, now just iterates through chunk list" (`Terrain.mm:2430`).
 
 ## Lifecycle
 - `Terrain()` constructed at app start; `allocateMemory()` only when entering a world;
-  `deallocateMemory()` on exit to menu (frees blockarray/lightarray/chunk objects).
+  `deallocateMemory()` on exit to menu (frees blockarray/the light bricks/chunk objects).
 - `loadTerrain(name, fromArchive)` → `FileManager::loadWorld` does the real work.
 - `unloadTerrain(exitToMenu)` only clears portals/fireworks and resets the mesh cache
   (`troot`) when `exitToMenu==TRUE` — i.e. when actually leaving the world, not on the

@@ -177,6 +177,17 @@ public:
     int meshJobState;
     BOOL meshJobStale;
     
+    // Stage R / R.2: TRUE only if every pblocks byte is known to be 0 (air). Conservative: FALSE
+    // means "not known", never "known non-empty". Types only -- paint on air does not mesh, and
+    // rebuild2()'s own empty early-out has always looked at types alone. It lets an all-air chunk
+    // skip rebuild2()'s scan and stay off the bulk-reload mesh budget. Who keeps it true:
+    //   Terrain::addChunk  -- recomputed from the voxels, the moment a column lands (readColumn,
+    //                         fmh_publishColumnFromDefault, every TerrainGenerator path);
+    //   Terrain::setLand / TerrainChunk::setLand -- a non-zero write clears it at once;
+    //   rebuild2()         -- a main-thread scan that finds nothing sets it (that is how a chunk
+    //                         dug back to air becomes empty again; a set-to-0 never sets it).
+    // Any NEW writer of pblocks owes one of those. eden_debug_chunk_state() audits it.
+    BOOL typesEmpty;
     BOOL in_view;
     BOOL has_light;
     BOOL modified;
@@ -230,6 +241,19 @@ static inline void tc_noteChunkWritten(TerrainChunk* chunk){
 }
 
 void tc_initGeometry();
+
+// Stage R / R.2: is a chunk's type plane all air? Word-at-a-time over the 4 KB plane (~0.1 us),
+// against the ~4 us (Mac) / ~11 us (A8X) rebuild2() scan it lets an empty chunk skip.
+static inline bool tc_typesAllZero(const block8* blocks){
+    const unsigned long long* w=(const unsigned long long*)blocks;
+    unsigned long long acc=0;
+    for(int i=0;i<(int)(CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE*sizeof(block8)/8);i++)acc|=w[i];
+    return acc==0;
+}
+// Recompute the bit from the voxels. Main thread only.
+static inline void tc_refreshTypesEmpty(TerrainChunk* chunk){
+    if(chunk)chunk->typesEmpty=tc_typesAllZero(chunk->pblocks);
+}
 
 #endif
 

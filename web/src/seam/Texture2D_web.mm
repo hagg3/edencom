@@ -478,6 +478,54 @@ Texture2D::Texture2D(NSString* string, CGSize dimensions, UITextAlignment alignm
     initFromString(string, dimensions, alignment, font);
 }
 
+// N.4.8 — UI text at the device's real density. The stock path rasterises one texel per 2D-ortho
+// unit, and the ortho (SCREEN_* x SCALE_*) is not the drawable: on an iPad Air 2's touch profile
+// it is 1136x852 units across a 2046x1536 px box, so every label was magnified 1.8x through
+// GL_MAG_FILTER NEAREST — the doubled-pixel softness reported as "dialogs slightly blurry".
+//
+// So rasterise at W = round(w * density) texels (font scaled to match), then copy the W x H
+// raster into the top-left of a POT buffer and let _maxS/_maxT select it. Rasterising into the
+// POT buffer directly would not do: the seam aligns text against the WHOLE buffer width, and
+// pot(w * density) is not w * density, so centred and right-aligned text would move. drawText
+// then draws W / density units — within half a device pixel of `w`, and exactly 1:1 on pixels.
+Texture2D::Texture2D(NSString* string, CGSize dimensions, UITextAlignment alignment, UIFont* font,
+                     float density) {
+    if (!(density > 1.0f) || font == nil) {
+        initFromString(string, dimensions, alignment, font);
+        return;
+    }
+    // A label that would outgrow the texture cap gets less density, never a clipped raster.
+    if (dimensions.width  * density > kMaxTextureSize_Eden) density = kMaxTextureSize_Eden / (float)dimensions.width;
+    if (dimensions.height * density > kMaxTextureSize_Eden) density = kMaxTextureSize_Eden / (float)dimensions.height;
+    if (!(density > 1.0f)) {
+        initFromString(string, dimensions, alignment, font);
+        return;
+    }
+    int W = (int)lroundf((float)dimensions.width * density);
+    int H = (int)lroundf((float)dimensions.height * density);
+    int potW = 1, potH = 1;
+    while (potW < W) potW *= 2;
+    while (potH < H) potH *= 2;
+    if (potW > kMaxTextureSize_Eden) potW = kMaxTextureSize_Eden;
+    if (potH > kMaxTextureSize_Eden) potH = kMaxTextureSize_Eden;
+    if (W > potW) W = potW;
+    if (H > potH) H = potH;
+    if (W <= 0 || H <= 0) return;
+
+    unsigned char* raster = (unsigned char*)calloc((size_t)W * H * 4, 1);
+    eden_rasterize_text_rgba([string UTF8String], W, H, [font pointSize] * density, (int)alignment, raster);
+    unsigned char* data = raster;
+    if (W != potW || H != potH) {
+        data = (unsigned char*)calloc((size_t)potW * potH * 4, 1);
+        for (int y = 0; y < H; y++)
+            memcpy(data + (size_t)y * potW * 4, raster + (size_t)y * W * 4, (size_t)W * 4);
+        free(raster);
+    }
+    initData(data, kTexture2DPixelFormat_RGBA8888, potW, potH, CGSizeMake(W, H), FALSE);
+    free(data);
+    _density = density;
+}
+
 Texture2D::Texture2D(NSString* path) { initFromPath(path, NO, kTexture2DPixelFormat_Automatic, FALSE); }
 Texture2D::Texture2D(NSString* path, BOOL sizeToFit, BOOL genMips) { initFromPath(path, sizeToFit, kTexture2DPixelFormat_Automatic, genMips); }
 Texture2D::Texture2D(NSString* path, BOOL sizeToFit) { initFromPath(path, sizeToFit, kTexture2DPixelFormat_Automatic, FALSE); }
@@ -694,7 +742,7 @@ void Texture2D::drawAtPoint(CGPoint point) { drawAtPoint(point, 0.0, FALSE); }
 
 void Texture2D::drawAtPoint(CGPoint point, CGFloat depth, BOOL center) {
     GLfloat coordinates[] = { 0, _maxT, _maxS, _maxT, 0, 0, _maxS, 0 };
-    GLfloat width = (GLfloat)_width * _maxS, height = (GLfloat)_height * _maxT;
+    GLfloat width = (GLfloat)_width * _maxS / _density, height = (GLfloat)_height * _maxT / _density;  // N.4.8
     // Both branches vertically center on point.y; only the horizontal anchor differs
     // (center: point.x is the midpoint; !center: point.x is the left edge) — matches the
     // original's separate cvertices/zvertices arrays exactly.
@@ -770,11 +818,14 @@ void Texture2D::drawText(CGRect rect, BOOL flipX) {
     GLfloat coordinates[] = { 0, flipX?0:_maxT, _maxS, flipX?0:_maxT, 0, flipX?_maxT:0, _maxS, flipX?_maxT:0 };
     GLfloat width = roundf((GLfloat)_width * _maxS), height = roundf((GLfloat)_height * _maxT);
     if (!IS_RETINA && SUPPORTS_RETINA) { width /= 2; height /= 2; }
+    // N.4.8: a density-built label is `_density` texels per unit, and its origin is snapped to a
+    // DEVICE pixel rather than an ortho unit so those texels stay 1:1. Both are no-ops at 1.
+    width /= _density; height /= _density;
     if (IS_IPAD) {
         rect.origin.x *= SCALE_WIDTH;
         rect.origin.y *= SCALE_HEIGHT;
-        rect.origin.x = roundf(rect.origin.x);
-        rect.origin.y = roundf(rect.origin.y);
+        rect.origin.x = roundf(rect.origin.x * _density) / _density;
+        rect.origin.y = roundf(rect.origin.y * _density) / _density;
     }
     GLfloat vertices[] = {
         rect.origin.x, rect.origin.y, depth,

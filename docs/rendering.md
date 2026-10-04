@@ -49,6 +49,18 @@ linear fog band: start `ZFAR-ZFAR/1.6`, end `ZFAR-30`). Fog color tracks sky col
 
 CPU-side, runs on the main thread inside `prepareAndLoadGeometry`. Stages:
 
+0. **Empty shortcut (modified from stock, Stage R / R.2, 2026-10-03).** If the chunk's
+   `typesEmpty` bit says its type plane is all air, `rebuild2()` returns right here, after
+   `clearMeshes()` and the counter resets and **before both mesher passes**, with
+   `clearOldVerticesOnly=TRUE`. That is exactly the state stage 1 leaves on an all-air chunk
+   (it sets nothing when every type is 0; `has_light` FALSE, `num_objects` 0, `needsVBO` TRUE),
+   so this only skips the 4096-voxel scan (~4 µs Mac, ~11 µs A8X). It is main-thread only (a
+   worker meshes a snapshot the bit doesn't describe), and stage 1, when it does run on the main
+   thread, writes the bit back (`typesEmpty = !hasAnything`), which is how a chunk dug back to air
+   rejoins the shortcut. Who maintains the bit is in [world-and-terrain.md](world-and-terrain.md),
+   under "The per-chunk empty bit". Gates: `eden_debug_chunk_state()` (state hash + bit audit),
+   `--empty-bit-selftest`, and `--empty-selfcheck`, which runs the scan anyway and counts a bit
+   that was wrong.
 1. **Scan pass** over `pblocks`: find lightboxes (`has_light`), clamp corrupt types to
    stone, note whether the chunk contains any `IS_ATLAS2` (transparent) blocks,
    count `StaticObject`s (doors/golden cubes/flowers/portal tops), and fill the

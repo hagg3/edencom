@@ -96,6 +96,14 @@ int   eden_display_point_height(void);
 // own aspect and the letterbox is a no-op, but the clamp below can make them differ.
 int   eden_display_aspect_x1000(void);
 
+// Device pixels per 2D-ortho unit (the `glOrthof(0, SCREEN_WIDTH*2, ...)` space every UI pass
+// draws in), from the live drawable. N.4.8: the UI text rasters were built at 1 texel per ortho
+// unit and then magnified by this ratio through GL_NEAREST — 1.8x on an iPad Air 2's touch
+// profile, which is the "dialogs are slightly blurry" report. Text built through
+// Texture2D's density constructor rasterises at this many texels per unit instead.
+// 1.0 when there is no drawable (headless), so no headless hash can move; clamped to [1, 4].
+float eden_ui_raster_density(void);
+
 // Does the active profile want the on-screen joystick / jump / crouch chrome? A profile FIELD, so
 // there is one answer rather than a `use_joystick` here and a CSS rule there.
 int   eden_profile_touch_chrome(void);

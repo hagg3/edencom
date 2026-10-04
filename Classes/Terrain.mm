@@ -12,8 +12,12 @@
 #import "Model.h"
 #import "VectorUtil.h"
 
-#import "Lighting.h"
+// The repo-root Lighting.h -- the one Eden.xcodeproj lists. A bare "Lighting.h" resolves to
+// Classes/Lighting.h first, an empty stock stub with the SAME include guard (Stage R / R.3 needs
+// the real one: the light store's accessors live there).
+#import "../Lighting.h"
 #import "MeshPool.h"
+#import "FileManagerHelper.h"   // fmh_defaultBandCount (Stage R / R.2b)
 
 // Repo-root Lighting.h is the built one (Eden.xcodeproj / web CMake); the Classes/ copy next to
 // this file is a stale snapshot with no prototypes, hence these explicit decls.
@@ -57,7 +61,7 @@ static void mp_redirtyChunk(int idxn){
 
 block8* blockarray;
 //static color8* shadowarray;
-Vector8* lightarray;
+Vector8* lightarray=NULL;   // R.3: only the self-check's dense mirror now (Lighting.h)
 //static map_t chunkMapc;
 TerrainChunk** chunkTablec;
 static BOOL secondPass;
@@ -219,7 +223,7 @@ void Terrain::clearBlocks(){
 	memset(blockarray,0,sizeof(block8)*T_SIZE*T_SIZE*T_HEIGHT);
   //  memset(shadowarray,0,sizeof(color8)*T_SIZE*T_SIZE);
     if(!LOW_MEM_DEVICE)
-    memset(lightarray,0,sizeof(Vector8)*T_SIZE*T_SIZE*T_HEIGHT);
+    light_storeClear();   // Stage R / R.3 (Lighting.h); was memset(lightarray,...)
 }
 
 
@@ -279,7 +283,7 @@ void Terrain::allocateMemory(){
     memset(chunksToUpdateImmediatley,0,sizeof(BOOL)*CHUNKS_PER_SIDE*CHUNKS_PER_SIDE*CHUNKS_PER_COLUMN);
     blockarray=(block8*)malloc(sizeof(block8)*(T_SIZE+1)*(T_SIZE+1)*(T_HEIGHT+1));
     if(!LOW_MEM_DEVICE)
-    lightarray=(Vector8*)malloc(sizeof(Vector8)*T_SIZE*T_SIZE*T_HEIGHT);
+    light_storeAllocate();   // Stage R / R.3: a brick table, not the dense lightarray (Lighting.h)
 }
 
 void Terrain::deallocateMemory(){
@@ -307,7 +311,7 @@ void Terrain::deallocateMemory(){
     free(blockarray);
     blockarray=NULL;
     if(!LOW_MEM_DEVICE)
-free(lightarray);
+light_storeFree();   // R.3: the only place a light brick is freed -- mp_drain above (Lighting.h)
     
 }
 
@@ -370,11 +374,15 @@ static BOOL bulk_reload_active=FALSE;
 // Set by the meshing pass when the per-frame budget stopped it short, i.e. that reload still owes
 // the window geometry even if every column has been read.
 static BOOL bulk_reload_meshing=FALSE;
+// Stage R / R.2b: count the reload's column reads in occupied chunks (see the read loop in
+// prepareAndLoadGeometry). The kill switch and A/B lever: false restores the stock count of
+// BULK_RELOAD_CHUNK_BUDGET/CHUNKS_PER_COLUMN columns a frame. Written only by diagnostics.
+bool g_read_budget_bands=true;
 
 void updateLightingBegin(){
     if(LOW_MEM_DEVICE)return;
     update_lighting=TRUE;
-    memset(lightarray,0,sizeof(Vector8)*T_SIZE*T_SIZE*T_HEIGHT);
+    light_storeClear();   // R.3: zero the lit bricks only; was a 16 MB (64z) / 64 MB (256z) memset
     calculateLightingSliceReset();   // restart the sliced sweep from column 0
 }
 
@@ -649,6 +657,11 @@ TerrainChunk* rebuildList[13000];
 }*/
 
 void Terrain::addChunk(TerrainChunk* chunk, int cx,int cy,int cz,BOOL rebuild){
+    // R.2: every path that lands a column's voxels ends here, after pblocks is final --
+    // FileManager::readColumn (all three band branches, and the RLE branch that can leave a band
+    // short), fmh_publishColumnFromDefault (also via MeshPool's decode publish), and every
+    // TerrainGenerator column. So this is the one place the empty bit is computed from scratch.
+    tc_refreshTypesEmpty(chunk);
 	
 	//NSNumber* chunkIdx=[NSNumber numberWithInt:threeToOne(cx,cy,cz)];
 	
@@ -748,6 +761,10 @@ void Terrain::setLand(int x,int z,int y,int type,BOOL chunkToo){
         }*/
        
             chunk->pblocks[x*(CHUNK_SIZE*CHUNK_SIZE)+z*(CHUNK_SIZE)+y]=type;
+        // R.2: a block landing in an all-air chunk must take it off the empty shortcut before the
+        // next budget decision. Setting air leaves the bit alone; the rebuild2() scan the edit
+        // triggers is what notices a chunk that is now all air (TerrainChunk.h).
+        if(type)chunk->typesEmpty=FALSE;
         chunk->modified=TRUE;
         // B3 Stage 2, invalidation rule 2: if a worker is meshing this chunk it is meshing a
         // snapshot taken before this edit. That is SAFE -- it cannot tear -- but the mesh it
@@ -1560,18 +1577,38 @@ float getShadow(int x,int z,int y){
 }
 float calcLight(int x,int z,int y,float shadow,int coord){
     if(LOW_MEM_DEVICE)return shadow;
+    // Stage R / R.3: the brick store (Lighting.h). No brick = no light, which adds exactly the 0.0f
+    // the dense array's zero did, so the clamp below sees the same value. The y test is new: every
+    // caller passes an in-window y, and the dense index read a NEIGHBOURING strip's light for one
+    // that was not (or past the array, at its ends).
+    const Vector8* lv=(y>=0&&y<T_HEIGHT)?light_get((x+g_offcx)%T_SIZE,(z+g_offcz)%T_SIZE,y):NULL;
+    if(lv){
     if(coord==0)
-        shadow+=(float)lightarray[((x+g_offcx)%T_SIZE)*T_SIZE*T_HEIGHT+((z+g_offcz)%T_SIZE)*T_HEIGHT+y].x/64.0f;
+        shadow+=(float)lv->x/64.0f;
     else if(coord==1)
-        shadow+=(float)lightarray[((x+g_offcx)%T_SIZE)*T_SIZE*T_HEIGHT+((z+g_offcz)%T_SIZE)*T_HEIGHT+y].y/64.0f;
+        shadow+=(float)lv->y/64.0f;
     else if(coord==2)
-        shadow+=(float)lightarray[((x+g_offcx)%T_SIZE)*T_SIZE*T_HEIGHT+((z+g_offcz)%T_SIZE)*T_HEIGHT+y].z/64.0f;
+        shadow+=(float)lv->z/64.0f;
+    }
     
     
     
     if(shadow<0)shadow=0;
     if(shadow>1.5f)shadow=1.5f;
     return shadow;
+}
+// The light at one voxel of the window, by TOROIDAL index (tx,tz in [0,T_SIZE)), for diagnostics
+// (eden_debug_light_state). Answers what calcLight would add, whatever the store looks like.
+Vector8 lightAtToroidal(int tx,int tz,int y){
+    Vector8 v; v.x=v.y=v.z=0;
+    if(LOW_MEM_DEVICE||y<0||y>=T_HEIGHT)return v;
+    const Vector8* lv=light_get(tx,tz,y);
+    return lv?*lv:v;
+}
+BOOL lightingSweepPending(){ return update_lighting; }
+unsigned long long lightStoreBytes(){
+    if(LOW_MEM_DEVICE)return 0;
+    return light_storeBytes();
 }
 int getLandc2(int x,int z,int y){
     if(y<0||y>=T_HEIGHT)return -1;
@@ -2404,6 +2441,23 @@ void Terrain::prepareAndLoadGeometry(){
 
                     int budget=BULK_RELOAD_CHUNK_BUDGET/CHUNKS_PER_COLUMN;
                     if(budget<1)budget=1;
+                    // Stage R / R.2b: the read half of the budget, counted in OCCUPIED chunks.
+                    // A column that lands costs its non-empty bands (typesEmpty, R.2, refreshed by
+                    // addChunk as it lands; at least 1), so a 256z column of 64z-shaped terrain
+                    // costs what the 64z column costs and the reload reads ~24 columns a frame
+                    // instead of 6. It cannot be known before the read, so the column that crosses
+                    // the budget still lands (<= CHUNKS_PER_COLUMN-1 over, as the mesh pass's last
+                    // chunk can be). Capped at the 64z column count, so no frame reads more columns
+                    // than a 64z frame does and 64z itself is unchanged. What grows is BYTES per
+                    // frame at 256z (.eden stores air bands as 8 KB of zeros): up to 4x, which is
+                    // the device cost R.4 must time. g_read_budget_bands=false is the old count.
+                    extern bool g_read_budget_bands;
+                    const bool byBands=g_read_budget_bands;
+                    if(byBands){
+                        budget=BULK_RELOAD_CHUNK_BUDGET/(T_HEIGHT_DEFAULT/CHUNK_SIZE);
+                        if(budget<1)budget=1;
+                    }
+                    int spent=0;
                     if(budget>nstale)budget=nstale;
                     // B3 Stage 2, invalidation rule 1 (plan doc §4.3): readColumn re-homes every
                     // chunk of the column -- setBounds(), and a wholesale rewrite of pblocks/
@@ -2412,7 +2466,8 @@ void Terrain::prepareAndLoadGeometry(){
                     // frame or two and the column is still in stale[] next frame. Structurally
                     // this is the same "wait for the state to be safe" the neighbour test below
                     // does, and it cannot livelock: workers always finish.
-                    for(int i=0,taken=0;i<nstale&&taken<budget;i++){
+                    for(int i=0,taken=0;i<nstale&&taken<budget&&
+                                        (!byBands||spent<BULK_RELOAD_CHUNK_BUDGET);i++){
                         if(mp_columnBusy(stale[i].cx,stale[i].cz))continue;
                         //removeLights
                         // B3 Stage 3: readColumnDeferred may hand the column's RLE decode to a
@@ -2421,8 +2476,22 @@ void Terrain::prepareAndLoadGeometry(){
                         // and what decides the reload is finished, and both answers have to stay
                         // "no" until the decode publishes. The column is still in stale[] next
                         // frame; mp_columnBusy above is what stops it being read a second time.
-                        if(world->fm->readColumnDeferred( stale[i].cx,stale[i].cz,saveFile))
+                        if(world->fm->readColumnDeferred( stale[i].cx,stale[i].cz,saveFile)){
                             isloaded[stale[i].cx-m_chunkOffsetX][stale[i].cz-m_chunkOffsetZ]=TRUE;
+                            if(byBands){
+                                int occupied=0;
+                                for(int cy=0;cy<CHUNKS_PER_COLUMN;cy++){
+                                    TerrainChunk* c=chunkTable[threeToOne(stale[i].cx,cy,stale[i].cz)];
+                                    if(!c||!c->typesEmpty)occupied++;
+                                }
+                                spent+=occupied>0?occupied:1;
+                            }
+                        }else if(byBands){
+                            // Dispatched to a worker (threaded web only): a bundled-map column,
+                            // which has at most fmh_defaultBandCount() occupied bands.
+                            const int bands=fmh_defaultBandCount();
+                            spent+=bands<CHUNKS_PER_COLUMN?bands:CHUNKS_PER_COLUMN;
+                        }
                         //addlights
                         // Counted whether it landed or was dispatched: the budget limits how much
                         // work one frame STARTS, which is what it has to mean once the work is
@@ -2496,6 +2565,12 @@ void Terrain::prepareAndLoadGeometry(){
         // explosion and the initial world load are all unbudgeted.
         const int frame_max=bulk_reload_active&&BULK_RELOAD_CHUNK_BUDGET<list_max
                             ?BULK_RELOAD_CHUNK_BUDGET:list_max;
+        // Stage R / R.2: what frame_max counts. An all-air chunk (typesEmpty) costs rebuild2() a
+        // few instructions now, not a scan, so it no longer spends the budget: at 256z ~80% of a
+        // reload's dirty chunks are air, and counting them made the mesh span 4x the 64z one for
+        // the same terrain. `num` still counts everything, because list[] is sized by list_max.
+        extern bool g_empty_shortcut;
+        int budgeted=0;
 
         idxrl=0;
         bulk_reload_meshing=FALSE;
@@ -2533,17 +2608,25 @@ void Terrain::prepareAndLoadGeometry(){
                                     column_deferred=TRUE;
                                     continue;
                                 }
-                                if(num>=frame_max){
+                                const BOOL budgetFree=g_empty_shortcut&&chunkTable[n]&&
+                                                      chunkTable[n]->typesEmpty;
+                                if(num>=list_max){
                                     // Leave chunksToUpdate/columnsToUpdate set for what didn't fit,
                                     // so the next frame picks it up instead of losing it forever.
-                                    if(num>=list_max){
-                                        printg("dirty-chunk list full at %d, deferring the rest\n",num);
-                                    }else{
-                                        bulk_reload_meshing=TRUE;
-                                    }
+                                    printg("dirty-chunk list full at %d, deferring the rest\n",num);
                                     goto list_full;
                                 }
+                                if(!budgetFree&&budgeted>=frame_max){
+                                    // Over budget: leave this one dirty for the next frame, same
+                                    // as the old goto did -- but keep walking (R.2), so the air
+                                    // chunks further on still clear this frame instead of each
+                                    // waiting behind a non-empty one.
+                                    bulk_reload_meshing=TRUE;
+                                    column_deferred=TRUE;
+                                    continue;
+                                }
                                 list[num++]=n;
+                                if(!budgetFree)budgeted++;
 
                                 chunksToUpdate[threeToOne(x,y,z)]=FALSE;
                             }
@@ -2594,7 +2677,12 @@ void Terrain::prepareAndLoadGeometry(){
                    // is not felt). Revisit only with a number. mp_dispatch answering FALSE -- no
                    // threads, no free slot, or something burning in this chunk -- falls straight
                    // through to the unmodified inline path below.
-                   if(bulk_reload_active&&mp_dispatch(rebuildList[i],rebuildList[i]->idxn))
+                   // R.2: an all-air chunk stays inline -- the shortcut makes it cheaper than the
+                   // 8 KB snapshot a dispatch would take, and it was never counted in the budget
+                   // the pool is sized for (MeshPool.mm).
+                   if(bulk_reload_active&&
+                      !(g_empty_shortcut&&rebuildList[i]->typesEmpty)&&
+                      mp_dispatch(rebuildList[i],rebuildList[i]->idxn))
                        continue;
               
                    if(rebuildList[i]->rebuild2()==-1){

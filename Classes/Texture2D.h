@@ -45,6 +45,9 @@ private:
 	Texture2DPixelFormat		_format;
 	GLfloat						_maxS,
 								_maxT;
+	// Texels per 2D-ortho unit (N.4.8). 1 for every texture except the density-built text below;
+	// drawText divides the quad extent by it, so a 1 here is the stock behaviour exactly.
+	GLfloat						_density = 1.0f;
 
     void initData(const void* data, Texture2DPixelFormat pixelFormat, int width,int height,CGSize size,BOOL genMips);
     void initFromPath(NSString* path, BOOL sizeToFit, Texture2DPixelFormat pixelFormat, BOOL genMips);
@@ -105,6 +108,10 @@ Texture2D(NSString* path);
     
    // Texture2D(NSString* string, CGSize dimension, UITextAlignment alignment, NSString* name,CGFloat size);
     Texture2D(NSString* string, CGSize dimension, UITextAlignment alignment, UIFont* font);
+    // N.4.8: the same label rasterised at `density` texels per ortho unit (font and buffer both
+    // scaled) so it lands 1:1 on device pixels; it still DRAWS at `dimension`, via drawText.
+    // Pass eden_ui_raster_density(). density <= 1 is exactly the constructor above.
+    Texture2D(NSString* string, CGSize dimension, UITextAlignment alignment, UIFont* font, float density);
 /*
 Extensions to make it easy to create a Texture2D object from a string of text.
 Note that the generated textures are of type A8 - use the blending mode (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA).

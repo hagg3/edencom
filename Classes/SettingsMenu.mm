@@ -97,9 +97,13 @@ extern float P_ASPECT_RATIO;
 // the whole quad.
 static float sm_scale() { return IS_IPAD ? SCALE_WIDTH : 1.0f; }
 
+// N.4.8: built at the drawable's real density so the label is 1:1 on device pixels; it still
+// draws at w x h ortho units through drawText, so nothing below changes.
+extern "C" float eden_ui_raster_density(void);   // web/src/seam/DisplayProfile_web.mm
 static Texture2D* sm_text(const char* s, int w, int h, UITextAlignment align, float pt) {
     return new Texture2D([NSString stringWithUTF8String:(s ? s : "")],
-                         CGSizeMake(w, h), align, [UIFont systemFontOfSize:pt * sm_scale()]);
+                         CGSizeMake(w, h), align, [UIFont systemFontOfSize:pt * sm_scale()],
+                         eden_ui_raster_density());
 }
 
 static void sm_fill(CGRect r, float cr, float cg, float cb, float ca) {

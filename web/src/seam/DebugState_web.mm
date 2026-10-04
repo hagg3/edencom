@@ -34,6 +34,12 @@ extern CGRect padbounds;
 // Declared in Globals.h, but with C++ linkage — so it has to be re-declared HERE, outside the
 // `extern "C"` block below, not inside the one function that reads it.
 extern float P_ASPECT_RATIO;
+// Classes/Terrain.mm, C++ linkage like the above (eden_debug_light_state, Stage R / R.3).
+Vector8 lightAtToroidal(int tx, int tz, int y);
+BOOL lightingSweepPending();
+unsigned long long lightStoreBytes();
+void updateLightingBegin();
+#include "../../../Lighting.h"                 // R.3's brick store (the root one, not Classes/)
 
 extern "C" {
 
@@ -245,13 +251,14 @@ const char* eden_debug_menu_state(void) {
 // failed malloc would splatter ~16 MB of zeros starting at address 0.
 EDEN_EXPORT
 extern "C" const char *eden_debug_alloc_state(void) {
+    // Stage R / R.3: lightarray is no longer the light store; the brick table is, and what it
+    // holds is reported instead of the old fixed 288*288*T_HEIGHT*3.
     extern block8 *blockarray;
-    extern Vector8 *lightarray;
     static char buf[256];
     snprintf(buf, sizeof(buf),
-             "{\"blockarray\":%u,\"lightarray\":%u,\"lightarray_bytes\":%u}",
-             (unsigned)(uintptr_t)blockarray, (unsigned)(uintptr_t)lightarray,
-             (unsigned)(sizeof(Vector8) * T_SIZE * T_SIZE * T_HEIGHT));
+             "{\"blockarray\":%u,\"lightbricks\":%u,\"lightarray_bytes\":%u}",
+             (unsigned)(uintptr_t)blockarray, (unsigned)(uintptr_t)lightbricks,
+             (unsigned)lightStoreBytes());
     return buf;
 }
 
@@ -436,6 +443,156 @@ extern "C" const char *eden_debug_mesh_checksum(void) {
              "\"geom\":\"%016llx\",\"full\":\"%016llx\"}",
              chunks, hashed, verts, hGeom, hFull);
     return buf;
+}
+
+// Stage R / R.2 (WORKING/ROADMAP.md): the gate for the empty-chunk shortcut. The mesh checksum
+// above covers what a rebuild PUBLISHES; this covers the state it leaves on the chunk that the
+// checksum cannot see -- has_light, the object counts, needsVBO, clearOldVerticesOnly -- which is
+// exactly what a skipped scan has to reproduce. `state` is an FNV-1a over those fields in
+// chunkTablec order, so it compares before/after R.2 the way `geom` does.
+//
+// It also audits the per-chunk `typesEmpty` bit against the voxels (`stale` = the bit says empty
+// and the chunk is not: a correctness bug, it would drop geometry; `missed` = the chunk is empty
+// and the bit says not: a scheduling miss, harmless). `selfcheck` reports how many shortcut-
+// eligible rebuilds eden_debug_set_empty_selfcheck(1) ran the full scan for instead, and how many
+// of them found a block (`selfcheck_stale`, must be 0).
+EDEN_EXPORT
+extern "C" const char *eden_debug_chunk_state(void) {
+    static char buf[320];
+    extern TerrainChunk** chunkTablec;
+    extern int g_empty_selfcheck_runs, g_empty_selfcheck_stale;
+
+    const unsigned long long kFnvOffset = 1469598103934665603ULL;
+    const unsigned long long kFnvPrime  = 1099511628211ULL;
+    unsigned long long h = kFnvOffset;
+    auto mix = [&](unsigned long long v) {
+        const unsigned char* b = (const unsigned char*)&v;
+        for (size_t i = 0; i < sizeof(v); ++i) { h ^= b[i]; h *= kFnvPrime; }
+    };
+    int chunks = 0, bit = 0, empty = 0, stale = 0, missed = 0, lit = 0, cleared = 0;
+    if (chunkTablec) {
+        const int n = CHUNKS_PER_SIDE * CHUNKS_PER_SIDE * CHUNKS_PER_COLUMN;
+        for (int i = 0; i < n; i++) {
+            TerrainChunk* c = chunkTablec[i];
+            if (!c) continue;
+            chunks++;
+            mix((unsigned long long)(c->has_light ? 1 : 0) |
+                ((unsigned long long)(c->needsVBO ? 1 : 0) << 1) |
+                ((unsigned long long)(c->clearOldVerticesOnly ? 1 : 0) << 2) |
+                ((unsigned long long)(unsigned)c->num_objects << 8) |
+                ((unsigned long long)(unsigned)c->rtnum_objects << 32));
+            if (c->has_light) lit++;
+            if (c->clearOldVerticesOnly) cleared++;
+            const bool isEmpty = tc_typesAllZero(c->pblocks);
+            if (isEmpty) empty++;
+            if (c->typesEmpty) bit++;
+            if (c->typesEmpty && !isEmpty) stale++;
+            if (!c->typesEmpty && isEmpty) missed++;
+        }
+    }
+    snprintf(buf, sizeof(buf),
+             "{\"chunks\":%d,\"state\":\"%016llx\",\"has_light\":%d,\"clear_only\":%d,"
+             "\"empty\":%d,\"bit\":%d,\"stale\":%d,\"missed\":%d,"
+             "\"selfcheck\":%d,\"selfcheck_stale\":%d}",
+             chunks, h, lit, cleared, empty, bit, stale, missed,
+             g_empty_selfcheck_runs, g_empty_selfcheck_stale);
+    return buf;
+}
+
+// One chunk's view of the same thing, by world block coordinate in Terrain's (x,z,y) order:
+// -1 = no chunk there, else bit 0 = the voxels really are all air, bit 1 = typesEmpty says so,
+// and the chunk's published vertex count above that (value >> 2). --empty-bit-selftest.
+EDEN_EXPORT
+extern "C" long long eden_debug_chunk_empty(int x, int z, int y) {
+    extern TerrainChunk** chunkTablec;
+    if (!chunkTablec || y < 0 || y >= T_HEIGHT) return -1;
+    TerrainChunk* c = chunkTablec[threeToOne(x / CHUNK_SIZE, y / CHUNK_SIZE, z / CHUNK_SIZE)];
+    if (!c || c->pbounds[0] != x / CHUNK_SIZE * CHUNK_SIZE ||
+        c->pbounds[2] != z / CHUNK_SIZE * CHUNK_SIZE) return -1;
+    return (tc_typesAllZero(c->pblocks) ? 1 : 0) | (c->typesEmpty ? 2 : 0) |
+           ((long long)(c->rtn_vertices + c->rtn_vertices2) << 2);
+}
+
+// Stage R / R.3 (WORKING/ROADMAP.md): the gate for the light store. R.1 found the mesh checksum
+// does not move when a lightbox is lost (calcLight only feeds vertex colours at night), so the
+// light itself has to be hashed. `hash` is an FNV-1a over (toroidal index, x, y, z) of every voxel
+// with non-zero light, walked in the dense array's order through lightAtToroidal(), so it answers
+// the same for the dense array and for a sparse store holding the same values. `bytes` is what the
+// store holds now (bricks in use + pooled + the two tables), `bricks` the lit slots; `pending` =
+// the post-reload sweep has not finished, so the hash is not final. `mismatch` (only with
+// eden_debug_set_light_selfcheck(1) before the world loaded) counts voxels where the bricks and the
+// stock dense array, written by the stock code alongside them, disagree: must be 0.
+EDEN_EXPORT
+extern "C" const char *eden_debug_light_state(void) {
+    static char buf[320];
+    const unsigned long long kFnvOffset = 1469598103934665603ULL;
+    const unsigned long long kFnvPrime  = 1099511628211ULL;
+    unsigned long long h = kFnvOffset;
+    auto mix = [&](unsigned long long v) {
+        const unsigned char* b = (const unsigned char*)&v;
+        for (size_t i = 0; i < sizeof(v); ++i) { h ^= b[i]; h *= kFnvPrime; }
+    };
+    long long lit = 0, sum = 0;
+    for (int tx = 0; tx < T_SIZE; tx++)
+        for (int tz = 0; tz < T_SIZE; tz++)
+            for (int y = 0; y < T_HEIGHT; y++) {
+                Vector8 v = lightAtToroidal(tx, tz, y);
+                if (!v.x && !v.y && !v.z) continue;
+                lit++;
+                sum += v.x + v.y + v.z;
+                mix((unsigned long long)((tx * T_SIZE + tz) * T_HEIGHT + y));
+                mix((unsigned long long)v.x | ((unsigned long long)v.y << 8) |
+                    ((unsigned long long)v.z << 16));
+            }
+    int n = snprintf(buf, sizeof(buf),
+             "{\"hash\":\"%016llx\",\"lit\":%lld,\"sum\":%lld,\"bytes\":%llu,\"bricks\":%d,"
+             "\"pending\":%d",
+             h, lit, sum, lightStoreBytes(), light_storeBricks(), lightingSweepPending() ? 1 : 0);
+    const long long bad = light_selfcheckMismatches();
+    if (bad >= 0) n += snprintf(buf + n, sizeof(buf) - n, ",\"mismatch\":%lld", bad);
+    snprintf(buf + n, sizeof(buf) - n, "}");
+    return buf;
+}
+
+// R.3's edit driver for --light-selftest: the light-changing edits through the engine's OWN entry
+// points, not a re-implementation of them. op 0 = place a lightbox of paint `color` (buildBlock,
+// with the HUD set the way a player would have it), 1 = break it (destroyBlock), 2 = repaint it
+// (paintBlock), 3 = start a fresh light sweep (updateLightingBegin -- what every reload and warp
+// does). Returns 0 if there is no world.
+EDEN_EXPORT
+extern "C" int eden_debug_light_edit(int op, int x, int z, int y, int color) {
+    if (!World::getWorld || !World::getWorld->terrain || !World::getWorld->hud) return 0;
+    Terrain* t = World::getWorld->terrain;
+    Hud* h = World::getWorld->hud;
+    switch (op) {
+    case 0: {
+        const int bt = h->blocktype, bc = h->block_paintcolor;
+        h->blocktype = TYPE_LIGHTBOX;
+        h->block_paintcolor = color;
+        t->buildBlock(x, z, y);
+        h->blocktype = bt;
+        h->block_paintcolor = bc;
+        break;
+    }
+    case 1: t->destroyBlock(x, z, y); break;
+    case 2: t->paintBlock(x, z, y, color); break;
+    case 3: updateLightingBegin(); break;
+    default: return 0;
+    }
+    return 1;
+}
+
+// Must be called before the world's memory is allocated (World::loadWorld): it decides whether
+// light_storeAllocate() also allocates the dense reference array.
+EDEN_EXPORT
+extern "C" void eden_debug_set_light_selfcheck(int on) {
+    g_light_selfcheck = (on != 0);
+}
+
+EDEN_EXPORT
+extern "C" void eden_debug_set_empty_selfcheck(int on) {
+    extern bool g_empty_selfcheck;   // Classes/TerrainChunk.mm
+    g_empty_selfcheck = (on != 0);
 }
 
 // B5 (256z Stage 3): force the save strategy for a test. Above g_save_inplace_threshold saveWorld

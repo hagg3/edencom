@@ -25,6 +25,18 @@ with OpenGL by the game itself. There is **no UIKit UI** beyond the GL view (and
   word-wrapping `GLW::Label`, and `GLW::Button`. **It applies the `SCALE_*` corrections itself**, so
   the caller works entirely in point space with y up — the `sm_fill`/`gldialog_fill` idiom that used
   to be copy-pasted into every screen. Adding a widget? Add it here, not in a screen.
+  - **Text is rasterised at the drawable's real density (N.4.8, 2026-10-04; modified from stock).**
+    The 2D ortho is `SCREEN_* x SCALE_*` units and is *not* the drawable: an iPad Air 2's touch
+    profile puts 1136x852 units across a 2046x1536 px box. Stock text rasters are one texel per
+    unit, so every label was magnified 1.8x through `GL_MAG_FILTER NEAREST` (doubled, uneven pixels;
+    the "dialogs are slightly blurry" report). `GLW::Label`, `SettingsMenu`'s `sm_text` and `statusbar` (the IS_IPAD branch) now build
+    through `Texture2D(string, dims, align, font, density)` with `eden_ui_raster_density()`
+    (`web/src/seam/DisplayProfile_web.mm`: drawable height / ortho height, clamped 1–4, **1 headless**
+    so no hash moves). The texture remembers its `_density`; `drawText` and `drawAtPoint` divide the quad by it
+    (`drawText` also snaps the origin to a device pixel), so the layout in ortho units is unchanged. Any other
+    `new Texture2D(NSString*, …)` site (SharedList, stubbed on native) still rasterises at 1 texel/unit and
+    can opt in the same way. **Bitmap art (HUD icons, menu atlases) is not covered**; it is
+    @2x art and stays magnified, so making it crisper means a filter choice or new art.
 - `GLDialog` (`Classes/GLDialog.{h,mm}`) — **added Phase N Stage 2.5, rebuilt on `GLWidgets` in
   5.1.** An engine-drawn centred modal (display-face title, an optional wrapped body sentence, up
   to `GLDIALOG_MAX_BUTTONS` buttons in a TWO-COLUMN grid, a C-function callback) for hosts with no

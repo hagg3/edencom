@@ -305,6 +305,20 @@ int eden_display_aspect_x1000(void) {
     return (int)(1000.0f * (float)g_pointW / (float)g_pointH + 0.5f);
 }
 
+// Height only: the drawable is the letterboxed box, whose aspect is the point space's, so the
+// two axes agree to within the even-rounding of the point width. Read live, never cached — the
+// drawable and the point space both change mid-session (a native window resize, a profile flip).
+float eden_ui_raster_density(void) {
+    int w = 0, h = 0;
+    eden_gl_context_get_drawable_size(&w, &h);
+    const float orthoH = SCREEN_HEIGHT * SCALE_HEIGHT;
+    if (h <= 0 || orthoH <= 0.0f) return 1.0f;
+    float k = (float)h / orthoH;
+    if (k < 1.0f) k = 1.0f;
+    if (k > 4.0f) k = 4.0f;
+    return k;
+}
+
 // Does the active profile want the on-screen joystick / jump / crouch chrome? Read by
 // Settings_web.mm's eden_apply_input_profile (which owns hud->use_joystick) and exported for the
 // page, which hides its own touch-only affordances on the same signal.

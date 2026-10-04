@@ -33,6 +33,7 @@ statusbar::statusbar(CGRect rect){
 void statusbar::setStatus(NSString* status,float time){
 	this->setStatus(status,time,UITextAlignmentCenter);
 }
+extern "C" float eden_ui_raster_density(void);   // web/src/seam/DisplayProfile_web.mm
 void statusbar::setStatus(NSString* status,float time,UITextAlignment align){
    if(message&&[status isEqualToString:message]){
         textlife=time;       
@@ -49,7 +50,8 @@ void statusbar::setStatus(NSString* status,float time,UITextAlignment align){
 									CGSizeMake(pos.size.width*SCALE_WIDTH,
 														  pos.size.height*SCALE_HEIGHT) ,
 									align,
-										 [UIFont systemFontOfSize:font_size*2]);
+										 [UIFont systemFontOfSize:font_size*2],
+                                         eden_ui_raster_density());   // N.4.8: 1:1 on device pixels
 	}
 	else{
 	text=new Texture2D(status,
