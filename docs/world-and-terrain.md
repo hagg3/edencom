@@ -240,8 +240,12 @@ Doors and portals are *stored* as voxels but *rendered and animated* as extracte
      the E2 worst frame went 28 → 40 ms (per rep 28.6/14.6/27.8 → 39.9/39.8/29.8), which is 64z's own
      spread with identical scheduling (40.3/39.5/26.7). Warps (E1) are unchanged: they read
      synchronously in `loadWorld`. On cold flash (F.3: ~70 MB/s at 256z) 3 MB is ~45 ms, so whether
-     the worst frame is acceptable on a device is ROADMAP R.4's call. `g_read_budget_bands` (native
-     `--read-budget-bands=0`) restores the stock count.
+     the worst frame is acceptable on a device is ROADMAP R.4's call. **R.4 (2026-10-04, iPad Air 2)
+     said no, so it ships OFF** (`g_read_budget_bands=false`, the stock count; this paragraph now
+     describes the opt-in path, native `--read-budget-bands=1`). 256z E2 on the device: on = 10
+     frames, 400–580 ms, worst frame **69–97 ms**; off = 27 frames, 580–650 ms, worst frame
+     **33–39 ms** (64z: 52–67 ms; F.3, before Stage R: 69 frames, 1430 ms, 48 ms). Revisit after
+     S.4, when `.emod` stops storing air bands as bytes.
    - when every column has landed *and* the meshing they dirtied has drained:
      `addMoreCreaturesIfNeeded()`, `loaded_new_terrain`, and the lighting recompute
      (`update_lighting` → `calculateLightingSlice()` at the tail of the same pass —
@@ -251,7 +255,7 @@ Doors and portals are *stored* as voxels but *rendered and animated* as extracte
      `update_lighting` stays set until the sweep reports done).
    - **Measured on an iPad Air 2 (F.3, 2026-10-03; `WORKING/emod-format-phase0-f3-results-2026-10-03.md`):**
      the same 144-column reload takes ~15 engine frames at 64z and **69 at 256z** (48 mesh-span + 21
-     sweep). (R.1, R.2 and R.2b since cut it to 10 frames on the Mac, the same as 64z; see the read-budget note above and the mesh-budget note under item 4.) The extra mesh frames exist because the 96-chunk budget counts an all-air chunk as a full
+     sweep). (R.1, R.2 and R.2b since cut it to 10 frames on the Mac, the same as 64z — with R.2b off by default since R.4, 27 frames on the iPad; see the read-budget note above and the mesh-budget note under item 4.) The extra mesh frames exist because the 96-chunk budget counts an all-air chunk as a full
      unit: 12 more bands per column × ~200 columns is ~2400 empty chunks, each ~11 µs on the A8X (4 µs on a
      Mac) to "mesh". A non-empty chunk costs the same ~0.41 ms at both heights, so the 256z premium is
      scheduling and empty-chunk overhead, not meshing work. Reading is a minor share (14% of a warp's

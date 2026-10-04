@@ -427,7 +427,7 @@ extern "C" void eden_mem_trace(const char* where) {
 //
 // The glFinish changes what it measures (a driver that defers work until a flush is made to do it
 // per texture), so the totals of a level-2 run are NOT the level-1 run's numbers; compare them to
-// a level-1 run and to the --tex-exp=flush run, which flushes without probing.
+// a level-1 run with --tex-exp=noflush (the pre-fix behaviour) and to one without it.
 #if defined(__APPLE__)
 struct TexSnap { int64_t fp = 0, gfx = 0, ioa = 0, ios = 0; };
 static TexSnap tex_snap() {

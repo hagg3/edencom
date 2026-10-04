@@ -375,9 +375,12 @@ static BOOL bulk_reload_active=FALSE;
 // the window geometry even if every column has been read.
 static BOOL bulk_reload_meshing=FALSE;
 // Stage R / R.2b: count the reload's column reads in occupied chunks (see the read loop in
-// prepareAndLoadGeometry). The kill switch and A/B lever: false restores the stock count of
-// BULK_RELOAD_CHUNK_BUDGET/CHUNKS_PER_COLUMN columns a frame. Written only by diagnostics.
-bool g_read_budget_bands=true;
+// prepareAndLoadGeometry). false is the stock count of BULK_RELOAD_CHUNK_BUDGET/CHUNKS_PER_COLUMN
+// columns a frame. OFF by default since R.4 (2026-10-04): on an iPad Air 2 it took the 256z walk
+// reload from 27 frames to 10 but its worst frame from 33-39 ms to 69-97 ms (64z: 52-67), because
+// a frame then reads up to 4x the bytes. Revisit with S.4 (.emod drops the 8 KB air bands).
+// Written only by diagnostics (native --read-budget-bands=1).
+bool g_read_budget_bands=false;
 
 void updateLightingBegin(){
     if(LOW_MEM_DEVICE)return;

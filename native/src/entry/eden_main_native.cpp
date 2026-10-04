@@ -298,6 +298,7 @@ bool set_render_scale_pct(int pct);   // --render-scale, defined beside run_scal
 extern "C" int g_eden_mem_trace;           // HeapProbe_native.cpp, --mem-trace (N.4.9)
 extern "C" void eden_mem_trace_install(void);   // HeapProbe_native.cpp, --mem-trace=2
 extern "C" void eden_gl_set_tex_experiments(int bits);   // gl_fixed_function.cpp, --tex-exp=
+extern "C" void eden_gl_set_tex_flush(int on);           // gl_fixed_function.cpp, N.4.9's fix
 extern "C" void eden_mem_trace(const char* where);
 void settings_pump() {
     if (!eden_settings_loaded()) eden_settings_init();
@@ -2704,14 +2705,16 @@ static int parse_one_arg(const char* a) {
         else if (starts_with(a, "--mem-trace="))      g_eden_mem_trace = atoi(a + 12);
         else if (starts_with(a, "--tex-exp=")) {
             // N.4.9 texture experiments (gl_fixed_function.cpp): comma list of nomips, storage,
-            // flush. Diagnostics for a device A/B; none of them is a default.
+            // noflush. Diagnostics for a device A/B. The per-upload flush has been the default
+            // since N.4.9's fix, so `noflush` is the old behaviour; `flush` is accepted as a no-op.
             int bits = 0;
             for (const char* p = a + 10; *p; ) {
                 const char* e = std::strchr(p, ',');
                 const size_t n = e ? (size_t)(e - p) : std::strlen(p);
                 if (n == 6 && !std::strncmp(p, "nomips", 6))       bits |= 1;
                 else if (n == 7 && !std::strncmp(p, "storage", 7)) bits |= 2;
-                else if (n == 5 && !std::strncmp(p, "flush", 5))   bits |= 4;
+                else if (n == 5 && !std::strncmp(p, "flush", 5))   eden_gl_set_tex_flush(1);
+                else if (n == 7 && !std::strncmp(p, "noflush", 7)) eden_gl_set_tex_flush(0);
                 else { std::fprintf(stderr, "eden: unknown --tex-exp entry in '%s'\n", a); return 2; }
                 p += n; if (*p == ',') ++p;
             }
@@ -2827,6 +2830,13 @@ static int eden_main_after_args(int argc, char** argv) {
     eden_mem_trace("boot");
     eden_gl_context_create(g_opt.winW, g_opt.winH);
 
+    // N.4.10 (2026-10-04): native never calls eden_set_low_memory(), on purpose — the decision,
+    // not an omission. On web it refuses 256z worlds and seeds 1x DPR / 75% render scale / 45 fps.
+    // On the 2 GB iPad Air 2, once N.4.9's texture flush landed, the F.3 walk peaks at 206 MB at
+    // 64z and 252 MB at 256z, so the refusal would protect nothing. And 75% render scale on native
+    // ADDS an offscreen framebuffer (N.4.11) rather than shrinking the drawable. Revisit only on a
+    // device that measures over criterion 3 (300 MB) with the fix in; the predicate would then be
+    // SDL_GetSystemRAM(). Never LOW_MEM_DEVICE: that turns coloured lighting off.
     eden_native::eden_seam_main();
     g_app = eden_native::eden_seam_get_app_delegate();
     eden_mem_trace("world-constructed");

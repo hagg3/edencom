@@ -832,19 +832,27 @@ bool g_pending_generate_mipmap = false;
 unsigned long long g_tex_upload_bytes = 0;
 unsigned g_tex_uploads = 0;
 
-// N.4.9 per-texture probe and texture experiments (diagnostics; all off by default, and the
-// default path below is byte-for-byte the one before them).
+// N.4.9: a glFlush after EVERY texture upload, on by default (2026-10-04). Without it the iOS GL
+// driver on an iPad Air 2 (A8X) held 192 MB of IOAccelerator memory for 45 MB of textures after the
+// ~150 start-up uploads, and +80 MB more on the first frames, while the same uploads each followed
+// by a flush cost 1.0-1.3x nominal: the driver keeps per-upload staging and glGenerateMipmap's
+// working memory until the work is submitted, and nothing submitted it until the first frame
+// presented. Measured: 64z footprint 338 -> 145 MB (criterion 3 is 300). The Mac and web already
+// cost ~1.0x and are unchanged by it. `--tex-exp=noflush` turns it off for an A/B.
+// Write-up: WORKING/n49-r4-device-results-2026-10-04.md.
+bool g_tex_flush = true;
+
+// N.4.9 per-texture probe and texture experiments (diagnostics; all off by default).
 //  - g_tex_probe: set by native --mem-trace=2 (HeapProbe_native.cpp). Called around each upload
-//    with phase 0 = before glTexImage2D, 1 = after it, 2 = after glGenerateMipmap, 3 = after a
-//    glFinish the probe itself issues — so the run that probes is not the run that measures the
-//    total, and that is why the experiments below exist as separate switches.
+//    with phase 0 = before glTexImage2D, 1 = after it, 2 = after glGenerateMipmap (and the flush
+//    above), 3 = after a glFinish the probe itself issues.
 //  - g_tex_exp (native --tex-exp=): EDEN_TEX_EXP_NOMIPS never builds a mip chain (any *_MIPMAP_*
 //    min filter becomes GL_LINEAR, else the texture is incomplete and samples black);
 //    EDEN_TEX_EXP_STORAGE allocates with glTexStorage2D (immutable, exact level count) and fills
-//    level 0 with glTexSubImage2D — ES 3.0 only, so iOS only; EDEN_TEX_EXP_FLUSH issues a
-//    glFlush after every upload so the driver can retire whatever it stages them in.
+//    level 0 with glTexSubImage2D — ES 3.0 only, so iOS only. On the iPad: nomips 64z 119 MB
+//    (with the flush off); storage made it WORSE (402 MB against 338).
 //  - g_tex_label: the asset name Texture2D_web.mm is uploading, for the probe's line only.
-enum { EDEN_TEX_EXP_NOMIPS = 1, EDEN_TEX_EXP_STORAGE = 2, EDEN_TEX_EXP_FLUSH = 4 };
+enum { EDEN_TEX_EXP_NOMIPS = 1, EDEN_TEX_EXP_STORAGE = 2 };
 void (*g_tex_probe)(int phase, const char* label, int w, int h, unsigned format, unsigned type,
                     int mips) = nullptr;
 int g_tex_exp = 0;
@@ -854,6 +862,7 @@ extern "C" void eden_gl_set_tex_probe(void (*fn)(int, const char*, int, int, uns
     g_tex_probe = fn;
 }
 extern "C" void eden_gl_set_tex_experiments(int bits) { g_tex_exp = bits; }
+extern "C" void eden_gl_set_tex_flush(int on) { g_tex_flush = (on != 0); }
 extern "C" int eden_gl_tex_experiments(void) { return g_tex_exp; }
 extern "C" void eden_gl_debug_tex_label(const char* label) { g_tex_label = label; }
 
@@ -912,7 +921,7 @@ void eden_gl_glTexImage2D(GLenum target, GLint level, GLint internalformat, GLsi
         }
         if (g_pending_generate_mipmap && level == 0) glGenerateMipmap(target);
         g_pending_generate_mipmap = false;
-        if (g_tex_exp & EDEN_TEX_EXP_FLUSH) glFlush();
+        if (g_tex_flush) glFlush();   // N.4.9: see g_tex_flush
         if (g_tex_probe) {
             g_tex_probe(2, g_tex_label, width, height, format, type, mips);
             glFinish();

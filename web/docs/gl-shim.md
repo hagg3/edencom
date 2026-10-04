@@ -152,17 +152,24 @@ it. Stock `Texture2D::initData` sets it on **every** texture (both of its branch
 the engine uploads, HUD art and text included, carries a mip chain. `g_tex_upload_bytes` counts
 level 0 × 4/3 for those (`eden_debug_gl_tex_bytes()`).
 
-For N.4.9 (2026-10-04) the upload has two diagnostic hooks, both off by default:
+**Every upload ends in a `glFlush()` (`g_tex_flush`, N.4.9's fix, 2026-10-04).** Without it, the iOS
+GL driver on an iPad Air 2 held **192 MB** of `IOAccelerator` memory for the 45 MB the ~150 start-up
+uploads amount to, plus ~80 MB more on the first frames: it keeps each upload's staging memory and
+`glGenerateMipmap`'s working memory until the work is submitted, and nothing submitted it until the
+first frame presented. With a flush after each upload the same textures cost 1.0–1.3× their nominal
+size, as they always did on the Mac, and the 64z footprint went **338 → 145 MB**. Web and the Mac
+cost ~1.0× either way. Measured, not assumed: `WORKING/n49-r4-device-results-2026-10-04.md`.
+
+Two diagnostic hooks sit beside it, both off by default:
 - **`g_tex_probe`** (native `--mem-trace=2`): called before the upload, after `glTexImage2D`, after
-  `glGenerateMipmap`, and after a `glFinish` it issues itself; `HeapProbe_native.cpp` turns that into
-  one `[eden-tex]` line of deltas per texture. `Texture2D_web.mm` names the asset through
-  `eden_gl_debug_tex_label()` (`<text>` for rasterised labels).
+  `glGenerateMipmap` (and the flush), and after a `glFinish` it issues itself; `HeapProbe_native.cpp`
+  turns that into one `[eden-tex]` line of deltas per texture. `Texture2D_web.mm` names the asset
+  through `eden_gl_debug_tex_label()` (`<text>` for rasterised labels).
 - **`g_tex_exp`** (native `--tex-exp=`): `nomips` drops the mip flag and rewrites any `*_MIPMAP_*` min
   filter to `GL_LINEAR` (without that the texture is incomplete and samples black); `storage`
   allocates with `glTexStorage2D` at the exact level count and fills level 0 with `glTexSubImage2D`
-  (ES 3.0 only, so iOS only; LUMINANCE/ALPHA uploads have no sized ES3 format and take the ordinary
-  path); `flush` issues `glFlush()` after each upload. They exist so one device install can measure
-  each candidate fix as a separate launch.
+  (ES 3.0 only, so iOS only; it made the iPad footprint *worse*, 402 MB against 338); `noflush`
+  turns the flush above off, i.e. the pre-fix behaviour, for an A/B.
 
 ## Debugging note
 See [conventions-and-pitfalls.md](conventions-and-pitfalls.md) #6 — Chrome-extension
