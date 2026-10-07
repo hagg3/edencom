@@ -439,9 +439,13 @@ EM_JS(void, eden_rasterize_text_rgba, (const char* textC, int width, int height,
   HEAPU8.set(img, outPtr);
 });
 // See TextRaster_native.cpp: 0 = body, 1 = display (Jersey 10). Sticky until set again.
-EM_JS(void, eden_text_raster_set_face, (int face), {
+// EM_JS declares an import, not a definition: another translation unit (GLWidgets.mm) that calls
+// it by plain declaration fails to link under Release LTO ("undefined symbol"), so the EM_JS stays
+// private to this file and the seam symbol is an ordinary function around it.
+EM_JS(void, eden_text_raster_set_face_js, (int face), {
   Module.__edenTextFace = (face === 1) ? 1 : 0;
 });
+extern "C" void eden_text_raster_set_face(int face) { eden_text_raster_set_face_js(face); }
 #else
 // Phase N Stage 1: the ONE genuinely platform-shaped line in this otherwise-portable file. Native
 // gets the same function from native/src/seam/TextRaster_native.cpp (stb_truetype), against this
