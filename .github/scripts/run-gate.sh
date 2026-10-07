@@ -37,7 +37,7 @@ run_gate() {
   echo "::endgroup::"
   # The tail is often debug chatter; the failing check names are what a reader needs.
   echo "::group::$label — FAIL lines"
-  grep -E ' FAIL' "$log" | head -n 40 || true
+  grep -E ' FAIL|TIMEOUT' "$log" | head -n 40 || true
   echo "::endgroup::"
 
   if [ "$rc" -gt 128 ] && command -v gdb >/dev/null 2>&1; then

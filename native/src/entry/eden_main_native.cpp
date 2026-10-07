@@ -355,7 +355,12 @@ void tick(int n) {
 // Ticks until `pred` is true or `timeoutFrames` frames have passed. Returns whether it happened.
 template <typename Pred>
 bool tick_until(Pred pred, int timeoutFrames, const char* what) {
-    for (int i = 0; i < timeoutFrames; ++i) {
+    // A frame budget alone is racy against worker threads (the net seam, the manifest parse): a
+    // fast machine burns 1500 frames in a few ms. So a timeout needs the frames AND 10 s of wall
+    // clock (a real failure costs at most 10 s more) — Windows CI lost "selecting a world shows
+    // its preview" to exactly this.
+    const Uint64 t0 = SDL_GetTicks();
+    for (int i = 0; i < timeoutFrames || SDL_GetTicks() - t0 < 10000; ++i) {
         if (pred()) return true;
         tick(1);
     }
