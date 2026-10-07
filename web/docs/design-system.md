@@ -251,17 +251,24 @@ fills, in the same order the CSS `box-shadow` list would composite.
 
 What carries over exactly: the palette, the three mechanics plus the two surfaces
 (`BEVEL_RAISED`/`SUNKEN`/`PRESSED`/`WINDOW`/`CONTENT`), the 6% gradient, square corners, the 1u
-chrome text shadow and its press inversion, the 44pt touch floor.
+chrome text shadow and its press inversion, the 44pt touch floor (on hit boxes, touch profile only).
 
 What differs, and why:
 
 | | DOM | GL kit |
 |---|---|---|
 | Scale unit | `--u` = `min(vw/783, vh/587)` clamped 1–2.4 | `GLW::u()`, same formula but against **point space** (~1138×640), clamped 0.7–2.4 — the display profile has already normalised the denominator, so the useful range is narrower |
-| Type | Jersey 10 for chrome, platform sans for body | **one** platform font at two sizes. The raster seam (`eden_rasterize_text_rgba`) takes a size and an alignment, not a family; giving native the pixel display face means giving that seam a font argument first |
+| Type | Jersey 10 for chrome, platform sans for body | **the same split** since 2026-10-05: `GLW::Label`'s `FACE_DISPLAY` (default) / `FACE_BODY`, through the raster seam's `eden_text_raster_set_face()`. Native rasterises the bundled `Jersey10-Regular.ttf` with stb_truetype. Jersey's caps are 0.50 of its pixel height against Arial's 0.64, so GL sizes are ~1.3x the body size for the same weight — the CSS's 22u buttons beside 15u body |
+| Density | `pointer: coarse` raises the hit box to 44px | `GLW::touchFloor()` (44pt on the touch profile, else 0) and `setHitRect()` on every control: rows are ~30u under a mouse and 44pt under a finger, the art stays compact either way |
 | Y axis | down | **up.** Every `--eden-drop-*` is drawn at −y and every `inset a a` is a strip on the TOP and LEFT edges |
 | Wrapping | the browser measures | estimated at `0.52 × pt` per character — there is no measure call in the seam. Costs at worst one extra break in a body sentence |
 | Icons | Lucide SVG, `currentColor` | **not yet.** The mockups' alert glyph is owed; it needs either vector path playback or an engine atlas tile |
+| Controls | `.eden-toggle`, `.eden-slider`, `.eden-field`, steppers as button rows | `GLW::Toggle` / `Slider` / `Stepper` / `TextField` (Stage 5.4 / N.4.5), same geometry tokens (104×34u toggle, 10u track + 16×24u thumb on `--bevel-raised-sm`, SUNKEN white field). Hit boxes sit at the 44pt floor with the art centred in them |
+| Lists | `.eden-listrow--selectable` in a natively scrolling `.eden-content` + `.eden-scrollbar` | `GLW::ListRow` (same tint + 4u lime bar) in a `GLW::ScrollView` (Stage 5.6). **Row-snapped**: the kit cannot clip (no scissor through the translator's letterboxed, render-scaled path), so it scrolls whole rows — by drag, by the scrollbar (thumb drag, track tap pages), or by the wheel through `eden_ui_take_wheel()` |
+| Tabs (a few words) | `.eden-btn--tab` tiles; selected = pressed | `GLW::TabRail` (Stage 5.9): a HORIZONTAL row of equal RAISED tiles, the selected one PRESSED. The world browser's source tabs and the servers' Featured / Recent. The vertical icon rail (`.eden-tabrail`, the settings screen's) has no kit twin yet |
+| Progress | `.eden-progress` + `__fill` | `GLW::progressBar(rect, frac)` (Stage 5.9): SUNKEN track, lime 12% fill; `frac < 0` is an indeterminate block (preview loading) |
+| Button tones / disabled | `.eden-btn--positive` / `--danger`, `:disabled` | `Button::setTone(TONE_POSITIVE / TONE_DANGER)` (same faces), `Button::setEnabled(false)` — solid chrome, grey label, no hit (the "not a translucent ghost" rule) |
+| Text field caret | the browser's | **a glyph** — the text is rasterised as `"name|"`, because with no measure call a drawn caret would sit at an estimated x. Editing is at the end only |
 
 ### Alert-2Stack
 

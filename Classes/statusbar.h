@@ -22,6 +22,9 @@ public:
     void update(float etime);
     void render();
     void renderPlain();
+    // Stage 5.6: the live message (NULL once its time ran out), for a screen that draws the
+    // status line itself in the GL widget kit instead of through render().
+    NSString* current() const { return (text!=NULL&&textlife>0)?message:NULL; }
     CGRect pos;
 private:
 	

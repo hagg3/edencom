@@ -33,8 +33,11 @@
 //                        someone sitting at the keyboard, and that is not a regression test.
 //   --shot[=PREFIX]      opens a REAL WINDOW and writes BMP captures of three screens — the main
 //                        menu, the in-world HUD and the in-game (ESC) panel — as
-//                        PREFIX-menu.bmp / -settings.bmp / -keybinds.bmp / -hud.bmp /
-//                        -pausemenu.bmp / -dialog.bmp (default prefix eden-shot).
+//                        PREFIX-menu.bmp / -settings.bmp (+ -settings-pN.bmp per page) /
+//                        -keybinds.bmp / -hud.bmp / -pausemenu.bmp / -dialog.bmp /
+//                        -menu-world.bmp / -rename.bmp (default prefix eden-shot), and since 5.9
+//                        -browser.bmp / -browser-current.bmp (Get Worlds; live network unless
+//                        --net-fixtures is given).
 //                        The GL UI is native's only UI until Stage 5, so "what does it look like"
 //                        needs an artefact; --smoke only answers "did it draw at all".
 //   --keybind-selftest   Stage 5.2/5.3: the keybind MODEL and the rebind path. Asserts the
@@ -43,6 +46,23 @@
 //                        the half a "does the setter store it" test would miss), that a default
 //                        double-binding still fires both of its actions, and that reset restores.
 //                        Headless.
+//   --ui-selftest        Stage 5.4 + N.4.5: the GL settings widgets (toggle tap, slider drag,
+//                        enum stepper) through real pointer events at the rects the screen
+//                        reports; GLW::TextField through pushed SDL text/key events (UTF-8
+//                        backspace, the byte cap, Return, Escape); and the world rename, checked
+//                        on disk — only WorldFileHeader::name may change. Headless.
+//   --browser-selftest   ROADMAP 5.9: Get Worlds (Classes/WorldBrowser.mm) end to end, OFFLINE —
+//                        it writes fixtures under <docs>/.net-fixtures and points the net seam at
+//                        them, then drives the menu button, the source tabs, the archive filter,
+//                        the servers' Featured/Recent/More/Search, five downloads (deflate zip,
+//                        zip-in-zip, no-overwrite, two-member gzip, an HTML page that must be
+//                        refused), the unreachable-server state, and plays a downloaded world.
+//                        Headless; cleans up after itself.
+//   --net-live-selftest  the same screen against the REAL archive and edengame.net servers: every
+//                        source's lists and a preview, and the smallest archive world downloaded
+//                        and loaded. Not a gate (it depends on three hosts being up).
+//   --net-fixtures=DIR   answer every eden_net_fetch from DIR/<host>/<path>@<query> instead of the
+//                        network (also the EDEN_NET_FIXTURES environment variable).
 //   --objc-selftest      Stage 3: this port's own ObjC runtime (Linux/Windows only; macOS uses
 //                        Apple's). Dispatch, ivar layout, super, categories, the empty-base ivar
 //                        bias and the @"literal" layout.
@@ -116,6 +136,7 @@
 #include "../../../Classes/TerrainGen2.h"  // GSIZE — same, and it is macros only
 #include "../../../Classes/Menu.h"         // Menu::settings, for --shot's keybinds capture
 #include "../../../Classes/SettingsMenu.h" // SettingsMenu::showKeybinds()
+#include "../../../Classes/GLDialog.h"    // --ui-selftest drives GLDialog::prompt
 #include "gl_es1_shim.h"   // also gives glGetString (renamed to the shim's guarded form)
 #include "platform_shims.h"
 #include "../eden_app_identity.h"   // Emod is not Eden — see that file
@@ -139,6 +160,7 @@
 #include <SDL3/SDL_main.h>
 #endif
 
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -151,6 +173,7 @@
 #include <cerrno>
 #include <cctype>
 #include <unistd.h>
+#include <zlib.h>                  // --browser-selftest builds its gzip/zip fixtures
 
 // Shared seam exports (web/src/seam/*, compiled into this target too).
 extern "C" {
@@ -173,6 +196,7 @@ int   eden_menu_world_count(void);
 const char* eden_menu_world_name(int index);
 const char* eden_menu_world_file(int index);
 void  eden_menu_select(int index);
+int   eden_menu_selected_index(void);
 int   eden_menu_play(void);
 char* eden_menu_name_buffer(void);
 int   eden_menu_create_world(void);
@@ -594,16 +618,56 @@ bool capture(const char* label) {
     return true;
 }
 
+void ui_tap(float x, float yUp);   // --ui-selftest's pointer tap, defined below
+
 int run_shot() {
     const char* name = g_opt.world.empty() ? "shot" : g_opt.world.c_str();
+    // No vsync: a capture needs drawn frames, not paced ones, and a vsync-blocked swap never
+    // returns while the display is asleep or locked (2026-10-06: --shot sat at tick 0 for minutes
+    // on an unattended Mac).
+    SDL_GL_SetSwapInterval(0);
     tick(180);
     capture("menu");
+
+    // Stage 5.9: Get Worlds, on the archive tab and on the current server's, each with its first
+    // world selected and (when the host has one) its preview. Live network unless --net-fixtures
+    // was given; a capture of the "couldn't reach" state is still the screen working.
+    if (World::getWorld && World::getWorld->menu && World::getWorld->menu->browserOffered()) {
+        Menu* m = World::getWorld->menu;
+        WorldBrowser* b = m->browser;
+        m->openBrowser();
+        for (int src = 0; src < 2; ++src) {
+            CGRect r = b->tabRect(src);
+            ui_tap(r.origin.x + r.size.width * 0.5f, r.origin.y + r.size.height * 0.5f);
+            tick_until([b] { return !b->listLoading(); }, 6000, "the browser's list");
+            if (b->rowRect(0, &r)) ui_tap(r.origin.x + r.size.width * 0.5f, r.origin.y + r.size.height * 0.5f);
+            tick_until([b] { return b->previewShown(); }, 1500, "a preview");
+            tick(4);
+            capture(src == 0 ? "browser" : "browser-current");
+        }
+        b->close();
+        m->showbrowser = FALSE;
+        tick(4);
+    }
 
     // The rewritten generic GL settings screen (Phase N Stage 2.5). Meaningful only from the main
     // menu (in game the panel is a host overlay); shot here before any world loads.
     eden_settings_menu_open_now();
     tick(30);
     capture("settings");
+    // Stage 5.4: every page, so a row whose control does not fit is visible without a human
+    // paging through. -settings.bmp stays page 1 (its name predates paging).
+    if (World::getWorld && World::getWorld->menu && World::getWorld->menu->settings) {
+        SettingsMenu* sm = World::getWorld->menu->settings;
+        for (int p = 1; p < sm->pageCount(); ++p) {
+            sm->showPage(p);
+            tick(4);
+            char label[32];
+            std::snprintf(label, sizeof(label), "settings-p%d", p + 1);
+            capture(label);
+        }
+        sm->showPage(0);
+    }
 
     // Stage 5.3's keybinds screen, reached the way the Keys button reaches it. Shown through
     // SettingsMenu::showKeybinds() rather than by hit-testing that button: where the button sits
@@ -623,6 +687,25 @@ int run_shot() {
     tick(g_opt.frames);
     capture("hud");
 
+    // The HUD's status line (statusbar.mm, the full-width box). It printed two and a bit copies
+    // side by side until Stage 5.6 (Texture2D_web.mm's text-texture cap); this is the artefact.
+    World::getWorld->hud->sb->setStatus(@"World Saved", 30);
+    tick(4);
+    capture("hud-status");
+    World::getWorld->hud->sb->clear();
+
+    // Stage 5.7: the block and colour pickers, opened the way E and C open them (a tap on the
+    // HUD's rbuild / rpaint), and closed by the same tap.
+    tap_hud(1);
+    tick(20);
+    capture("picker-blocks");
+    tap_hud(1);
+    tap_hud(2);
+    tick(20);
+    capture("picker-colors");
+    tap_hud(2);
+    tick(10);
+
     // The in-game (ESC) panel, through the same synthetic HUD tap Escape uses. This is the shot
     // that would have caught the suppressed-panel bug (eden_ui_force_legacy) at Stage 2's start
     // instead of at the first play pass.
@@ -633,11 +716,33 @@ int run_shot() {
     std::printf("[eden-shot] in_menu=%d\n", eden_hud_in_menu());
     capture("pausemenu");
 
+    // Stage 5.5: Settings opened from the pause menu — the GL SettingsMenu as an in-game modal.
+    // Set directly, as the pause menu's Settings button does; Back is the screen's own path.
+    World::getWorld->menu->settings->resetView();
+    World::getWorld->menu->showsettings = TRUE;
+    tick(10);
+    capture("pausemenu-settings");
+    World::getWorld->menu->showsettings = FALSE;
+    tick(2);
+
     // The GL modal (Phase N Stage 2.5) — the ESC menu's Home button raises this. Shown directly
     // here rather than hunting the icon's rect; the point is the artefact.
     ::showAlertWarpHome();
     tick(20);
     capture("dialog");
+
+    // N.4.5: the main menu with a world selected (its Rename button) and the rename prompt.
+    GLDialog::dismiss();
+    tick(2);
+    if (quit_to_menu()) {
+        tick(60);
+        capture("menu-world");
+        if (World::getWorld && World::getWorld->menu && World::getWorld->menu->renameOffered()) {
+            World::getWorld->menu->beginRename();
+            tick(10);
+            capture("rename");
+        }
+    }
     return 0;
 }
 
@@ -1421,6 +1526,37 @@ int run_audio_selftest() {
                           a->isBackgroundMusicPlaying() ? 1 : 0);
             check(bed != 0 && eden_native_audio_channel_volume(1) > 0.0f,
                   "the engine starts an AUDIBLE ambience bed in-world", detail);
+
+            // 2026-10-05, two music bugs the user heard. (1) Resources::update wrote its song
+            // crossfade into the SLIDER's knob every frame, so a Music volume change lasted one
+            // frame. The slider value must survive the engine running.
+            auto idx = [](const char* key) {
+                for (int i = 0; i < eden_settings_count(); ++i)
+                    if (std::strcmp(eden_settings_key(i), key) == 0) return i;
+                return -1;
+            };
+            const int mv = idx("music_volume"), mu = idx("music");
+            if (mv >= 0) {
+                eden_settings_set(mv, 0.30f);
+                tick(30);
+                const float got = a->getBackgroundMusicVolume();
+                std::snprintf(detail, sizeof(detail), "set 0.30, after 30 frames %.2f", got);
+                check(std::fabs(got - 0.30f) < 0.001f, "the Music volume setting survives Resources::update", detail);
+                eden_settings_set(mv, 1.0f);
+            }
+            // (2) Switching Music on from the in-game settings called playMenuTune(): a TITLE
+            // track over gameplay. In a world it must cue an in-game song instead.
+            if (mu >= 0) {
+                eden_settings_set(mu, 0.0f);
+                tick(5);
+                eden_settings_set(mu, 1.0f);
+                tick(30);
+                const char* ch0 = eden_native_audio_channel_name(0);
+                std::snprintf(detail, sizeof(detail), "channel 0 = %s, playing=%d",
+                              ch0 ? ch0 : "(none)", a->isBackgroundMusicPlaying() ? 1 : 0);
+                check(ch0 && !std::strstr(ch0, "title") && a->isBackgroundMusicPlaying(),
+                      "Music switched on in a world plays an in-game song, not a title track", detail);
+            }
         }
     }
 
@@ -1791,6 +1927,861 @@ int  eden_keybind_capture_active(void);
 void eden_keybind_capture_begin(int i);
 int  eden_keybind_capture_feed(int code);
 const char* eden_keybind_code_name(int code);
+}
+
+// ---------------------------------------------------------------------------------------------
+// --ui-selftest  (Stage 5.4 widgets + N.4.5 text entry and world rename)
+// ---------------------------------------------------------------------------------------------
+// Drives the REAL screens with the inputs a player would produce — pointer events at the rects
+// the screen itself reports (SettingsMenu::showRow), SDL text/key events pushed through the pump
+// — and asserts on the model and the disk, never on the widgets' own state. Headless: none of
+// this needs a pixel, and --shot is the artefact for what it looks like.
+extern "C" {
+float eden_settings_get(int i);
+int   eden_settings_kind(int i);
+int   eden_settings_enum_count(int i);
+void  eden_input_pointer_event(int phase, int identity, float x, float y);
+}
+int settings_index(const char* key) {
+    for (int i = 0; i < eden_settings_count(); ++i)
+        if (std::strcmp(eden_settings_key(i), key) == 0) return i;
+    return -1;
+}
+
+// Engine touches are y-UP point space; eden_input_pointer_event takes y-DOWN (window order).
+const int kUiPointer = 4242;
+void ui_pointer(int phase, float x, float yUp) {
+    eden_input_pointer_event(phase, kUiPointer, x, SCREEN_HEIGHT - yUp);
+}
+void ui_tap(float x, float yUp) {
+    ui_pointer(0, x, yUp); tick(2);
+    ui_pointer(2, x, yUp); tick(2);
+}
+
+void push_text(const char* utf8) {          // must be a literal: SDL keeps the pointer
+    SDL_Event e;
+    SDL_zero(e);
+    e.type = SDL_EVENT_TEXT_INPUT;
+    e.text.text = utf8;
+    SDL_PushEvent(&e);
+}
+void push_tap_key(SDL_Scancode sc) { push_key(sc, true); push_key(sc, false); }
+
+int  g_promptChosen = -2;
+std::string g_promptText;
+void ui_prompt_cb(int chosen, const char* text) { g_promptChosen = chosen; g_promptText = text ? text : ""; }
+
+bool read_file(const std::string& path, std::vector<unsigned char>* out) {
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return false;
+    out->clear();
+    unsigned char buf[65536];
+    size_t n;
+    while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) out->insert(out->end(), buf, buf + n);
+    std::fclose(f);
+    return true;
+}
+
+void ui_tap_rect(CGRect r) { ui_tap(r.origin.x + r.size.width * 0.5f, r.origin.y + r.size.height * 0.5f); }
+
+void push_wheel(float y) {
+    SDL_Event e;
+    SDL_zero(e);
+    e.type = SDL_EVENT_MOUSE_WHEEL;
+    e.wheel.y = y;
+    e.wheel.direction = SDL_MOUSEWHEEL_NORMAL;
+    SDL_PushEvent(&e);
+}
+
+// Stage 5.6: the kit main menu, driven only through taps at the rects the screen reports (and one
+// wheel event), asserting on the menu's model — the list, the selection, `loading`, the disk.
+// Works on whatever list this machine already has: it adds its own worlds and only deletes those.
+int run_menu_selftest() {
+    char detail[240];
+    Menu* m = World::getWorld->menu;
+    tick(5);
+    const int n0 = eden_menu_world_count();
+
+    // New: one more world, selected, scrolled into view.
+    ui_tap_rect(m->controlRect("new"));
+    tick(3);
+    int sel = eden_menu_selected_index();
+    CGRect rr;
+    std::snprintf(detail, sizeof(detail), "count %d -> %d, selected %d, first %d of %d visible",
+                  n0, eden_menu_world_count(), sel, m->firstVisibleRow(), m->visibleRows());
+    check(eden_menu_world_count() == n0 + 1 && sel == n0 && m->rowRect(sel, &rr),
+          "New adds a world, selects it, and scrolls it into view", detail);
+    // Enough worlds that the list must scroll.
+    for (int guard = 0; eden_menu_world_count() < m->visibleRows() + 3 && guard < 40; ++guard) {
+        ui_tap_rect(m->controlRect("new"));
+        tick(3);
+    }
+    const int total = eden_menu_world_count();
+    const int vis = m->visibleRows();
+    check(total > vis, "the list is longer than the window (it has to scroll)", "");
+
+    // A tap on a row that is not selected selects it — and does not play it.
+    sel = eden_menu_selected_index();
+    int pick = m->firstVisibleRow();
+    if (pick == sel) pick++;
+    if (m->rowRect(pick, &rr)) ui_tap_rect(rr);
+    tick(3);
+    std::snprintf(detail, sizeof(detail), "tapped %d: selected %d loading %d", pick, eden_menu_selected_index(), m->loading);
+    check(eden_menu_selected_index() == pick && m->loading == 0, "tapping a row selects it without playing", detail);
+
+    // Drag the list down two rows: earlier rows come into view, and the drag selects nothing.
+    {
+        sel = eden_menu_selected_index();
+        m->rowRect(m->firstVisibleRow(), &rr);
+        const float pitch = rr.size.height;
+        eden_menu_select(total - 1);                    // scrolls to the end, so there is room above
+        tick(2);
+        sel = total - 1;
+        const int f0 = m->firstVisibleRow();
+        const CGRect L = m->controlRect("list");
+        const float x = L.origin.x + L.size.width * 0.5f, y0 = L.origin.y + L.size.height * 0.5f;
+        ui_pointer(0, x, y0); tick(2);
+        ui_pointer(1, x, y0 - pitch); tick(2);
+        ui_pointer(1, x, y0 - 2.0f * pitch); tick(2);
+        ui_pointer(2, x, y0 - 2.0f * pitch); tick(2);
+        const int f1 = m->firstVisibleRow();
+        std::snprintf(detail, sizeof(detail), "first %d -> %d, selected %d (was %d), loading %d",
+                      f0, f1, eden_menu_selected_index(), sel, m->loading);
+        check(f1 == f0 - 2 && eden_menu_selected_index() == sel && m->loading == 0,
+              "dragging the list scrolls by whole rows and selects nothing", detail);
+
+        // The wheel: one notch toward the user is one row later.
+        push_wheel(-1.0f);
+        tick(3);
+        std::snprintf(detail, sizeof(detail), "first %d -> %d", f1, m->firstVisibleRow());
+        check(m->firstVisibleRow() == f1 + 1, "a wheel notch scrolls one row", detail);
+
+        // The scrollbar: a tap on the track above the thumb pages up.
+        const int f2 = m->firstVisibleRow();
+        const CGRect B = m->controlRect("scrollbar");
+        ui_tap(B.origin.x + B.size.width * 0.5f, B.origin.y + B.size.height - 2.0f);
+        const int want = std::max(0, f2 - vis);
+        std::snprintf(detail, sizeof(detail), "first %d -> %d (want %d)", f2, m->firstVisibleRow(), want);
+        check(m->firstVisibleRow() == want, "a tap on the scrollbar track pages", detail);
+    }
+
+    // Delete: Cancel keeps the world, Delete removes it (the dialog was a no-op before 5.6).
+    {
+        eden_menu_select(total - 1);
+        tick(2);
+        const std::string victim = eden_menu_world_name(total - 1);
+        ui_tap_rect(m->controlRect("delete"));
+        tick(3);
+        CGRect b;
+        const bool up = GLDialog::active() && GLDialog::buttonRect(1, &b);
+        check(up, "Delete asks first", "");
+        if (up) ui_tap_rect(b);
+        tick(3);
+        std::snprintf(detail, sizeof(detail), "count %d (was %d), dialog %d", eden_menu_world_count(), total,
+                      GLDialog::active() ? 1 : 0);
+        check(eden_menu_world_count() == total && !GLDialog::active(), "Cancel keeps the world", detail);
+        ui_tap_rect(m->controlRect("delete"));
+        tick(3);
+        if (GLDialog::buttonRect(0, &b)) ui_tap_rect(b);
+        tick(3);
+        bool listed = false;
+        for (int i = 0; i < eden_menu_world_count(); ++i) listed |= (victim == eden_menu_world_name(i));
+        std::snprintf(detail, sizeof(detail), "count %d (was %d), \"%s\" listed %d", eden_menu_world_count(), total,
+                      victim.c_str(), listed ? 1 : 0);
+        check(eden_menu_world_count() == total - 1 && !listed, "Delete -> Delete removes the world", detail);
+    }
+
+    // Play: the button, then the stock world-type + height dialogs (Flat, Classic), to a world.
+    {
+        const int idx = eden_menu_world_count() - 1;
+        eden_menu_select(idx);
+        tick(2);
+        const std::string name = eden_menu_world_name(idx);
+        ui_tap_rect(m->controlRect("play"));
+        CGRect b;
+        const bool asked = tick_until([] { return GLDialog::active(); }, 600, "world-type dialog");
+        if (asked && GLDialog::buttonRect(0, &b)) ui_tap_rect(b);            // Flat
+        tick(3);
+        if (GLDialog::active() && GLDialog::buttonRect(0, &b)) ui_tap_rect(b); // Classic 64
+        const bool played = tick_until([] { return game_mode() == 1; }, 60000, "game_mode == PLAY");
+        check(asked && played, "Play -> Flat -> Classic loads the selected world", name.c_str());
+        if (!played) return 1;
+        tick(60);
+        if (!quit_to_menu()) return 1;
+        tick(30);
+
+        // Now it has a file: Delete must remove that too.
+        int at = -1;
+        for (int i = 0; i < eden_menu_world_count(); ++i) if (name == eden_menu_world_name(i)) at = i;
+        check(at >= 0, "the played world is listed after quitting", name.c_str());
+        if (at < 0) return 1;
+        const std::string file = std::string(eden_platform_documents_root()) + "/" + eden_menu_world_file(at);
+        std::vector<unsigned char> bytes;
+        const bool had = read_file(file, &bytes);
+        eden_menu_select(at);
+        tick(2);
+        ui_tap_rect(m->controlRect("delete"));
+        tick(3);
+        if (GLDialog::buttonRect(0, &b)) ui_tap_rect(b);
+        tick(3);
+        const bool gone = !read_file(file, &bytes);
+        std::snprintf(detail, sizeof(detail), "%s: before %d after %d", file.c_str(), had ? 1 : 0, gone ? 0 : 1);
+        check(had && gone, "deleting a played world removes its file", detail);
+    }
+    return 0;
+}
+
+// Stage 5.7: the pickers kept stock's hit path; prove a tap on a cell still picks, through the
+// HUD's own rects, and that the current choice is what a build would use.
+int run_picker_selftest() {
+    char detail[200];
+    Hud* hud = World::getWorld->hud;
+    tap_hud(1);
+    tick(5);
+    check(hud->mode == MODE_PICK_BLOCK, "E's HUD button opens the block picker", "");
+    // Cells 2 and 3 are dark stone and stone in the stock table: plain blocks, no special pick.
+    const CGRect c0 = hud->blockBounds[2];
+    ui_tap_rect(c0);
+    tick(5);
+    std::snprintf(detail, sizeof(detail), "mode %d blocktype %d", hud->mode, hud->blocktype);
+    check(hud->mode == MODE_BUILD, "tapping a block cell picks it and closes the picker", detail);
+    const int picked = hud->blocktype;
+    tap_hud(1);
+    tick(5);
+    ui_tap_rect(hud->blockBounds[3]);
+    tick(5);
+    std::snprintf(detail, sizeof(detail), "blocktype %d -> %d", picked, hud->blocktype);
+    check(hud->mode == MODE_BUILD && hud->blocktype != picked, "a different cell picks a different block", detail);
+
+    tap_hud(2);
+    tick(5);
+    check(hud->mode == MODE_PICK_COLOR, "C's HUD button opens the colour picker", "");
+    ui_tap_rect(hud->colorBounds[10]);
+    tick(5);
+    std::snprintf(detail, sizeof(detail), "mode %d paintColor %d", hud->mode, (int)hud->paintColor);
+    check(hud->mode == MODE_PAINT && (int)hud->paintColor == 11, "tapping swatch 10 paints colour 11", detail);
+    return 0;
+}
+
+int run_ui_selftest() {
+    g_selftestTag = "eden-ui";
+    g_tickInput = true;            // headless pump_events() only drains SDL's queue with this set
+    char detail[240];
+    tick(120);
+    check(eden_settings_loaded() != 0, "the settings model loaded", "");
+
+    // --- the slider's arithmetic, on its own --------------------------------------------------
+    {
+        GLW::Slider sl;
+        sl.setRect(CGRectMake(100, 100, 200, 40));
+        sl.setRange(0.25f, 3.0f, 0.05f);
+        sl.setValue(1.0f);
+        const bool moved = sl.beginDrag(100.0f);
+        const float lo = sl.value();
+        const bool again = sl.dragTo(90.0f);           // already pinned at min: no change
+        sl.dragTo(300.0f);
+        const float hi = sl.value();
+        sl.dragTo(173.0f);
+        const float mid = sl.value();
+        sl.endDrag();
+        const float steps = (mid - 0.25f) / 0.05f;
+        std::snprintf(detail, sizeof(detail), "lo %.3f hi %.3f mid %.4f (%.3f steps) moved=%d again=%d",
+                      lo, hi, mid, steps, moved, again);
+        check(moved && !again && std::fabs(lo - 0.25f) < 1e-4f && std::fabs(hi - 3.0f) < 1e-4f &&
+              std::fabs(steps - std::floor(steps + 0.5f)) < 1e-3f,
+              "Slider pins to its ends, snaps to min+k*step, reports only real changes", detail);
+    }
+
+    // --- the settings screen, through real pointer events -------------------------------------
+    eden_settings_menu_open_now();
+    tick(10);
+    SettingsMenu* sm = (World::getWorld && World::getWorld->menu) ? World::getWorld->menu->settings : nullptr;
+    if (!sm) { check(false, "the settings screen exists", ""); return 1; }
+    std::snprintf(detail, sizeof(detail), "%d pages", sm->pageCount());
+    check(sm->pageCount() > 1, "settings paginate", detail);
+
+    const int iHealth = settings_index("health");
+    const int iVol    = settings_index("music_volume");
+    // The first ENUM row this build shows (input_mode, the obvious one, is web-only).
+    const char* modeKey = nullptr;
+    for (int i = 0; i < eden_settings_count() && !modeKey; ++i)
+        if (eden_settings_kind(i) == 2 && sm->showRow(eden_settings_key(i), nullptr)) modeKey = eden_settings_key(i);
+    const int iMode   = modeKey ? settings_index(modeKey) : -1;
+    const float health0 = eden_settings_get(iHealth), vol0 = eden_settings_get(iVol);
+    const float mode0 = iMode >= 0 ? eden_settings_get(iMode) : 0.0f;
+    CGRect r;
+
+    if (sm->showRow("health", &r)) {
+        tick(2);
+        ui_tap(r.origin.x + r.size.width * 0.5f, r.origin.y + r.size.height * 0.5f);
+        const float after = eden_settings_get(iHealth);
+        ui_tap(r.origin.x + r.size.width * 0.5f, r.origin.y + r.size.height * 0.5f);
+        std::snprintf(detail, sizeof(detail), "%.0f -> %.0f -> %.0f", health0, after, eden_settings_get(iHealth));
+        check(after != health0 && eden_settings_get(iHealth) == health0, "tapping a Toggle flips its setting, twice restores", detail);
+    } else check(false, "the health row is shown", "");
+
+    if (sm->showRow("music_volume", &r)) {
+        tick(2);
+        const float cy = r.origin.y + r.size.height * 0.5f;
+        ui_pointer(0, r.origin.x + 1.0f, cy); tick(3);
+        const float atLeft = eden_settings_get(iVol);
+        ui_pointer(1, r.origin.x + r.size.width - 1.0f, cy + 60.0f); tick(3);   // off the track, vertically
+        const float atRight = eden_settings_get(iVol);
+        ui_pointer(1, r.origin.x + r.size.width * 0.5f, cy); tick(3);
+        const float atMid = eden_settings_get(iVol);
+        ui_pointer(2, r.origin.x + r.size.width * 0.5f, cy); tick(3);
+        std::snprintf(detail, sizeof(detail), "left %.2f right %.2f mid %.2f (was %.2f)", atLeft, atRight, atMid, vol0);
+        check(atLeft == 0.0f && atRight == 1.0f && std::fabs(atMid - 0.5f) <= 0.051f,
+              "dragging a Slider writes the setting live, and keeps tracking off the track", detail);
+    } else check(false, "the music volume row is shown", "");
+
+    if (modeKey && sm->showRow(modeKey, &r)) {
+        tick(2);
+        const float h = r.size.height;    // the stepper's buttons are square at its height
+        ui_tap(r.origin.x + r.size.width - h * 0.5f, r.origin.y + h * 0.5f);
+        const int n = eden_settings_enum_count(iMode);
+        const int want = ((int)mode0 + 1) % (n > 0 ? n : 1);
+        std::snprintf(detail, sizeof(detail), "%s: %.0f -> %.0f of %d", modeKey, mode0, eden_settings_get(iMode), n);
+        check((int)eden_settings_get(iMode) == want, "a Stepper's > steps an enum row", detail);
+    } else check(false, "an enum row is shown", "");
+
+    eden_settings_set(iHealth, health0);
+    eden_settings_set(iVol, vol0);
+    if (iMode >= 0) eden_settings_set(iMode, mode0);
+    eden_settings_menu_close();
+    tick(10);
+
+    if (run_menu_selftest() != 0) return 1;
+
+    // --- the text field: typing, UTF-8 backspace, the byte cap, Return, Escape -----------------
+    {
+        static const char* const kBtn[] = { "OK", "Cancel" };
+        check(GLDialog::textEntryAvailable(), "native reports GL text entry", "");
+        g_promptChosen = -2;
+        GLDialog::prompt("Selftest", NULL, "abc", 8, kBtn, 2, ui_prompt_cb);
+        tick(2);
+        check(eden_text_input_active() == 1, "focusing the field starts platform text input", "");
+        push_text("d\xC3\xA9");             // "dé": é is two bytes
+        tick(2);
+        push_tap_key(SDL_SCANCODE_BACKSPACE);
+        tick(2);
+        push_text("xyz12345");
+        push_tap_key(SDL_SCANCODE_W);       // must reach the field's queue (nothing), not the game
+        tick(2);
+        push_tap_key(SDL_SCANCODE_RETURN);
+        tick(3);
+        std::snprintf(detail, sizeof(detail), "chosen %d text \"%s\" active %d dialog %d",
+                      g_promptChosen, g_promptText.c_str(), eden_text_input_active(), GLDialog::active() ? 1 : 0);
+        check(g_promptChosen == 0 && g_promptText == "abcdxyz1" && eden_text_input_active() == 0 && !GLDialog::active(),
+              "type + backspace (a whole UTF-8 char) + 8-byte cap + Return commits", detail);
+
+        push_text("late");
+        tick(2);
+        char sink[16];
+        check(eden_text_input_take(sink, sizeof(sink)) == 0, "text typed with no field focused is dropped", "");
+
+        g_promptChosen = -2;
+        GLDialog::prompt("Selftest", NULL, "keep", 8, kBtn, 2, ui_prompt_cb);
+        tick(2);
+        push_text("zz");
+        push_tap_key(SDL_SCANCODE_ESCAPE);
+        tick(3);
+        std::snprintf(detail, sizeof(detail), "chosen %d text \"%s\" in_menu %d", g_promptChosen,
+                      g_promptText.c_str(), eden_hud_in_menu());
+        check(g_promptChosen == 1 && !GLDialog::active(), "Escape picks the LAST button (Cancel) and closes", detail);
+    }
+
+    // --- rename a world that exists on disk -------------------------------------------------
+    // Play it once so there is a file (a created-but-never-played world has none), go back to the
+    // menu, rename through the real button -> prompt -> renameSelected path, then check the file:
+    // ONLY WorldFileHeader::name may differ, and the world must still load under its new name.
+    const char* name = g_opt.world.empty() ? "ui-selftest" : g_opt.world.c_str();
+    if (!open_world(name, g_opt.height)) return 1;
+    tick(60);
+    if (!quit_to_menu()) return 1;
+    tick(30);
+    int idx = -1;
+    for (int i = 0; i < eden_menu_world_count(); ++i)
+        if (std::strcmp(eden_menu_world_name(i), name) == 0) idx = i;
+    check(idx >= 0, "the played world is listed", name);
+    if (idx < 0) return 1;
+    eden_menu_select(idx);
+    tick(5);
+    const std::string file = std::string(eden_platform_documents_root()) + "/" + eden_menu_world_file(idx);
+    std::vector<unsigned char> before, after;
+    check(read_file(file, &before) && before.size() > sizeof(WorldFileHeader), "the world has a file", file.c_str());
+
+    Menu* menu = World::getWorld->menu;
+    const bool offered = menu->renameOffered();
+    check(offered, "the menu offers Rename for the selected world", "");
+    const CGRect rb = menu->rect_rename.rect();
+    ui_tap(rb.origin.x + rb.size.width * 0.5f, rb.origin.y + rb.size.height * 0.5f);
+    tick(2);
+    check(GLDialog::active() && eden_text_input_active() == 1, "the Rename button opens the prompt, focused", "");
+    for (int i = 0; i < 64; ++i) push_tap_key(SDL_SCANCODE_BACKSPACE);
+    tick(2);
+    push_text("Renamed \xC3\x9C");          // "Renamed Ü"
+    tick(2);
+    push_tap_key(SDL_SCANCODE_RETURN);
+    tick(5);
+    const char* want = "Renamed \xC3\x9C";
+    const std::string listed = eden_menu_world_name(idx);   // copy: one static buffer per accessor family
+    std::string onDisk = cpstring(World::getWorld->fm->getName([NSString stringWithUTF8String:eden_menu_world_file(idx)]));
+    std::snprintf(detail, sizeof(detail), "listed \"%s\" on disk \"%s\"", listed.c_str(), onDisk.c_str());
+    check(listed == want && onDisk == want, "the rename reaches the list and the file header", detail);
+
+    read_file(file, &after);
+    size_t diffOutside = 0, diffInside = 0;
+    const size_t n0 = offsetof(WorldFileHeader, name), n1 = n0 + sizeof(((WorldFileHeader*)0)->name);
+    for (size_t i = 0; i < before.size() && i < after.size(); ++i) {
+        if (before[i] == after[i]) continue;
+        if (i >= n0 && i < n1) diffInside++; else diffOutside++;
+    }
+    std::snprintf(detail, sizeof(detail), "size %zu -> %zu, %zu name bytes changed, %zu other bytes changed",
+                  before.size(), after.size(), diffInside, diffOutside);
+    check(before.size() == after.size() && diffInside > 0 && diffOutside == 0,
+          "only the header's name bytes changed on disk", detail);
+
+    const bool reopened = open_world(want, g_opt.height);
+    check(reopened, "the renamed world loads under its new name", "");
+
+    // --- Stage 5.5: the kit pause menu --------------------------------------------------------
+    // Real taps at the rects the Hud laid out: Settings opens the GL SettingsMenu as an in-game
+    // modal, its own Back returns to the pause menu (not to gameplay, not to the title screen),
+    // and Resume closes the menu.
+    if (reopened) {
+        Hud* hud = World::getWorld->hud;
+        tick(30);
+        if (!eden_hud_in_menu()) tap_hud(0);
+        tick(10);
+        check(eden_hud_in_menu() == 1, "Escape's HUD button opens the pause menu", "");
+        const Button rs = hud->rsettings;
+        ui_tap(rs.origin.x + rs.size.width * 0.5f, rs.origin.y + rs.size.height * 0.5f);
+        tick(5);
+        std::snprintf(detail, sizeof(detail), "showsettings=%d game_mode=%d", (int)menu->showsettings,
+                      World::getWorld->game_mode);
+        check(menu->showsettings && World::getWorld->game_mode == GAME_MODE_PLAY,
+              "pause menu -> Settings opens the settings screen over the world", detail);
+        const CGRect bk = menu->settings->backRect();
+        ui_tap(bk.origin.x + bk.size.width * 0.5f, bk.origin.y + bk.size.height * 0.5f);
+        tick(5);
+        std::snprintf(detail, sizeof(detail), "showsettings=%d in_menu=%d", (int)menu->showsettings,
+                      eden_hud_in_menu());
+        check(!menu->showsettings && eden_hud_in_menu() == 1, "Settings' Back returns to the pause menu", detail);
+        const Button rr = hud->rresume;
+        ui_tap(rr.origin.x + rr.size.width * 0.5f, rr.origin.y + rr.size.height * 0.5f);
+        tick(5);
+        check(eden_hud_in_menu() == 0, "Resume closes the pause menu", "");
+        run_picker_selftest();
+        quit_to_menu();
+    }
+
+    std::printf("[eden-ui] %s (%d failure(s))\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
+    return g_selftestFailures ? 1 : 0;
+}
+
+// ---------------------------------------------------------------------------------------------
+// --browser-selftest  (ROADMAP 5.9: Get Worlds — the archive, the current and the legacy server)
+// ---------------------------------------------------------------------------------------------
+// OFFLINE, and that is the point: the CI runners must not depend on edengame.net being up, so
+// Net_native.cpp's fixture mode answers every URL from files this test writes first —
+// `<docs>/.net-fixtures/<host>/<path>@<query>`. Everything above the HTTP stack is the real thing:
+// the menu's button, the browser's tabs/rows/field/buttons through pointer and SDL text events,
+// the list parsers, the per-frame unpacker (a gzip, a deflate zip, a stored zip around a deflate
+// zip), the import, and finally loading a downloaded world. The payload is a world this test plays
+// and saves first, so "the download is a world" is checked byte-for-byte and by loading it.
+//
+// The legacy server gets NO fixtures on purpose: that is the "server unreachable" path.
+// --net-live-selftest below runs the same screen against the real servers (not a CI gate).
+extern "C" void eden_net_set_fixture_root(const char* dir);
+void mkdirs(const std::string& path);
+
+namespace {
+std::vector<std::string> g_fixtureFiles;
+
+bool write_bytes(const std::string& path, const std::vector<unsigned char>& b) {
+    const size_t slash = path.find_last_of('/');
+    if (slash != std::string::npos) mkdirs(path.substr(0, slash));
+    FILE* f = std::fopen(path.c_str(), "wb");
+    if (!f) return false;
+    const bool ok = b.empty() || std::fwrite(b.data(), 1, b.size(), f) == b.size();
+    std::fclose(f);
+    g_fixtureFiles.push_back(path);
+    return ok;
+}
+std::vector<unsigned char> bytes_of(const std::string& s) { return std::vector<unsigned char>(s.begin(), s.end()); }
+
+std::vector<unsigned char> deflate_bytes(const std::vector<unsigned char>& in, int windowBits) {
+    z_stream z;
+    std::memset(&z, 0, sizeof(z));
+    deflateInit2(&z, 6, Z_DEFLATED, windowBits, 8, Z_DEFAULT_STRATEGY);
+    std::vector<unsigned char> out(deflateBound(&z, (uLong)in.size()) + 64);
+    z.next_in = (Bytef*)in.data();
+    z.avail_in = (uInt)in.size();
+    z.next_out = out.data();
+    z.avail_out = (uInt)out.size();
+    deflate(&z, Z_FINISH);
+    out.resize(z.total_out);
+    deflateEnd(&z);
+    return out;
+}
+std::vector<unsigned char> gzip_bytes(const std::vector<unsigned char>& in) { return deflate_bytes(in, 15 + 16); }
+
+// A single-entry PK zip, the shape the archive serves: local header, data, central directory, EOCD.
+// `streamed` sets general-purpose bit 3 and ZEROES the local header's sizes, as a streaming
+// archiver does — the case that makes a reader trust the central directory.
+std::vector<unsigned char> zip_bytes(const char* name, const std::vector<unsigned char>& data, bool deflate,
+                                     bool streamed) {
+    const std::vector<unsigned char> body = deflate ? deflate_bytes(data, -15) : data;
+    const unsigned crc = (unsigned)crc32(0, data.data(), (uInt)data.size());
+    const unsigned nlen = (unsigned)std::strlen(name);
+    std::vector<unsigned char> z;
+    auto u16 = [&](unsigned v) { z.push_back(v & 0xff); z.push_back((v >> 8) & 0xff); };
+    auto u32 = [&](unsigned v) { u16(v & 0xffff); u16(v >> 16); };
+    const unsigned method = deflate ? 8 : 0, flags = streamed ? 8 : 0;
+    u32(0x04034b50); u16(20); u16(flags); u16(method); u16(0); u16(0);
+    u32(streamed ? 0 : crc); u32(streamed ? 0 : (unsigned)body.size()); u32(streamed ? 0 : (unsigned)data.size());
+    u16(nlen); u16(0);
+    z.insert(z.end(), name, name + nlen);
+    z.insert(z.end(), body.begin(), body.end());
+    if (streamed) { u32(0x08074b50); u32(crc); u32((unsigned)body.size()); u32((unsigned)data.size()); }
+    const unsigned cdOff = (unsigned)z.size();
+    u32(0x02014b50); u16(20); u16(20); u16(flags); u16(method); u16(0); u16(0);
+    u32(crc); u32((unsigned)body.size()); u32((unsigned)data.size());
+    u16(nlen); u16(0); u16(0); u16(0); u16(0); u32(0); u32(0);
+    z.insert(z.end(), name, name + nlen);
+    const unsigned cdSize = (unsigned)z.size() - cdOff;
+    u32(0x06054b50); u16(0); u16(0); u16(1); u16(1); u32(cdSize); u32(cdOff); u16(0);
+    return z;
+}
+
+int menu_index_of_file(const char* file) {
+    for (int i = 0; i < eden_menu_world_count(); ++i) if (!std::strcmp(eden_menu_world_file(i), file)) return i;
+    return -1;
+}
+
+bool browser_wait_list(WorldBrowser* b) {
+    return tick_until([b] { return !b->listLoading(); }, 3000, "the browser's list");
+}
+
+// Selects the row whose id is `id` (scrolled into view first) and taps
+// Download, then waits for the browser to hand back to the menu or to report a failure.
+bool browser_download(WorldBrowser* b, Menu* m, const char* id) {
+    int at = -1;
+    for (int i = 0; i < b->entryCount(); ++i) if (!std::strcmp(b->entryId(i), id)) at = i;
+    CGRect r;
+    if (at >= 0) b->showRow(at);
+    if (at < 0 || !b->rowRect(at, &r)) return false;
+    ui_tap_rect(r);
+    tick(2);
+    if (b->selectedIndex() != at) return false;
+    ui_tap_rect(b->controlRect("download"));
+    tick(2);
+    return tick_until([b, m] { return !m->showbrowser || !b->busy(); }, 6000, "the download");
+}
+}  // namespace
+
+int run_browser_selftest_body(bool live) {
+    char detail[300];
+    Menu* m = World::getWorld->menu;
+    WorldBrowser* b = m->browser;
+    const std::string docs = eden_platform_documents_root();
+
+    if (live) {
+        check(WorldBrowser::available(), "this build has a network backend", "");
+        if (!WorldBrowser::available()) return 1;
+        ui_tap_rect(m->controlRect("getworlds"));
+        tick(3);
+        check(m->showbrowser && b->isOpen(), "Get Worlds opens the browser", "");
+        const char* names[3] = { "archive", "current server", "legacy server" };
+        for (int src = 0; src < 3; ++src) {
+            ui_tap_rect(b->tabRect(src));
+            tick(3);
+            browser_wait_list(b);
+            std::snprintf(detail, sizeof(detail), "%d worlds; status \"%s\"; first \"%s\"", b->entryCount(),
+                          b->statusText(), b->entryName(0));
+            char what[80];
+            std::snprintf(what, sizeof(what), "the %s lists worlds", names[src]);
+            check(b->entryCount() > 5, what, detail);
+            if (src >= 1) {                   // Recent, the paged list, on the servers
+                ui_tap_rect(b->modeRect(WorldBrowser::MODE_RECENT));
+                tick(3);
+                browser_wait_list(b);
+                std::snprintf(detail, sizeof(detail), "%d worlds; first \"%s\" (%s)", b->entryCount(), b->entryName(0), b->entryId(0));
+                std::snprintf(what, sizeof(what), "the %s's Recent list", names[src]);
+                check(b->entryCount() > 5, what, detail);
+            }
+            if (b->entryCount() > 0) {
+                CGRect r;
+                if (b->rowRect(0, &r)) ui_tap_rect(r);
+                tick_until([b] { return b->previewShown(); }, 4000, "a preview");
+                std::printf("[eden-browser] %s preview for \"%s\": %s\n", names[src], b->entryName(0),
+                            b->previewShown() ? "shown" : "none (many worlds have none)");
+            }
+        }
+        // One real download, chosen to be SMALL: the archive is the only source that publishes
+        // sizes, and the first entry of a server list can be gigabytes (on 2026-10-07 the current
+        // server's first Featured world inflated to 1.88 GB). HTTPS + a zip, end to end.
+        ui_tap_rect(b->tabRect(WorldBrowser::SRC_ARCHIVE));
+        tick(3);
+        browser_wait_list(b);
+        int pick = -1;
+        double best = 1e18;
+        for (int i = 0; i < b->entryCount(); ++i) {
+            double v = 0;
+            char unit[8] = {0};
+            if (std::sscanf(b->entrySize(i), "%lf %7s", &v, unit) != 2 || v <= 0) continue;
+            const double bytes = v * (!std::strcmp(unit, "GB") ? 1e9 : !std::strcmp(unit, "MB") ? 1e6 : !std::strcmp(unit, "KB") ? 1e3 : 1.0);
+            if (bytes < best) { best = bytes; pick = i; }
+        }
+        const std::string id = pick >= 0 ? b->entryId(pick) : "";
+        const std::string size = pick >= 0 ? b->entrySize(pick) : "";
+        const int before = eden_menu_world_count();
+        const bool ok = !id.empty() && browser_download(b, m, id.c_str());
+        const int at = menu_index_of_file((id + ".eden").c_str());
+        std::snprintf(detail, sizeof(detail), "id %s (%s), worlds %d -> %d, status \"%s\", listed as \"%s\"", id.c_str(),
+                      size.c_str(), before, eden_menu_world_count(), b->statusText(), at >= 0 ? eden_menu_world_name(at) : "-");
+        check(ok && at >= 0 && !m->showbrowser, "the smallest archive world downloads, unpacks and is listed", detail);
+        if (at >= 0) {
+            eden_menu_select(at);
+            tick(2);
+            ui_tap_rect(m->controlRect("play"));
+            const bool played = tick_until([] { return game_mode() == 1; }, 60000, "game_mode == PLAY");
+            check(played, "the downloaded world loads", "");
+            if (played) { tick(60); quit_to_menu(); tick(10); }
+            const int again = menu_index_of_file((id + ".eden").c_str());
+            if (again >= 0) { eden_menu_select(again); m->a_deleteConfirm(); }
+        }
+        if (m->showbrowser) { ui_tap_rect(b->controlRect("back")); tick(3); }
+        return 0;
+    }
+
+    // --- a world to serve: play one, save it, read its bytes --------------------------------
+    const char* name = g_opt.world.empty() ? "browser-selftest" : g_opt.world.c_str();
+    if (!open_world(name, g_opt.height)) return 1;
+    tick(60);
+    if (!quit_to_menu()) return 1;
+    tick(20);
+    int src = -1;
+    for (int i = 0; i < eden_menu_world_count(); ++i) if (!std::strcmp(eden_menu_world_name(i), name)) src = i;
+    std::vector<unsigned char> world;
+    const bool haveWorld = src >= 0 && read_file(docs + "/" + eden_menu_world_file(src), &world);
+    check(haveWorld && world.size() > 192, "a saved world to serve", "");
+    if (!haveWorld) return 1;
+
+    // --- fixtures -----------------------------------------------------------------------------
+    const std::string fx = docs + "/.net-fixtures";
+    const std::string arch = fx + "/hagg3.github.io/edenarchive/assets";
+    write_bytes(arch + "/data/worlds.json", bytes_of(
+        "[\n"
+        " {\"filename\": \"1600000001.eden\", \"worldname\": \"Selftest Alpha\", \"publishdate\": \"2020-09-13\",\n"
+        "  \"archivedate\": null, \"filesize\": \"1.0 MB\", \"author\": \"Tester\", \"tags\": [\"castle\", true, 7],\n"
+        "  \"url\": \"/worlds/alpha/\"},\n"
+        " {\"filename\": \"1600000002.eden\", \"worldname\": \"Selftest Beta \\u00dc\", \"publishdate\": null,\n"
+        "  \"archivedate\": null, \"filesize\": null, \"author\": null, \"tags\": [], \"url\": \"/worlds/beta/\"},\n"
+        " {\"filename\": \"../evil.eden\", \"worldname\": \"Path traversal\", \"tags\": []}\n"
+        "]\n"));
+    // Alpha: a deflate zip written the streaming way (bit 3, zero sizes in the local header).
+    write_bytes(arch + "/worldfiles/1600000001/1600000001.eden.zip", zip_bytes("1600000001.eden", world, true, true));
+    // Beta: the "double-compressed" case the archive's own site warns about — a stored zip
+    // around a deflate zip around the world.
+    write_bytes(arch + "/worldfiles/1600000002/1600000002.eden.zip",
+                zip_bytes("1600000002.eden.zip", zip_bytes("1600000002.eden", world, true, false), false, false));
+    std::vector<unsigned char> png;
+    char exe[1024] = {0};
+    const char* base = SDL_GetBasePath();
+    std::snprintf(exe, sizeof(exe), "%sreport_flag.png", base ? base : "");
+    const bool havePng = read_file(exe, &png);
+    if (havePng) write_bytes(arch + "/worldfiles/1600000001/1600000001.eden.png", png);
+
+    const std::string app2 = fx + "/app2.edengame.net", files2 = fx + "/files2.edengame.net";
+    write_bytes(files2 + "/popularlist.txt", bytes_of("1600000101.eden\nServer Alpha.name\n"));
+    write_bytes(app2 + "/list2.php@start=0&sort=2", bytes_of(
+        "1600000101.eden\nServer Alpha.name\n\n1600000102.eden\nBroken World.name\n"));   // a stray blank line
+    write_bytes(app2 + "/list2.php@start=2&sort=2", bytes_of(
+        "1600000102.eden\nBroken World.name\n1600000103.eden\nServer Gamma.name\n"));    // one repeat, one new
+    write_bytes(app2 + "/list2.php@start=3&sort=2", bytes_of(""));
+    write_bytes(app2 + "/list2.php@search=gamma", bytes_of("1600000103.eden\nServer Gamma.name\n"));
+    write_bytes(files2 + "/1600000101.eden", gzip_bytes(world));
+    write_bytes(files2 + "/1600000102.eden", bytes_of("<html><body>Not found</body></html>\n"));
+    // A gzip file of two members (what `cat a.gz b.gz` makes) — still one world once inflated.
+    {
+        const size_t half = world.size() / 2;
+        std::vector<unsigned char> a(world.begin(), world.begin() + (long)half), c(world.begin() + (long)half, world.end());
+        std::vector<unsigned char> two = gzip_bytes(a), tail = gzip_bytes(c);
+        two.insert(two.end(), tail.begin(), tail.end());
+        write_bytes(files2 + "/1600000103.eden", two);
+    }
+    eden_net_set_fixture_root(fx.c_str());
+
+    // --- the menu offers it, and it opens on the archive --------------------------------------
+    tick(3);
+    check(m->browserOffered(), "the menu offers Get Worlds", "");
+    ui_tap_rect(m->controlRect("getworlds"));
+    tick(3);
+    check(m->showbrowser && b->isOpen() && b->source() == WorldBrowser::SRC_ARCHIVE,
+          "Get Worlds opens the browser on the archive tab", "");
+    browser_wait_list(b);
+    std::snprintf(detail, sizeof(detail), "%d entries: \"%s\", \"%s\"", b->entryCount(), b->entryName(0), b->entryName(1));
+    check(b->entryCount() == 2 && !std::strcmp(b->entryName(0), "Selftest Alpha") &&
+          !std::strcmp(b->entryName(1), "Selftest Beta \xC3\x9C"),
+          "the manifest parses (\\u escape, odd tags) and drops a bad id", detail);
+
+    // The archive filters as you type: by name, then by a tag.
+    ui_tap_rect(b->controlRect("search"));
+    tick(2);
+    push_text("beta");
+    tick(3);
+    std::snprintf(detail, sizeof(detail), "%d: \"%s\"", b->entryCount(), b->entryName(0));
+    check(b->entryCount() == 1 && !std::strcmp(b->entryId(0), "1600000002"), "typing filters the archive by name", detail);
+    for (int k = 0; k < 4; ++k) push_tap_key(SDL_SCANCODE_BACKSPACE);
+    tick(2);
+    push_text("castle");
+    tick(3);
+    std::snprintf(detail, sizeof(detail), "%d: \"%s\"", b->entryCount(), b->entryName(0));
+    check(b->entryCount() == 1 && !std::strcmp(b->entryId(0), "1600000001"), "...and by tag", detail);
+    for (int k = 0; k < 6; ++k) push_tap_key(SDL_SCANCODE_BACKSPACE);
+    push_tap_key(SDL_SCANCODE_RETURN);
+    tick(3);
+    check(b->entryCount() == 2, "clearing the field shows the whole list again", "");
+
+    // A selection fetches its preview.
+    CGRect r;
+    if (b->rowRect(0, &r)) ui_tap_rect(r);
+    tick_until([b] { return b->previewShown(); }, 1500, "the preview");
+    check(!havePng || b->previewShown(), "selecting a world shows its preview", havePng ? "" : "(no PNG to serve)");
+
+    // --- downloads: deflate zip, nested zip, no overwrite --------------------------------------
+    struct Want { const char* id; const char* file; const char* what; int source; };
+    const Want wants[] = {
+        { "1600000001", "1600000001.eden",   "a streamed deflate zip imports as a world", WorldBrowser::SRC_ARCHIVE },
+        { "1600000002", "1600000002.eden",   "a zip inside a zip imports as a world", WorldBrowser::SRC_ARCHIVE },
+        { "1600000001", "1600000001-2.eden", "a second download never replaces the first", WorldBrowser::SRC_ARCHIVE },
+    };
+    std::vector<std::string> made;
+    for (const Want& w : wants) {
+        if (!m->showbrowser) { ui_tap_rect(m->controlRect("getworlds")); tick(3); browser_wait_list(b); }
+        const bool done = browser_download(b, m, w.id);
+        const int at = menu_index_of_file(w.file);
+        std::vector<unsigned char> got;
+        const bool same = read_file(docs + "/" + w.file, &got) && got == world;
+        std::snprintf(detail, sizeof(detail), "%s: listed %d selected %d same-bytes %d browser %d status \"%s\"", w.file,
+                      at, eden_menu_selected_index(), same ? 1 : 0, m->showbrowser ? 1 : 0, b->statusText());
+        check(done && at >= 0 && eden_menu_selected_index() == at && same && !m->showbrowser, w.what, detail);
+        if (at >= 0) made.push_back(w.file);
+    }
+    {
+        const int at = menu_index_of_file("1600000001.eden");
+        std::snprintf(detail, sizeof(detail), "\"%s\"", at >= 0 ? eden_menu_world_name(at) : "-");
+        check(at >= 0 && !std::strcmp(eden_menu_world_name(at), name), "a downloaded world is named from its own header", detail);
+    }
+
+    // --- the current server: Featured, Recent + More, Search, gzip, a bad payload -------------
+    ui_tap_rect(m->controlRect("getworlds"));
+    tick(3);
+    ui_tap_rect(b->tabRect(WorldBrowser::SRC_CURRENT));
+    tick(3);
+    browser_wait_list(b);
+    std::snprintf(detail, sizeof(detail), "source %d mode %d, %d entries", b->source(), b->mode(), b->entryCount());
+    check(b->source() == WorldBrowser::SRC_CURRENT && b->mode() == WorldBrowser::MODE_FEATURED && b->entryCount() == 1,
+          "the current server's tab opens on Featured", detail);
+    ui_tap_rect(b->modeRect(WorldBrowser::MODE_RECENT));
+    tick(3);
+    browser_wait_list(b);
+    std::snprintf(detail, sizeof(detail), "%d entries", b->entryCount());
+    check(b->mode() == WorldBrowser::MODE_RECENT && b->entryCount() == 2, "Recent lists pairs past a stray blank line", detail);
+    ui_tap_rect(b->controlRect("more"));
+    tick(3);
+    browser_wait_list(b);
+    std::snprintf(detail, sizeof(detail), "%d entries", b->entryCount());
+    check(b->entryCount() == 3, "More appends the next page and skips the repeat", detail);
+    ui_tap_rect(b->controlRect("search"));
+    tick(2);
+    push_text("gamma");
+    tick(2);
+    push_tap_key(SDL_SCANCODE_RETURN);
+    tick(3);
+    browser_wait_list(b);
+    std::snprintf(detail, sizeof(detail), "mode %d, %d: \"%s\"", b->mode(), b->entryCount(), b->entryName(0));
+    check(b->mode() == WorldBrowser::MODE_SEARCH && b->entryCount() == 1 && !std::strcmp(b->entryId(0), "1600000103"),
+          "Return runs a server search", detail);
+    {
+        const bool done = browser_download(b, m, "1600000103");
+        std::vector<unsigned char> got;
+        const bool same = read_file(docs + "/1600000103.eden", &got) && got == world;
+        std::snprintf(detail, sizeof(detail), "listed %d same-bytes %d status \"%s\"", menu_index_of_file("1600000103.eden"),
+                      same ? 1 : 0, b->statusText());
+        check(done && same && !m->showbrowser, "a two-member gzip from the server imports as a world", detail);
+        if (same) made.push_back("1600000103.eden");
+    }
+    ui_tap_rect(m->controlRect("getworlds"));
+    tick(3);
+    check(b->source() == WorldBrowser::SRC_CURRENT && b->mode() == WorldBrowser::MODE_SEARCH,
+          "the browser reopens where it was", "");
+    ui_tap_rect(b->modeRect(WorldBrowser::MODE_RECENT));
+    tick(3);
+    browser_wait_list(b);
+    {
+        const int before = eden_menu_world_count();
+        browser_download(b, m, "1600000102");
+        std::vector<unsigned char> got;
+        const bool none = !read_file(docs + "/1600000102.eden", &got);
+        std::snprintf(detail, sizeof(detail), "status \"%s\", worlds %d -> %d, browser %d", b->statusText(), before,
+                      eden_menu_world_count(), m->showbrowser ? 1 : 0);
+        check(std::strstr(b->statusText(), "not an Eden world") && none && eden_menu_world_count() == before && m->showbrowser,
+              "an HTML page served as a world is refused", detail);
+    }
+
+    // --- the legacy server: nothing answers -----------------------------------------------------
+    ui_tap_rect(b->tabRect(WorldBrowser::SRC_LEGACY));
+    tick(3);
+    browser_wait_list(b);
+    std::snprintf(detail, sizeof(detail), "%d entries, status \"%s\"", b->entryCount(), b->statusText());
+    check(b->source() == WorldBrowser::SRC_LEGACY && b->entryCount() == 0 && std::strstr(b->statusText(), "Couldn't reach"),
+          "an unreachable server says so", detail);
+    ui_tap_rect(b->controlRect("back"));
+    tick(3);
+    check(!m->showbrowser, "Back returns to the menu", "");
+
+    // --- a downloaded world plays -------------------------------------------------------------
+    {
+        const int at = menu_index_of_file("1600000002.eden");
+        if (at >= 0) eden_menu_select(at);
+        tick(2);
+        ui_tap_rect(m->controlRect("play"));
+        const bool played = at >= 0 && tick_until([] { return game_mode() == 1; }, 60000, "game_mode == PLAY");
+        check(played, "a downloaded world loads and plays", "");
+        if (played) { tick(60); quit_to_menu(); tick(20); }
+    }
+
+    // --- clean up: the downloads (through the menu's own delete), the fixtures, the world -------
+    eden_net_set_fixture_root("");
+    made.push_back(eden_menu_world_file(src));
+    for (const std::string& f : made) {
+        const int at = menu_index_of_file(f.c_str());
+        if (at < 0) continue;
+        eden_menu_select(at);
+        m->a_deleteConfirm();
+    }
+    // Files, then their now-empty directories, deepest first (SDL_RemovePath only takes an empty one).
+    std::vector<std::string> dirs;
+    for (const std::string& f : g_fixtureFiles) {
+        std::remove(f.c_str());
+        for (std::string d = f.substr(0, f.find_last_of('/')); d.size() > docs.size(); d = d.substr(0, d.find_last_of('/')))
+            if (std::find(dirs.begin(), dirs.end(), d) == dirs.end()) dirs.push_back(d);
+    }
+    std::sort(dirs.begin(), dirs.end(), [](const std::string& a, const std::string& b) { return a.size() > b.size(); });
+    for (const std::string& d : dirs) SDL_RemovePath(d.c_str());
+    return 0;
+}
+
+int run_browser_selftest(bool live) {
+    g_selftestTag = "eden-browser";
+    g_tickInput = true;
+    tick(120);
+    const int rc = run_browser_selftest_body(live);
+    std::printf("[eden-browser] %s (%d failure(s))\n", (rc || g_selftestFailures) ? "FAILURES" : "ALL PASS", g_selftestFailures);
+    return (rc || g_selftestFailures) ? 1 : 0;
 }
 
 int run_keybind_selftest() {
@@ -2669,6 +3660,10 @@ static int parse_one_arg(const char* a) {
         else if (!std::strcmp(a, "--empty-bit-selftest")) { g_opt.mode = "empty-bit-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--light-selftest")) { g_opt.mode = "light-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--keybind-selftest")) { g_opt.mode = "keybind-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--ui-selftest"))   { g_opt.mode = "ui-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--browser-selftest")) { g_opt.mode = "browser-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--net-live-selftest")) { g_opt.mode = "net-live-selftest"; g_opt.headless = true; }
+        else if (starts_with(a, "--net-fixtures="))  eden_net_set_fixture_root(a + 15);
         else if (!std::strcmp(a, "--objc-selftest")) { g_opt.mode = "objc-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--save-roundtrip")) g_opt.mode = "save-roundtrip";
         else if (!std::strcmp(a, "--background-selftest")) { g_opt.mode = "background-selftest"; g_opt.headless = true; }
@@ -2906,6 +3901,9 @@ static int eden_main_after_args(int argc, char** argv) {
         else if (!std::strcmp(g_opt.mode, "smoke"))         rc = run_smoke();
         else if (!std::strcmp(g_opt.mode, "input-selftest")) rc = run_input_selftest();
         else if (!std::strcmp(g_opt.mode, "keybind-selftest")) rc = run_keybind_selftest();
+        else if (!std::strcmp(g_opt.mode, "ui-selftest")) rc = run_ui_selftest();
+        else if (!std::strcmp(g_opt.mode, "browser-selftest")) rc = run_browser_selftest(false);
+        else if (!std::strcmp(g_opt.mode, "net-live-selftest")) rc = run_browser_selftest(true);
         else if (!std::strcmp(g_opt.mode, "audio-selftest")) rc = run_audio_selftest();
         else if (!std::strcmp(g_opt.mode, "gamepad-selftest")) rc = run_gamepad_selftest();
         else if (!std::strcmp(g_opt.mode, "touch-selftest")) rc = run_touch_selftest();

@@ -11,6 +11,11 @@
 //  web/src/seam/Settings_web.mm feeds public/eden-settings.js, reached here through the
 //  eden_settings_* accessors (added in that file's portable half, so both targets link them).
 //
+//  Stage 5.4 (WORKING/ROADMAP.md) reskinned it onto the GL widget kit: a WINDOW panel with a
+//  titlebar, CONTENT strips per row, and the kit's Toggle / Slider / Stepper as the three row
+//  controls — a real draggable slider for KIND_RANGE replacing the Stage 2.5 [-] [+] stepper.
+//  Every pixel is a GLW:: call; the shape is KeybindsMenu.mm's, which is the one to copy.
+//
 //  On WEB this code does not run: Settings_web.mm --wrap's SettingsMenu::update/render to no-ops
 //  (the DOM panel owns settings there). It is the native build's real settings UI, and the
 //  fallback for any future host without a DOM.
@@ -22,12 +27,14 @@
 //
 
 #import "SettingsMenu.h"
+#import "GLWidgets.h"
 #import "Graphics.h"
 #import "KeybindsMenu.h"
 #import "Globals.h"
 #import "Util.h"
 #import "World.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -38,6 +45,7 @@
 extern "C" {
     int         eden_settings_count(void);
     const char* eden_settings_label(int i);
+    const char* eden_settings_key(int i);
     const char* eden_settings_group(int i);
     int         eden_settings_kind(int i);          // 0 toggle, 1 range, 2 enum
     float       eden_settings_min(int i);
@@ -50,6 +58,7 @@ extern "C" {
     void        eden_settings_set(int i, float v);
     float       eden_settings_toggle(int i);
     int         eden_settings_loaded(void);
+    void        eden_settings_menu_close(void);
 }
 
 enum { SM_KIND_TOGGLE = 0, SM_KIND_RANGE = 1, SM_KIND_ENUM = 2 };
@@ -82,53 +91,6 @@ extern float SCREEN_HEIGHT;
 extern float P_ASPECT_RATIO;
 
 // ---------------------------------------------------------------------------------------------
-// helpers
-// ---------------------------------------------------------------------------------------------
-// This port always runs with the "2x UI scale" flags (IS_IPAD/IS_RETINA true, SCALE_* == 2 —
-// DisplayProfile_web.mm) on both web and native. Two consequences the drawing here has to respect:
-//   * Texture2D::drawText multiplies the rect ORIGIN by SCALE_* but draws the texture at its raw
-//     pixel size, so a label built at font `pt` renders `pt/SCALE` points tall — sm_text scales
-//     the font up so it lands at `pt` POINTS.
-//   * Graphics::drawRect draws in the RAW ortho (0..SCREEN_*SCALE), not point space — sm_fill
-//     scales its point-space rect up to match.
-// Also: pass POWER-OF-TWO w/h. initFromString rounds the buffer up to POT and centres/right-aligns
-// the text within that POT buffer, but drawText only samples the requested sub-rect — a non-POT
-// width silently clips right-aligned text and offsets centred text. Callers use POT dims and draw
-// the whole quad.
-static float sm_scale() { return IS_IPAD ? SCALE_WIDTH : 1.0f; }
-
-// N.4.8: built at the drawable's real density so the label is 1:1 on device pixels; it still
-// draws at w x h ortho units through drawText, so nothing below changes.
-extern "C" float eden_ui_raster_density(void);   // web/src/seam/DisplayProfile_web.mm
-static Texture2D* sm_text(const char* s, int w, int h, UITextAlignment align, float pt) {
-    return new Texture2D([NSString stringWithUTF8String:(s ? s : "")],
-                         CGSizeMake(w, h), align, [UIFont systemFontOfSize:pt * sm_scale()],
-                         eden_ui_raster_density());
-}
-
-static void sm_fill(CGRect r, float cr, float cg, float cb, float ca) {
-    const float s = sm_scale();
-    glDisable(GL_TEXTURE_2D);
-    glColor4f(cr, cg, cb, ca);
-    Graphics::drawRect(r.origin.x * s, r.origin.y * s,
-                       (r.origin.x + r.size.width) * s, (r.origin.y + r.size.height) * s);
-    glEnable(GL_TEXTURE_2D);
-    glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
-}
-
-// Draw a `wpx`x`hpx` text texture at point-space (px,py). drawText scales the ORIGIN by SCALE but
-// not the extent, so the origin that lands the texture where we want is computed here: `center`
-// puts the texture's middle at (px,py); otherwise (px,py) is its top-left in point space (still
-// vertically centred on py for row use). left-anchored text passes center=false.
-static void sm_blit(Texture2D* t, int wpx, int hpx, float px, float py, bool center) {
-    if (!t) return;
-    const float s = sm_scale();
-    float ox = center ? (px - wpx / (2.0f * s)) : px;
-    float oy = py - hpx / (2.0f * s);
-    t->drawText(CGRectMake(ox, oy, wpx, hpx));
-}
-
-// ---------------------------------------------------------------------------------------------
 SettingsMenu::SettingsMenu(){
 	for(int i=0;i<NUM_PROP;i++){
 		properties[i].name=pnames[i];
@@ -145,114 +107,225 @@ SettingsMenu::SettingsMenu(){
         properties[S_CREATURES].value=false;
     }
 
-    m_page=0;
-    m_rowsPerPage=SM_ROWS_PER_PAGE;
-    m_keys=new KeybindsMenu();
     m_built=false;
     m_seeded=false;
-    for(int i=0;i<SM_NUM_GLYPH;i++) m_glyph[i]=NULL;
+    m_rowsPerPage=8;
+    m_maxPageLen=0;
+    m_pitch=m_btnH=0;
+    m_page=0;
+    m_laidOutPage=-1;
+    m_titleY=0;
+    m_dragSlot=-1;
+    m_dragTouch=-1;
+    m_panel=m_content=CGRectMake(0,0,0,0);
+    for(int k=0;k<SM_ROWS_PER_PAGE;k++) m_slot[k]=CGRectMake(0,0,0,0);
+    m_keys=new KeybindsMenu();
 
 	this->load();
 }
 
 SettingsMenu::~SettingsMenu(){
     delete m_keys;
-    for(size_t i=0;i<m_label.size();i++)    if(m_label[i])    delete m_label[i];
-    for(size_t i=0;i<m_value.size();i++)    if(m_value[i])    delete m_value[i];
-    for(size_t i=0;i<m_groupHdr.size();i++) if(m_groupHdr[i]) delete m_groupHdr[i];
-    for(int i=0;i<SM_NUM_GLYPH;i++) if(m_glyph[i]) delete m_glyph[i];
 }
 
-void SettingsMenu::rebuildValueTex(int si){
-    if((size_t)si>=m_value.size()) return;
-    if(m_value[si]){ delete m_value[si]; m_value[si]=NULL; }
-    int kind=eden_settings_kind(si);
-    char buf[64];
-    if(kind==SM_KIND_ENUM){
-        int idx=(int)lroundf(eden_settings_get(si));
-        int n=eden_settings_enum_count(si);
-        if(idx<0) idx=0; if(n>0&&idx>=n) idx=n-1;
-        std::snprintf(buf,sizeof(buf),"%s",eden_settings_enum_label(si,idx));
-    }else{
-        float v=eden_settings_get(si);
-        float st=eden_settings_step(si);
-        std::snprintf(buf,sizeof(buf), (st>=1.0f?"%.0f":"%.2f"), v);
-    }
-    m_value[si]=sm_text(buf,128,32,UITextAlignmentCenter,15);
-}
-
-void SettingsMenu::buildTextures(){
+// ---------------------------------------------------------------------------------------------
+// pages
+// ---------------------------------------------------------------------------------------------
+// A group heading takes a SLOT of its own rather than being squeezed into the gap above a row:
+// Stage 2.5 printed "Audio" between two rows in 11pt and it read as part of neither. Paging rule:
+// every page starts with its group's heading (a continued group repeats it), and a heading is
+// never the last slot on a page — it moves to the next one with its first row.
+void SettingsMenu::build(){
     if(m_built) return;
     m_built=true;
 
-    int count=eden_settings_count();
-    m_label.assign(count,NULL);
-    m_value.assign(count,NULL);
-    m_groupHdr.assign(count,NULL);
-    m_vis.clear();
-
-    const char* prevGroup="";
+    m_pages.clear();
+    m_groups.clear();
+    std::vector<Item> cur;
+    int curGroup=-1;
+    const int count=eden_settings_count();
     for(int i=0;i<count;i++){
         if(eden_settings_native_hidden(i)) continue;
-        m_vis.push_back(i);
-        m_label[i]=sm_text(eden_settings_label(i),512,32,UITextAlignmentLeft,14);
         const char* g=eden_settings_group(i);
-        if(std::strcmp(g,prevGroup)!=0){
-            m_groupHdr[i]=sm_text(g,512,32,UITextAlignmentLeft,11);
-            prevGroup=g;
+        if(m_groups.empty()||m_groups.back()!=g) m_groups.push_back(g);
+        const int gi=(int)m_groups.size()-1;
+        bool head=cur.empty()||gi!=curGroup;
+        if((int)cur.size()+(head?2:1)>m_rowsPerPage){
+            m_pages.push_back(cur);
+            cur.clear();
+            head=true;
         }
-        if(eden_settings_kind(i)!=SM_KIND_TOGGLE) rebuildValueTex(i);
+        if(head){ Item h={-1,gi}; cur.push_back(h); }
+        Item it={i,gi};
+        cur.push_back(it);
+        curGroup=gi;
     }
+    if(!cur.empty()) m_pages.push_back(cur);
+    if(m_page>=(int)m_pages.size()) m_page=0;
+    m_maxPageLen=0;
+    for(size_t p=0;p<m_pages.size();p++)
+        if((int)m_pages[p].size()>m_maxPageLen) m_maxPageLen=(int)m_pages[p].size();
 
-    m_glyph[0]=sm_text("-", 32,32,UITextAlignmentCenter,20);
-    m_glyph[1]=sm_text("+", 32,32,UITextAlignmentCenter,20);
-    m_glyph[2]=sm_text("<", 32,32,UITextAlignmentCenter,18);
-    m_glyph[3]=sm_text(">", 32,32,UITextAlignmentCenter,18);
-    m_glyph[4]=sm_text("On", 64,32,UITextAlignmentCenter,15);
-    m_glyph[5]=sm_text("Off",64,32,UITextAlignmentCenter,15);
-    m_glyph[6]=sm_text("Keys",128,32,UITextAlignmentCenter,15);
+    // Display face throughout (GLW::FACE_DISPLAY, the Label default) — Jersey 10 runs ~1.3x the
+    // sans size for the same visual weight, hence the bigger numbers than Stage 5.4's.
+    m_title.set("Settings", GLW::du(32), UITextAlignmentCenter);
+    m_back.setLabel("Back", GLW::du(22));
+    m_keysBtn.setLabel("Controls", GLW::du(22));
+    m_prev.setLabel("<", GLW::du(22));
+    m_next.setLabel(">", GLW::du(22));
+    m_laidOutPage=-1;
+}
+
+// The density rule (2026-10-05, the user's look at 5.4: "too dense... massive switches and huge
+// text-to-boundary padding"): rows are as tight as the pointer allows — 30u on a mouse, the 44pt
+// touch floor on touch — and as many fit on a page as the screen has room for. A change in
+// either (a display-profile switch, a window resize) re-pages.
+void SettingsMenu::fit(){
+    using namespace GLW;
+    const float tf=touchFloor();
+    m_pitch=std::max(du(30),tf);
+    m_btnH=std::max(du(30),tf);
+    const float margin=du(12), pad=du(12), gap=du(10);
+    const float avail=SCREEN_HEIGHT-2.0f*margin-2.0f*pad-2.0f*(m_btnH+gap);
+    int cap=(int)std::floor(avail/m_pitch);
+    if(cap<3) cap=3;
+    if(cap>SM_ROWS_PER_PAGE) cap=SM_ROWS_PER_PAGE;
+    if(cap!=m_rowsPerPage){
+        m_rowsPerPage=cap;
+        m_built=false;
+    }
+}
+
+void SettingsMenu::refreshValue(int k){
+    if(m_page>=(int)m_pages.size()||k>=(int)m_pages[m_page].size()) return;
+    const int si=m_pages[m_page][k].si;
+    if(si<0) return;
+    char buf[64];
+    switch(eden_settings_kind(si)){
+    case SM_KIND_TOGGLE:
+        m_toggle[k].setOn(eden_settings_get(si)!=0.0f);
+        break;
+    case SM_KIND_ENUM:{
+        int idx=(int)lroundf(eden_settings_get(si));
+        int n=eden_settings_enum_count(si);
+        if(idx<0) idx=0; if(n>0&&idx>=n) idx=n-1;
+        m_stepper[k].setValueText(eden_settings_enum_label(si,idx), GLW::du(20));
+        break;
+    }
+    default:{
+        const float v=eden_settings_get(si);
+        if(!m_slider[k].dragging()) m_slider[k].setValue(v);
+        // A 0..1 range is a volume and reads as a percentage; anything else is a multiplier or a
+        // count, printed in the precision its step implies.
+        if(eden_settings_min(si)==0.0f&&eden_settings_max(si)==1.0f)
+            std::snprintf(buf,sizeof(buf),"%d%%",(int)lroundf(v*100.0f));
+        else
+            std::snprintf(buf,sizeof(buf),(eden_settings_step(si)>=1.0f?"%.0f":"%.2f"),v);
+        // LEFT-aligned beside the track, not right-aligned in a 56u box: Label aligns inside its
+        // POT texture, which is wider than the box, so "right" printed past the row's edge.
+        m_valueLabel[k].set(buf, GLW::du(20), UITextAlignmentLeft);
+        break;
+    }
+    }
+}
+
+void SettingsMenu::buildPage(){
+    m_laidOutPage=m_page;
+    m_dragSlot=-1;
+    m_dragTouch=-1;
+    char buf[32];
+    std::snprintf(buf,sizeof(buf),"%d / %d",m_page+1,(int)m_pages.size());
+    m_pageLabel.set(buf, GLW::du(20), UITextAlignmentCenter);
+    for(int k=0;k<SM_ROWS_PER_PAGE;k++){
+        m_rowLabel[k].clear();
+        m_valueLabel[k].clear();
+        m_slider[k].endDrag();
+        if(m_page>=(int)m_pages.size()||k>=(int)m_pages[m_page].size()) continue;
+        const Item& it=m_pages[m_page][k];
+        if(it.si<0){
+            m_rowLabel[k].set(m_groups[it.group].c_str(), GLW::du(20), UITextAlignmentLeft);
+            continue;
+        }
+        m_rowLabel[k].set(eden_settings_label(it.si), GLW::du(22), UITextAlignmentLeft);
+        const int kind=eden_settings_kind(it.si);
+        if(kind==SM_KIND_RANGE)
+            m_slider[k].setRange(eden_settings_min(it.si),eden_settings_max(it.si),eden_settings_step(it.si));
+        else if(kind==SM_KIND_ENUM)
+            m_stepper[k].setGlyphs("<",">");
+        refreshValue(k);
+    }
 }
 
 void SettingsMenu::layout(){
-    float w=SCREEN_WIDTH, h=SCREEN_HEIGHT;
+    using namespace GLW;
+    const float pad=du(12), gap=du(10);
+    const float pages=(float)m_pages.size();
 
-    rect_settings.size.width=246;
-    rect_settings.size.height=45;
-    rect_settings.origin.x=w/2-rect_settings.size.width/2;
-    rect_settings.origin.y=h-rect_settings.size.height-3;
+    // THE WINDOW SITS BEHIND THE CONTENT, it does not fill the screen: a column capped at the
+    // mockups' measure, as tall as the longest page (so paging never resizes it), centred.
+    // (Stage 5.4 drew a full-screen panel around a centred column — the user, 2026-10-05: "the
+    // settings window edges should not fill the entire screen and just sit behind the content".)
+    float cw=du(500);
+    const float maxCw=SCREEN_WIDTH-du(12)*2.0f-pad*2.0f;
+    if(cw>maxCw) cw=maxCw;
+    const float pagerH=(pages>1)?m_btnH+gap:0.0f;
+    const float ph=pad+m_btnH+gap+m_maxPageLen*m_pitch+pagerH+pad;
+    const float pw=cw+pad*2.0f;
+    m_panel=CGRectMake((SCREEN_WIDTH-pw)*0.5f,(SCREEN_HEIGHT-ph)*0.5f,pw,ph);
+    m_content=CGRectMake(m_panel.origin.x+pad,m_panel.origin.y,cw,ph);
+    const float left=m_content.origin.x, right=left+cw;
 
-    rect_save.size.width=104; rect_save.size.height=32;
-    rect_save.origin.x=w/2-rect_save.size.width/2; rect_save.origin.y=14;
-    rect_prev=ButtonMake(18,14,86,32);
-    rect_next=ButtonMake(w-18-86,14,86,32);
-    // Stage 5.3: the keybinds screen's entry point, parked between Save and the next-page arrow.
-    rect_keys=ButtonMake(rect_save.origin.x+rect_save.size.width+10,14,86,32);
+    // Titlebar (`.eden-titlebar`): Back at the left, the title centred on the WINDOW, actions at
+    // the right — Controls opens the Stage 5.3 keybinds screen.
+    const float barY=m_panel.origin.y+ph-pad-m_btnH;
+    m_back.setRect(CGRectMake(left,barY,du(80),m_btnH));
+    m_keysBtn.setRect(CGRectMake(right-du(104),barY,du(104),m_btnH));
+    m_titleY=barY+(m_btnH+m_title.height())*0.5f;
 
-    float top=h-46.0f;          // just below the "Options" header
-    float bottom=56.0f;         // just above the button row
-    float pitch=(top-bottom)/m_rowsPerPage;
-    if(pitch>52.0f) pitch=52.0f;
+    // Pager along the bottom: < [n / m] >.
+    const float pagerY=m_panel.origin.y+pad;
+    m_prev.setRect(CGRectMake(left,pagerY,du(40),m_btnH));
+    m_next.setRect(CGRectMake(right-du(40),pagerY,du(40),m_btnH));
 
-    const int first=m_page*m_rowsPerPage;
-    const int visN=(int)m_vis.size();
-    for(int k=0;k<m_rowsPerPage;k++){
-        float rTop=top-(k+1)*pitch;
-        float cy=rTop+pitch*0.5f;
-        float right=w-22.0f;
-        int vi=first+k;
-        int kind=(vi<visN)? eden_settings_kind(m_vis[vi]) : -1;
-        if(kind==SM_KIND_TOGGLE){
-            m_ctlA[k]=ButtonMake(right-84.0f, cy-14.0f, 84.0f, 28.0f);   // ON/OFF button
-            m_ctlB[k]=ButtonMake(0,0,0,0);
-        }else{
-            // "<"/"-"  [ value ]  ">"/"+"  — non-overlapping, value drawn in the 120px gap
-            m_ctlB[k]=ButtonMake(right-30.0f,           cy-14.0f, 30.0f, 28.0f);
-            m_ctlA[k]=ButtonMake(right-30.0f-120.0f-30.0f, cy-14.0f, 30.0f, 28.0f);
-        }
+    // Rows. The CONTROLS stay compact at any profile; on touch only their hit boxes grow, to the
+    // whole row slot (design-system.md: the floor raises the hit box, not the art).
+    const float top=barY-gap;
+    const float ch=std::min(m_pitch-du(8),std::max(du(22),touchFloor()*0.6f));
+    const float cr=right-du(8);                      // controls' right edge, inside the strip
+    const float sw=du(160);                          // slider / stepper width
+    for(int k=0;k<SM_ROWS_PER_PAGE;k++){
+        const float rowTop=top-k*m_pitch;
+        m_slot[k]=CGRectMake(left,rowTop-m_pitch,cw,m_pitch);
+        const float cy=rowTop-m_pitch*0.5f;
+        const float slotY=rowTop-m_pitch;
+        const float tw=ch*2.4f;                      // the split pill, at the CSS's ~3:1 squashed
+        m_toggle[k].setRect(CGRectMake(cr-tw,cy-ch*0.5f,tw,ch));
+        m_toggle[k].setHitRect(CGRectMake(cr-tw-du(8),slotY,tw+du(16),m_pitch));
+        // Slider: track, then a left-aligned readout in the last 52u.
+        const float sx=cr-du(52)-sw;
+        m_slider[k].setRect(CGRectMake(sx,cy-ch*0.5f,sw,ch));
+        m_slider[k].setHitRect(CGRectMake(sx-du(8),slotY,sw+du(16),m_pitch));
+        m_stepper[k].setRect(CGRectMake(cr-sw,cy-ch*0.5f,sw,ch));
+        m_stepper[k].setHitRect(CGRectMake(cr-sw,slotY,sw,m_pitch));
     }
 }
 
-void SettingsMenu::stepRow(int si,int dir){
+// Rebuilds the page's widgets when the page changed, and once more when the settings table
+// finishes loading — before that the values are defaults, and the rows stay hidden and inert
+// (as Stage 2.5's did) while Back still works.
+void SettingsMenu::syncPage(){
+    if(!m_seeded&&eden_settings_loaded()){ m_seeded=true; m_laidOutPage=-1; }
+    if(m_laidOutPage!=m_page) buildPage();
+}
+
+void SettingsMenu::commitSlider(int k){
+    const int si=m_pages[m_page][k].si;
+    eden_settings_set(si,m_slider[k].value());      // set() clamps + commits + side effects
+    refreshValue(k);
+}
+
+void SettingsMenu::stepRow(int k,int dir){
+    const int si=m_pages[m_page][k].si;
     int kind=eden_settings_kind(si);
     if(kind==SM_KIND_ENUM){
         int n=eden_settings_enum_count(si); if(n<1) n=1;
@@ -263,78 +336,94 @@ void SettingsMenu::stepRow(int si,int dir){
         float st=eden_settings_step(si); if(st<=0.0f) st=0.05f;
         eden_settings_set(si, eden_settings_get(si)+dir*st);   // set() clamps to [min,max]
     }
-    rebuildValueTex(si);
+    refreshValue(k);
 }
 
 static const int usage_id=3;
-
-void SettingsMenu::refreshSeededValues(){
-    if(m_seeded || !eden_settings_loaded()) return;
-    m_seeded=true;
-    for(size_t k=0;k<m_vis.size();k++)
-        if(eden_settings_kind(m_vis[k])!=SM_KIND_TOGGLE) rebuildValueTex(m_vis[k]);
-}
 
 void SettingsMenu::update(float etime){
     (void)etime;
     // The keybinds screen takes the whole frame while it is up — input included, which is what
     // keeps the two screens' touch slots (usage_id 3 here, 11 there) from ever contending.
     if(m_keys&&m_keys->active()){ m_keys->update(etime); return; }
-    buildTextures();
-    refreshSeededValues();
+    fit();
+    build();
+    syncPage();
     layout();
 
     Input* input=Input::getInput();
     itouch* touches=input->getTouches();
-
-    const int first=m_page*m_rowsPerPage;
-    const int visN=(int)m_vis.size();
+    const int pages=(int)m_pages.size();
+    const std::vector<Item>& page=m_pages[m_page];
+    const int nItems=(int)page.size();
 
     for(int i=0;i<MAX_TOUCHES;i++){
         if(touches[i].inuse==0&&touches[i].down==M_DOWN){
             touches[i].inuse=usage_id;
-            inbox3(touches[i].mx,touches[i].my,&rect_save);
-            inbox3(touches[i].mx,touches[i].my,&rect_prev);
-            inbox3(touches[i].mx,touches[i].my,&rect_next);
-            inbox3(touches[i].mx,touches[i].my,&rect_keys);
-            for(int k=0;k<m_rowsPerPage;k++){
-                inbox3(touches[i].mx,touches[i].my,&m_ctlA[k]);
-                inbox3(touches[i].mx,touches[i].my,&m_ctlB[k]);
-            }
-        }
-        if(touches[i].inuse==usage_id&&touches[i].down==M_RELEASE){
-            if(inbox2(touches[i].mx,touches[i].my,&rect_save)){
-                this->save();
-                World::getWorld->menu->showsettings=FALSE;
-            }else if(inbox2(touches[i].mx,touches[i].my,&rect_prev)){
-                if(m_page>0) m_page--;
-            }else if(inbox2(touches[i].mx,touches[i].my,&rect_next)){
-                if((m_page+1)*m_rowsPerPage<visN) m_page++;
-            }else if(inbox2(touches[i].mx,touches[i].my,&rect_keys)){
-                rect_keys.pressed=FALSE;
-                if(m_keys) m_keys->show();
-                touches[i].inuse=0; touches[i].down=M_NONE;
-                return;                       // the child owns the rest of this frame
-            }else if(eden_settings_loaded()){
-                for(int k=0;k<m_rowsPerPage;k++){
-                    int vi=first+k;
-                    if(vi>=visN) break;
-                    int si=m_vis[vi];
-                    int kind=eden_settings_kind(si);
-                    if(kind==SM_KIND_TOGGLE){
-                        if(inbox2(touches[i].mx,touches[i].my,&m_ctlA[k]))
-                            eden_settings_toggle(si);
-                    }else{
-                        if(inbox2(touches[i].mx,touches[i].my,&m_ctlA[k])) stepRow(si,-1);
-                        else if(inbox2(touches[i].mx,touches[i].my,&m_ctlB[k])) stepRow(si,+1);
-                    }
+            const float mx=touches[i].mx, my=touches[i].my;
+            m_back.setPressed(m_back.hit(mx,my));
+            m_keysBtn.setPressed(m_keysBtn.hit(mx,my));
+            m_prev.setPressed(m_page>0&&m_prev.hit(mx,my));
+            m_next.setPressed(m_page<pages-1&&m_next.hit(mx,my));
+            for(int k=0;k<nItems&&m_seeded;k++){
+                const int si=page[k].si;
+                if(si<0) continue;
+                const int kind=eden_settings_kind(si);
+                if(kind==SM_KIND_RANGE&&m_dragSlot<0&&m_slider[k].hit(mx,my)){
+                    // The down edge already moves the thumb — a tap on the track is a jump there.
+                    m_dragSlot=k; m_dragTouch=i;
+                    if(m_slider[k].beginDrag(mx)) commitSlider(k);
+                }else if(kind==SM_KIND_ENUM){
+                    m_stepper[k].setPressed(m_stepper[k].hitDec(mx,my),m_stepper[k].hitInc(mx,my));
                 }
             }
-            rect_save.pressed=FALSE; rect_prev.pressed=FALSE; rect_next.pressed=FALSE;
-            rect_keys.pressed=FALSE;
-            for(int k=0;k<m_rowsPerPage;k++){ m_ctlA[k].pressed=FALSE; m_ctlB[k].pressed=FALSE; }
+        }
+        // Held: only the touch that grabbed a thumb drives it, and it keeps driving it when the
+        // finger wanders off the track (vertically or past the ends), as a native slider does.
+        if(touches[i].inuse==usage_id&&touches[i].down==M_DOWN&&i==m_dragTouch&&m_dragSlot>=0){
+            if(m_slider[m_dragSlot].dragTo(touches[i].mx)) commitSlider(m_dragSlot);
+        }
+        if(touches[i].inuse==usage_id&&touches[i].down==M_RELEASE){
+            const float mx=touches[i].mx, my=touches[i].my;
             touches[i].inuse=0;
             touches[i].down=M_NONE;
+            m_back.setPressed(false); m_keysBtn.setPressed(false);
+            m_prev.setPressed(false); m_next.setPressed(false);
+            for(int k=0;k<SM_ROWS_PER_PAGE;k++) m_stepper[k].setPressed(false,false);
+
+            if(i==m_dragTouch){
+                if(m_dragSlot>=0){
+                    if(m_slider[m_dragSlot].dragTo(mx)) commitSlider(m_dragSlot);
+                    m_slider[m_dragSlot].endDrag();
+                }
+                m_dragSlot=-1; m_dragTouch=-1;
+                continue;                     // a drag that ends over a button does not press it
+            }
+            if(m_back.hit(mx,my)){
+                // save() + showsettings=FALSE, plus the two things a bare save() misses: it
+                // re-applies the port settings load() stomps (invertcam, use_joystick — harmless
+                // on the title screen, wrong in a world since Stage 5.5 opens this in-game) and
+                // clears the touch table so the release does not land on the screen beneath.
+                eden_settings_menu_close();
+                return;
+            }
+            if(m_keysBtn.hit(mx,my)){
+                if(m_keys) m_keys->show();
+                return;                       // the child owns the rest of this frame
+            }
+            if(m_prev.hit(mx,my)){ if(m_page>0) m_page--; continue; }
+            if(m_next.hit(mx,my)){ if(m_page<pages-1) m_page++; continue; }
+            for(int k=0;k<nItems&&m_seeded;k++){
+                const int si=page[k].si;
+                if(si<0) continue;
+                const int kind=eden_settings_kind(si);
+                if(kind==SM_KIND_TOGGLE){
+                    if(m_toggle[k].hit(mx,my)){ eden_settings_toggle(si); refreshValue(k); }
+                }else if(kind==SM_KIND_ENUM){
+                    if(m_stepper[k].hitDec(mx,my))      stepRow(k,-1);
+                    else if(m_stepper[k].hitInc(mx,my)) stepRow(k,+1);
+                }
+            }
         }
     }
 }
@@ -383,6 +472,51 @@ void SettingsMenu::showKeybinds(){
     if(m_keys) m_keys->show();
 }
 
+void SettingsMenu::resetView(){
+    if(m_keys&&m_keys->active()) m_keys->hide();
+    m_page=0;
+    m_dragSlot=m_dragTouch=-1;
+}
+
+// --shot / --ui-selftest entry points (see the header). Both lay the page out immediately so a
+// caller can read rects back without waiting a frame.
+int SettingsMenu::pageCount(){
+    fit();
+    build();
+    return (int)m_pages.size();
+}
+
+void SettingsMenu::showPage(int p){
+    fit();
+    build();
+    if(p<0||p>=(int)m_pages.size()) return;
+    m_page=p;
+    syncPage();
+    layout();
+}
+
+bool SettingsMenu::showRow(const char* key,CGRect* control){
+    fit();
+    build();
+    if(!key) return false;
+    for(int p=0;p<(int)m_pages.size();p++){
+        for(int k=0;k<(int)m_pages[p].size();k++){
+            const int si=m_pages[p][k].si;
+            if(si<0||std::strcmp(eden_settings_key(si),key)!=0) continue;
+            showPage(p);
+            if(control){
+                switch(eden_settings_kind(si)){
+                case SM_KIND_TOGGLE: *control=m_toggle[k].rect(); break;
+                case SM_KIND_ENUM:   *control=m_stepper[k].rect(); break;
+                default:             *control=m_slider[k].rect(); break;
+                }
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
 NSString* SettingsMenu::getNewWorldName(){
 	world_counter++;
 
@@ -394,70 +528,75 @@ NSString* SettingsMenu::getNewWorldName(){
 
 void SettingsMenu::render(){
     if(m_keys&&m_keys->active()){ m_keys->render(); return; }
-    buildTextures();
-    refreshSeededValues();
+    fit();
+    build();
+    syncPage();
     layout();
 
-    // Dark backing so the list stays legible over the animated menu art.
-    sm_fill(CGRectMake(8, 52, SCREEN_WIDTH-16, SCREEN_HEIGHT-52-40), 0.06f, 0.06f, 0.09f, 0.93f);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glDisable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+    glDisableClientState(GL_COLOR_ARRAY);
 
-	glColor4f(1.0, 1.0, 1.0, 1.0f);
-	Resources::getResources->getMenuTex(MENU_OPTIONS_HEADER)->drawText(rect_settings);
+    const float s = IS_IPAD ? SCALE_WIDTH : 1.0f;
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
+    glLoadIdentity();
+    glOrthof(0, SCREEN_WIDTH * s, 0, SCREEN_HEIGHT * s, -1, 1);
+    glMatrixMode(GL_MODELVIEW);
+    glPushMatrix();
+    glLoadIdentity();
 
-    const int visN=(int)m_vis.size();
-    const int pages=(visN+m_rowsPerPage-1)/m_rowsPerPage;
+    using namespace GLW;
+    fill(CGRectMake(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT), kScrim);
+    bevel(m_panel, BEVEL_WINDOW);
 
-    // button row
-    glColor4f(1,1,1,1);
-    Resources::getResources->getMenuTex(MENU_SAVE)->drawButton(rect_save);
-    // "Keys" has no atlas art (every menu texture in this build predates the screen), so it is a
-    // fill plus a rasterised label — the same idiom the pager arrows beside it already use.
-    sm_fill(RectFromButton(rect_keys),0.24f,0.26f,0.32f,1.0f);
-    sm_blit(m_glyph[6],128,32, rect_keys.origin.x+rect_keys.size.width/2, rect_keys.origin.y+rect_keys.size.height/2, true);
-    if(m_page>0){
-        sm_fill(RectFromButton(rect_prev),0.24f,0.26f,0.32f,1.0f);
-        sm_blit(m_glyph[2],32,32, rect_prev.origin.x+rect_prev.size.width/2, rect_prev.origin.y+rect_prev.size.height/2, true);
-    }
-    if(m_page<pages-1){
-        sm_fill(RectFromButton(rect_next),0.24f,0.26f,0.32f,1.0f);
-        sm_blit(m_glyph[3],32,32, rect_next.origin.x+rect_next.size.width/2, rect_next.origin.y+rect_next.size.height/2, true);
-    }
+    m_back.render();
+    m_keysBtn.render();
+    m_title.drawCentered(m_panel.origin.x+m_panel.size.width*0.5f, m_titleY, kText);
 
-    if(!eden_settings_loaded()) return;
-
-    const int first=m_page*m_rowsPerPage;
-    for(int k=0;k<m_rowsPerPage;k++){
-        int vi=first+k;
-        if(vi>=visN) break;
-        int si=m_vis[vi];
-        CGRect a=RectFromButton(m_ctlA[k]);
-        float cy=a.origin.y+a.size.height*0.5f;
-
-        // Group heading in the gap above the row (skip the top row — no room there).
-        if(k>0 && m_groupHdr[si]){
-            glColor4f(0.60f,0.66f,0.82f,1.0f);
-            sm_blit(m_groupHdr[si],512,32, 24, a.origin.y+a.size.height+9, false);
-            glColor4f(1,1,1,1);
+    const int pages=(int)m_pages.size();
+    const std::vector<Item>& page=m_pages[m_page];
+    for(int k=0;m_seeded&&k<(int)page.size()&&k<SM_ROWS_PER_PAGE;k++){
+        const CGRect r=m_slot[k];
+        const float cy=r.origin.y+r.size.height*0.5f;
+        if(page[k].si<0){
+            // A heading sits on the bottom of its slot, next to the rows it names.
+            m_rowLabel[k].draw(r.origin.x+du(2), r.origin.y+du(4)+m_rowLabel[k].lineHeight(), kTextSecondary);
+            continue;
         }
-
-        glColor4f(0.95f,0.95f,0.95f,1.0f);
-        sm_blit(m_label[si],512,32, 26, cy, false);
-        glColor4f(1,1,1,1);
-
-        int kind=eden_settings_kind(si);
-        if(kind==SM_KIND_TOGGLE){
-            bool on=eden_settings_get(si)!=0.0f;
-            if(on) sm_fill(a,0.20f,0.42f,0.26f,1.0f);
-            else   sm_fill(a,0.22f,0.22f,0.26f,1.0f);
-            sm_blit(m_glyph[on?4:5],64,32, a.origin.x+a.size.width*0.5f, cy, true);
-        }else{
-            CGRect b=RectFromButton(m_ctlB[k]);
-            sm_fill(a,0.24f,0.26f,0.32f,1.0f);
-            sm_fill(b,0.24f,0.26f,0.32f,1.0f);
-            sm_blit(m_glyph[kind==SM_KIND_ENUM?2:0],32,32, a.origin.x+a.size.width*0.5f, cy, true);
-            sm_blit(m_glyph[kind==SM_KIND_ENUM?3:1],32,32, b.origin.x+b.size.width*0.5f, cy, true);
-            if((size_t)si<m_value.size())
-                sm_blit(m_value[si],128,32, (a.origin.x+a.size.width + b.origin.x)*0.5f, cy, true);
+        // Contiguous CONTENT strips: one box per row, so a label and its control read as one
+        // thing (KeybindsMenu.mm, "A SUNKEN content strip behind the whole row").
+        bevel(CGRectMake(r.origin.x, r.origin.y, r.size.width, r.size.height), BEVEL_CONTENT);
+        m_rowLabel[k].draw(r.origin.x+du(10), cy+m_rowLabel[k].lineHeight()*0.5f, kText);
+        switch(eden_settings_kind(page[k].si)){
+        case SM_KIND_TOGGLE: m_toggle[k].render(); break;
+        case SM_KIND_ENUM:   m_stepper[k].render(); break;
+        default:{
+            m_slider[k].render();
+            const CGRect sr=m_slider[k].rect();
+            m_valueLabel[k].draw(sr.origin.x+sr.size.width+du(8), cy+m_valueLabel[k].lineHeight()*0.5f, kText);
+            break;
+        }
         }
     }
+
+    if(pages>1){
+        if(m_page>0)         m_prev.render();
+        if(m_page<pages-1)   m_next.render();
+        const CGRect pr=m_prev.rect();
+        m_pageLabel.drawCentered(m_content.origin.x+m_content.size.width*0.5f,
+                                 pr.origin.y+(pr.size.height+m_pageLabel.height())*0.5f, kTextSecondary);
+    }
+
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
+    glPopMatrix();
+
+    glDisable(GL_BLEND);
+    glEnable(GL_DEPTH_TEST);
 }

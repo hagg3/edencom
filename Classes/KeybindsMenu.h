@@ -27,7 +27,9 @@
 #import "Input.h"
 #include <vector>
 
-#define KB_ROWS_PER_PAGE 7
+// Slots per page are fitted to the screen (fit(), 2026-10-05 — the same density rule as
+// SettingsMenu); this is only the array capacity. A slot is a row or a group heading.
+#define KB_ROWS_PER_PAGE 16
 
 class KeybindsMenu {
 public:
@@ -42,9 +44,14 @@ public:
     void render();
 
 private:
-    void build();                  // resolve the visible rows + their labels, once
+    // One slot on a page: a group heading (vi < 0, group = its m_vis index) or a row (vi = index
+    // into m_vis).
+    struct Item { int vi; int head; };
+
+    void fit();                    // pitch + slots per page from SCREEN_*; re-pages on change
+    void build();                  // resolve the visible rows into pages, once per fit
     void layout();                 // recompute rects from SCREEN_* (cheap, per frame)
-    void refreshKeyLabel(int k);   // row k of the current page -> its button text
+    void refreshKeyLabel(int k);   // slot k of the current page -> its labels + button text
 
     KeybindsMenu(const KeybindsMenu&);
     KeybindsMenu& operator=(const KeybindsMenu&);
@@ -53,22 +60,26 @@ private:
     bool  m_built;
     int   m_page;
     int   m_touchSlot;
+    int   m_slots;                 // fit()'s slots per page
+    int   m_maxPageLen;
+    float m_pitch, m_btnH;
 
     std::vector<int> m_vis;        // model row indices this build shows, in order
-    std::vector<int> m_groupHead;  // parallel to m_vis: 1 = first row of its group
+    std::vector<std::vector<Item> > m_pages;
 
     GLW::Label  m_title;
-    GLW::Label  m_rowLabel[KB_ROWS_PER_PAGE];
+    GLW::Label  m_rowLabel[KB_ROWS_PER_PAGE];   // a row's action, or a heading's group name
     GLW::Label  m_secLabel[KB_ROWS_PER_PAGE];   // the fixed secondary binding, or empty
-    GLW::Label  m_groupLabel[KB_ROWS_PER_PAGE];
     GLW::Label  m_capture;         // the "Press a key..." overlay text
     GLW::Button m_key[KB_ROWS_PER_PAGE];
     GLW::Button m_back, m_reset, m_prev, m_next;
+    GLW::Label  m_pageLabel;
 
     CGRect m_panel;
-    CGRect m_content;              // the centred column the rows live in
-    float  m_titleTop;
-    int    m_laidOutPage;          // which page m_rowLabel/m_key were last built for
+    CGRect m_content;              // the column the rows live in
+    CGRect m_slot[KB_ROWS_PER_PAGE];
+    float  m_titleY;
+    int    m_laidOutPage;          // which page the labels/buttons were last built for
 };
 
 #endif

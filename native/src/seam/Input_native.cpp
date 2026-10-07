@@ -49,6 +49,8 @@
 
 #include <cstdio>
 #include <cmath>
+#include <cstring>
+#include <string>
 
 // The engine-side input surface. All of it is web/src/seam/Input_web.mm, compiled into this target
 // unchanged — see this file's header.
@@ -618,6 +620,85 @@ void gamepad_tick() {
 // to see it from outside without waiting for a terrain diff.
 int eden_native_input_debug_hold_active(void) { return g_hold.active ? 1 : 0; }
 
+// ---------------------------------------------------------------------------------------------
+// Text input (N.4.5) — the platform half of GLW::TextField
+// ---------------------------------------------------------------------------------------------
+// The engine has had no text entry on any port target: Classes/VKeyboard.mm overlays a UIKit
+// UITextField and is seam-excluded everywhere. SDL's text input is the cross-platform answer —
+// composed UTF-8 from the OS (dead keys, IMEs, the iOS system keyboard, which SDL_StartTextInput
+// raises) — and the field draws itself in GL. This is a byte queue between the two: TEXT_INPUT
+// appends, the three editing keys append as control bytes ('\b', '\r', 0x1b), and the field
+// drains it once a frame. Kept as OUR flag rather than only SDL_TextInputActive() so the headless
+// --text-input-selftest (no window) drives exactly the path a real keyboard does.
+namespace {
+bool        g_textActive = false;
+std::string g_textQueue;
+
+// Point space (y up) -> window points (y down), the inverse of window_to_point(). Only used to
+// tell the IME / iOS keyboard where the field is, so a little slop is harmless.
+void point_rect_to_window(float x, float y, float w, float h, SDL_Rect* out) {
+    int bx = 0, by = 0, bw = 0, bh = 0;
+    eden_native_gl_get_letterbox(&bx, &by, &bw, &bh);
+    int ww = 0, wh = 0, pw = 0, ph = 0;
+    if (g_window) {
+        SDL_GetWindowSize(g_window, &ww, &wh);
+        SDL_GetWindowSizeInPixels(g_window, &pw, &ph);
+    }
+    const float sx = (pw > 0 && ww > 0) ? (float)pw / (float)ww : 1.0f;
+    const float sy = (ph > 0 && wh > 0) ? (float)ph / (float)wh : 1.0f;
+    const float boxX = (float)bx / sx, boxY = (float)by / sy;
+    const float boxW = bw > 0 ? (float)bw / sx : (float)ww, boxH = bh > 0 ? (float)bh / sy : (float)wh;
+    const float kx = SCREEN_WIDTH  > 0 ? boxW / SCREEN_WIDTH  : 1.0f;
+    const float ky = SCREEN_HEIGHT > 0 ? boxH / SCREEN_HEIGHT : 1.0f;
+    out->x = (int)(boxX + x * kx);
+    out->y = (int)(boxY + (SCREEN_HEIGHT - (y + h)) * ky);
+    out->w = (int)(w * kx);
+    out->h = (int)(h * ky);
+}
+}  // namespace
+
+extern "C" int eden_text_input_available(void) { return 1; }
+
+extern "C" void eden_text_input_start(float x, float y, float w, float h) {
+    g_textActive = true;
+    if (!g_window) return;
+    SDL_Rect r;
+    point_rect_to_window(x, y, w, h, &r);
+    SDL_SetTextInputArea(g_window, &r, 0);
+    if (!SDL_TextInputActive(g_window)) SDL_StartTextInput(g_window);
+}
+
+extern "C" void eden_text_input_stop(void) {
+    g_textActive = false;
+    g_textQueue.clear();
+    if (g_window && SDL_TextInputActive(g_window)) SDL_StopTextInput(g_window);
+}
+
+// On iOS, dismissing the system keyboard stops SDL's text input without asking us; the field
+// reads that as "done". On a desktop the two never disagree.
+extern "C" int eden_text_input_active(void) {
+    if (!g_textActive) return 0;
+    if (g_window && !SDL_TextInputActive(g_window)) return 0;
+    return 1;
+}
+
+extern "C" int eden_text_input_take(char* buf, int cap) {
+    if (!buf || cap <= 0 || g_textQueue.empty()) return 0;
+    const int n = (int)g_textQueue.size() < cap ? (int)g_textQueue.size() : cap;
+    std::memcpy(buf, g_textQueue.data(), (size_t)n);
+    g_textQueue.erase(0, (size_t)n);
+    return n;
+}
+
+// Stage 5.6: wheel notches for the GL UI (the main menu's world list). Accumulated only while the
+// mouse is NOT captured — in mouse-look the wheel is the hotbar's — and drained by the screen.
+static float g_uiWheel = 0.0f;
+extern "C" int eden_ui_take_wheel(void) {
+    const int n = (int)g_uiWheel;          // whole notches; a trackpad's fraction carries over
+    g_uiWheel -= (float)n;
+    return n;
+}
+
 void eden_native_input_init(SDL_Window* window) {
     g_window = window;
     g_haveWindow = (window != nullptr);
@@ -649,7 +730,21 @@ void eden_native_input_init(SDL_Window* window) {
 
 void eden_native_input_handle_event(const SDL_Event& e) {
     switch (e.type) {
+        case SDL_EVENT_TEXT_INPUT: {
+            if (g_textActive && e.text.text) g_textQueue += e.text.text;
+            return;
+        }
         case SDL_EVENT_KEY_DOWN: {
+            // N.4.5: while a GL text field has focus EVERY key is the field's — Escape must cancel
+            // the edit rather than open the pause menu, and typing "w" must not walk. Ahead of the
+            // repeat filter on purpose: a held Backspace should keep deleting.
+            if (g_textActive) {
+                const SDL_Scancode sc = e.key.scancode;
+                if (sc == SDL_SCANCODE_BACKSPACE) g_textQueue += '\b';
+                else if (sc == SDL_SCANCODE_RETURN || sc == SDL_SCANCODE_KP_ENTER) { if (!e.key.repeat) g_textQueue += '\r'; }
+                else if (sc == SDL_SCANCODE_ESCAPE) { if (!e.key.repeat) g_textQueue += '\x1b'; }
+                return;
+            }
             if (e.key.repeat) return;          // held keys are state, not repeated edges
             // Stage 5.3: the GL keybinds screen arms the model's one capture slot and the next
             // key belongs to IT, not to the game. This has to sit ahead of every dispatch below
@@ -688,6 +783,7 @@ void eden_native_input_handle_event(const SDL_Event& e) {
             return;
         }
         case SDL_EVENT_KEY_UP: {
+            if (g_textActive) return;          // the field swallowed the down edge too
             resolve_model();
             const int code = (int)e.key.scancode;
             for (int mi = eden_keybind_action_after(-1, code); mi >= 0;
@@ -806,9 +902,15 @@ void eden_native_input_handle_event(const SDL_Event& e) {
             return;
 
         case SDL_EVENT_MOUSE_WHEEL:
-            // Only while playing: in the menu the wheel would fight the drag-scroll above.
+            // Captured (playing): the hotbar. Free cursor (menus): the GL UI's lists, through
+            // eden_ui_take_wheel() above. SDL's y is positive away from the user, unless the
+            // platform flips it ("natural" scrolling), which SDL reports in `direction`.
             if (is_synthetic_mouse(e.wheel.which)) return;
-            if (g_relativeMouse && e.wheel.y != 0) eden_hotbar_scroll(e.wheel.y > 0 ? 1 : -1);
+            if (g_relativeMouse) {
+                if (e.wheel.y != 0) eden_hotbar_scroll(e.wheel.y > 0 ? 1 : -1);
+            } else {
+                g_uiWheel += (e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) ? -e.wheel.y : e.wheel.y;
+            }
             return;
 
         default:

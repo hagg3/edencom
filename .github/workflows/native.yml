@@ -65,7 +65,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            clang lld ninja-build cmake gdb zlib1g-dev libgl1-mesa-dev \
+            clang lld ninja-build cmake gdb zlib1g-dev libcurl4-openssl-dev libgl1-mesa-dev \
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
             libxfixes-dev libxss-dev libxtst-dev libwayland-dev libxkbcommon-dev \
             libasound2-dev libpulse-dev libudev-dev
@@ -135,6 +135,10 @@ jobs:
           run_gate "touch selftest"   $B --touch-selftest
           run_gate "audio selftest"   $B --audio-selftest
           run_gate "background selftest" $B --background-selftest --world=bg --docs="$PWD/bg-docs"
+          # ROADMAP 5.9: Get Worlds end to end over OFFLINE fixtures it writes itself (a runner must
+          # not depend on edengame.net being up) — tabs, both list parsers, gzip / zip / zip-in-zip
+          # unpacking, the import, and loading a downloaded world.
+          run_gate "browser selftest" $B --browser-selftest --docs="$PWD/browser-docs"
 
           # The stage's leak obligation. The shim Foundation runs outside Emscripten on this leg
           # for the first time and this runtime's object_dispose() has no .cxx_destruct, so a shim
@@ -170,6 +174,16 @@ jobs:
           test -s publish/world-linux.geom
           echo "linux loads its own world as geom $(cat publish/world-linux.geom)"
           ls -l publish
+
+      # ROADMAP 5.9: the world browser's REAL HTTP backend (NSURLSession / libcurl / WinHTTP —
+      # --browser-selftest above uses offline fixtures and never touches it). Lists from the archive
+      # and both Eden servers, a preview, and the smallest archive world downloaded and loaded.
+      # NOT A GATE: it depends on hagg3.github.io and edengame.net being up, which a red CI run
+      # must never be about. Read its log when a backend changes.
+      - name: Live network smoke — archive + both Eden servers (informational)
+        working-directory: native
+        continue-on-error: true
+        run: ./build/eden_native --net-live-selftest --docs="$PWD/live-docs"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -270,6 +284,10 @@ jobs:
           run_gate "touch selftest"   $B --touch-selftest
           run_gate "audio selftest"   $B --audio-selftest
           run_gate "background selftest" $B --background-selftest --world=bg --docs="$PWD/bg-docs"
+          # ROADMAP 5.9: Get Worlds end to end over OFFLINE fixtures it writes itself (a runner must
+          # not depend on edengame.net being up) — tabs, both list parsers, gzip / zip / zip-in-zip
+          # unpacking, the import, and loading a downloaded world.
+          run_gate "browser selftest" $B --browser-selftest --docs="$PWD/browser-docs"
 
           # See the Linux job for why the leak probe is a stage obligation. Windows has the one
           # honest gap in the statistic — the mingw CRT publishes no live-bytes figure, so
@@ -277,6 +295,16 @@ jobs:
           # flat" at least as well; read the absolute number as a trend, not as bytes.
           rm -rf leak-docs && mkdir -p leak-docs
           run_gate "leak probe (torture, same 64z)" $B --leak-probe --docs="$PWD/leak-docs"
+
+      # ROADMAP 5.9: the world browser's REAL HTTP backend (NSURLSession / libcurl / WinHTTP —
+      # --browser-selftest above uses offline fixtures and never touches it). Lists from the archive
+      # and both Eden servers, a preview, and the smallest archive world downloaded and loaded.
+      # NOT A GATE: it depends on hagg3.github.io and edengame.net being up, which a red CI run
+      # must never be about. Read its log when a backend changes.
+      - name: Live network smoke — archive + both Eden servers (informational)
+        working-directory: native
+        continue-on-error: true
+        run: ./build/eden_native --net-live-selftest --docs="$PWD/live-docs"
 
       - uses: actions/download-artifact@v4
         with:
@@ -345,7 +373,7 @@ jobs:
           # four files in it and no error. `cp -L` then copies what each one points at.
           find build -maxdepth 1 \( -type f -o -type l \) \
             \( -name '*.png' -o -name '*.pod' -o -name '*.caf' -o -name '*.wav' \
-               -o -name '*.aif' -o -name '*.mp3' -o -name '*.eden' \) -exec cp -L {} dist/ \;
+               -o -name '*.aif' -o -name '*.mp3' -o -name '*.eden' -o -name '*.ttf' \) -exec cp -L {} dist/ \;
 
           # SDL3, plus the runtime this toolchain links against. `ldd` on the built exe is the
           # source of truth rather than a hand-listed set of DLL names: it reports what THIS binary
@@ -425,8 +453,19 @@ jobs:
           ./build/eden_native --touch-selftest
           ./build/eden_native --audio-selftest
           ./build/eden_native --background-selftest --world=bg --docs="$PWD/bg-docs"
+          ./build/eden_native --browser-selftest --docs="$PWD/browser-docs"
           rm -rf leak-docs && mkdir -p leak-docs
           ./build/eden_native --leak-probe --docs="$PWD/leak-docs"
+
+      # ROADMAP 5.9: the world browser's REAL HTTP backend (NSURLSession / libcurl / WinHTTP —
+      # --browser-selftest above uses offline fixtures and never touches it). Lists from the archive
+      # and both Eden servers, a preview, and the smallest archive world downloaded and loaded.
+      # NOT A GATE: it depends on hagg3.github.io and edengame.net being up, which a red CI run
+      # must never be about. Read its log when a backend changes.
+      - name: Live network smoke — archive + both Eden servers (informational)
+        working-directory: native
+        continue-on-error: true
+        run: ./build/eden_native --net-live-selftest --docs="$PWD/live-docs"
 
       - uses: actions/download-artifact@v4
         with:

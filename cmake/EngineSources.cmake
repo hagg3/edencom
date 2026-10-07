@@ -42,6 +42,10 @@ function(eden_collect_engine_sources)
   #   Classes/KeybindsMenu.mm — Phase N Stage 5.3's keybinds screen, the kit's second consumer.
   #   Driven from inside SettingsMenu, which web --wraps to a no-op, so it is inert there.
   list(APPEND _eden_sources "${EDEN_ECS_BASE_DIR}/Classes/KeybindsMenu.mm")
+  #   Classes/WorldBrowser.mm — ROADMAP 5.9's Get Worlds screen (the community archive plus the
+  #   current and legacy edengame.net servers) on the kit, over the eden_net_* seam. Inert on web:
+  #   the seam's stubs report no network, so the menu never offers it there.
+  list(APPEND _eden_sources "${EDEN_ECS_BASE_DIR}/Classes/WorldBrowser.mm")
 
   list(LENGTH _eden_sources_rel _eden_total_count)
   list(LENGTH _eden_sources _eden_kept_count)

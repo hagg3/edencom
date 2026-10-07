@@ -123,6 +123,10 @@ public:
     void compressLastPlayed();
     void convertFile(NSString* file_name);
     NSString* getName(NSString* file_name);
+    // N.4.5: the world list's rename. Rewrites WorldFileHeader::name in place and nothing else;
+    // a world with no file yet (created, never played) needs no write — its first save takes the
+    // name from Menu::selected_world. Returns FALSE only if a file exists and the write failed.
+    BOOL renameWorld(NSString* file_name, NSString* display_name);
     void setName(std::string fn,std::string dn);
     void setImageHash(NSString* hash);
     void loadWorld(NSString* name,BOOL fromArchive);

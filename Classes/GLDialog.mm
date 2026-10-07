@@ -9,6 +9,7 @@
 //  claim protocol, which is the shape every screen converted in Stage 5 should end up with.
 //
 #import "GLDialog.h"
+#include <algorithm>
 #import "Globals.h"
 #import "Util.h"
 #import "Input.h"
@@ -20,6 +21,8 @@ extern float SCREEN_HEIGHT;
 GLDialog::GLDialog() {
     m_active = false;
     m_cb = NULL;
+    m_promptCb = NULL;
+    m_hasField = false;
     m_nButtons = 0;
     m_touchSlot = -1;
     m_titleTop = m_bodyTop = 0.0f;
@@ -39,6 +42,9 @@ void GLDialog::reset() {
     m_title.clear();
     m_body.clear();
     for (int j = 0; j < GLDIALOG_MAX_BUTTONS; j++) m_btn[j].setPressed(false);
+    m_field.blur();                // stops the platform's text input (the iOS keyboard goes away)
+    m_hasField = false;
+    m_promptCb = NULL;
     m_active = false;
     m_cb = NULL;
     m_nButtons = 0;
@@ -61,6 +67,42 @@ void GLDialog::show(const char* title, const char* body,
     d->layout();
 }
 
+void GLDialog::dismiss() { getDialog()->reset(); }
+
+bool GLDialog::buttonRect(int j, CGRect* r) {
+    GLDialog* d = getDialog();
+    if (!d->m_active || j < 0 || j >= d->m_nButtons) return false;
+    d->layout();
+    if (r) *r = d->m_btn[j].rect();
+    return true;
+}
+
+bool GLDialog::textEntryAvailable() { return eden_text_input_available() != 0; }
+
+void GLDialog::prompt(const char* title, const char* body, const char* initialText, int maxBytes,
+                      const char* const* buttons, int n, void (*cb)(int, const char*)) {
+    show(title, body, buttons, n, NULL);
+    GLDialog* d = getDialog();
+    d->m_hasField = true;
+    d->m_promptCb = cb;
+    d->m_field.setMaxBytes(maxBytes > 0 ? maxBytes : 49);
+    d->m_field.setPointSize(GLW::du(20));   // display face, like .eden-field
+    d->m_field.setText(initialText);
+    d->layout();                   // again, now with the field's row
+    d->m_field.focus();
+}
+
+// Close BEFORE the callback — it may show() the next dialog. The prompt's text is copied out
+// first because reset() is what tears the field down.
+void GLDialog::choose(int j) {
+    void (*cb)(int) = m_cb;
+    void (*pcb)(int, const char*) = m_promptCb;
+    const std::string text = m_field.text();
+    reset();
+    if (pcb) pcb(j, text.c_str());
+    else if (cb) cb(j);
+}
+
 // Everything here is in design pixels through GLW::du(), so the panel keeps the mockup's
 // proportions at any display profile. Two columns, and an ODD LAST BUTTON SPANS BOTH — which is
 // what puts "Cancel" on its own full-width row in all three of the port's dialogs.
@@ -68,8 +110,10 @@ void GLDialog::layout() {
     using namespace GLW;
     const float pad   = du(16);
     const float gap   = du(8);
-    const float rowH  = du(38) < 34.0f ? 34.0f : du(38);
-    const float titlePt = du(24), bodyPt = du(13), btnPt = du(14);
+    // Compact on a pointer, the 44pt floor on touch (GLW::touchFloor) — the same density rule as
+    // SettingsMenu. Title and buttons are the display face, so they run ~1.3x the body size.
+    const float rowH  = std::max(du(32), touchFloor());
+    const float titlePt = du(30), bodyPt = du(14), btnPt = du(20);
 
     float pw = du(420);
     const float maxW = SCREEN_WIDTH - du(24) * 2.0f;
@@ -78,10 +122,12 @@ void GLDialog::layout() {
     const float colW   = (innerW - gap) * 0.5f;
 
     m_title.set(m_titleText.c_str(), titlePt, UITextAlignmentLeft, innerW);
-    m_body.set(m_bodyText.c_str(),  bodyPt,  UITextAlignmentLeft, innerW);
+    m_body.set(m_bodyText.c_str(),  bodyPt,  UITextAlignmentLeft, innerW, FACE_BODY);
 
     const int rows = (m_nButtons + 1) / 2;
+    const float fieldH = rowH;
     float ph = pad + m_title.height() + (m_body.empty() ? 0.0f : du(4) + m_body.height())
+             + (m_hasField ? du(12) + fieldH : 0.0f)
              + du(14) + rows * (rowH + gap) - gap + pad;
 
     const float px = (SCREEN_WIDTH  - pw) * 0.5f;
@@ -93,6 +139,11 @@ void GLDialog::layout() {
 
     float rowTop = (m_body.empty() ? m_titleTop - m_title.height()
                                    : m_bodyTop - m_body.height()) - du(14);
+    if (m_hasField) {
+        rowTop += du(14) - du(12);
+        m_field.setRect(CGRectMake(px + pad, rowTop - fieldH, innerW, fieldH));
+        rowTop -= fieldH + du(14);
+    }
     for (int j = 0; j < m_nButtons; j++) {
         const bool lastOdd = (j == m_nButtons - 1) && (m_nButtons % 2 == 1);
         const int  col = j % 2;
@@ -112,6 +163,12 @@ void GLDialog::update(float etime) {
     itouch* touches = input->getTouches();
     static const int usage_id = 9;   // distinct from Menu / SettingsMenu (3) / Hud
 
+    if (m_hasField) {
+        const GLW::TextField::Event ev = m_field.update();
+        if (ev == GLW::TextField::EV_COMMIT) { choose(0); return; }
+        if (ev == GLW::TextField::EV_CANCEL) { choose(m_nButtons - 1); return; }
+    }
+
     for (int i = 0; i < MAX_TOUCHES; i++) {
         if (touches[i].inuse == 0 && touches[i].down == M_DOWN) {
             touches[i].inuse = usage_id;
@@ -124,14 +181,12 @@ void GLDialog::update(float etime) {
                 m_btn[j].setPressed(false);
                 if (m_btn[j].hit(touches[i].mx, touches[i].my)) chosen = j;
             }
+            const bool onField = m_hasField && m_field.hit(touches[i].mx, touches[i].my);
             touches[i].inuse = 0;
             touches[i].down = M_NONE;
-            if (chosen >= 0) {
-                void (*cb)(int) = m_cb;
-                reset();                 // close BEFORE the callback — it may show() the next dialog
-                if (cb) cb(chosen);
-                return;
-            }
+            if (chosen >= 0) { choose(chosen); return; }
+            // Tapping the field re-raises the keyboard after the player dismissed it (iOS).
+            if (onField) m_field.focus();
         }
     }
 }
@@ -163,6 +218,7 @@ void GLDialog::render() {
     m_title.draw(tx, m_titleTop, GLW::kText);
     if (!m_body.empty()) m_body.draw(tx, m_bodyTop, GLW::kTextSecondary);
 
+    if (m_hasField) m_field.render();
     for (int j = 0; j < m_nButtons; j++) m_btn[j].render();
 
     glMatrixMode(GL_PROJECTION);

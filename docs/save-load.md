@@ -238,7 +238,13 @@ blocks) become modern type+paint pairs — into a temp file which replaces the
 original. Shows "Converting World…" in the UI via `convertingWorld`.
 
 ## Renaming, hashes, deletion
-- `setName(file,display)` rewrites just the header's name field (menu rename).
+- `setName(file,display)` is stock's header-name rewrite (its only caller is the share flow) and
+  does not work — see the last bullet. **`renameWorld(file,display)` (N.4.5, 2026-10-04) is the
+  one the port's menu rename uses**: `"r+b"`, reads the header first and refuses a short file,
+  then writes ONLY the 50 bytes at `offsetof(WorldFileHeader,name)`. No scratch copy and no
+  journal, because no other byte moves (`--ui-selftest` diffs the file and asserts exactly that).
+  A world that was created but never played has no file; it returns TRUE without writing and the
+  first save takes the name from `Menu::selected_world`.
 - `setImageHash(md5)` rewrites the header when a new preview screenshot is taken
   (`md5.c` computes it; sharing uses it to pair world+png server-side).
 - `deleteWorld` removes the file, its `.png`, and its `.savejrnl` — a journal must never outlive
@@ -263,7 +269,8 @@ original. Shows "Converting World…" in the UI via `convertingWorld`.
   changed, because its only caller is `ShareMenu.mm` — the world-sharing feature, which is
   seam-excluded on every port target and deferred to Stage 4.6 — and turning a no-op into a real
   header rewrite is a behaviour change that wants its own verification, not a portability fix's
-  tail. The mode it means is `"r+b"`.
+  tail. The mode it means is `"r+b"`. If sharing ever ships, point it at `renameWorld` rather than
+  reviving this.
 
 ## Where "Documents" is, and the two port hooks (Phase N Stage 2, 2026-09-05)
 `FileManager`'s constructor and `saveWorld` each grew one NULL-by-default hook, declared in

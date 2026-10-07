@@ -42,11 +42,13 @@ set_channel_fade` — replace the old music-only `eden_audio_play_music` family;
 3=treasure-cube proximity; `getAmbienceVolume`/`setAmbienceVolume` take no layer — one
 settings slider drives all four). Only the four ambience channels separate the
 settings-slider volume (`userVolume`) from the engine's per-frame crossfade
-(`engineFade`) — `audio.volume = userVolume * clamp(engineFade,0,1)`; the music
-channel keeps its original single-volume behavior (`setBackgroundMusicVolume` is
-called by both the settings slider and `Resources::update`'s song-crossfade math,
-last write wins, unchanged from before this split) since nothing asked for that to
-change.
+(`engineFade`) — `audio.volume = userVolume * clamp(engineFade,0,1)`. **Since
+2026-10-05 the music channel does too**: `setBackgroundMusicVolume` is the slider and
+the new `setBackgroundMusicFade` is `Resources::update`'s song crossfade. Until then
+both wrote one knob, last write wins — and the engine wrote it every frame the two
+differed, so the Music volume slider moved the volume for exactly one frame (the
+user's report: "changes very slightly but otherwise does nothing"). `--audio-selftest`
+asserts the slider value survives 30 engine frames.
 
 **Hardware media keys and backgrounding** (also in `eden_audio_js_init`): a
 no-op `navigator.mediaSession.setActionHandler` for `play`/`pause`/`stop`/

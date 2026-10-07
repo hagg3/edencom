@@ -21,6 +21,31 @@ sequenceDiagram
     SU-->>UI: sets finished_* flags, statusbar text
 ```
 
+## The port's client (Stage 5.9, 2026-10-07)
+None of the files below is compiled by the live port targets (they are NSURLConnection + UIKit and
+seam-excluded). The port's browser is `Classes/WorldBrowser.{h,mm}` (docs/ui.md) over a tiny
+non-blocking seam, `eden_net_fetch/poll/body/error/release` — implemented natively in
+`native/src/seam/Net_native.cpp` (NSURLSession on Apple, libcurl on Linux, WinHTTP on Windows) and
+stubbed to "no network" on web. It speaks the stock protocol to BOTH official services and adds the
+community archive:
+
+| Source | List | World | Preview |
+|---|---|---|---|
+| Current | `http://app2.edengame.net/list2.php?start=N&sort=2` (Recent), `?search=` (Search); `http://files2.edengame.net/popularlist.txt` (Featured) | `files2/<id>.eden` (gzip) | `files2/<id>.eden.png` |
+| Legacy | the same paths on `app.` / `files.edengame.net` | `files/<id>.eden` | `files/<id>.eden.png` |
+| Archive | `https://hagg3.github.io/edenarchive/assets/data/worlds.json` (JSON array) | `…/assets/worldfiles/<id>/<id>.eden.zip` (zip, sometimes zip-in-zip) | `…/<id>/<id>.eden.png` (often 404) |
+
+**The list format, now traced (was "confidence medium" below):** plain text, `<id>.eden` and
+`<name>.name` on alternating lines, no counts and no page size (Recent returned 150 per page and
+Featured 100 on 2026-10-07; `popularlist.txt` repeats an id under two names). Parse by adjacency,
+not by stride — a stray blank line would desync every later pair. `sort=2` is what the stock client
+sends for Recent; `sort=0` returns a different ordering whose meaning is unknown. Only the `files*`
+hosts answer HTTPS (CloudFront); `app*` refuse TLS, so the client stays plain HTTP and iOS needs an
+ATS exception (native/ios/Info.plist.in). Neither service sends CORS headers, which is why a browser
+page cannot use them. Worlds can be large: the current server's first Featured world inflated to 1.88 GB
+(2026-10-07). Upload (`upload2.php`, multipart `uploaded` + `uploaded2`)
+and report are not implemented on the port.
+
 ## Client files
 - `Classes/ShareUtil.mm` — endpoint knowledge and orchestration. Current endpoints
   (`ShareUtil.mm:48-53`; note this community fork repointed them, and the file

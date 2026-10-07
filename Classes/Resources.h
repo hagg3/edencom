@@ -53,6 +53,7 @@ public:
     void update(float etime);
     void playMenuTune();
     void stopMenuTune();
+    void musicToggled(BOOL on);   // the Music setting's side effect (port, 2026-10-05)
     void soundEventBed(int actionid);
     void soundEventBed(int actionid,Vector location);
     void soundEventProximity(int actionid);

@@ -81,6 +81,11 @@ public:
     CGRect rpaintframe;
     CGRect rmenuframe;
     Button rtSave,rtHome,rtCam,rtExit;
+    // Stage 5.5: the in-game menu is a GL-kit panel. Two actions stock never had (Resume, and
+    // Settings on targets where the GL settings screen is live); the kit state lives behind a
+    // pointer so this header stays includable without GLWidgets.h.
+    Button rresume,rsettings;
+    struct HudPauseKit* pauseKit;
     
     float var1,var2,var3;
 	CGRect blockBounds[NUM_DISPLAY_BLOCKS];
@@ -115,6 +120,7 @@ private:
     void renderColorPickScreen();
     void renderBlockAndBorder(CGRect recto);
     void renderMenuScreen();
+    void layoutPauseMenu();       // Stage 5.5: the six action rects + the panel, from SCREEN_*
     void renderBlockScreen();
     
     BOOL pickSecondBlock;

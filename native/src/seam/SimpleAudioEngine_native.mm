@@ -424,11 +424,16 @@ bool SimpleAudioEngine::willPlayBackgroundMusic() { return true; }
 bool SimpleAudioEngine::isBackgroundMusicPlaying() {
     return g_players[0] && eden_apple_player_is_playing(g_players[0]);
 }
-// Music has one volume knob, not the user/fade split the ambience channels get — the settings
-// slider and Resources::update's song crossfade both call this, last write wins. Same as web.
+// Music has the same user/fade split as the ambience channels: Volume is the settings slider,
+// Fade is Resources::update's song crossfade. (They used to share one knob, last write wins, and
+// the engine wrote it every frame — so the slider did nothing.) Same as web.
 float SimpleAudioEngine::getBackgroundMusicVolume() { return g_channelUserVolume[0]; }
 void SimpleAudioEngine::setBackgroundMusicVolume(float volume) {
     g_channelUserVolume[0] = clamp01(volume);
+    apply_channel_volume(0);
+}
+void SimpleAudioEngine::setBackgroundMusicFade(float fade) {
+    g_channelFade[0] = fade;
     apply_channel_volume(0);
 }
 

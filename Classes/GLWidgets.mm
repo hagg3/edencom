@@ -17,6 +17,7 @@
 #import "Globals.h"
 #import "Util.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <string>
@@ -48,6 +49,16 @@ float u() {
 }
 
 const float kTouchFloor = 44.0f;
+
+extern "C" int eden_effective_input_is_touch(void);   // web/src/seam/Settings_web.mm (both targets)
+float touchFloor() { return eden_effective_input_is_touch() ? kTouchFloor : 0.0f; }
+
+// A hit box: the explicit one if a screen set it, else the drawn rect.
+static bool inBox(CGRect drawn, CGRect hitBox, float x, float y) {
+    const CGRect r = (hitBox.size.width > 0.0f && hitBox.size.height > 0.0f) ? hitBox : drawn;
+    return x >= r.origin.x && x <= r.origin.x + r.size.width &&
+           y >= r.origin.y && y <= r.origin.y + r.size.height;
+}
 
 // --- palette -------------------------------------------------------------------------------
 Color rgb(unsigned int hex, float a) {
@@ -155,11 +166,15 @@ void bevel(CGRect r, BevelStyle style) {
 // wrapping estimates a line's width as chars * kAvgGlyph * pt. 0.52 is a sans-serif average; it
 // over-estimates all-caps and under-estimates "iiii", which for dialog body copy costs at worst
 // one extra break. If a measure ever lands in the seam, use it here and delete this constant.
+// The display face's own figure: Jersey 10 measures 0.34 em on mixed-case labels (stb_truetype,
+// 2026-10-05; Arial measures 0.41 against the 0.52 above), so 0.42 keeps the same headroom.
 static const float kAvgGlyph = 0.52f;
+static const float kAvgGlyphDisplay = 0.42f;
 
 static int potAtLeast(int v) { int p = 32; while (p < v && p < 2048) p <<= 1; return p; }
 
-Label::Label() : m_pt(15.0f), m_texW(512), m_texH(64), m_align(UITextAlignmentCenter), m_boxW(0) {}
+Label::Label() : m_pt(15.0f), m_texW(512), m_texH(64), m_align(UITextAlignmentCenter), m_boxW(0),
+                 m_face(FACE_DISPLAY) {}
 Label::~Label() { clear(); }
 
 void Label::clear() {
@@ -170,14 +185,15 @@ void Label::clear() {
 float Label::lineHeight() const { return m_pt * 1.28f; }
 float Label::height() const     { return m_lines.size() * lineHeight(); }
 
-void Label::set(const char* text, float pt, UITextAlignment align, float maxWidth) {
+void Label::set(const char* text, float pt, UITextAlignment align, float maxWidth, Face face) {
     clear();
     m_pt = pt;
     m_align = align;
     m_boxW = maxWidth;
+    m_face = face;
     if (!text || !*text) return;
 
-    const float glyph = kAvgGlyph * pt;
+    const float glyph = (face == FACE_DISPLAY ? kAvgGlyphDisplay : kAvgGlyph) * pt;
     const int perLine = (maxWidth > 0.0f && glyph > 0.0f) ? (int)(maxWidth / glyph) : 1 << 20;
 
     // Greedy word wrap. A single word longer than the line is left long rather than hyphenated —
@@ -210,11 +226,15 @@ void Label::set(const char* text, float pt, UITextAlignment align, float maxWidt
     // on device pixels instead of magnified through NEAREST. Layout above stays in ortho units.
     const float density = eden_ui_raster_density();
 
+    // The face is a sticky seam switch, so it is set for exactly these rasters and put back:
+    // every non-kit caller of the raster (statusbar.mm, SharedList.mm) expects the body face.
+    eden_text_raster_set_face(face);
     for (size_t i = 0; i < lines.size(); i++) {
         m_lines.push_back(new Texture2D([NSString stringWithUTF8String:lines[i].c_str()],
                                         CGSizeMake(m_texW, m_texH), align,
                                         [UIFont systemFontOfSize:pt * s], density));
     }
+    eden_text_raster_set_face(FACE_BODY);
 }
 
 // drawText scales the rect ORIGIN by SCALE_* but draws the texture at its raw pixel extent, so
@@ -242,7 +262,10 @@ void Label::drawChrome(float cx, float yTop, Color c, Color shadow) const {
 }
 
 // --- Button --------------------------------------------------------------------------------
-Button::Button() : m_pt(15.0f), m_pressed(false) { m_rect = CGRectMake(0, 0, 0, 0); }
+Button::Button() : m_pt(15.0f), m_pressed(false), m_enabled(true), m_tone(TONE_DEFAULT) {
+    m_rect = CGRectMake(0, 0, 0, 0);
+    m_hit = CGRectMake(0, 0, 0, 0);
+}
 Button::~Button() {}
 
 // The label is only rasterised once the box is known — its wrap width is the box's. A caller
@@ -260,21 +283,525 @@ void Button::setLabel(const char* text, float pt) {
 
 void Button::setPointSize(float pt) { m_pt = pt; rebuildLabel(); }
 
-void Button::setRect(CGRect r) { m_rect = r; rebuildLabel(); }
-
-bool Button::hit(float x, float y) const {
-    return x >= m_rect.origin.x && x <= m_rect.origin.x + m_rect.size.width &&
-           y >= m_rect.origin.y && y <= m_rect.origin.y + m_rect.size.height;
+// Only a WIDTH change re-wraps. Screens call setRect() from a per-frame layout(), and until 5.4
+// this rebuilt the label every time — a texture upload (and, since N.4.9, a glFlush) per button
+// per frame on every converted screen. Position changes need nothing: the label draws at render().
+void Button::setRect(CGRect r) {
+    const bool rewrap = (r.size.width != m_rect.size.width) || m_label.empty();
+    m_rect = r;
+    if (rewrap) rebuildLabel();
 }
+
+bool Button::hit(float x, float y) const { return m_enabled && inBox(m_rect, m_hit, x, y); }
+
+// eden-ui.css tones: positive is --eden-green-play under the 6% white band and --eden-green-500
+// pressed; danger is --eden-red-100 / --eden-red-500 (whose pressed label goes white).
+static const Color kPlayFace   = { 0xa9/255.0f, 0xe4/255.0f, 0xb0/255.0f, 1.0f };
+static const Color kGreen500   = { 0x89/255.0f, 0xc3/255.0f, 0x1f/255.0f, 1.0f };
+static const Color kRed100     = { 0xe8/255.0f, 0xa4/255.0f, 0x9b/255.0f, 1.0f };
+static const Color kRed500     = { 0xc0/255.0f, 0x39/255.0f, 0x2b/255.0f, 1.0f };
 
 void Button::render() const {
     bevel(m_rect, m_pressed ? BEVEL_PRESSED : BEVEL_RAISED);
+    if (m_tone != TONE_DEFAULT) {
+        // Re-face inside the keyline (2u) — the bevel's shadow, keyline and far-corner inset stay.
+        const float U = u();
+        const CGRect in = CGRectMake(m_rect.origin.x + 2*U, m_rect.origin.y + 2*U,
+                                     m_rect.size.width - 4*U, m_rect.size.height - 4*U);
+        if (m_pressed) {
+            fill(in, m_tone == TONE_POSITIVE ? kGreen500 : kRed500);
+            insetTopLeft(in, 2*U, C(0x000000, 0.50f));
+        } else {
+            const float band = m_rect.size.height * 0.06f;
+            fill(in.origin.x, in.origin.y, in.size.width, in.size.height - band,
+                 m_tone == TONE_POSITIVE ? kPlayFace : kRed100);
+            insetBottomRight(in, 1*U, C(0x646464, 0.47f));
+        }
+    }
     if (m_label.empty()) return;
     const float cx   = m_rect.origin.x + m_rect.size.width * 0.5f;
     const float yTop = m_rect.origin.y + (m_rect.size.height + m_label.height()) * 0.5f;
     // "Pressed == selected" inverts BOTH the label and its shadow — that inversion is the cue.
-    if (m_pressed) m_label.drawChrome(cx, yTop, kTextPressed, kBlack);
+    if (!m_enabled) m_label.drawCentered(cx, yTop, kKeyline);
+    else if (m_pressed) m_label.drawChrome(cx, yTop, m_tone == TONE_DANGER ? kWhite : kTextPressed, kBlack);
     else           m_label.drawChrome(cx, yTop, kText,        kWhite);
+}
+
+// --- Toggle --------------------------------------------------------------------------------
+// eden-ui.css `.eden-toggle`: 104x34u, SUNKEN on the content face; each half is inset 2u and
+// (50% - 2u) wide. Checked: the ON half takes the lime 12% face (the toggle's own one-stop
+// gradient, a sibling of the button's 6% one) and the OFF half goes white; unchecked, ON is white
+// and OFF is grey-300.
+static const Color kLimeTop    = { 0xc6/255.0f, 0xf1/255.0f, 0x75/255.0f, 1.0f };   // --eden-green-100
+static const Color kLime       = { 0x89/255.0f, 0xc3/255.0f, 0x1f/255.0f, 1.0f };   // --eden-green-500
+static const Color kOffHalf    = { 0x97/255.0f, 0x97/255.0f, 0x97/255.0f, 1.0f };   // --eden-gray-300
+static const Color kTrack      = { 0x45/255.0f, 0x45/255.0f, 0x45/255.0f, 1.0f };   // --eden-surface-track
+static const Color kPlaceholder = { 0.0f, 0.0f, 0.0f, 0.5f };                       // --eden-text-placeholder
+
+static bool inRect(CGRect r, float x, float y) {
+    return x >= r.origin.x && x <= r.origin.x + r.size.width &&
+           y >= r.origin.y && y <= r.origin.y + r.size.height;
+}
+
+Toggle::Toggle() : m_on(false) { m_rect = m_hit = CGRectMake(0, 0, 0, 0); }
+
+bool Toggle::hit(float x, float y) const { return inBox(m_rect, m_hit, x, y); }
+
+void Toggle::render() const {
+    const float U = u();
+    fill(m_rect, kContentFace);
+    const float x = m_rect.origin.x, y = m_rect.origin.y + 2*U;
+    const float hw = m_rect.size.width * 0.5f - 2*U, hh = m_rect.size.height - 4*U;
+    if (m_on) {
+        const float band = hh * 0.12f;
+        fill(x + 2*U, y, hw, hh - band, kLime);
+        fill(x + 2*U, y + hh - band, hw, band, kLimeTop);
+        fill(x + m_rect.size.width - 2*U - hw, y, hw, hh, kContentFace);
+    } else {
+        fill(x + 2*U, y, hw, hh, kContentFace);
+        fill(x + m_rect.size.width - 2*U - hw, y, hw, hh, kOffHalf);
+    }
+    // The bevel last: SUNKEN's inset shadow sits ON TOP of the halves, as the CSS box-shadow does
+    // (box-shadow paints over the background, under the children — and the halves are children,
+    // but they are inset 2u, inside the 1u keyline and mostly clear of the 3u recess).
+    bevel(m_rect, BEVEL_SUNKEN);
+}
+
+// --- Slider --------------------------------------------------------------------------------
+Slider::Slider() : m_min(0), m_max(1), m_step(0), m_value(0), m_dragging(false) {
+    m_rect = m_hit = CGRectMake(0, 0, 0, 0);
+}
+
+void Slider::setRange(float minV, float maxV, float step) {
+    m_min = minV;
+    m_max = (maxV > minV) ? maxV : minV;
+    m_step = step > 0.0f ? step : 0.0f;
+    setValue(m_value);
+}
+
+// Snapped from MIN, not from zero: a 0.25..3 range in 0.05 steps has to land on 0.25, 0.30 ...
+// and rounding v/step would put it on 0.25 only by floating-point luck.
+float Slider::snap(float v) const {
+    if (v < m_min) v = m_min;
+    if (v > m_max) v = m_max;
+    if (m_step > 0.0f) {
+        v = m_min + std::floor((v - m_min) / m_step + 0.5f) * m_step;
+        if (v > m_max) v = m_max;
+    }
+    return v;
+}
+
+void Slider::setValue(float v) { m_value = snap(v); }
+
+// The thumb's CENTRE travels the track inset by half a thumb at each end, so min and max put the
+// thumb flush with the track's ends rather than half off them (what a native range input does).
+// The CSS thumb is 16x24u on a 10u track. Those are CAPS here, not sizes: a compact row hands the
+// slider a shorter box, and the thumb and track shrink with it in the same proportions.
+static float thumbH(CGRect r) { return std::min(du(24), (float)r.size.height); }
+static float thumbW(CGRect r) { return thumbH(r) * (16.0f / 24.0f); }
+
+float Slider::valueAt(float x) const {
+    const float tw = thumbW(m_rect);
+    const float x0 = m_rect.origin.x + tw * 0.5f;
+    const float span = m_rect.size.width - tw;
+    if (span <= 0.0f || m_max <= m_min) return m_min;
+    float t = (x - x0) / span;
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+    return m_min + t * (m_max - m_min);
+}
+
+CGRect Slider::thumbRect() const {
+    const float tw = thumbW(m_rect), th = thumbH(m_rect);
+    const float span = m_rect.size.width - tw;
+    const float t = (m_max > m_min) ? (m_value - m_min) / (m_max - m_min) : 0.0f;
+    return CGRectMake(m_rect.origin.x + span * t,
+                      m_rect.origin.y + (m_rect.size.height - th) * 0.5f, tw, th);
+}
+
+bool Slider::hit(float x, float y) const { return inBox(m_rect, m_hit, x, y); }
+
+bool Slider::beginDrag(float x) {
+    m_dragging = true;
+    return dragTo(x);
+}
+
+bool Slider::dragTo(float x) {
+    if (!m_dragging) return false;
+    const float v = snap(valueAt(x));
+    if (v == m_value) return false;
+    m_value = v;
+    return true;
+}
+
+void Slider::render() const {
+    const float th = thumbH(m_rect) * (10.0f / 24.0f);
+    const CGRect track = CGRectMake(m_rect.origin.x, m_rect.origin.y + (m_rect.size.height - th) * 0.5f,
+                                    m_rect.size.width, th);
+    fill(track, kTrack);
+    bevel(track, BEVEL_SUNKEN);
+    // The thumb is the small raised bevel (--bevel-raised-sm: 2u keyline, 2u drop, 2u highlight)
+    // on its own 8% face, NOT BEVEL_RAISED's 3u highlight — at 16u wide the full one eats the face.
+    const CGRect t = thumbRect();
+    const float U = u();
+    fill(t.origin.x + 2*U, t.origin.y - 2*U, t.size.width, t.size.height, C(0x000000, 0.25f));
+    const float band = t.size.height * 0.08f;
+    fill(t.origin.x, t.origin.y, t.size.width, t.size.height - band, kFaceBottom);
+    fill(t.origin.x, t.origin.y + t.size.height - band, t.size.width, band, kFaceTop);
+    insetBottomRight(t, 2*U, C(0x646464, 0.47f));
+    border(t, 2*U, kKeyline);
+}
+
+// --- Stepper -------------------------------------------------------------------------------
+Stepper::Stepper() : m_decGlyph("-"), m_incGlyph("+"), m_glyphPt(0.0f) { m_rect = CGRectMake(0, 0, 0, 0); }
+
+// The glyphs are sized from the buttons (setRect), so a compact stepper gets compact glyphs.
+void Stepper::setGlyphs(const char* dec, const char* inc) {
+    m_decGlyph = dec ? dec : "-";
+    m_incGlyph = inc ? inc : "+";
+    m_glyphPt = 0.0f;                     // re-rasterise at the next setRect()
+}
+
+void Stepper::setValueText(const char* text, float pt) {
+    m_value.set(text, pt, UITextAlignmentCenter);
+}
+
+// Buttons are square at the rect's height; the well takes what is left between them, with a 4u
+// gap each side so the buttons' drop shadows do not land on the well's keyline.
+void Stepper::setRect(CGRect r) {
+    m_rect = r;
+    const float b = r.size.height;
+    m_dec.setRect(CGRectMake(r.origin.x, r.origin.y, b, b));
+    m_inc.setRect(CGRectMake(r.origin.x + r.size.width - b, r.origin.y, b, b));
+    // Only on a size change: setRect() runs every frame, and a label is a texture upload.
+    const float pt = std::min(du(22), b * 0.9f);
+    if (pt != m_glyphPt) {
+        m_glyphPt = pt;
+        m_dec.setLabel(m_decGlyph.c_str(), pt);
+        m_inc.setLabel(m_incGlyph.c_str(), pt);
+    }
+}
+
+void Stepper::setHitRect(CGRect h) {
+    if (h.size.width <= 0.0f || h.size.height <= 0.0f) {
+        m_dec.setHitRect(CGRectMake(0, 0, 0, 0));
+        m_inc.setHitRect(CGRectMake(0, 0, 0, 0));
+        return;
+    }
+    const CGRect d = m_dec.rect(), i = m_inc.rect();
+    m_dec.setHitRect(CGRectMake(d.origin.x, h.origin.y, d.size.width, h.size.height));
+    m_inc.setHitRect(CGRectMake(i.origin.x, h.origin.y, i.size.width, h.size.height));
+}
+
+void Stepper::render() const {
+    const float b = m_rect.size.height, g = du(4);
+    const CGRect well = CGRectMake(m_rect.origin.x + b + g, m_rect.origin.y,
+                                   m_rect.size.width - 2*b - 2*g, m_rect.size.height);
+    fill(well, kContentFace);
+    bevel(well, BEVEL_SUNKEN);
+    if (!m_value.empty())
+        m_value.drawCentered(well.origin.x + well.size.width * 0.5f,
+                             well.origin.y + (well.size.height + m_value.height()) * 0.5f, kText);
+    m_dec.render();
+    m_inc.render();
+}
+
+// --- ListRow -------------------------------------------------------------------------------
+// color-mix(in srgb, --eden-green-100 45%, white): the CSS selection tint, resolved.
+static const Color kSelectTint = { 0.45f*0xc6/255.0f + 0.55f, 0.45f*0xf1/255.0f + 0.55f,
+                                   0.45f*0x75/255.0f + 0.55f, 1.0f };
+
+ListRow::ListRow() : m_selected(false), m_last(false) { m_rect = CGRectMake(0, 0, 0, 0); }
+
+void ListRow::setTitle(const char* utf8, float pt) { m_title.set(utf8, pt, UITextAlignmentLeft); }
+
+bool ListRow::hit(float x, float y) const { return inRect(m_rect, x, y); }
+
+void ListRow::render() const {
+    const float U = u();
+    const CGRect r = m_rect;
+    if (m_selected) {
+        fill(r, kSelectTint);
+        fill(r.origin.x, r.origin.y, 4*U, r.size.height, kLime);
+    }
+    if (!m_last) fill(r.origin.x, r.origin.y, r.size.width, 1*U, C(0x000000, 0.28f));
+    if (!m_title.empty())
+        m_title.draw(r.origin.x + du(10), r.origin.y + (r.size.height + m_title.height()) * 0.5f, kText);
+}
+
+// --- ScrollView ----------------------------------------------------------------------------
+ScrollView::ScrollView() : m_pitch(30.0f), m_total(0), m_visible(1), m_first(0), m_thumbDrag(false),
+                           m_contentDrag(false), m_contentScrolling(false), m_dragY0(0), m_dragFirst0(0) {
+    m_bar = CGRectMake(0, 0, 0, 0);
+}
+
+void ScrollView::setRows(int total, int visible) {
+    m_total = total > 0 ? total : 0;
+    m_visible = visible > 0 ? visible : 1;
+    setFirst(m_first);
+}
+
+void ScrollView::setFirst(int f) {
+    if (f > maxFirst()) f = maxFirst();
+    if (f < 0) f = 0;
+    m_first = f;
+}
+
+bool ScrollView::scrollBy(int rows) {
+    const int before = m_first;
+    setFirst(m_first + rows);
+    return m_first != before;
+}
+
+void ScrollView::ensureVisible(int index) {
+    if (index < 0) return;
+    if (index < m_first) setFirst(index);
+    else if (index >= m_first + m_visible) setFirst(index - m_visible + 1);
+}
+
+// The thumb's length is the visible fraction, floored at the CSS's 24u min-height; it travels the
+// track in maxFirst() discrete stops. y is UP, so first()==0 puts the thumb at the TOP.
+CGRect ScrollView::thumbRect() const {
+    const float U = u();
+    const CGRect t = CGRectMake(m_bar.origin.x + 2*U, m_bar.origin.y + 2*U,
+                                m_bar.size.width - 4*U, m_bar.size.height - 4*U);
+    if (m_total <= m_visible || t.size.height <= 0.0f) return t;
+    float h = t.size.height * (float)m_visible / (float)m_total;
+    if (h < du(24)) h = std::min(du(24), (float)t.size.height);
+    const float travel = t.size.height - h;
+    const float frac = (float)m_first / (float)maxFirst();
+    return CGRectMake(t.origin.x, t.origin.y + travel * (1.0f - frac), t.size.width, h);
+}
+
+bool ScrollView::hitBar(float x, float y) const { return inRect(m_bar, x, y); }
+
+bool ScrollView::barBegin(float y) {
+    const CGRect th = thumbRect();
+    if (y >= th.origin.y && y <= th.origin.y + th.size.height) {
+        m_thumbDrag = true;
+        m_dragY0 = y;
+        m_dragFirst0 = m_first;
+        return false;
+    }
+    // On the track: one page toward the pointer, as a native scrollbar's track click does.
+    return scrollBy(y > th.origin.y ? -m_visible : m_visible);
+}
+
+bool ScrollView::barDragTo(float y) {
+    if (!m_thumbDrag || maxFirst() <= 0) return false;
+    const CGRect th = thumbRect();
+    const float travel = (m_bar.size.height - 4*u()) - th.size.height;
+    if (travel <= 0.0f) return false;
+    const float rowsPerUnit = (float)maxFirst() / travel;
+    const int before = m_first;
+    setFirst(m_dragFirst0 + (int)lroundf((m_dragY0 - y) * rowsPerUnit));   // finger down = later rows
+    return m_first != before;
+}
+
+void ScrollView::beginContentDrag(float y) {
+    m_contentDrag = true;
+    m_contentScrolling = false;
+    m_dragY0 = y;
+    m_dragFirst0 = m_first;
+}
+
+// A finger moving UP pulls later rows into view, as a touch list does. Below the slop it is still
+// a tap; once past it, it is a scroll for the rest of the touch even if it comes back.
+bool ScrollView::contentDragTo(float y) {
+    if (!m_contentDrag) return false;
+    const float dy = y - m_dragY0;
+    if (!m_contentScrolling && std::fabs(dy) < std::max(du(8), m_pitch * 0.35f)) return false;
+    m_contentScrolling = true;
+    if (m_pitch > 0.0f) setFirst(m_dragFirst0 + (int)lroundf(dy / m_pitch));
+    return true;
+}
+
+void ScrollView::endDrag() { m_thumbDrag = m_contentDrag = m_contentScrolling = false; }
+
+void ScrollView::render() const {
+    if (m_bar.size.width <= 0.0f || m_bar.size.height <= 0.0f) return;
+    fill(m_bar, kTrack);
+    bevel(m_bar, BEVEL_SUNKEN);
+    // The thumb: --bevel-raised-sm, the slider thumb's recipe.
+    const CGRect t = thumbRect();
+    const float U = u();
+    fill(t.origin.x + 2*U, t.origin.y - 2*U, t.size.width, t.size.height, C(0x000000, 0.25f));
+    const float band = t.size.height * 0.08f;
+    fill(t.origin.x, t.origin.y, t.size.width, t.size.height - band, m_thumbDrag ? kFacePressed : kFaceBottom);
+    fill(t.origin.x, t.origin.y + t.size.height - band, t.size.width, band, m_thumbDrag ? kFacePressed : kFaceTop);
+    insetBottomRight(t, 2*U, C(0x646464, 0.47f));
+    border(t, 2*U, kKeyline);
+}
+
+// --- TabRail -------------------------------------------------------------------------------
+TabRail::TabRail() : m_n(0), m_sel(0), m_held(-1) { m_rect = CGRectMake(0, 0, 0, 0); }
+
+void TabRail::setTabs(const char* const* labels, int n, float pt) {
+    m_n = n < 0 ? 0 : (n > GLW_MAX_TABS ? GLW_MAX_TABS : n);
+    for (int i = 0; i < m_n; i++) m_tabs[i].setLabel(labels[i], pt);
+}
+
+CGRect TabRail::tabRect(int i) const {
+    if (i < 0 || i >= m_n) return CGRectMake(0, 0, 0, 0);
+    const float g = du(6);
+    const float w = (m_rect.size.width - g * (m_n - 1)) / (float)m_n;
+    return CGRectMake(m_rect.origin.x + i * (w + g), m_rect.origin.y, w, m_rect.size.height);
+}
+
+void TabRail::setRect(CGRect r) {
+    m_rect = r;
+    for (int i = 0; i < m_n; i++) m_tabs[i].setRect(tabRect(i));   // re-wraps only on a width change
+}
+
+int TabRail::hit(float x, float y) const {
+    for (int i = 0; i < m_n; i++) if (m_tabs[i].hit(x, y)) return i;
+    return -1;
+}
+
+void TabRail::render() const {
+    for (int i = 0; i < m_n; i++) {
+        Button& b = const_cast<Button&>(m_tabs[i]);   // pressed is presentation state only
+        b.setPressed(i == m_sel || i == m_held);
+        b.render();
+    }
+}
+
+void progressBar(CGRect r, float frac, float phase) {
+    fill(r, kTrack);
+    const float U = u();
+    const CGRect in = CGRectMake(r.origin.x + 2*U, r.origin.y + 2*U, r.size.width - 4*U, r.size.height - 4*U);
+    float x = in.origin.x, w;
+    if (frac < 0.0f) {                       // indeterminate: a third-width block ping-pongs
+        w = in.size.width / 3.0f;
+        float t = std::fmod(phase, 2.0f);
+        if (t > 1.0f) t = 2.0f - t;
+        x += (in.size.width - w) * t;
+    } else {
+        w = in.size.width * std::min(1.0f, frac);
+    }
+    if (w > 0.0f) {
+        const float band = in.size.height * 0.12f;
+        fill(x, in.origin.y, w, in.size.height - band, kLime);
+        fill(x, in.origin.y + in.size.height - band, w, band, kLimeTop);
+    }
+    bevel(r, BEVEL_SUNKEN);
+}
+
+// --- TextField -----------------------------------------------------------------------------
+static TextField* s_focused = NULL;
+
+TextField::TextField() : m_pt(16.0f), m_maxBytes(49), m_showingPlaceholder(false) {
+    m_rect = CGRectMake(0, 0, 0, 0);
+}
+
+TextField::~TextField() { if (s_focused == this) blur(); }
+
+void TextField::rebuild() {
+    std::string shown = m_text;
+    m_showingPlaceholder = false;
+    if (focused()) shown += "|";
+    else if (shown.empty() && !m_placeholder.empty()) { shown = m_placeholder; m_showingPlaceholder = true; }
+    if (shown.empty()) { m_label.clear(); return; }
+    m_label.set(shown.c_str(), m_pt, UITextAlignmentLeft);
+}
+
+// Re-announces the IME area only when the rect moved: screens lay out every frame, and
+// SDL_StartTextInput per frame is a keyboard re-show request per frame on iOS.
+void TextField::setRect(CGRect r) {
+    const bool moved = r.origin.x != m_rect.origin.x || r.origin.y != m_rect.origin.y ||
+                       r.size.width != m_rect.size.width || r.size.height != m_rect.size.height;
+    m_rect = r;
+    if (moved && focused())
+        eden_text_input_start(r.origin.x, r.origin.y, r.size.width, r.size.height);
+}
+
+void TextField::setPointSize(float pt) { m_pt = pt; rebuild(); }
+
+void TextField::setText(const char* utf8) {
+    m_text = utf8 ? utf8 : "";
+    if ((int)m_text.size() > m_maxBytes) {
+        size_t n = (size_t)m_maxBytes;
+        while (n > 0 && ((unsigned char)m_text[n] & 0xC0) == 0x80) n--;   // never split a char
+        m_text.resize(n);
+    }
+    rebuild();
+}
+
+void TextField::setPlaceholder(const char* utf8) { m_placeholder = utf8 ? utf8 : ""; rebuild(); }
+
+bool TextField::hit(float x, float y) const { return inRect(m_rect, x, y); }
+
+bool TextField::focused() const { return s_focused == this; }
+
+void TextField::focus() {
+    if (s_focused == this) return;
+    if (s_focused) s_focused->blur();
+    s_focused = this;
+    char drain[256];
+    while (eden_text_input_take(drain, sizeof(drain)) > 0) {}   // nothing typed before focus counts
+    eden_text_input_start(m_rect.origin.x, m_rect.origin.y, m_rect.size.width, m_rect.size.height);
+    rebuild();
+}
+
+void TextField::blur() {
+    if (s_focused != this) return;
+    s_focused = NULL;
+    eden_text_input_stop();
+    rebuild();
+}
+
+// Returns false once the field has committed or cancelled, so the caller stops feeding it.
+bool TextField::applyInput(const char* bytes, int n, Event* ev) {
+    for (int i = 0; i < n; ++i) {
+        const unsigned char c = (unsigned char)bytes[i];
+        if (c == '\r' || c == '\n') { *ev = EV_COMMIT; return false; }
+        if (c == 0x1b)              { *ev = EV_CANCEL; return false; }
+        if (c == '\b') {
+            if (m_text.empty()) continue;
+            size_t k = m_text.size() - 1;
+            while (k > 0 && ((unsigned char)m_text[k] & 0xC0) == 0x80) k--;   // a whole UTF-8 char
+            m_text.resize(k);
+            *ev = EV_CHANGED;
+            continue;
+        }
+        if (c < 0x20 || c == 0x7f) continue;          // other control bytes: not text
+        // A lead byte starts a character of 1-4 bytes; take it whole or not at all.
+        int len = 1;
+        if      ((c & 0xE0) == 0xC0) len = 2;
+        else if ((c & 0xF0) == 0xE0) len = 3;
+        else if ((c & 0xF8) == 0xF0) len = 4;
+        else if ((c & 0xC0) == 0x80) continue;        // a stray continuation byte
+        if (i + len > n) break;
+        if ((int)m_text.size() + len <= m_maxBytes) {
+            m_text.append(bytes + i, (size_t)len);
+            *ev = EV_CHANGED;
+        }
+        i += len - 1;
+    }
+    return true;
+}
+
+TextField::Event TextField::update() {
+    if (!focused()) return EV_NONE;
+    Event ev = EV_NONE;
+    char buf[256];
+    int n;
+    bool open = true;
+    while (open && (n = eden_text_input_take(buf, sizeof(buf))) > 0) open = applyInput(buf, n, &ev);
+    // The platform ended text input under us — on iOS, the user dismissing the keyboard. Not a
+    // commit (they may only want to see the screen) and not a cancel (the typing is kept).
+    if (open && !eden_text_input_active()) ev = EV_BLURRED;
+    if (ev == EV_COMMIT || ev == EV_CANCEL || ev == EV_BLURRED) blur();
+    else if (ev == EV_CHANGED) rebuild();
+    return ev;
+}
+
+void TextField::render() const {
+    fill(m_rect, kContentFace);
+    bevel(m_rect, BEVEL_SUNKEN);
+    if (m_label.empty()) return;
+    const float yTop = m_rect.origin.y + (m_rect.size.height + m_label.height()) * 0.5f;
+    m_label.draw(m_rect.origin.x + du(6), yTop, m_showingPlaceholder ? kPlaceholder : kText);
 }
 
 }  // namespace GLW

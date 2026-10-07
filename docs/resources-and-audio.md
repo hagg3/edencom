@@ -189,7 +189,11 @@ the entire audio layer (sound effects, ambience, music, creature voices).
   cued non-looping and advanced to the next random track by a per-frame
   `GAME_MODE_MENU` poll of `isBackgroundMusicPlaying()` in `update(etime)`; in-game
   music tracks (`NUM_SONGS 6`, `songFiles`) rotate the same way via the same engine
-  but on a `TIME_BETWEEN_SONGS` cadence instead of track-end.
+  but on a `TIME_BETWEEN_SONGS` cadence instead of track-end. **Port (2026-10-05):** the
+  crossfade drives `setBackgroundMusicFade`, not the user's volume (web/docs/resources-and-audio.md),
+  and the Music setting's side effect is `Resources::musicToggled()` — title tune in the menu, the
+  next in-game song in a world. The port used to call `playMenuTune()` on every switch-on, which
+  started a title track over gameplay.
 - User toggles `playmusic`/`playsound` come from the settings menu.
 
 ## Lifecycle

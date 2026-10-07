@@ -7,6 +7,8 @@
 //
 
 #import "Hud.h"
+#import "GLWidgets.h"
+#include <algorithm>
 #import "Globals.h"
 #import "Frustum.h"
 #import "TerrainGen2.h"
@@ -197,7 +199,41 @@ void Hud::genColorTable(){
     
     
 }
+// ---------------------------------------------------------------------------------------------
+// Stage 5.5 — the in-game (pause) menu on the GL widget kit.
+// ---------------------------------------------------------------------------------------------
+// Stock drew a 2010 frame texture with four icon buttons and four text-image buttons beside them
+// (rsave/rhome/rcam/rexit + rtSave/...), hit-tested by handlePickMenu(). That input path is KEPT
+// — the claim on touch-down (inbox3), the action on release (inbox2), the actions themselves —
+// and only two things change: layoutPauseMenu() places those same Button rects as a column of
+// kit buttons in a WINDOW panel, and renderMenuScreen() draws the kit instead of the textures.
+// Each rt* text rect now equals its icon rect (the label is ON the button), so every existing
+// `inbox2(r)||inbox2(rt)` test still means "this button".
+//
+// Two actions are new, both from the DOM pause menu (web/public/eden-pausemenu.js): Resume, and
+// Settings — the GL SettingsMenu as an in-game modal (World::update), offered only where that
+// screen is live (eden_gl_settings_available(): not on web, where the DOM owns settings).
+//
+// The engine's own action icons stay, drawn on the left of each button — design-system.md's
+// "Action icons" rule: the same painted objects the 2010 HUD used for these actions.
+extern "C" int eden_gl_settings_available(void);   // web/src/seam/Settings_web.mm (both targets)
+
+enum { PM_RESUME, PM_SAVE, PM_HOME, PM_PHOTO, PM_SETTINGS, PM_QUIT, PM_COUNT };
+static const char* kPauseLabels[PM_COUNT] = {
+    "Resume", "Save Game", "Warp Home", "Take Photo", "Settings", "Quit to Menu"
+};
+
+struct HudPauseKit {
+    GLW::Label  title;
+    GLW::Button btn[PM_COUNT];
+    CGRect      panel;
+    float       titleTop;
+    bool        built;
+    HudPauseKit() : titleTop(0), built(false) { panel = CGRectMake(0, 0, 0, 0); }
+};
+
 Hud::Hud(){
+    pauseKit=new HudPauseKit();
 
     fps=60;
 	flash=-1;
@@ -428,6 +464,37 @@ void Hud::layoutForScreen(){
     rtHome=ButtonMake(rhome.origin.x+57,rhome.origin.y+5,180,56/2+10);
     rtCam=ButtonMake(rcam.origin.x+57,rcam.origin.y+5,180,56/2+10);
     rtExit=ButtonMake(rexit.origin.x+57,rexit.origin.y+5,180,56/2+10);
+    layoutPauseMenu();   // Stage 5.5: replaces the four rects above with the kit column
+}
+
+void Hud::layoutPauseMenu(){
+    using namespace GLW;
+    ::Button* r[PM_COUNT]={&rresume,&rsave,&rhome,&rcam,&rsettings,&rexit};
+    const bool withSettings=eden_gl_settings_available()!=0;
+    const int n=withSettings?PM_COUNT:PM_COUNT-1;
+    // Gap > 8pt on purpose: inbox2/inbox3 add 4pt of slop on every side, and a smaller gap would
+    // let one release land on two buttons — handlePickMenu runs every matching action.
+    const float btnH=std::max(du(34),touchFloor());
+    const float gap=std::max(du(10),10.0f), pad=du(14), titleH=du(40);
+    const float bw=du(240);
+    const float ph=pad+titleH+n*btnH+(n-1)*gap+pad;
+    const float pw=bw+pad*2.0f;
+    const float px=(SCREEN_WIDTH-pw)*0.5f, py=(SCREEN_HEIGHT-ph)*0.5f;
+    pauseKit->panel=CGRectMake(px,py,pw,ph);
+    pauseKit->titleTop=py+ph-pad;
+    float y=py+ph-pad-titleH-btnH;
+    for(int k=0;k<PM_COUNT;k++){
+        if(k==PM_SETTINGS&&!withSettings){
+            r[k]->origin.x=r[k]->origin.y=-10000;          // off-screen: never hit
+            r[k]->size.width=r[k]->size.height=0;
+            continue;
+        }
+        r[k]->origin.x=px+pad; r[k]->origin.y=y;
+        r[k]->size.width=bw;   r[k]->size.height=btnH;
+        y-=btnH+gap;
+    }
+    // The label is on the button now: each text rect IS its button (see the block comment above).
+    rtSave=rsave; rtHome=rhome; rtCam=rcam; rtExit=rexit;
 }
 static float at1=0,at2=0,at3=0;
 void Hud::worldLoaded(){
@@ -626,6 +693,7 @@ BOOL Hud::update(float etime){
                 if(inmenu==TRUE){
                     rcam.pressed=rtCam.pressed=FALSE;rhome.pressed=rtHome.pressed=FALSE;
                     rsave.pressed=rtSave.pressed=FALSE;rexit.pressed=rtExit.pressed=FALSE;
+                    rresume.pressed=rsettings.pressed=FALSE;
                     if(mode==MODE_PICK_BLOCK){
                         mode=MODE_BUILD;
                         
@@ -688,7 +756,9 @@ BOOL Hud::update(float etime){
         
         if(touches[i].inuse==0&&touches[i].down==M_DOWN){
             if(inmenu){
-                if(inbox3(touches[i].mx,touches[i].my,&rcam)||
+                if(inbox3(touches[i].mx,touches[i].my,&rresume)||
+                   inbox3(touches[i].mx,touches[i].my,&rsettings)||
+                   inbox3(touches[i].mx,touches[i].my,&rcam)||
                    inbox3(touches[i].mx,touches[i].my,&rhome)||
                    inbox3(touches[i].mx,touches[i].my,&rsave)||
                    inbox3(touches[i].mx,touches[i].my,&rexit)||
@@ -698,6 +768,8 @@ BOOL Hud::update(float etime){
                    inbox3(touches[i].mx,touches[i].my,&rtExit))
                 {
                     printg("something touched in menu\n");
+                    inbox3(touches[i].mx,touches[i].my,&rresume);
+                    inbox3(touches[i].mx,touches[i].my,&rsettings);
                     inbox3(touches[i].mx,touches[i].my,&rcam);
                     inbox3(touches[i].mx,touches[i].my,&rhome);
                     inbox3(touches[i].mx,touches[i].my,&rsave);
@@ -987,6 +1059,17 @@ BOOL Hud::handlePickColor(int x,int y){
 }
 BOOL Hud::handlePickMenu(int x,int y){
     BOOL handled=FALSE;
+    if(inbox2(x,y,&rresume)){
+        inmenu=false;
+        return TRUE;
+    }
+    if(inbox2(x,y,&rsettings)&&eden_gl_settings_available()){
+        // The menu stays open underneath: Settings' Back returns here, as on web.
+        World::getWorld->menu->settings->resetView();
+        World::getWorld->menu->showsettings=TRUE;
+        Input::getInput()->clearAll();
+        return TRUE;
+    }
     if(inbox2(x,y,&rcam)||inbox2(x,y,&rtCam)){
         
         rcam.pressed=rtCam.pressed=FALSE;
@@ -1118,71 +1201,78 @@ BOOL Hud::handlePickBlock(int x,int y){
     
 }
 
+// ---------------------------------------------------------------------------------------------
+// Stage 5.7 — the block and colour pickers on the GL widget kit.
+// ---------------------------------------------------------------------------------------------
+// Same trick as the pause menu (5.5): the HIT-TEST PATH IS UNTOUCHED. blockBounds[] / colorBounds[]
+// are laid out by layoutForScreen() exactly as before (headless-display-profile-test pins them at
+// the classic profile), handlePickBlock / handlePickColor and Hud::update's release logic are
+// unchanged. Only the drawing moves:
+//   - the 2010 card texture (ICO_COLOR_SELECT_BACKGROUND over rpaintframe) -> a WINDOW bevel that
+//     shrink-wraps the grid (rpaintframe is still computed; nothing draws it any more);
+//   - each cell's border art (ICO_BLOCK_BORDER*, ICO_TRIANGLE_BORDER*, ICO_COLOR_BLOCK_BORDER*,
+//     and the TNT "pick a second block" glow ICO_*_BORDER_ACTIVE) -> a RAISED cell, PRESSED while
+//     held AND for the current choice (design-system.md: pressed == selected — stock only showed
+//     the press), a lime ring for a block the second-block pick accepts, a grey veil for one it
+//     does not;
+//   - the swatches and block faces are the atlas art and stay the atlas art, drawn inside the cell.
+// The kit snaps (design-system.md, "Motion"): drawn while the picker is open, not during the
+// at2/at3 fade-out, which would leave full-opacity chrome over the game for a few frames.
+static float picker_scale(){ return IS_IPAD ? SCALE_WIDTH : 1.0f; }
+
+// The window around a grid: the union of its cells, padded.
+static CGRect picker_panel(const CGRect* cells,int n){
+    float x0=1e9f,y0=1e9f,x1=-1e9f,y1=-1e9f;
+    for(int i=0;i<n;i++){
+        x0=std::min(x0,(float)cells[i].origin.x); y0=std::min(y0,(float)cells[i].origin.y);
+        x1=std::max(x1,(float)(cells[i].origin.x+cells[i].size.width));
+        y1=std::max(y1,(float)(cells[i].origin.y+cells[i].size.height));
+    }
+    const float pad=GLW::du(10);
+    return CGRectMake(x0-pad,y0-pad,(x1-x0)+pad*2.0f,(y1-y0)+pad*2.0f);
+}
+
+// The art's box inside a cell: clear of the 2u keyline, nudged down-right while the cell is
+// pressed so the face moves with the bevel.
+static CGRect picker_inner(CGRect cell,bool pressed){
+    const float in=GLW::du(2)+2.0f, o=pressed?GLW::u():0.0f;
+    return CGRectMake(cell.origin.x+in+o,cell.origin.y+in-o,cell.size.width-in*2.0f,cell.size.height-in*2.0f);
+}
+
+// One atlas face (tex point tp, the stock coordinate convention) as a quad — or, for a ramp, the
+// stock's lower-left triangle — into a point-space box.
+static void picker_face(CGRect r,CGPoint tp,bool triangle){
+    const float s=picker_scale();
+    const float x0=r.origin.x*s, y0=r.origin.y*s, x1=(r.origin.x+r.size.width)*s, y1=(r.origin.y+r.size.height)*s;
+    GLfloat coordinates[] = { 0, tp.y+tp.x,  1, tp.y+tp.x,  0, tp.x,  1, tp.x };
+    GLfloat vertices[] = { x0,y0,0,  x1,y0,0,  x0,y1,0,  x1,y1,0 };
+    glVertexPointer(3, GL_FLOAT, 0, vertices);
+    glTexCoordPointer(2, GL_FLOAT, 0, coordinates);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, triangle?3:4);
+}
+
 void Hud::renderColorPickScreen(){
-    glColor4f(1.0, 1.0, 1.0, at3);	
-    Resources::getResources->getTex( ICO_COLOR_SELECT_BACKGROUND)->drawInRect(rpaintframe);
-   
-    for(int i=0;i<NUM_COLORS;i++){
-        if(blocktype_pressed==i)
-           Resources::getResources->getTex(ICO_COLOR_BLOCK_BORDER_PRESSED)->drawInRect2(colorBounds[i]);
-            else
-		Resources::getResources->getTex(ICO_COLOR_BLOCK_BORDER)->drawInRect2(colorBounds[i]);
-	}
-   // 
-	glBindTexture(GL_TEXTURE_2D, Resources::getResources->atlas->name);
-	for(int i=0;i<NUM_COLORS;i++){
-		
-		CGRect rect=colorBounds[i];
-		CGPoint tp;
-		 tp=Resources::getResources->getBlockTex(blockTypeFaces[TYPE_CLOUD][5]);
-		GLfloat				coordinates[] = {
-			0,			tp.y+tp.x,
-			1,			tp.y+tp.x,
-			0,				tp.x,
-			1,				tp.x,
-		};
-        
-        int bb=0;
-        if(blocktype_pressed==i){
-            bb=2;
-        }
-        int size=29;
-        float off=3;
-        if(IS_IPAD){
-            rect.origin.x*=SCALE_WIDTH;
-            rect.origin.y*=SCALE_HEIGHT;
-            size*=2;
-            bb*=2;
-            off*=2;
-        }
-		GLfloat				vertices[] = {
-			rect.origin.x+off+bb,							rect.origin.y+off-bb,							0,
-			rect.origin.x + size+bb,		rect.origin.y+off-bb,							0,
-			rect.origin.x+off+bb,							rect.origin.y + size-bb,		0,
-			rect.origin.x + size+bb,		rect.origin.y + size-bb,		0
-		};
-		
-		Vector hudColor=colorTable[i+1];
-        //if(i%9>3)hudColor=colorTable[i-9+5+1];
-        
-       // if(i%9 ==8){
-         //   hudColor=colorTable[i+1];
-           // printg("i:%d\n",i);
-           // if(i==13||i==22)
-           // hudColor=MakeVector(1.0f,1,1);
-        //}
-        
-        
-        glColor4f(hudColor.x,hudColor.y,hudColor.z,at3);
-		
-        
-		glVertexPointer(3, GL_FLOAT, 0, vertices);
-		glTexCoordPointer(2, GL_FLOAT, 0, coordinates);
-		glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-       
-	}
+    if(mode!=MODE_PICK_COLOR) return;
+    using namespace GLW;
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
     glEnable(GL_BLEND);
-    
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    bevel(picker_panel(colorBounds,NUM_COLORS),BEVEL_WINDOW);
+    const int current=(int)paintColor-1;           // paintColor is the colour index + 1, 0 = none
+    for(int i=0;i<NUM_COLORS;i++)
+        bevel(colorBounds[i],(blocktype_pressed==i||current==i)?BEVEL_PRESSED:BEVEL_RAISED);
+
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, Resources::getResources->atlas->name);
+    const CGPoint tp=Resources::getResources->getBlockTex(blockTypeFaces[TYPE_CLOUD][5]);
+    for(int i=0;i<NUM_COLORS;i++){
+        const Vector hudColor=colorTable[i+1];
+        glColor4f(hudColor.x,hudColor.y,hudColor.z,1.0f);
+        picker_face(picker_inner(colorBounds[i],blocktype_pressed==i||current==i),tp,false);
+    }
+    glColor4f(1.0f,1.0f,1.0f,1.0f);
+    glEnable(GL_BLEND);
 }
 void Hud::renderBlockAndBorder(CGRect recto){
     int type=blocktype;
@@ -1645,362 +1735,136 @@ void Hud::renderBlockAndBorder(CGRect recto){
 }
 
 void Hud::renderMenuScreen(){
-    
-	//glDisable(GL_TEXTURE_2D);
-	//glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    glEnable(GL_BLEND);
-          glColor4f(1.0,1.0,1.0,at1);
-	
-    if(rcam.pressed||rtCam.pressed)rcam.pressed=rtCam.pressed=TRUE;
-    if(rsave.pressed||rtSave.pressed)rsave.pressed=rtSave.pressed=TRUE;
-    if(rexit.pressed||rtExit.pressed)rexit.pressed=rtExit.pressed=TRUE;
-    if(rhome.pressed||rtHome.pressed)rhome.pressed=rtHome.pressed=TRUE;
-    
-    //if(!IS_WIDESCREEN)
-	Resources::getResources->getTex(ICO_COLOR_SELECT_BACKGROUND)->drawInRect(rmenuframe);
-	//
-	
-		Resources* res=Resources::getResources;
-	Texture2D* tsave=res->getTex(ICO_SAVE);
-	Texture2D* thome=res->getTex(ICO_HOME);
-	Texture2D* texit=res->getTex(ICO_EXIT);
-	Texture2D* tcam=res->getTex(ICO_SCREENSHOT);
-    
-    
-    
+    // The kit snaps, it does not fade (design-system.md, "Motion"): drawn while the menu is open
+    // and not during at1's fade-out, which would leave a full-opacity panel for a few frames.
+    if(!inmenu) return;
+    using namespace GLW;
+    layoutPauseMenu();   // cheap; keeps up with a display-profile switch mid-game
+    HudPauseKit* k=pauseKit;
+    if(!k->built){
+        k->built=true;
+        k->title.set("Paused", du(34), UITextAlignmentCenter);
+        for(int j=0;j<PM_COUNT;j++) k->btn[j].setLabel(kPauseLabels[j], du(22));
+    }
+    ::Button* r[PM_COUNT]={&rresume,&rsave,&rhome,&rcam,&rsettings,&rexit};
+    // An rt* rect may carry the press (handlePickMenu tests both), so either lights the button.
+    const bool rtp[PM_COUNT]={false,rtSave.pressed,rtHome.pressed,rtCam.pressed,false,rtExit.pressed};
 
-		tsave->drawButton(rsave);
-  
-   // printg("rtExit.x:%f  rtCam.x:%f\n",rtExit.origin.x, rtCam.origin.x);
-    res->getTex(ICOT_SAVE)->drawButton(rtSave);
-    res->getTex(ICOT_HOME)->drawButton(rtHome);
-    res->getTex(ICOT_PHOTO)->drawButton(rtCam);
-    res->getTex(ICOT_EXIT)->drawButton(rtExit);
-	thome->drawButton( rhome);
-	texit->drawButton( rexit);
-	tcam->drawButton( rcam);
-	
-	
-	return;
+    // Same GL set-up as GLDialog::render, minus the projection: the HUD's ortho (Graphics::
+    // beginHud) is already SCREEN*2, the space GLW draws in.
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glColor4f(1.0f,1.0f,1.0f,1.0f);
+
+    fill(CGRectMake(0,0,SCREEN_WIDTH,SCREEN_HEIGHT), kScrim);
+    bevel(k->panel, BEVEL_WINDOW);
+    k->title.drawCentered(k->panel.origin.x+k->panel.size.width*0.5f,
+                          k->titleTop-(du(40)-k->title.height())*0.5f, kText);
+
+    Resources* res=Resources::getResources;
+    Texture2D* icon[PM_COUNT]={NULL,res->getTex(ICO_SAVE),res->getTex(ICO_HOME),
+                               res->getTex(ICO_SCREENSHOT),NULL,res->getTex(ICO_EXIT)};
+    for(int j=0;j<PM_COUNT;j++){
+        if(r[j]->size.width<=0) continue;
+        k->btn[j].setRect(CGRectMake(r[j]->origin.x,r[j]->origin.y,r[j]->size.width,r[j]->size.height));
+        k->btn[j].setPressed(r[j]->pressed||rtp[j]);
+        k->btn[j].render();
+        if(icon[j]){
+            const float sz=r[j]->size.height-du(8);
+            glColor4f(1.0f,1.0f,1.0f,1.0f);
+            icon[j]->drawInRect(CGRectMake(r[j]->origin.x+du(6),
+                                           r[j]->origin.y+(r[j]->size.height-sz)*0.5f,sz,sz));
+        }
+    }
+    glColor4f(1.0f,1.0f,1.0f,1.0f);
 }
 
 
 void Hud::renderBlockScreen(){
-    float alpha=at2;
-	//glDisable(GL_TEXTURE_2D);
-	//glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-	glColor4f(1.0, 1.0, 1.0, at2);
-	// Was a local rebuilt here from the same `marginLeft2` / `marginVert+10` / 402x282 as
-	// rpaintframe — i.e. a verbatim duplicate of a rect the layout already computes. Now that the
-	// card has to be anchored against a screen height that is no longer constant (see
-	// layoutForScreen), one copy of that arithmetic is the only version that can stay correct.
-	CGRect rblocksframe=rpaintframe;
-	Resources::getResources->getTex(ICO_COLOR_SELECT_BACKGROUND)->drawInRect(rblocksframe);
-	//
-	
-	glColor4f(1.0, 1.0, 1.0, at2);	
-	//glEnable(GL_TEXTURE_2D);
-    
-	int golden_cubei;
-	for(int i=0;i<NUM_DISPLAY_BLOCKS;i++){
-        int type=hudBlocks[i];
-        if(pickSecondBlock&&hudBlocksMap[hudBlocks[i]]==-1){
-            alpha=0.5f;
-             glColor4f(1.0f,1.0f,1.0f,alpha);
-        }else{
-            alpha=at2;
-             glColor4f(1.0f,1.0f,1.0f,alpha);
-        }
-        if(build_size==0){/*blockBounds[i].size.width-=10;
-            blockBounds[i].size.height-=10;
-            blockBounds[i].origin.x+=0;
-            blockBounds[i].origin.y+=1;*/
-        }
-        if(build_size==2){blockBounds[i].size.width+=10;
-            blockBounds[i].size.height+=10;
-        }
-        if(type>=TYPE_STONE_RAMP1&&type<=TYPE_ICE_RAMP4){
-            
-            
-            if(blocktype_pressed==hudBlocks[i]){
-                 if(build_size==0){
-                      Resources::getResources->getTex(ICO_TRIANGLE_BORDER_PRESSED2)->drawText(blockBounds[i]);
-                 }else{
-                     
-                      Resources::getResources->getTex(ICO_TRIANGLE_BORDER_PRESSED)->drawText(blockBounds[i]);
-                     
-                 }
-            }
-               
-            else{
-                if(build_size==0){
-                    Resources::getResources->getTex(ICO_TRIANGLE_BORDER2)->drawText(blockBounds[i]);
-                } else {
-                    if(pickSecondBlock&&hudBlocksMap[hudBlocks[i]]!=-1){
-                        if(IS_IPAD&&!SUPPORTS_RETINA){
-                            blockBounds[i].origin.x-=26/SCALE_WIDTH;
-                            blockBounds[i].origin.y-=26/SCALE_HEIGHT;
-                            
-                            Resources::getResources->getTex(ICO_TRIANGLE_BORDER_ACTIVE)->drawText(blockBounds[i]);
-                            blockBounds[i].origin.x+=26/SCALE_WIDTH;
-                            blockBounds[i].origin.y+=26/SCALE_HEIGHT;
-                            
-                        }else{
-                        blockBounds[i].origin.x-=13;
-                        blockBounds[i].origin.y-=13;
-                       
-                        Resources::getResources->getTex(ICO_TRIANGLE_BORDER_ACTIVE)->drawText(blockBounds[i]);
-                        blockBounds[i].origin.x+=13;
-                        blockBounds[i].origin.y+=13;
-                            
-                        }
-                    }else{
-                     Resources::getResources->getTex(ICO_TRIANGLE_BORDER)->drawText(blockBounds[i]);
-                        }
-                }
-            }
-               
-        }else if(type==TYPE_FLOWER||type==TYPE_GOLDEN_CUBE||type==TYPE_PORTAL_TOP||type==TYPE_DOOR_TOP){
-            Button b=ButtonFromRect(blockBounds[i]);
-            
-            if(blocktype_pressed==hudBlocks[i])
-                b.pressed=TRUE;
-            else {
-                b.pressed=FALSE;
-            } 
-            int tid;
-            if(type==TYPE_FLOWER){
-                tid=ICO_FLOWER_ICO;
-            }else if(type==TYPE_GOLDEN_CUBE){
-                golden_cubei=i;
-                
-                tid=ICO_GOLDCUBE;
-        }else if(type==TYPE_PORTAL_TOP){
-                tid=ICO_PORTAL2;
-               // glColor4f(2000/255.0,150/255.0,255/255.0f,at2);
-            }else if(type==TYPE_DOOR_TOP){
-                tid=ICO_DOOR2;
-            }
-            if(tid==ICO_GOLDCUBE&&goldencubes==0){
-                glColor4f(1.0f,1.0f,1.0f,.3f);
-                Resources::getResources->getTex(tid)->drawButton(b);
-                glColor4f(1.0f,1.0f,1.0f,alpha);
-            }else{
-                Resources::getResources->getTex(tid)->drawButton(b);
-            }
-        }else if(type==TYPE_CUSTOM){
-           
-        }else{
-            if(blocktype_pressed==hudBlocks[i])
-                if(build_size==0){
-                    
-                    Resources::getResources->getTex(ICO_BLOCK_BORDER_PRESSED2)->drawText(blockBounds[i]);
-                }else{
-                Resources::getResources->getTex(ICO_BLOCK_BORDER_PRESSED)->drawInRect2(blockBounds[i]);
-                }
-            else{
-                if(build_size==0){
-                    Resources::getResources->getTex(ICO_BLOCK_BORDER2)->drawText(blockBounds[i]);
-                }else{
-                    if(pickSecondBlock&&hudBlocksMap[hudBlocks[i]]!=-1){
-                        if(IS_IPAD&&!SUPPORTS_RETINA){
-                            blockBounds[i].origin.x-=26/SCALE_WIDTH;
-                            blockBounds[i].origin.y-=26/SCALE_HEIGHT;
-                            
-                             Resources::getResources->getTex(ICO_BLOCK_BORDER_ACTIVE)->drawText(blockBounds[i]);
-                            blockBounds[i].origin.x+=26/SCALE_WIDTH;
-                            blockBounds[i].origin.y+=26/SCALE_HEIGHT;
-                            
-                        }else{
-                        blockBounds[i].origin.x-=13;
-                        blockBounds[i].origin.y-=13;
-                        Resources::getResources->getTex(ICO_BLOCK_BORDER_ACTIVE)->drawText(blockBounds[i]);
-                        blockBounds[i].origin.x+=13;
-                        blockBounds[i].origin.y+=13;
-                        }
-                    }else{
-                    Resources::getResources->getTex(ICO_BLOCK_BORDER)->drawText(blockBounds[i]);
-                    }
-                }
-            }
-        }
-        if(type==TYPE_PORTAL_TOP){
-           
-            glColor4f(1.0,1.0,1.0f,alpha);
-        }
-        if(build_size==0){/*blockBounds[i].size.width+=10;
-            blockBounds[i].size.height+=10;
-            blockBounds[i].origin.x-=0;
-            blockBounds[i].origin.y-=1;*/
-        }
-        if(build_size==2){blockBounds[i].size.width-=10;
-            blockBounds[i].size.height-=10;
-        }
-		
-	}
-	//glDisable(GL_BLEND);
-    glBindTexture(GL_TEXTURE_2D, Resources::getResources->atlas->name);
-	for(int i=0;i<NUM_DISPLAY_BLOCKS;i++){
-        if(pickSecondBlock&&hudBlocksMap[hudBlocks[i]]==-1){
-            alpha=0.5f;
-             glColor4f(1.0f,1.0f,1.0f,alpha);
-        }else {alpha=at2;
-            
-             glColor4f(1.0f,1.0f,1.0f,alpha);
-        }
-        
-		int type=hudBlocks[i];
-        if(type==TYPE_FLOWER||type==TYPE_GOLDEN_CUBE||type==TYPE_DOOR_TOP||type==TYPE_PORTAL_TOP||type==TYPE_CUSTOM)continue;
-            
-        if(blockinfo[type]&IS_ATLAS2){
-            glBindTexture(GL_TEXTURE_2D, Resources::getResources->atlas2->name);
-        }else{
-            glBindTexture(GL_TEXTURE_2D, Resources::getResources->atlas->name);
-        }
-		CGRect rect=blockBounds[i];
-		CGPoint tp;
-		if(type==TYPE_TNT||type==TYPE_LADDER||type==TYPE_FIREWORK||type==TYPE_BLOCK_TNT){
-            if(type==TYPE_TNT)
-                tp=Resources::getResources->getBlockTex(TEX_TNT_SIDE_COLOR);
-            else if(type==TYPE_FIREWORK){
-                
-                tp=Resources::getResources->getBlockTex(TEX_FIREWORK);
-            }else if(type==TYPE_BLOCK_TNT){
-                 tp=Resources::getResources->getBlockTex(TEX_BLOCKTNT);
-            }else
-            tp=Resources::getResources->getBlockTex(blockTypeFaces[type][3]);
-		}else{
-             if(type==TYPE_BRICK)
-                 tp=Resources::getResources->getBlockTex(TEX_BRICK_COLOR);
-            else
-            tp=Resources::getResources->getBlockTex(blockTypeFaces[type][5]);
-		}
-		GLfloat				coordinates[] = {
-			0,			tp.y+tp.x,
-			1,			tp.y+tp.x,
-			0,				tp.x,
-			1,				tp.x,
-            
-            0,			tp.y+tp.x,
-			1,			tp.y+tp.x,
-			0,				tp.x,
-			1,				tp.x,
-            
-            0,			tp.y+tp.x,
-			1,			tp.y+tp.x,
-			0,				tp.x,
-			1,				tp.x,
-		};
-        GLfloat				coordinates2[] = {
-			0,			tp.y+tp.x,
-			1,			tp.y+tp.x,
-			//0,				tp.x,
-			0,				tp.x,
-		};
-        
-        int bb=0;
-        if(blocktype_pressed==hudBlocks[i]){
-            bb=2;
-        }
-        int size=35;
-        if(build_size==0){size=25;
-            rect.origin.x+=5;
-            rect.origin.y+=5;
-        }
-        if(build_size==2)size=45;
-        float off=3;
-        if(IS_IPAD){
-            rect.origin.x*=SCALE_WIDTH;
-            rect.origin.y*=SCALE_HEIGHT;
-            if(IS_RETINA&&build_size==0){rect.origin.x+=1;
-                rect.origin.y+=2;}
-            size*=2;
-            bb*=2;
-            off*=2;
-        }
-        int depth=25;
-        GLfloat				bvertices[] = {
-			off+bb,			off-bb,							0,
-			size+bb,		off-bb,							0,
-			off+bb,			size-bb,                        0,
-			size+bb,		size-bb,                        0,
-            
-            //off+bb,			off-bb,							0,
-			//size+bb,		off-bb,							0,
-			off+bb,			size-bb,                        0,
-			size+bb,		size-bb,                        0,
-            off+bb+depth,			size-bb+depth,          0,
-			size+bb+depth,		size-bb+depth,              0,
-            
-            size+bb,			off-bb,							0,
-			size+bb+depth,		off-bb+depth,							0,
-			size+bb,			size-bb,                        0,
-			size+bb+depth,		size-bb+depth,                        0,
+    if(mode!=MODE_PICK_BLOCK) return;
+    using namespace GLW;
+    Resources* res=Resources::getResources;
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-		};
-        
-        
-		GLfloat				vertices[3*6*3]; 
-        for(int i=0;i<3*6*2;i+=3){
-            vertices[i]=bvertices[i]+rect.origin.x;
-            vertices[i+1]=bvertices[i+1]+rect.origin.y;
-            vertices[i+2]=bvertices[i+2];
+    bevel(picker_panel(blockBounds,NUM_DISPLAY_BLOCKS),BEVEL_WINDOW);
+
+    // Pass 1, chrome: the second-block ring, then the cell. TYPE_CUSTOM is a blank slot, as stock.
+    // "Current" is the block a build would place; while a second block is being picked there is
+    // no current one (the TNT cell is what started the pick).
+    int golden_cubei=-1;
+    for(int i=0;i<NUM_DISPLAY_BLOCKS;i++){
+        const int type=hudBlocks[i];
+        if(type==TYPE_GOLDEN_CUBE) golden_cubei=i;
+        if(type==TYPE_CUSTOM) continue;
+        const bool on=(blocktype_pressed==type)||(!pickSecondBlock&&type==blocktype);
+        if(pickSecondBlock&&hudBlocksMap[type]!=-1){
+            const float g=du(3);
+            const CGRect c=blockBounds[i];
+            fill(CGRectMake(c.origin.x-g,c.origin.y-g,c.size.width+g*2.0f,c.size.height+g*2.0f),rgb(0x89c31f));
         }
-      
-        GLfloat				vertices2[] = {
-			rect.origin.x+off+bb,							rect.origin.y+off-bb,			0,
-			rect.origin.x + size+bb,		rect.origin.y+off-bb,							0,
-			//rect.origin.x+off+bb,							rect.origin.y + size-bb,		0,
-			rect.origin.x + off+bb,		rect.origin.y + size-bb,		0
-		};
-		 if(type==TYPE_FIREWORK||type==TYPE_GRASS2||type==TYPE_GRASS3||type==TYPE_TNT||type==TYPE_BLOCK_TNT||type==TYPE_BRICK||type==TYPE_VINE)
-             glColor4f(1.0f, 1.0f, 1.0f, alpha);
+        bevel(blockBounds[i],on?BEVEL_PRESSED:BEVEL_RAISED);
+    }
+
+    // Pass 2, art: the atlas face (or the item's own icon) inside each cell.
+    glEnable(GL_TEXTURE_2D);
+    for(int i=0;i<NUM_DISPLAY_BLOCKS;i++){
+        const int type=hudBlocks[i];
+        if(type==TYPE_CUSTOM) continue;
+        const bool on=(blocktype_pressed==type)||(!pickSecondBlock&&type==blocktype);
+        const CGRect in=picker_inner(blockBounds[i],on);
+        if(type==TYPE_FLOWER||type==TYPE_GOLDEN_CUBE||type==TYPE_PORTAL_TOP||type==TYPE_DOOR_TOP){
+            int tid=ICO_FLOWER_ICO;
+            if(type==TYPE_GOLDEN_CUBE)     tid=ICO_GOLDCUBE;
+            else if(type==TYPE_PORTAL_TOP) tid=ICO_PORTAL2;
+            else if(type==TYPE_DOOR_TOP)   tid=ICO_DOOR2;
+            glColor4f(1.0f,1.0f,1.0f,(type==TYPE_GOLDEN_CUBE&&goldencubes==0)?0.3f:1.0f);
+            res->getTex(tid)->drawInRect(in);
+            continue;
+        }
+        glBindTexture(GL_TEXTURE_2D,(blockinfo[type]&IS_ATLAS2)?res->atlas2->name:res->atlas->name);
+        CGPoint tp;
+        if(type==TYPE_TNT)                 tp=res->getBlockTex(TEX_TNT_SIDE_COLOR);
+        else if(type==TYPE_FIREWORK)       tp=res->getBlockTex(TEX_FIREWORK);
+        else if(type==TYPE_BLOCK_TNT)      tp=res->getBlockTex(TEX_BLOCKTNT);
+        else if(type==TYPE_LADDER)         tp=res->getBlockTex(blockTypeFaces[type][3]);
+        else if(type==TYPE_BRICK)          tp=res->getBlockTex(TEX_BRICK_COLOR);
+        else                               tp=res->getBlockTex(blockTypeFaces[type][5]);
+        // Faces whose art already carries its colour draw white; the rest take blockColor, as stock.
+        if(type==TYPE_FIREWORK||type==TYPE_GRASS2||type==TYPE_GRASS3||type==TYPE_TNT||type==TYPE_BLOCK_TNT||type==TYPE_BRICK||type==TYPE_VINE)
+            glColor4f(1.0f,1.0f,1.0f,1.0f);
         else
-		glColor4ub(blockColor[type][0], blockColor[type][1], blockColor[type][2], alpha*255);
-        
-        
-		if(type==TYPE_CLOUD&&holding_creature){
-            glVertexPointer(3, GL_FLOAT, 0, vertices);
-            glTexCoordPointer(2, GL_FLOAT, 0, coordinates);
-            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-            glColor4f(1.0f, 1.0f, 1.0f, alpha);
-            
-            Resources::getResources->getTex(ICO_MOOF)->drawTextNoScale(
-            CGRectMake(rect.origin.x+off+bb, rect.origin.y+off-bb,32, 32));
-        }else
-        if(type>=TYPE_STONE_RAMP1&&type<=TYPE_ICE_RAMP4){
-		glVertexPointer(3, GL_FLOAT, 0, vertices2);
-		glTexCoordPointer(2, GL_FLOAT, 0, coordinates2);
-		glDrawArrays(GL_TRIANGLE_STRIP, 0, 3);
-        }else{
-            glVertexPointer(3, GL_FLOAT, 0, vertices);
-            glTexCoordPointer(2, GL_FLOAT, 0, coordinates);
-           glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-         //   glDrawArrays(GL_TRIANGLE_STRIP, 4, 4);
-          //  glDrawArrays(GL_TRIANGLE_STRIP, 8, 4);
+            glColor4ub(blockColor[type][0],blockColor[type][1],blockColor[type][2],255);
+        picker_face(in,tp,type>=TYPE_STONE_RAMP1&&type<=TYPE_ICE_RAMP4);
+        if(type==TYPE_CLOUD&&holding_creature){
+            const float s=picker_scale();
+            glColor4f(1.0f,1.0f,1.0f,1.0f);
+            res->getTex(ICO_MOOF)->drawTextNoScale(CGRectMake(in.origin.x*s,in.origin.y*s,32,32));
         }
-        
-       
-		//vertices[v_idx].texs[0]=cubeTexture[st]*size;		
-        
-		//vertices[v_idx].texs[1]=cubeTexture[st+1]*tp.y+tp.x;
-	}
-    if(TRUE){
-       
+    }
+    glColor4f(1.0f,1.0f,1.0f,1.0f);
+
+    // Pass 3: blocks the second-block pick will not take are veiled rather than faded — the kit's
+    // chrome stays solid (design-system.md, "Placeholders and disabled controls").
+    if(pickSecondBlock){
+        for(int i=0;i<NUM_DISPLAY_BLOCKS;i++)
+            if(hudBlocks[i]!=TYPE_CUSTOM&&hudBlocksMap[hudBlocks[i]]==-1)
+                fill(blockBounds[i],rgb(0xc9c9c9,0.6f));
+    }
+
+    // The golden-cube count, where stock put it on that cell.
+    if(golden_cubei>=0){
         CGRect num_rect=blockBounds[golden_cubei];
         num_rect.origin.x+=18;
         if(goldencubes!=10){
             num_rect.origin.x+=3;
         }
         num_rect.origin.y-=2;
-        if(goldencubes==0){
-            glColor4f(1.0f,1.0f,1.0f,.3f);
+        glColor4f(1.0f,1.0f,1.0f,goldencubes==0?.3f:1.0f);
         Resources::getResources->getTex(TEXT_NUMBERS)->drawNumbers(num_rect,goldencubes);
-            glColor4f(1.0f,1.0f,1.0f,1.0f);
-        }else{
-            Resources::getResources->getTex(TEXT_NUMBERS)->drawNumbers(num_rect,goldencubes);
-            
-        }
+        glColor4f(1.0f,1.0f,1.0f,1.0f);
     }
 	/*
     glColor4f(1.0, 1.0, 1.0, 1.0f);

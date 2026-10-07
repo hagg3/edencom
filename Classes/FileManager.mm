@@ -16,6 +16,7 @@
 #import "FileManagerHelper.h"
 #import "MeshPool.h"
 #import "World.h"
+#include <cstddef>   // offsetof, renameWorld
 
 // See FileManager.h. Both NULL on web — its Foundation shim already answers both questions the
 // way this port wants — and both installed by the native entry point.
@@ -1778,6 +1779,29 @@ void FileManager::setImageHash(NSString* hash){
 	
 	
 }*/
+
+// N.4.5. The name is 50 bytes inside the 192-byte header that every save rewrites anyway (see
+// saveWorld's sfh->name), so this is the smallest write that can rename a world: no scratch copy
+// and no journal, because no other byte moves. The header is read first and the write refused if
+// it is short, so a truncated or foreign file is left alone rather than padded out to a header.
+// "r+b" for the reason getName's comment gives (the Windows CRT's text mode).
+BOOL FileManager::renameWorld(NSString* file_name, NSString* display_name){
+    std::string n=cpstring(file_name);
+    if(!worldExists(n,FALSE)) return TRUE;
+    std::string fn=docs+"/"+n;
+    FILE* f=fopen(fn.c_str(),"r+b");
+    if(!f) return FALSE;
+    WorldFileHeader fh;
+    if(fread(&fh,sizeof(WorldFileHeader),1,f)!=1){ fclose(f); return FALSE; }
+    char name[sizeof(fh.name)];
+    memset(name,0,sizeof(name));
+    std::string dn=cpstring(display_name);
+    strncpy(name,dn.c_str(),sizeof(name)-1);
+    BOOL ok=fseek(f,(long)offsetof(WorldFileHeader,name),SEEK_SET)==0
+          &&fwrite(name,1,sizeof(name),f)==sizeof(name);
+    if(fclose(f)!=0) ok=FALSE;
+    return ok;
+}
 
 NSString* FileManager::getName(NSString* name){
     std::string n=cpstring(name);

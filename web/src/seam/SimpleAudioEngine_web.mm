@@ -436,12 +436,12 @@ void SimpleAudioEngine::stopBackgroundMusic(bool releaseData) {
     eden_audio_stop_channel(0);
 }
 bool SimpleAudioEngine::isBackgroundMusicPlaying() { return eden_audio_is_channel_playing(0) != 0; }
-// Music has always had a single volume knob (no separate user/engine fade split) — the settings
-// slider and Resources::update's song crossfade both call this, last write wins, unchanged from
-// before this channel split. Only the four ambience channels below get the userVolume/engineFade
-// separation, via setAmbienceVolume vs. setAmbienceFade.
+// Music gets the same userVolume/engineFade split as the ambience channels: Volume is the settings
+// slider, Fade is Resources::update's song crossfade. Until 2026-10-05 both wrote one knob, last
+// write wins — and the engine wrote it every frame, so the Music volume slider did nothing.
 float SimpleAudioEngine::getBackgroundMusicVolume() { return eden_audio_get_channel_user_volume(0); }
 void SimpleAudioEngine::setBackgroundMusicVolume(float volume) { eden_audio_set_channel_user_volume(0, volume); }
+void SimpleAudioEngine::setBackgroundMusicFade(float fade) { eden_audio_set_channel_fade(0, fade); }
 float SimpleAudioEngine::getEffectsVolume() { return eden_audio_get_effects_volume(); }
 void SimpleAudioEngine::setEffectsVolume(float volume) { eden_audio_set_effects_volume(volume); }
 

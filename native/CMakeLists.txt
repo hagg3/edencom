@@ -375,6 +375,10 @@ set(EDEN_NATIVE_SOURCES
   src/seam/seam_link_stubs_native.mm
   src/seam/SimpleAudioEngine_native.mm
   src/seam/TextRaster_native.cpp
+  # ROADMAP 5.9: the eden_net_* seam the world browser polls (job table, worker threads, .part
+  # files, offline fixtures). The blocking GET under it is per platform — see the block after
+  # this list for which backend each target links.
+  src/seam/Net_native.cpp
   src/seam/pvrt_matrix_palette_native.cpp
   src/shim/gl/gl_context_native.cpp
   src/shim/gl/gl_es1_extras_native.cpp
@@ -442,7 +446,14 @@ if(APPLE)
   set_source_files_properties(src/seam/AppleAudio_native.mm PROPERTIES
     LANGUAGE CXX COMPILE_OPTIONS "-x;objective-c++")
   target_compile_features(eden_apple_audio PRIVATE cxx_std_17)
-  set(EDEN_AUDIO_OBJECTS $<TARGET_OBJECTS:eden_apple_audio>)
+  # ROADMAP 5.9: the world browser's HTTP backend (NSURLSession), behind the same kind of plain-C
+  # wall (src/seam/NetBackend_native.h) and for the same reason — real SDK headers, none of the
+  # shim's shadows. ARC, because it is new code with blocks and delegates and no reason to count.
+  add_library(eden_apple_net OBJECT src/seam/AppleNet_native.mm)
+  set_source_files_properties(src/seam/AppleNet_native.mm PROPERTIES
+    LANGUAGE CXX COMPILE_OPTIONS "-x;objective-c++;-fobjc-arc")
+  target_compile_features(eden_apple_net PRIVATE cxx_std_17)
+  set(EDEN_AUDIO_OBJECTS $<TARGET_OBJECTS:eden_apple_audio> $<TARGET_OBJECTS:eden_apple_net>)
 else()
   set(EDEN_AUDIO_OBJECTS "")
 endif()
@@ -859,6 +870,29 @@ else()
   endif()
 endif()
 
+# ---------------------------------------------------------------------------------------------
+# The world browser's HTTP backend (ROADMAP 5.9) — one per platform, see NetBackend_native.h
+# ---------------------------------------------------------------------------------------------
+# Apple: NSURLSession, already in eden_apple_net above (Foundation is linked anyway).
+# Windows: WinHTTP, part of the OS — no DLL joins the release zip.
+# Linux: libcurl when its headers are present (CI installs libcurl4-openssl-dev); without them
+# the build still succeeds and the browser is simply not offered (NetNone_native.cpp).
+if(APPLE)
+  # nothing more to link
+elseif(WIN32)
+  target_sources(eden_native PRIVATE src/seam/NetWinHttp_native.cpp)
+  target_link_libraries(eden_native PRIVATE winhttp)
+else()
+  find_package(CURL)
+  if(CURL_FOUND)
+    target_sources(eden_native PRIVATE src/seam/NetCurl_native.cpp)
+    target_link_libraries(eden_native PRIVATE CURL::libcurl)
+  else()
+    message(STATUS "Eden native: libcurl not found — the world browser will not be offered")
+    target_sources(eden_native PRIVATE src/seam/NetNone_native.cpp)
+  endif()
+endif()
+
 find_package(ZLIB REQUIRED)   # Classes' RLE Eden.eden path includes <zlib.h>
 target_link_libraries(eden_native PRIVATE ZLIB::ZLIB)
 
@@ -910,6 +944,9 @@ file(GLOB _f "${EDEN_PARENT_DIR}/media/sound/*.caf" "${EDEN_PARENT_DIR}/media/so
              "${EDEN_PARENT_DIR}/media/new_sound/*.mp3"
              "${EDEN_PARENT_DIR}/media/music/*.mp3")
 list(APPEND EDEN_ASSET_GLOBS ${_f} "${EDEN_PARENT_DIR}/report_flag.png")
+# The design system's display face (Jersey 10, SIL OFL — OFL.txt beside it), the same file the web
+# UI self-hosts. TextRaster_native.cpp loads it by bare name from the bundle root for GL-kit chrome.
+list(APPEND EDEN_ASSET_GLOBS "${EDEN_PARENT_DIR}/web/public/assets/fonts/Jersey10-Regular.ttf")
 
 # Stage 4.4: on iOS the bundle is COPIED into the .app (see the COPY_ON_ERROR comment below), so
 # Eden.eden's 52.47 MiB is charged against install size; on every other target it's a symlink and

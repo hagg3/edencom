@@ -540,6 +540,13 @@ BOOL World::update(float etime){
 		GLDialog::getDialog()->update(etime);
 		return FALSE;
 	}
+	// Stage 5.5: Settings opened from the in-game (pause) menu is the same kind of modal — the
+	// world is frozen under it, and Back returns to the pause menu. Only the GL pause menu sets
+	// this in play (it asks eden_gl_settings_available() first), so on web it never happens.
+	if(game_mode==GAME_MODE_PLAY&&menu->showsettings){
+		menu->settings->update(etime);
+		return FALSE;
+	}
 	if(game_mode==GAME_MODE_MENU){
 		menu->update(etime);
 	}else if(game_mode==GAME_MODE_PLAY){
@@ -647,6 +654,7 @@ void World::renderFrame(BOOL draw){
          glPopMatrix();
         eden_scene_pass_end(); //upscale the 3D pass; the hud draws at full resolution
 		hud->render(); //render hud last
+		if(menu->showsettings) menu->settings->render();   // Stage 5.5, see update()
 
 	}
 

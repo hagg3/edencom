@@ -38,6 +38,23 @@ public:
     static void show(const char* title, const char* body,
                      const char* const* buttons, int n, void (*cb)(int chosen));
 
+    // N.4.5: the same dialog with a GLW::TextField between the body and the buttons, focused on
+    // show (on iOS that raises the system keyboard). Return chooses button 0, Escape the LAST
+    // button — so pass the confirm first and "Cancel" last, which the grid already wants. `cb`
+    // gets the chosen index and the field's UTF-8 text (valid only during the call). Check
+    // textEntryAvailable() first: on a host without GL text input (web) the field cannot be typed
+    // into, and the caller should not offer the action at all.
+    static void prompt(const char* title, const char* body, const char* initialText, int maxBytes,
+                       const char* const* buttons, int n, void (*cb)(int chosen, const char* text));
+    static bool textEntryAvailable();
+    // Closes whatever is up WITHOUT calling its callback — the harness's way out of a modal
+    // (--shot), and the answer to "the screen under the dialog went away". Not a "Cancel":
+    // a caller that needs its cancel branch to run must pick the button instead.
+    static void dismiss();
+    // Stage 5.6: where button j is (point space, y up) while a dialog is up — so a harness taps the
+    // real button instead of assuming the grid. False when no dialog is up or j is out of range.
+    static bool buttonRect(int j, CGRect* r);
+
     void update(float etime);
     void render();
 
@@ -45,9 +62,13 @@ private:
     GLDialog();
     void reset();
     void layout();
+    void choose(int j);
 
     bool  m_active;
     void (*m_cb)(int);
+    void (*m_promptCb)(int, const char*);
+    bool  m_hasField;
+    GLW::TextField m_field;
     int   m_nButtons;
     int   m_touchSlot;                 // Input touch index we claimed, or -1
 

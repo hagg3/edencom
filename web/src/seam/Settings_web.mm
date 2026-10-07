@@ -357,13 +357,13 @@ static void eden_apply_setting(int i, bool commitEngine) {
         sm->properties[s.engine].value = (v != 0.0f) ? 1 : 0;
         if (!commitEngine) return;
         sm->save();                       // engine: writes NSUserDefaults, then load() applies
-        // Music has one side effect save()/load() does not do: the menu tune has to be started or
-        // stopped right now. Classes/SettingsMenu.mm:150-158 did this inline in its touch handler,
-        // which is exactly the piece a wrapped-out update() would otherwise lose.
-        if (s.engine == ENG_MUSIC && Resources::getResources) {
-            if (v != 0.0f) Resources::getResources->playMenuTune();
-            else           Resources::getResources->stopMenuTune();
-        }
+        // Music has one side effect save()/load() does not do: music has to start or stop right
+        // now. Classes/SettingsMenu.mm:150-158 did this inline in its touch handler, which is
+        // exactly the piece a wrapped-out update() would otherwise lose. musicToggled() picks the
+        // title tune or an in-game song by mode — this called playMenuTune() unconditionally until
+        // 2026-10-05, which is how a title track came to play over gameplay.
+        if (s.engine == ENG_MUSIC && Resources::getResources)
+            Resources::getResources->musicToggled(v != 0.0f ? TRUE : FALSE);
         eden_apply_port_settings();       // undo load()'s invertcam/use_joystick stomp
         return;
     }
@@ -1093,6 +1093,18 @@ EDEN_EXPORT const char* eden_keybind_code_table(void) {
 // None of the three touches vertex data, which is what Stage 1's byte-identical-geometry
 // criterion compares.
 // ---------------------------------------------------------------------------------------------
+
+// Is the GL settings screen LIVE on this target? Exactly "is it not --wrap'd away" — so it is
+// answered here, beside the wraps. The GL pause menu (Stage 5.5) asks before offering Settings:
+// on web (legacy_menu) a GL Settings button would open a screen whose update/render are no-ops,
+// i.e. one with no way back out. The DOM owns settings there until Stage 5.10.
+int eden_gl_settings_available(void) {
+#ifdef EDEN_LD_WRAP
+    return 0;
+#else
+    return 1;
+#endif
+}
 }  // extern "C" — the portable half of this file ends here
 #ifdef EDEN_LD_WRAP
 extern "C" {

@@ -221,6 +221,32 @@ void showAlertDeleteConfirm(NSString *name) { (void)name; }
 // equivalent is a real DOM <input> positioned over the canvas.
 void vkeyboard_init() {}
 
+// GLW::TextField's platform half (N.4.5; native/src/seam/Input_native.cpp is the real one). Web
+// has no GL text entry until Stage 5.10 retires the DOM UI: available() is 0, so a GL screen
+// does not offer an editable field here, and a field focused anyway receives nothing and reads
+// "inactive", which commits it unchanged on its next update().
+extern "C" int  eden_text_input_available(void) { return 0; }
+extern "C" void eden_text_input_start(float x, float y, float w, float h) { (void)x; (void)y; (void)w; (void)h; }
+extern "C" void eden_text_input_stop(void) {}
+extern "C" int  eden_text_input_active(void) { return 0; }
+extern "C" int  eden_text_input_take(char* buf, int cap) { (void)buf; (void)cap; return 0; }
+// Stage 5.6's wheel seam (GLWidgets.h). The GL main menu only draws on web under legacy_menu, and
+// there it scrolls by drag and scrollbar; the DOM owns the wheel.
+extern "C" int  eden_ui_take_wheel(void) { return 0; }
+// ROADMAP 5.9's network seam (Classes/WorldBrowser.h; native/src/seam/Net_native.cpp is the real
+// one). Web reports no network, so the GL menu never offers its Get Worlds screen here: the DOM
+// screen (public/eden-menu.js + eden-worldbrowser.js) is the web's browser until Stage 5.10, and
+// a page cannot reach the edengame.net servers anyway — they are plain HTTP (mixed content from
+// an https page) and send no CORS headers. Only the community archive is fetchable from a page.
+extern "C" int  eden_net_available(void) { return 0; }
+extern "C" int  eden_net_fetch(const char* url, const char* destPath) { (void)url; (void)destPath; return 0; }
+extern "C" int  eden_net_poll(int job, long long* got, long long* total) {
+    (void)job; if (got) *got = 0; if (total) *total = -1; return -1;
+}
+extern "C" const char* eden_net_error(int job) { (void)job; return "no network on this host"; }
+extern "C" const unsigned char* eden_net_body(int job, int* len) { (void)job; if (len) *len = 0; return 0; }
+extern "C" void eden_net_release(int job) { (void)job; }
+
 // =============================================================================================
 // SharedList / ShareMenu  (networking cluster, excluded) — TODO P6
 // =============================================================================================

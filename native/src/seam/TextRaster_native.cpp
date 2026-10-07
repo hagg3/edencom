@@ -36,6 +36,8 @@
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
 
+extern "C" const char* eden_platform_bundle_root(void);   // web/src/shim/foundation/platform_shims.cpp
+
 namespace {
 
 // One font, loaded once, kept for the process lifetime — these rasters happen at UI-build time,
@@ -167,17 +169,64 @@ Font& font() {
     return f;
 }
 
+// The design system's DISPLAY face (web/docs/design-system.md, "Type"): Jersey 10, SIL OFL, the
+// same file the web UI self-hosts (web/public/assets/fonts/), linked into the flat bundle by
+// native/CMakeLists.txt. Only GL-kit chrome asks for it (eden_text_raster_set_face below); a
+// missing file falls back to the body face rather than to blank labels.
+struct DisplayFont {
+    std::vector<unsigned char> bytes;
+    stbtt_fontinfo info;
+    bool ok = false;
+
+    DisplayFont() {
+        const std::string path = std::string(eden_platform_bundle_root()) + "/Jersey10-Regular.ttf";
+        FILE* f = fopen(path.c_str(), "rb");
+        if (!f) {
+            std::fprintf(stderr, "[eden-text] display face missing (%s) — chrome falls back to "
+                                 "the body face.\n", path.c_str());
+            return;
+        }
+        fseek(f, 0, SEEK_END);
+        long len = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        if (len > 0) {
+            bytes.resize((size_t)len);
+            if (fread(bytes.data(), 1, (size_t)len, f) == (size_t)len) {
+                int offset = stbtt_GetFontOffsetForIndex(bytes.data(), 0);
+                ok = offset >= 0 && stbtt_InitFont(&info, bytes.data(), offset);
+            }
+        }
+        fclose(f);
+    }
+};
+
+int g_face = 0;   // 0 = body (system sans), 1 = display (Jersey 10)
+
+const stbtt_fontinfo* active_font() {
+    if (g_face == 1) {
+        static DisplayFont d;
+        if (d.ok) return &d.info;
+    }
+    Font& f = font();
+    return f.ok ? &f.info : nullptr;
+}
+
 }  // namespace
+
+// Selects the face the NEXT rasters use. Sticky, so a caller sets it, builds, and puts it back —
+// GLW::Label does exactly that. Every other caller (statusbar.mm, SharedList.mm) never calls this
+// and keeps the body face.
+extern "C" void eden_text_raster_set_face(int face) { g_face = (face == 1) ? 1 : 0; }
 
 extern "C" void eden_rasterize_text_rgba(const char* textC, int width, int height, float fontPx,
                                          int align, unsigned char* outPtr) {
     if (!textC || !outPtr || width <= 0 || height <= 0) return;
-    Font& f = font();
-    if (!f.ok) return;   // pre-zeroed buffer stands — see the contract note above
+    const stbtt_fontinfo* fi = active_font();
+    if (!fi) return;   // pre-zeroed buffer stands — see the contract note above
 
-    const float scale = stbtt_ScaleForPixelHeight(&f.info, fontPx);
+    const float scale = stbtt_ScaleForPixelHeight(fi, fontPx);
     int ascent = 0, descent = 0, lineGap = 0;
-    stbtt_GetFontVMetrics(&f.info, &ascent, &descent, &lineGap);
+    stbtt_GetFontVMetrics(fi, &ascent, &descent, &lineGap);
 
     // Measure first, so alignment can be applied. ASCII only, matching what the engine actually
     // puts through here (world names and dates); a multi-byte UTF-8 sequence degrades to its
@@ -185,9 +234,9 @@ extern "C" void eden_rasterize_text_rgba(const char* textC, int width, int heigh
     float advance = 0.0f;
     for (const char* p = textC; *p; ++p) {
         int aw = 0, lsb = 0;
-        stbtt_GetCodepointHMetrics(&f.info, (unsigned char)*p, &aw, &lsb);
+        stbtt_GetCodepointHMetrics(fi, (unsigned char)*p, &aw, &lsb);
         advance += aw * scale;
-        if (p[1]) advance += stbtt_GetCodepointKernAdvance(&f.info,
+        if (p[1]) advance += stbtt_GetCodepointKernAdvance(fi,
                                                            (unsigned char)p[0],
                                                            (unsigned char)p[1]) * scale;
     }
@@ -205,7 +254,7 @@ extern "C" void eden_rasterize_text_rgba(const char* textC, int width, int heigh
     for (const char* p = textC; *p; ++p) {
         const int cp = (unsigned char)*p;
         int gw = 0, gh = 0, gxo = 0, gyo = 0;
-        unsigned char* glyph = stbtt_GetCodepointBitmap(&f.info, scale, scale, cp,
+        unsigned char* glyph = stbtt_GetCodepointBitmap(fi, scale, scale, cp,
                                                         &gw, &gh, &gxo, &gyo);
         if (glyph) {
             const int gx = (int)(x + 0.5f) + gxo;
@@ -228,8 +277,8 @@ extern "C" void eden_rasterize_text_rgba(const char* textC, int width, int heigh
             stbtt_FreeBitmap(glyph, nullptr);
         }
         int aw = 0, lsb = 0;
-        stbtt_GetCodepointHMetrics(&f.info, cp, &aw, &lsb);
+        stbtt_GetCodepointHMetrics(fi, cp, &aw, &lsb);
         x += aw * scale;
-        if (p[1]) x += stbtt_GetCodepointKernAdvance(&f.info, cp, (unsigned char)p[1]) * scale;
+        if (p[1]) x += stbtt_GetCodepointKernAdvance(fi, cp, (unsigned char)p[1]) * scale;
     }
 }

@@ -426,7 +426,9 @@ EM_JS(void, eden_rasterize_text_rgba, (const char* textC, int width, int height,
   if (!ctx) return;
   ctx.clearRect(0, 0, width, height);
   ctx.fillStyle = '#fff';
-  ctx.font = fontPx + 'px sans-serif';
+  // Face 1 is the design system's display face, which eden-ui.css already @font-face's; until the
+  // page has loaded it the canvas falls back to sans-serif, the same as the DOM's font-display:swap.
+  ctx.font = fontPx + 'px ' + (Module.__edenTextFace === 1 ? '"Jersey 10", sans-serif' : 'sans-serif');
   ctx.textBaseline = 'middle';
   var x;
   if (align === 1) { ctx.textAlign = 'center'; x = width / 2; }
@@ -435,6 +437,10 @@ EM_JS(void, eden_rasterize_text_rgba, (const char* textC, int width, int height,
   ctx.fillText(text, x, height / 2);
   var img = ctx.getImageData(0, 0, width, height).data;
   HEAPU8.set(img, outPtr);
+});
+// See TextRaster_native.cpp: 0 = body, 1 = display (Jersey 10). Sticky until set again.
+EM_JS(void, eden_text_raster_set_face, (int face), {
+  Module.__edenTextFace = (face === 1) ? 1 : 0;
 });
 #else
 // Phase N Stage 1: the ONE genuinely platform-shaped line in this otherwise-portable file. Native
@@ -480,9 +486,9 @@ void Texture2D::initFromString(NSString* string, CGSize dimensions, UITextAlignm
     g_decodeLabel = "<CGImage>";
     free(data);
 }
-Texture2D::Texture2D(NSString* string, CGSize dimensions, UITextAlignment alignment, UIFont* font) {
-    initFromString(string, dimensions, alignment, font);
-}
+// Delegates so a box wider than the texture cap takes the reduced-density path below (Stage 5.6).
+Texture2D::Texture2D(NSString* string, CGSize dimensions, UITextAlignment alignment, UIFont* font)
+    : Texture2D(string, dimensions, alignment, font, 1.0f) {}
 
 // N.4.8 — UI text at the device's real density. The stock path rasterises one texel per 2D-ortho
 // unit, and the ortho (SCREEN_* x SCALE_*) is not the drawable: on an iPad Air 2's touch profile
@@ -494,16 +500,25 @@ Texture2D::Texture2D(NSString* string, CGSize dimensions, UITextAlignment alignm
 // POT buffer directly would not do: the seam aligns text against the WHOLE buffer width, and
 // pot(w * density) is not w * density, so centred and right-aligned text would move. drawText
 // then draws W / density units — within half a device pixel of `w`, and exactly 1:1 on pixels.
+//
+// THE CAP, AND THE DOUBLED STATUS LINE (Stage 5.6). A box wider than kMaxTextureSize_Eden used to
+// fall through to initFromString(), which clamps the TEXTURE to the cap but keeps the box as its
+// content size — so _maxS came out > 1 (2276 / 1024 for the menu's full-width status bar on a
+// 1138-point screen) and GL_REPEAT drew the line two and a bit times side by side. That is the
+// stock menu's "Choose world to load" printed twice, and the HUD's status line had it too. Such a
+// box now takes this path at a density BELOW 1: the raster fits the cap, and drawing divides by
+// _density, so the label still spans the box it was laid out for — just at fewer texels.
 Texture2D::Texture2D(NSString* string, CGSize dimensions, UITextAlignment alignment, UIFont* font,
                      float density) {
-    if (!(density > 1.0f) || font == nil) {
-        initFromString(string, dimensions, alignment, font);
+    if (font == nil) {
+        initFromString(string, dimensions, alignment, font);   // reports the error
         return;
     }
+    if (!(density > 1.0f)) density = 1.0f;
     // A label that would outgrow the texture cap gets less density, never a clipped raster.
     if (dimensions.width  * density > kMaxTextureSize_Eden) density = kMaxTextureSize_Eden / (float)dimensions.width;
     if (dimensions.height * density > kMaxTextureSize_Eden) density = kMaxTextureSize_Eden / (float)dimensions.height;
-    if (!(density > 1.0f)) {
+    if (density == 1.0f) {
         initFromString(string, dimensions, alignment, font);
         return;
     }

@@ -95,6 +95,23 @@
 	<!-- The only way a .eden world gets OFF an iOS device. This pair is what makes
 	     `<container>/Documents` the right save root there (see default_docs() in
 	     native/src/entry/eden_main_native.cpp) — the Files app and Finder both read it. -->
+	<!-- ROADMAP 5.9, the world browser. The Eden servers (app/app2/files/files2.edengame.net) are
+	     plain HTTP — app.* refuses TLS outright — and App Transport Security blocks plain HTTP in
+	     an app by default. The exception is for that one domain only; the community archive
+	     (hagg3.github.io) is HTTPS and needs none. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>edengame.net</key>
+			<dict>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+		</dict>
+	</dict>
 	<key>UIFileSharingEnabled</key>
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>

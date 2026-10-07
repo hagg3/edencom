@@ -7,6 +7,7 @@
 //
 
 #import "Menu.h"
+#import "GLDialog.h"
 #import "Graphics.h"
 #import "Globals.h"
 #import "Util.h"
@@ -14,6 +15,11 @@
 #import "zpipe.h"
 #import "FileArchive.h"
 #import "Alert.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <string>
 
 
 //@synthesize loading,showsettings,sbar,is_sharing,
@@ -25,6 +31,201 @@ extern float P_ASPECT_RATIO;
 
 
 static float fade_out=0;
+
+// ---------------------------------------------------------------------------------------------
+// Stage 5.6 — the main menu on the GL widget kit
+// ---------------------------------------------------------------------------------------------
+// Stock drew a carousel of atlas "world blocks" with arrow buttons, five icon buttons in the
+// corners (options, create, delete, share, get worlds) and two statusbar lines; a world was picked
+// by tapping its block, and played by tapping it again. What changes is the drawing and the
+// hit-testing; the STATE and the ACTIONS are the stock ones — world_list / selected_world, the
+// `loading` ladder in render(), the create branch (now createWorld()), showAlertDeleteConfirm ->
+// a_deleteConfirm, showsettings, sbar for status. So web's Menu_web.mm accessors, which drive the
+// same state, are unaffected, and "tap the selected world again to play" still works.
+//
+// The shape is the DOM's Load World screen (web/public/eden-menu.js) under the painted title art
+// (design-system.md, "Iconography": the logo and the parallax layers stay art): a WINDOW with a
+// titlebar, a CONTENT list of ListRows with a scrollbar, and an action bar. Share is not offered
+// (inert stubs on both hosts: ShareUtil/SharedList in seam_link_stubs*.mm). Get Worlds is, since
+// Stage 5.9, wherever the host can fetch: it opens WorldBrowser (Classes/WorldBrowser.h), not the
+// stock SharedList.
+//
+// Density follows 5.4b: rows and buttons 30u under a mouse, the 44pt floor under a finger, and
+// the window shrink-wraps the list instead of filling the screen.
+#define MK_MAX_ROWS 24
+
+struct MenuKit {
+    GLW::Label      title, status, empty, emptyHint;
+    GLW::Button     settings, create, play, del, getWorlds;
+    GLW::ListRow    rows[MK_MAX_ROWS];
+    std::string     rowText[MK_MAX_ROWS];   // what each row's label was built from, so a label
+    bool            rowBuilt[MK_MAX_ROWS];  // is re-rasterised only when its text changes
+    GLW::ScrollView scroll;
+    CGRect          panel, list;
+    float           pitch, btnH, titleY;
+    bool            built;
+    std::string     shownStatus;
+    WorldNode*      lastSelected;
+    int             listTouch, barTouch, downRow;
+    MenuKit() : pitch(30), btnH(30), titleY(0), built(false), lastSelected(NULL),
+                listTouch(-1), barTouch(-1), downRow(-1) {
+        panel=list=CGRectMake(0,0,0,0);
+        for(int k=0;k<MK_MAX_ROWS;k++) rowBuilt[k]=false;
+    }
+};
+
+static int menu_world_count(Menu* m){
+    int n=0;
+    for(WorldNode* p=m->world_list;p;p=p->next) n++;
+    return n;
+}
+static WorldNode* menu_node_at(Menu* m,int index){
+    if(index<0) return NULL;
+    WorldNode* p=m->world_list;
+    while(p&&index-->0) p=p->next;
+    return index<0?p:NULL;
+}
+static int menu_index_of(Menu* m,WorldNode* node){
+    int i=0;
+    for(WorldNode* p=m->world_list;p;p=p->next,i++) if(p==node) return i;
+    return -1;
+}
+
+// Pure rect arithmetic from SCREEN_* and the list's length; cheap, run every frame like
+// SettingsMenu::layout(), so a display-profile switch or a new world re-flows on the next frame.
+void Menu::layoutKit(){
+    using namespace GLW;
+    MenuKit* k=kit;
+    if(!k->built){
+        k->built=true;
+        k->title.set("Worlds",du(32),UITextAlignmentCenter);
+        k->settings.setLabel("Settings",du(22));
+        k->create.setLabel("New",du(22));
+        k->getWorlds.setLabel("Get Worlds",du(22));
+        k->play.setLabel("Play",du(22));
+        k->play.setTone(GLW::Button::TONE_POSITIVE);
+        k->del.setLabel("Delete",du(22));
+        rect_rename.setLabel("Rename",du(22));
+        k->empty.set("No worlds yet",du(24),UITextAlignmentCenter);
+        k->emptyHint.set("Choose New to make one.",du(15),UITextAlignmentCenter,0,FACE_BODY);
+    }
+    const float tf=touchFloor();
+    k->pitch=std::max(du(30),tf);
+    k->btnH=std::max(du(30),tf);
+    const float pad=du(12), gap=du(10), margin=du(12), statusH=du(26), barW=du(20);
+
+    // The window lives between the logo (rect_name, laid out by layoutForScreen) and the status
+    // line, and is as tall as its list needs — at least four rows, so a short list does not make a
+    // stub of a window, and at most what fits.
+    const float top=rect_name.origin.y-gap;
+    const float bottom=margin+statusH;
+    float cw=du(520);
+    const float maxCw=SCREEN_WIDTH-margin*2.0f-pad*2.0f;
+    if(cw>maxCw) cw=maxCw;
+    const float fixed=pad+k->btnH+gap+gap+k->btnH+pad;
+    int cap=(int)std::floor((top-bottom-fixed)/k->pitch);
+    if(cap<2) cap=2;
+    if(cap>MK_MAX_ROWS) cap=MK_MAX_ROWS;
+    const int count=menu_world_count(this);
+    int vis=std::max(count,4);
+    if(vis>cap) vis=cap;
+    k->scroll.setRows(count,vis);
+    k->scroll.setPitch(k->pitch);
+
+    const float listH=vis*k->pitch;
+    const float ph=fixed+listH, pw=cw+pad*2.0f;
+    float py=bottom+((top-bottom)-ph)*0.5f;
+    if(py<bottom) py=bottom;
+    k->panel=CGRectMake((SCREEN_WIDTH-pw)*0.5f,py,pw,ph);
+    const float left=k->panel.origin.x+pad, right=left+cw;
+
+    // Titlebar: Settings at the left, the title centred on the window, [Get Worlds] New at the
+    // right. The title gives way when Get Worlds would run into it (renderKit).
+    const float barY=py+ph-pad-k->btnH;
+    k->settings.setRect(CGRectMake(left,barY,du(112),k->btnH));
+    k->create.setRect(CGRectMake(right-du(80),barY,du(80),k->btnH));
+    k->getWorlds.setRect(CGRectMake(right-du(80)-gap-du(140),barY,du(140),k->btnH));
+    k->titleY=barY+(k->btnH+k->title.height())*0.5f;
+
+    // The list and its scrollbar, side by side, the bar flush right.
+    const float listY=barY-gap-listH;
+    k->list=CGRectMake(left,listY,cw-barW-du(6),listH);
+    k->scroll.setBarRect(CGRectMake(right-barW,listY,barW,listH));
+    for(int r=0;r<MK_MAX_ROWS;r++){
+        k->rows[r].setRect(CGRectMake(k->list.origin.x,listY+listH-(r+1)*k->pitch,k->list.size.width,k->pitch));
+        k->rows[r].setLast(r==vis-1);
+    }
+
+    // Action bar: the destructive and the rare action at the left, Play at the right.
+    const float actY=py+pad;
+    k->del.setRect(CGRectMake(left,actY,du(96),k->btnH));
+    rect_rename.setRect(CGRectMake(left+du(96)+gap,actY,du(110),k->btnH));
+    k->play.setRect(CGRectMake(right-du(120),actY,du(120),k->btnH));
+
+    const bool idle=(loading==0);
+    k->play.setEnabled(idle&&selected_world!=NULL);
+    k->del.setEnabled(idle&&selected_world!=NULL);
+    rect_rename.setEnabled(idle&&selected_world!=NULL);
+    k->create.setEnabled(idle);
+    k->settings.setEnabled(idle);
+    k->getWorlds.setEnabled(idle&&browserOffered());
+
+    // Keep the selection on screen when it moved under us (New, a web accessor, a delete).
+    if(selected_world!=k->lastSelected){
+        k->lastSelected=selected_world;
+        k->scroll.ensureVisible(menu_index_of(this,selected_world));
+    }
+    // Row labels: compared by TEXT, not by node or NSString pointer — a freed node or name can come
+    // back at the same address — and re-rasterised only when it changed (scroll, rename, delete).
+    const int first=k->scroll.first();
+    for(int r=0;r<vis;r++){
+        WorldNode* n=menu_node_at(this,first+r);
+        const std::string t=n?cpstring(n->display_name):std::string();
+        if(!k->rowBuilt[r]||t!=k->rowText[r]){
+            k->rowBuilt[r]=true;
+            k->rowText[r]=t;
+            k->rows[r].setTitle(t.c_str(),du(22));
+        }
+        k->rows[r].setSelected(n!=NULL&&n==selected_world);
+    }
+}
+
+// A tap on the world at `index`: select it, or — if it already is — play it (stock behaviour).
+void Menu::tapRow(int index){
+    WorldNode* n=menu_node_at(this,index);
+    if(!n||loading) return;
+    if(n==selected_world){
+        loading=1;
+        sbar->setStatus(@"Loading " ,9999);
+    }else{
+        selected_world=n;
+        fnbar->setStatus(selected_world->display_name ,9999);
+    }
+}
+
+CGRect Menu::controlRect(const char* which){
+    layoutKit();
+    if(!strcmp(which,"settings")) return kit->settings.rect();
+    if(!strcmp(which,"new"))      return kit->create.rect();
+    if(!strcmp(which,"play"))     return kit->play.rect();
+    if(!strcmp(which,"delete"))   return kit->del.rect();
+    if(!strcmp(which,"rename"))   return rect_rename.rect();
+    if(!strcmp(which,"list"))     return kit->list;
+    if(!strcmp(which,"scrollbar"))return kit->scroll.barRect();
+    if(!strcmp(which,"getworlds"))return kit->getWorlds.rect();
+    return CGRectMake(0,0,0,0);
+}
+
+bool Menu::rowRect(int index,CGRect* r){
+    layoutKit();
+    const int k=index-kit->scroll.first();
+    if(index<0||k<0||k>=kit->scroll.visible()||index>=kit->scroll.total()) return false;
+    if(r) *r=kit->rows[k].rect();
+    return true;
+}
+
+int Menu::firstVisibleRow(){ return kit->scroll.first(); }
+int Menu::visibleRows(){ return kit->scroll.visible(); }
 
 // Split out of the constructor so the point space can change after the Menu exists — see the same
 // method on Hud for why (web port audit D1/D4: SCREEN_WIDTH/SCREEN_HEIGHT are derived from the real
@@ -116,6 +317,7 @@ void Menu::layoutForScreen(){
 Menu::Menu(){
    
     fade_out=0;
+    kit=new MenuKit();
     settings=new SettingsMenu();
     menu_back=new Menu_background();
 	delete_mode=FALSE;
@@ -151,6 +353,8 @@ Menu::Menu(){
 	loading_world_list=0;
 	
     shared_list=new SharedList();
+    browser=new WorldBrowser();
+    showbrowser=FALSE;
 	
     
    /*  WorldNode* new_world;
@@ -373,6 +577,68 @@ void Menu::removeWorld(WorldNode* node){
 }
 static const int usage_id=7;
 #define SPACE 75
+
+// ---------------------------------------------------------------------------------------------
+// N.4.5: rename the selected world
+// ---------------------------------------------------------------------------------------------
+// In the action bar beside Delete since Stage 5.6 (layoutKit places it); offered only where the
+// host has GL text entry, so on web the bar is Delete · Play.
+bool Menu::renameOffered(){
+    if(!selected_world||delete_mode||share_mode||loading) return false;
+    if(!GLDialog::textEntryAvailable()) return false;
+    return true;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Stage 5.9: Get Worlds
+// ---------------------------------------------------------------------------------------------
+bool Menu::browserOffered(){
+    return WorldBrowser::available();
+}
+
+void Menu::openBrowser(){
+    if(!browserOffered()||loading) return;
+    browser->open();
+    showbrowser=TRUE;
+}
+
+static void menu_rename_cb(int chosen,const char* text){
+    if(chosen!=0) return;                 // "Cancel" (or Escape)
+    World::getWorld->menu->renameSelected(text);
+}
+
+void Menu::beginRename(){
+    if(!selected_world) return;
+    static const char* const kButtons[]={"Rename","Cancel"};
+    std::string cur=cpstring(selected_world->display_name);
+    // 49 bytes: WorldFileHeader::name is char[50] and the last byte is the terminator.
+    GLDialog::prompt("Rename world",NULL,cur.c_str(),49,kButtons,2,menu_rename_cb);
+}
+
+bool Menu::renameSelected(const char* utf8){
+    if(!selected_world||!utf8) return false;
+    // Trim: a name of only spaces lists as a blank tile, and a trailing space is never meant.
+    std::string n(utf8);
+    size_t a=n.find_first_not_of(' ');
+    size_t b=n.find_last_not_of(' ');
+    n=(a==std::string::npos)?std::string():n.substr(a,b-a+1);
+    if(n.empty()){
+        sbar->setStatus(@"A world needs a name",2);
+        return false;
+    }
+    NSString* nn=[NSString stringWithUTF8String:n.c_str()];
+    if(!nn) return false;
+    if(!World::getWorld->fm->renameWorld(selected_world->file_name,nn)){
+        sbar->setStatus(@"Couldn't rename the world",2);
+        return false;
+    }
+    [selected_world->display_name release];
+    selected_world->display_name=nn;
+    [selected_world->display_name retain];
+    fnbar->setStatus(selected_world->display_name,9999);
+    sbar->setStatus([NSString stringWithFormat:@"Renamed to %@",nn],2);
+    return true;
+}
 void Menu::update(float etime){
 	menu_back->update(etime);
 	if(is_sharing){
@@ -396,156 +662,102 @@ void Menu::update(float etime){
 		settings->update(etime);
 		return;
 	}
+	if(showbrowser){
+		browser->update(etime);
+		if(!browser->isOpen()) showbrowser=FALSE;   // Back, or a download handed back a world
+		return;
+	}
 	if(showlistscreen){
 		shared_list->update(etime);
 		
 	}
-	WorldNode* node=world_list;
-	while(node!=NULL){
-		node->rect.size.width=0;
-		node->rect.size.height=0;
-		//node->rect.origin.x=-1;
-		//node->rect.origin.y=-1;
-		node->tex=Resources::getResources->getMenuTex(MENU_BLOCK_UNSELECTED);
-		node=node->next;
-	}
-	activeRightArrow=FALSE;
-	activeLeftArrow=FALSE;
-	if(selected_world!=NULL){
-		selected_world->rect.size.width=85;
-		selected_world->rect.size.height=85;
-		selected_world->rect.origin.x=(SCREEN_WIDTH/2-selected_world->rect.size.width/2);
-		selected_world->rect.origin.y=130;
-		selected_world->tex=Resources::getResources->getMenuTex(MENU_BLOCK_SELECTED);
-		if(selected_world->prev!=NULL){
-			activeLeftArrow=TRUE;
-			selected_world->prev->rect.size.width=85;
-			selected_world->prev->rect.size.height=85;
-			selected_world->prev->rect.origin.x=
-				(SCREEN_WIDTH/2-selected_world->rect.size.width/2)-SPACE;
-			selected_world->prev->rect.origin.y=130;	
-			if(selected_world->prev->prev!=NULL){
-				selected_world->prev->prev->rect.size.width=85;
-				selected_world->prev->prev->rect.size.height=85;
-				selected_world->prev->prev->rect.origin.x=
-				(SCREEN_WIDTH/2-selected_world->rect.size.width/2)-SPACE*2;
-				selected_world->prev->prev->rect.origin.y=130;					
-			}
-		}
-		if(selected_world->next!=NULL){
-			activeRightArrow=TRUE;	
-			selected_world->next->rect.size.width=85;
-			selected_world->next->rect.size.height=85;
-			selected_world->next->rect.origin.x=(SCREEN_WIDTH/2-selected_world->rect.size.width/2)
-												+SPACE;
-			selected_world->next->rect.origin.y=130;	
-			if(selected_world->next->next!=NULL){
-				selected_world->next->next->rect.size.width=85;
-				selected_world->next->next->rect.size.height=85;
-				selected_world->next->next->rect.origin.x=(SCREEN_WIDTH/2-selected_world->rect.size.width/2)
-				+SPACE*2;
-				selected_world->next->next->rect.origin.y=130;	
-				
-				if(selected_world->next->next->next!=NULL){		
-					selected_world->next->next->next->rect.origin.x=(SCREEN_WIDTH/2-selected_world->rect.size.width/2)
-					+SPACE*3;
-				}
-			}
-		}
-	}
-	while(node!=NULL){
-		if(!node->rect.size.width){
-			node->anim.size.width=0;
-			node->anim.size.height=0;
-		}
-		
-	}
+	// Stage 5.6: the kit menu's input (the stock carousel's block rects, arrows and corner buttons
+	// are no longer hit-tested; see the block comment at the top of this file). Same usage_id claim
+	// protocol as before: a free touch is claimed on its down edge, acted on at its release.
+	layoutKit();
+	MenuKit* k=kit;
 	Input* input=Input::getInput();
-    itouch* touches=input->getTouches();
+	itouch* touches=input->getTouches();
 	sbar->update(etime);
-    
-   
-    
+	if(int wheel=eden_ui_take_wheel()) k->scroll.scrollBy(-wheel);   // wheel away = earlier rows
+
 	for(int i=0;i<MAX_TOUCHES;i++){
 		if(touches[i].inuse==0&&touches[i].down==M_DOWN){
 			touches[i].inuse=usage_id;
-			inbox3(touches[i].mx,touches[i].my,&right_arrow);            
-			inbox3(touches[i].mx,touches[i].my,&rect_options);
-			inbox3(touches[i].mx,touches[i].my,&rect_create);
-			inbox3(touches[i].mx,touches[i].my,&left_arrow)	;		
-            inbox3(touches[i].mx,touches[i].my,&rect_delete);
-			inbox3(touches[i].mx,touches[i].my,&rect_share);
-			inbox3(touches[i].mx,touches[i].my,&rect_loadshared);                
-            WorldNode* node=world_list;
-			while(node!=NULL){
-                inbox3(touches[i].mx,touches[i].my,&(node->anim));
-                node=node->next;
-            }
-		}			
+			const float mx=touches[i].mx, my=touches[i].my;
+			k->settings.setPressed(k->settings.hit(mx,my));
+			k->create.setPressed(k->create.hit(mx,my));
+			k->getWorlds.setPressed(k->getWorlds.hit(mx,my));
+			k->play.setPressed(k->play.hit(mx,my));
+			k->del.setPressed(k->del.hit(mx,my));
+			if(renameOffered()) rect_rename.setPressed(rect_rename.hit(mx,my));
+			if(loading) continue;
+			if(k->barTouch<0&&k->scroll.hitBar(mx,my)){
+				k->barTouch=i;
+				k->scroll.barBegin(my);
+			}else if(k->listTouch<0&&inbox(mx,my,k->list)){
+				k->listTouch=i;
+				k->scroll.beginContentDrag(my);
+				k->downRow=-1;
+				for(int r=0;r<k->scroll.visible();r++)
+					if(k->rows[r].hit(mx,my)) k->downRow=k->scroll.first()+r;
+			}
+		}
+		// Held: the thumb follows its touch; a list touch becomes a scroll once it travels.
+		if(touches[i].inuse==usage_id&&touches[i].down==M_DOWN){
+			if(i==k->barTouch) k->scroll.barDragTo(touches[i].my);
+			if(i==k->listTouch&&k->scroll.contentDragTo(touches[i].my)) k->downRow=-1;
+		}
 		if(touches[i].inuse==usage_id&&touches[i].down==M_RELEASE){
-			
-			WorldNode* node=world_list;
-			while(node!=NULL){
-                inbox2(touches[i].mx,touches[i].my,&(node->anim));
-				if(inbox2(touches[i].mx,touches[i].my,&(node->rect))){	
-					if(node==selected_world){					
-						if(delete_mode){	
-							if(selected_world){
-                               /* if(!World::getWorld->FLIPPED){
-                                    [UIApplication sharedApplication].statusBarOrientation = UIInterfaceOrientationLandscapeRight;
-                                }
-                                else{
-                                    [UIApplication sharedApplication].statusBarOrientation = UIInterfaceOrientationLandscapeLeft;
-                                    
-                                }*/
-                                showAlertDeleteConfirm([NSString stringWithFormat:@"Are you sure you want to delete \"%@\"?",selected_world->display_name]);
-                                 
-                                
+			const float mx=touches[i].mx, my=touches[i].my;
+			touches[i].inuse=0;
+			touches[i].down=M_NONE;
+			const bool settingsHit=k->settings.pressed()&&k->settings.hit(mx,my);
+			const bool createHit=k->create.pressed()&&k->create.hit(mx,my);
+			const bool getHit=k->getWorlds.pressed()&&k->getWorlds.hit(mx,my);
+			const bool playHit=k->play.pressed()&&k->play.hit(mx,my);
+			const bool delHit=k->del.pressed()&&k->del.hit(mx,my);
+			const bool renameHit=renameOffered()&&rect_rename.pressed()&&rect_rename.hit(mx,my);
+			k->settings.setPressed(false); k->create.setPressed(false); k->play.setPressed(false);
+			k->getWorlds.setPressed(false);
+			k->del.setPressed(false); rect_rename.setPressed(false);
 
-                                delete_mode=FALSE;
-							}
-							break;
-							
-						}else if(share_mode){
-							share_mode=FALSE;
-							
-							
-							if(World::getWorld->fm->worldExists(cpstring(node->file_name),TRUE)){
-								sbar->setStatus(@"Sharing world..." ,2);
-								is_sharing=TRUE;
-								share_menu->beginShare(node);
-							}else{
-								sbar->setStatus(@"World is empty" ,2);
-							}
-							
-							
-						
-						}else{
-                            if(loading==0){
-							loading=1;
-							sbar->setStatus(@"Loading " ,9999);
-                            }
-						}	
-					}else{
-						selected_world=node;
-						fnbar->setStatus(selected_world->display_name ,9999);
-					}
+			if(i==k->barTouch){ k->scroll.endDrag(); k->barTouch=-1; continue; }
+			if(i==k->listTouch){
+				const bool scrolled=k->scroll.scrolling();
+				k->scroll.endDrag();
+				k->listTouch=-1;
+				const int row=k->downRow;
+				k->downRow=-1;
+				// A tap: released on the row it went down on. A drag that came back is still a drag.
+				if(!scrolled&&row>=0){
+					const int r=row-k->scroll.first();
+					if(r>=0&&r<k->scroll.visible()&&k->rows[r].hit(mx,my)) tapRow(row);
 				}
-				node=node->next;
+				continue;
 			}
-			if(delete_mode){
-				sbar->clear();
-				delete_mode=FALSE;
+			if(renameHit){
+				beginRename();
+				return;                 // the dialog owns input from the next frame
 			}
-			if(share_mode){
-				sbar->clear();
-				share_mode=FALSE;
+			if(settingsHit){
+				settings->resetView();
+				showsettings=TRUE;
+				return;
 			}
-			
-			if(inbox2(touches[i].mx,touches[i].my,&rect_options)){				
-				showsettings=TRUE;				
+			if(getHit){
+				openBrowser();
+				return;
 			}
-			if(inbox2(touches[i].mx,touches[i].my,&rect_create)){
+			if(playHit&&selected_world&&loading==0){
+				loading=1;
+				sbar->setStatus(@"Loading " ,9999);
+			}
+			if(delHit&&selected_world){
+				showAlertDeleteConfirm([NSString stringWithFormat:@"%@",selected_world->display_name]);
+				return;
+			}
+			if(createHit){
 				WorldNode* new_world;
 				new_world=(WorldNode*)malloc(sizeof(WorldNode));
 				memset(new_world,0,sizeof(WorldNode));
@@ -554,38 +766,11 @@ void Menu::update(float etime){
 				[new_world->file_name retain];
 				[new_world->display_name retain];
 				addWorld(new_world);
-				selected_world=new_world;				
+				selected_world=new_world;
 				sbar->setStatus([NSString stringWithFormat:@"%@ created",new_world->display_name]
 							   ,2);
 				fnbar->setStatus(selected_world->display_name ,9999);
 			}
-			if(inbox2(touches[i].mx,touches[i].my,&left_arrow)){
-				if(selected_world&&selected_world->prev){
-					selected_world=selected_world->prev;
-					fnbar->setStatus(selected_world->display_name ,9999);
-				}
-			}
-			if(inbox2(touches[i].mx,touches[i].my,&right_arrow)){
-				if(selected_world&&selected_world->next){
-					selected_world=selected_world->next;
-					fnbar->setStatus(selected_world->display_name ,9999);
-				}
-			}
-			if(inbox2(touches[i].mx,touches[i].my,&rect_delete)){
-				sbar->setStatus(@"Choose world to delete" ,9999);
-				delete_mode=TRUE;					
-			}
-			if(inbox2(touches[i].mx,touches[i].my,&rect_share)){
-				sbar->setStatus(@"Choose world to share" ,9999);
-				share_mode=TRUE;					
-			}
-			if(inbox2(touches[i].mx,touches[i].my,&rect_loadshared)){		
-				sbar->setStatus(@"Getting world list. ",2);
-				loading_world_list=1;
-							
-			}
-			touches[i].inuse=0;
-			touches[i].down=M_NONE;
 		}
 	}
 			
@@ -668,6 +853,65 @@ void Menu::refreshfn(){
  fnbar->setStatus(selected_world->display_name ,9999);
 	
 }
+void Menu::renderKit(){
+    using namespace GLW;
+    layoutKit();
+    MenuKit* k=kit;
+
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+    glDisableClientState(GL_COLOR_ARRAY);
+
+    bevel(k->panel,BEVEL_WINDOW);
+    k->settings.render();
+    k->create.render();
+    const bool offerGet=browserOffered();
+    if(offerGet) k->getWorlds.render();
+    // The title is centred on the window; beside Get Worlds it may not fit between the buttons
+    // (Label has no measure call, so this is the width estimate its own wrap uses, 0.42 em/char).
+    const float cx=k->panel.origin.x+k->panel.size.width*0.5f;
+    const float halfTitle=du(32)*0.42f*6.0f*0.5f;
+    const float titleRoom=(offerGet?k->getWorlds.rect().origin.x:k->create.rect().origin.x)-du(6);
+    if(cx+halfTitle<=titleRoom) k->title.drawCentered(cx,k->titleY,kText);
+
+    bevel(k->list,BEVEL_CONTENT);
+    const int vis=k->scroll.visible();
+    if(k->scroll.total()==0){
+        const float cx=k->list.origin.x+k->list.size.width*0.5f;
+        const float h=k->empty.height()+du(6)+k->emptyHint.height();
+        const float yTop=k->list.origin.y+(k->list.size.height+h)*0.5f;
+        k->empty.drawCentered(cx,yTop,kText);
+        k->emptyHint.drawCentered(cx,yTop-k->empty.height()-du(6),kTextSecondary);
+    }else{
+        for(int r=0;r<vis&&k->scroll.first()+r<k->scroll.total();r++) k->rows[r].render();
+    }
+    k->scroll.render();
+
+    k->del.render();
+    if(renameOffered()) rect_rename.render();
+    k->play.render();
+
+    // The status line, over the background art: in-game chrome's inverted palette (light text,
+    // dark 1u shadow — design-system.md, "In-game chrome"), centred under the window.
+    NSString* st=sbar->current();
+    std::string t=st?cpstring(st):std::string();
+    const size_t e=t.find_last_not_of(" ");      // "Loading " has a stock trailing space
+    t=(e==std::string::npos)?std::string():t.substr(0,e+1);
+    if(t!=k->shownStatus){
+        k->shownStatus=t;
+        if(!t.empty()) k->status.set(t.c_str(),du(20),UITextAlignmentCenter);
+        else k->status.clear();
+    }
+    if(!k->status.empty()){
+        const float yTop=k->panel.origin.y-du(6);
+        k->status.drawChrome(SCREEN_WIDTH*0.5f,yTop,kWhite,kBlack);
+    }
+    glColor4f(1.0f,1.0f,1.0f,1.0f);
+}
+
 void Menu::render(){
     Graphics::prepareMenu();
 	
@@ -686,6 +930,11 @@ void Menu::render(){
 		settings->render();
         Graphics::endMenu();
 		
+		return;
+	}
+	if(showbrowser){
+		browser->render();
+        Graphics::endMenu();
 		return;
 	}
 	if(showlistscreen){
@@ -707,90 +956,10 @@ void Menu::render(){
         Resources::getResources->getMenuTex(MENU_LOGO)->drawText(rect_name);
     else
 	Resources::getResources->getMenuTex(MENU_LOGO)->drawInRect2(rect_name);
-	glColor4f(1.0, 1.0, 1.0, 1.0f);
-	WorldNode* node=world_list;
-	
-	while(node!=NULL){		
-		if(node->anim.size.width||node->rect.size.width){
-			Vector vec;
-			vec.z=0;
-			vec.x=node->rect.origin.x-node->anim.origin.x;
-			vec.y=node->rect.origin.y-node->anim.origin.y;
-			NormalizeVector(&vec);
-			
-			float d=node->rect.size.width-node->anim.size.width;
-			if(d<.00001&&d>-.00001)d=0.00001;
-			d=d/absf(d);
-			d*=10;
-			node->anim.size.width+=d;
-			node->anim.size.height+=d;
-			float d2=node->rect.size.width-node->anim.size.width;
-			if((d>=0&&d2<=0)||(d<=0&&d2>=0)){
-				node->anim.size.width=node->rect.size.width;
-				node->anim.size.height=node->rect.size.height;
-			}
-
-			
-		
-			node->anim.origin.x+=(vec.x*10);
-			node->anim.origin.y+=(vec.y*10);
-			
-			Vector vec2;
-			vec2.z=0;
-			vec2.x=node->rect.origin.x-node->anim.origin.x;
-			vec2.y=node->rect.origin.y-node->anim.origin.y;
-			if((vec2.x>=0&&vec.x<=0)||(vec2.x<=0&&vec.x>=0)){
-				node->anim.origin.x=node->rect.origin.x;
-				node->anim.origin.y=node->rect.origin.y;
-			}
-            float nn=85;
-            if(IS_IPAD)
-                nn=115/SCALE_HEIGHT;
-            if(node->anim.size.width<nn){
-               
-                if(node==selected_world)
-                    Resources::getResources->getMenuTex(MENU_BLOCK_SELECTED)->drawButton2(node->anim);
-                else {
-                    Resources::getResources->getMenuTex(MENU_BLOCK_UNSELECTED)->drawButton2(node->anim);
-                }
-               
-                
-            }else{
-			if(node==selected_world)
-			Resources::getResources->getMenuTex(MENU_BLOCK_SELECTED)->drawButton(node->anim);
-			else {
-				Resources::getResources->getMenuTex(MENU_BLOCK_UNSELECTED)->drawButton(node->anim);
-			}
-            }
-
-		}
-		node=node->next;
-	}
-	Resources::getResources->getMenuTex(MENU_OPTIONS)->drawButton(rect_options);
-	Resources::getResources->getMenuTex(MENU_DELETE_WORLD)->drawButton(rect_delete);
-	Resources::getResources->getMenuTex(MENU_CREATE_WORLD)->drawButton(rect_create);
-	Resources::getResources->getMenuTex(MENU_SHARE_WORLD)->drawButton(rect_share);
-	Resources::getResources->getMenuTex(MENU_LOAD_WORLD)->drawButton(rect_loadshared);
-	glColor4f(1.0, 1.0, 1.0, 1.0f);
-	if(!activeLeftArrow)
-		glColor4f(1.0, 1.0, 1.0, 0.3f);
-	Resources::getResources->getMenuTex(MENU_ARROW_LEFT)->drawButton(left_arrow);
-	glColor4f(1.0, 1.0, 1.0, 1.0f);
-	if(!activeRightArrow)
-		glColor4f(1.0, 1.0, 1.0, 0.3f);
-	Resources::getResources->getMenuTex(MENU_ARROW_RIGHT)->drawButton(right_arrow);
-	glDisable(GL_TEXTURE_2D);
-	if(delete_mode)
-		glColor4f(1.0, 0.0, 0.0, 1.0f);
-	else if(share_mode){
-		glColor4f(0.0, 1.0, 0.0, 1.0f);
-	}
-	
-	glColor4f(0.0, 0.0, 0.0, 1.0f);
-	glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-	glEnable(GL_TEXTURE_2D);
-	sbar->render();
-	fnbar->render();
+	// Stage 5.6: the kit window replaces the carousel, the corner icons and the two statusbar lines
+	// (sbar's text is drawn by the kit as the status line; fnbar's job, naming the selection, is
+	// the selected row's).
+	renderKit();
     if(AUTO_LOAD&&loading==0){
        
         

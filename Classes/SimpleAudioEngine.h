@@ -166,6 +166,12 @@ public:
     */
     void setBackgroundMusicVolume(float volume);
 
+    // Port only (SimpleAudioEngine_web.mm / _native.mm): the ENGINE's half of the music volume —
+    // Resources::update's per-frame song crossfade — multiplied with the user's slider above, the
+    // same split the ambience layers have. Until 2026-10-05 the engine wrote the slider's own value
+    // every frame, so the Music volume setting was overwritten one frame after it was set.
+    void setBackgroundMusicFade(float fade);
+
     /**
     @brief The volume of the effects max value is 1.0,the min value is 0.0
     */

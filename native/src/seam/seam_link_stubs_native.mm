@@ -102,8 +102,25 @@ void showAlertWarpHome() {
     GLDialog::show("Home menu", "Both options save the world file first.", kHome, 3, home_cb);
 }
 
-// Safe as a no-op: not confirming a delete is the non-destructive default.
-void showAlertDeleteConfirm(NSString *name) { (void)name; }
+// Stage 5.6: a real confirmation. It was a no-op ("not confirming a delete is the non-destructive
+// default"), which made the main menu's Delete do nothing on native at all. The callback is
+// Alert.mm's delegate for this alert: button 0 runs Menu::a_deleteConfirm() on the selected
+// world, Cancel runs a_deleteCancel(). Nothing waits on the answer (no `loading` is parked).
+// The body names the world; "Delete" first and Cancel LAST, the full-width row (see above).
+static void delete_cb(int i) {
+    Menu* m = World::getWorld ? World::getWorld->menu : NULL;
+    if (!m) return;
+    if (i == 0 && m->selected_world) m->a_deleteConfirm();
+    else m->a_deleteCancel();
+}
+
+void showAlertDeleteConfirm(NSString *name) {
+    static const char* const kDelete[] = { "Delete", "Cancel" };
+    static char body[160];
+    std::snprintf(body, sizeof(body), "\"%s\" will be deleted from this device. This can't be undone.",
+                  name ? [name UTF8String] : "This world");
+    GLDialog::show("Delete world?", body, kDelete, 2, delete_cb);
+}
 
 // =============================================================================================
 // VKeyboard  (Classes/VKeyboard.mm, excluded) — Stage 2

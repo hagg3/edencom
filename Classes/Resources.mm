@@ -973,11 +973,13 @@ Resources::Resources(){
    
 	//[[CDAudioManager sharedManager] setMode:kAMM_FxPlusMusicIfNoOtherAudio];
 	
-	audio->setBackgroundMusicVolume(1.0);
-	
-	
-	
-	
+	// PORT FIX (2026-10-05): the crossfade's starting point, not the volume — setBackgroundMusicVolume
+	// is the player's slider now (SimpleAudioEngine.h), and writing 1.0 there would reset it.
+	audio->setBackgroundMusicFade(1.0);
+
+
+
+
 }
 static int lasttitlesongplayed=-1;
 static BOOL titlesongisplaying=FALSE;
@@ -1638,6 +1640,21 @@ void Resources::endBurn(){
 #define TIME_BETWEEN_SONGS (60*5)
 static int lastsongplayed=-1;
 
+// PORT FIX (2026-10-05): the Music toggle's side effect. Settings_web.mm used to call
+// playMenuTune() on every switch-on, which is right on the title screen and wrong in a world —
+// toggling music on from the pause menu's settings started a TITLE track over gameplay. In a
+// world, switching on cues the next in-game song now instead; switching off stops music and
+// the ambience beds (both follow `playmusic`) wherever it happens, as it always did.
+void Resources::musicToggled(BOOL on){
+    if(!on){ stopMenuTune(); return; }
+    World* w=World::getWorld;
+    const bool inWorld=w&&(w->game_mode==GAME_MODE_PLAY||
+                           (w->game_mode==GAME_MODE_WAIT&&w->target_game_mode==GAME_MODE_PLAY));
+    if(!inWorld){ playMenuTune(); return; }
+    titlesongisplaying=FALSE;
+    songisplaying=FALSE;
+    cuetimer=TIME_BETWEEN_SONGS;      // update()'s next tick starts a song
+}
 
 void Resources::update(float etime){
     lasteffectplayed=-1;
@@ -1681,8 +1698,14 @@ void Resources::update(float etime){
                 songisplaying=TRUE;
             }
         }
-        if(audio->getBackgroundMusicVolume()!=bkgvolume)  //crash tally: 1
-          audio->setBackgroundMusicVolume(bkgvolume);
+        // PORT FIX (2026-10-05): the crossfade is the FADE half of the music volume. This used to
+        // write setBackgroundMusicVolume — the settings slider's own knob — every frame the two
+        // differed, so a slider change lasted exactly one frame.
+        static float lastfade=-1.0f;
+        if(lastfade!=bkgvolume){  //crash tally: 1
+            audio->setBackgroundMusicFade(bkgvolume);
+            lastfade=bkgvolume;
+        }
 
         // All four ambience layers' triggers (soundEventBed/Proximity/Portal/TreasureProximity)
         // early-return without stopping anything once game_mode leaves GAME_MODE_PLAY -- there's no

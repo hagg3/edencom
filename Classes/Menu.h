@@ -18,6 +18,8 @@
 #import "ShareMenu.h"
 #import "Util.h"
 #import "Menu_background.h"
+#import "GLWidgets.h"
+#import "WorldBrowser.h"
 
 
 class ShareMenu;
@@ -79,6 +81,40 @@ public:
     void activate();
     void deactivate();
     
+    // N.4.5: rename the selected world. A GL text prompt (GLDialog::prompt) behind a "Rename"
+    // button under the carousel, offered only where the host has GL text entry (not web, whose
+    // DOM menu owns world naming). renameSelected() is the prompt's commit, public so a harness
+    // can drive the same path the dialog does.
+    GLW::Button rect_rename;
+    bool renameOffered();
+    void beginRename();
+    bool renameSelected(const char* utf8);
+
+    // Stage 5.6: the main menu on the GL widget kit — a WINDOW under the logo holding a titlebar
+    // (Settings · Worlds · New), the world list (GLW::ListRow in a row-snapped GLW::ScrollView)
+    // and an action bar (Delete · Rename · Play), with the status line under it. The stock
+    // carousel's rects above (rect_options, rect_create, the arrows, ...) are still computed by
+    // layoutForScreen() but no longer drawn or hit-tested. The kit's state lives in Menu.mm.
+    struct MenuKit* kit;
+    void layoutKit();
+    void renderKit();
+    void tapRow(int index);
+    // --ui-selftest / --shot: where a control is, in point space (y up). `which` is one of
+    // "settings", "new", "play", "delete", "rename", "list", "scrollbar"; rowRect() answers for a
+    // world index, and false if that row is scrolled out of view. "getworlds" since 5.9.
+    CGRect controlRect(const char* which);
+    bool   rowRect(int index, CGRect* r);
+    int    firstVisibleRow();
+    int    visibleRows();
+
+    // Stage 5.9: "Get Worlds" — the online browser (archive + the current and legacy Eden
+    // servers), a full screen over the menu background like settings. Offered only where the host
+    // can fetch (WorldBrowser::available(); never on web, whose DOM screen is its browser).
+    WorldBrowser* browser;
+    BOOL showbrowser;
+    bool browserOffered();
+    void openBrowser();
+
     void a_genFlat(BOOL b);
     void a_deleteCancel();
     void a_deleteConfirm();
