@@ -16,7 +16,8 @@
 #include "../../../Classes/FileManagerHelper.h"   // B6 read-path benchmark, below
 #include "../shim/foundation/platform_shims.h"   // EDEN_EXPORT (Phase N Stage 1)
 #include <cstdio>
-#ifdef __APPLE__
+#include <TargetConditionals.h>
+#if defined(__APPLE__) && !TARGET_OS_IPHONE
 #include <libproc.h>
 #include <sys/resource.h>
 #endif
@@ -94,14 +95,14 @@ EDEN_EXPORT
 const char* eden_bench_save(void) {
     static char buf[160];
     unsigned long long r0 = 0, w0 = 0, r1 = 0, w1 = 0;
-#ifdef __APPLE__
+#if defined(__APPLE__) && !TARGET_OS_IPHONE
     rusage_info_current ri;
     if (proc_pid_rusage(getpid(), RUSAGE_INFO_CURRENT, (rusage_info_t*)&ri) == 0) { r0 = ri.ri_diskio_bytesread; w0 = ri.ri_diskio_byteswritten; }
 #endif
     auto t0 = std::chrono::steady_clock::now();
     World::getWorld->fm->saveWorld();
     auto t1 = std::chrono::steady_clock::now();
-#ifdef __APPLE__
+#if defined(__APPLE__) && !TARGET_OS_IPHONE
     if (proc_pid_rusage(getpid(), RUSAGE_INFO_CURRENT, (rusage_info_t*)&ri) == 0) { r1 = ri.ri_diskio_bytesread; w1 = ri.ri_diskio_byteswritten; }
 #endif
     snprintf(buf, sizeof(buf), "{\"ms\":%.3f,\"read\":%llu,\"written\":%llu}",
