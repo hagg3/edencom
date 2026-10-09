@@ -142,6 +142,9 @@ void GLDialog::layout() {
     if (m_hasField) {
         rowTop += du(14) - du(12);
         m_field.setRect(CGRectMake(px + pad, rowTop - fieldH, innerW, fieldH));
+        // The iOS keyboard lifts the view only as far as this rect's bottom: the field alone left
+        // the buttons under the keyboard (T.B1). The whole panel keeps them, and the title, on screen.
+        m_field.setKeepVisible(m_panel);
         rowTop -= fieldH + du(14);
     }
     for (int j = 0; j < m_nButtons; j++) {

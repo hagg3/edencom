@@ -265,13 +265,22 @@ state machine for sky-color regions (`Terrain.mm:3073-3170`).
 between them (sky, terrain passes 1 and 2, creatures, effects, fireworks, the player's selection
 outline) is the **3D pass**; the HUD, menus and `GLDialog` come after it. Both are port hooks in the
 GL shim (`gl_es1_shim.h`): on web they are no-ops (the page scales the whole canvas by
-`render_scale`), and on native at 100% they are no-ops too. At any other `render_scale` the native
+`render_scale`), and on native at 100% they are no-ops too. On iOS `render_scale` is always 100% (N.4.12: the setting was dropped there). At any other `render_scale` the native
 shim (`native/src/shim/gl/gl_context_native.cpp`) points the 3D pass at an offscreen colour+depth
 framebuffer of drawable × scale and blits it, linearly filtered, into the letterbox box at `_end`,
 so the 2D UI still draws at full density. Point-sprite sizes are compensated for the scale; picking
 is unaffected (it unprojects against the fixed point-space viewport). Anything new that belongs to
 the world must draw *before* `_end`, and anything that is UI must draw *after* it, or it renders at
 the wrong resolution.
+
+**iOS presents the BOUND renderbuffer** (N.4.12, 2026-10-08). SDL's UIKit swap is a bare
+`presentRenderbuffer:GL_RENDERBUFFER`, so GL code on native must never leave a renderbuffer other
+than SDL's view's bound at the end of a frame. The scene framebuffer's allocation once ended with
+`glBindRenderbuffer(0)`; at 50%/75% the iPad then stopped presenting from the first world frame on
+(screen frozen on the loading bar, game running underneath) while every readback-based harness
+passed. The allocation now restores the previous binding, and `eden_native_gl_present()` carries an
+iOS-only **present guard**: it rebinds the view's renderbuffer if anything else is bound, logs
+`[eden-gl] PRESENT GUARD` once, and `--smoke` fails if it ever fired.
 
 ## Camera (`Camera.mm`)
 First-person: position = player pos (eye offset), yaw/pitch from touch-look. `render()`

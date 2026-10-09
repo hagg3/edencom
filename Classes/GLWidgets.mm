@@ -692,6 +692,13 @@ static TextField* s_focused = NULL;
 
 TextField::TextField() : m_pt(16.0f), m_maxBytes(49), m_showingPlaceholder(false) {
     m_rect = CGRectMake(0, 0, 0, 0);
+    m_keep = CGRectMake(0, 0, 0, 0);
+}
+
+// Tells the platform where the field is, and what else the keyboard must leave visible.
+void TextField::announce() const {
+    eden_text_input_keep_visible(m_keep.origin.x, m_keep.origin.y, m_keep.size.width, m_keep.size.height);
+    eden_text_input_start(m_rect.origin.x, m_rect.origin.y, m_rect.size.width, m_rect.size.height);
 }
 
 TextField::~TextField() { if (s_focused == this) blur(); }
@@ -711,8 +718,14 @@ void TextField::setRect(CGRect r) {
     const bool moved = r.origin.x != m_rect.origin.x || r.origin.y != m_rect.origin.y ||
                        r.size.width != m_rect.size.width || r.size.height != m_rect.size.height;
     m_rect = r;
-    if (moved && focused())
-        eden_text_input_start(r.origin.x, r.origin.y, r.size.width, r.size.height);
+    if (moved && focused()) announce();
+}
+
+void TextField::setKeepVisible(CGRect r) {
+    const bool moved = r.origin.x != m_keep.origin.x || r.origin.y != m_keep.origin.y ||
+                       r.size.width != m_keep.size.width || r.size.height != m_keep.size.height;
+    m_keep = r;
+    if (moved && focused()) announce();
 }
 
 void TextField::setPointSize(float pt) { m_pt = pt; rebuild(); }
@@ -739,7 +752,7 @@ void TextField::focus() {
     s_focused = this;
     char drain[256];
     while (eden_text_input_take(drain, sizeof(drain)) > 0) {}   // nothing typed before focus counts
-    eden_text_input_start(m_rect.origin.x, m_rect.origin.y, m_rect.size.width, m_rect.size.height);
+    announce();
     rebuild();
 }
 

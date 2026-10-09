@@ -578,6 +578,7 @@ static BOOL beginSaveJournal(NSString* file_name,unsigned long long orig_length,
 	NSMutableData* out=[NSMutableData dataWithCapacity:(NSUInteger)(sizeof(jh)+region_len)];
 	[out appendBytes:&jh length:sizeof(jh)];
 	[out appendData:region];
+	[fm createFileAtPath:jrnl contents:nil attributes:nil]; // S0 BENCH: Apple Foundation returns nil for a missing file
 	NSFileHandle* jf=[NSFileHandle fileHandleForUpdatingAtPath:jrnl];
 	if(jf==NULL)return FALSE;
 	[jf writeData:out];
@@ -813,7 +814,7 @@ void FileManager::saveWorld(Vector warp){
 			// unloadable. The last complete save stays on disk untouched, every chunk keeps its
 			// `modified` flag, and the next save retries. (Chunks are re-marked by endDynamics
 			// only; nothing above this point has cleared them.)
-			NSLog(@"saveWorld: could not journal %@ -- SKIPPING this save, last one left intact",file_name);
+			fprintf(stderr,"S0DBG could not journal -- SKIPPING\n");NSLog(@"saveWorld: could not journal %@ -- SKIPPING this save, last one left intact",file_name);
 			endSaveJournal(file_name,TRUE);
 			free(sfh);
 			return;

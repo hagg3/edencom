@@ -103,7 +103,29 @@ void eden_native_gl_set_present(int on) { g_present_enabled = (on != 0); }
 
 void eden_mem_trace_frame(void);   // HeapProbe_native.cpp: --mem-trace=2's first-frames samples
 
+// THE PRESENT GUARD (N.4.12). On iOS, SDL_GL_SwapWindow presents whichever renderbuffer is bound
+// (see the scene-pass notes below), so any code that leaves another one bound freezes the screen
+// silently: the game keeps running and every readback-based check still passes. The view's own
+// renderbuffer is recorded once the context is live; a present that finds a different binding puts
+// it back, says so once, and counts it, so --smoke can fail on it (eden_native_gl_present_guard_fires).
+static GLint g_view_rb = -1;
+static int   g_present_guard_fires = 0;
+int eden_native_gl_present_guard_fires(void) { return g_present_guard_fires; }
+
 void eden_native_gl_present(void) {
+#if defined(EDEN_PLATFORM_IOS)
+    if (g_window && g_present_enabled && g_view_rb >= 0) {
+        GLint rb = 0;
+        glGetIntegerv(GL_RENDERBUFFER_BINDING, &rb);
+        if (rb != g_view_rb) {
+            if (g_present_guard_fires++ == 0)
+                std::fprintf(stderr, "[eden-gl] PRESENT GUARD: renderbuffer %d bound at present, not "
+                                     "the view's %d; rebinding (the frame would not have shown).\n",
+                             (int)rb, (int)g_view_rb);
+            glBindRenderbuffer(GL_RENDERBUFFER, (GLuint)g_view_rb);
+        }
+    }
+#endif
     if (g_window && g_present_enabled) SDL_GL_SwapWindow(g_window);
     eden_mem_trace_frame();
 }
@@ -208,6 +230,9 @@ int eden_gl_context_create(int drawable_width, int drawable_height) {
     }
     SDL_GL_MakeCurrent(g_window, g_gl);
     SDL_GL_SetSwapInterval(1);
+#if defined(EDEN_PLATFORM_IOS)
+    glGetIntegerv(GL_RENDERBUFFER_BINDING, &g_view_rb);   // SDL leaves its view's bound; see the present guard
+#endif
 
     // (4) Phase N Stage 3.2: on Linux and Windows every GL call above 1.1 goes through a function
     // pointer this resolves (gl_loader_native.h explains why, and why it is an explicit list).
@@ -342,6 +367,17 @@ void eden_gl_context_bind_default_framebuffer(void) {
 // object of its own and the system presents its renderbuffer; binding 0 there would send the HUD
 // nowhere. So _begin reads GL_FRAMEBUFFER_BINDING and _end restores exactly that.
 //
+// NOR IS ITS RENDERBUFFER BINDING OURS TO CHANGE (N.4.12, 2026-10-08). SDL's UIKit swap is a bare
+// `[context presentRenderbuffer:GL_RENDERBUFFER]`, which presents WHATEVER renderbuffer is bound
+// ("viewRenderbuffer should always be bound here. Code that binds something else is responsible
+// for rebinding viewRenderbuffer", SDL_uikitopenglview.m). Allocating the scene framebuffer used
+// to finish with glBindRenderbuffer(0), so from the first scaled frame on every present failed
+// (GL_INVALID_OPERATION, which the next texture upload reported as "invalid operation in
+// initData"): the iPad kept showing the last menu frame, the loading bar at 58%, while the game
+// ran on underneath at ~40% CPU. Every --smoke/--shot check passed because they read the
+// framebuffer back and never look at what was presented. Desktop swaps ignore the binding, which
+// is why macOS never reproduced it. So the allocation saves GL_RENDERBUFFER_BINDING and puts it back.
+//
 // WHAT ELSE A SCALED PASS CHANGES, and what was checked:
 //   * picking: Util.mm's findWorldCoords unprojects against kPickViewport, the engine's POINT
 //     space, never the real viewport, so a smaller framebuffer cannot misaim a tap;
@@ -396,6 +432,8 @@ void eden_scene_pass_begin(void) {
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &g_scene_prev_fbo);
     if (!g_scene_fbo || w != g_scene_fbo_w || h != g_scene_fbo_h) {
         eden_scene_fbo_release();
+        GLint prevRb = 0;
+        glGetIntegerv(GL_RENDERBUFFER_BINDING, &prevRb);
         glGenFramebuffers(1, &g_scene_fbo);
         glGenRenderbuffers(1, &g_scene_color);
         glGenRenderbuffers(1, &g_scene_depth);
@@ -406,7 +444,7 @@ void eden_scene_pass_begin(void) {
         glBindRenderbuffer(GL_RENDERBUFFER, g_scene_depth);
         glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, g_scene_depth);
-        glBindRenderbuffer(GL_RENDERBUFFER, 0);
+        glBindRenderbuffer(GL_RENDERBUFFER, (GLuint)prevRb);   // iOS presents this one; see above
         const GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
         if (status != GL_FRAMEBUFFER_COMPLETE) {
             std::fprintf(stderr, "[eden-gl] scene framebuffer %dx%d incomplete (0x%x); rendering "

@@ -47,6 +47,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cmath>
 #include <cstring>
@@ -633,6 +634,7 @@ int eden_native_input_debug_hold_active(void) { return g_hold.active ? 1 : 0; }
 namespace {
 bool        g_textActive = false;
 std::string g_textQueue;
+float       g_keep[4] = {0, 0, 0, 0};   // eden_text_input_keep_visible(), point space
 
 // Point space (y up) -> window points (y down), the inverse of window_to_point(). Only used to
 // tell the IME / iOS keyboard where the field is, so a little slop is harmless.
@@ -659,9 +661,28 @@ void point_rect_to_window(float x, float y, float w, float h, SDL_Rect* out) {
 
 extern "C" int eden_text_input_available(void) { return 1; }
 
+extern "C" void eden_text_input_keep_visible(float x, float y, float w, float h) {
+    g_keep[0] = x; g_keep[1] = y; g_keep[2] = w; g_keep[3] = h;
+}
+
 extern "C" void eden_text_input_start(float x, float y, float w, float h) {
     g_textActive = true;
     if (!g_window) return;
+#if defined(EDEN_PLATFORM_IOS)
+    // SDL's UIKit controller shifts the whole view up until the BOTTOM of the text-input area meets
+    // the keyboard's top (SDL_uikitviewcontroller.m, updateKeyboard), and that is all the keyboard
+    // avoidance iOS gets. With only the field announced, a dialog's buttons below it stayed covered
+    // (T.B1, 2026-10-08), so the area is the field plus whatever the screen asked to keep visible.
+    // Desktops skip this: there the area anchors the IME candidate window, which belongs on the field.
+    if (g_keep[2] > 0.0f && g_keep[3] > 0.0f) {
+        const float x1 = std::max(x + w, g_keep[0] + g_keep[2]);
+        const float y1 = std::max(y + h, g_keep[1] + g_keep[3]);
+        x = std::min(x, g_keep[0]);
+        y = std::min(y, g_keep[1]);
+        w = x1 - x;
+        h = y1 - y;
+    }
+#endif
     SDL_Rect r;
     point_rect_to_window(x, y, w, h, &r);
     SDL_SetTextInputArea(g_window, &r, 0);
@@ -671,6 +692,7 @@ extern "C" void eden_text_input_start(float x, float y, float w, float h) {
 extern "C" void eden_text_input_stop(void) {
     g_textActive = false;
     g_textQueue.clear();
+    g_keep[0] = g_keep[1] = g_keep[2] = g_keep[3] = 0.0f;
     if (g_window && SDL_TextInputActive(g_window)) SDL_StopTextInput(g_window);
 }
 

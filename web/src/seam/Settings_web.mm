@@ -626,7 +626,9 @@ int eden_get_render_scale_pct(void) {
     static const int kPct[] = {50, 75, 100, 125};
     int i = (int)lroundf(eden_render_scale);
 #if defined(EDEN_PLATFORM_IOS)
-    if (i == 3) return 100;   // 125% is not offered on iOS (see the kSettings[] row)
+    // N.4.12: iOS ignores the setting altogether (the row is hidden too). At 50% the iPad showed the HUD over a
+    // frozen menu even after the present-binding fix; the user chose to drop it. A stored 0/1/3 reads as 100%.
+    (void)i; return 100;
 #endif
     if (i < 0 || i >= (int)(sizeof(kPct) / sizeof(kPct[0]))) return 100;
     return kPct[i];
@@ -718,6 +720,9 @@ EDEN_EXPORT int eden_settings_native_hidden(int i) {
         "display_layout", "input_mode", "legacy_menu",
     };
     for (const char* h : kHidden) if (std::strcmp(s->key, h) == 0) return 1;
+#if defined(EDEN_PLATFORM_IOS)
+    if (std::strcmp(s->key, "render_scale") == 0) return 1;   // N.4.12: dropped on iOS (see eden_get_render_scale_pct)
+#endif
     return 0;
 }
 

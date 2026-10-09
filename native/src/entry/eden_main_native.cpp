@@ -184,6 +184,7 @@ int   eden_settings_loaded(void);
 void  eden_heap_pressure_tick(void);
 void  eden_native_gl_set_headless(int on);
 void  eden_native_gl_set_present(int on);
+int   eden_native_gl_present_guard_fires(void);
 void  eden_gl_glReadPixels(int x, int y, int w, int h, unsigned fmt, unsigned type, void* px);
 void  eden_gl_context_get_drawable_size(int* w, int* h);
 SDL_Window* eden_native_gl_window(void);
@@ -234,6 +235,7 @@ void  eden_debug_set_light_selfcheck(int on);
 void  eden_debug_set_empty_selfcheck(int on);
 long long eden_debug_chunk_empty(int x, int z, int y);
 int   eden_console_getblock(int x, int z, int y);
+const char* eden_bench_save(void);   // S.0(a) throwaway
 void  eden_debug_set_mesh_checksum(int on);
 const char* eden_debug_world_format(void);
 const char* eden_debug_heap(void);
@@ -252,6 +254,7 @@ extern float eden_gamepad_deadzone;
 // Classes/Alert.h — the native seam (seam_link_stubs_native.mm) implements this as a GLDialog.
 void showAlertWarpHome();
 
+void eden_set_save_inplace_threshold(unsigned long long);   // S.0(a) throwaway
 namespace {
 
 struct Options {
@@ -545,6 +548,13 @@ int run_smoke() {
     // in the exit code rather than leaving it to be read out of the log.
     if (draws <= 0) {
         std::fprintf(stderr, "[eden-smoke] FAIL: the world frame issued no draw calls.\n");
+        return 1;
+    }
+    // The readback above cannot see a frame that was drawn but never PRESENTED (N.4.12: iOS at a
+    // non-100% render scale), so the present guard's count is the check for that.
+    if (eden_native_gl_present_guard_fires() > 0) {
+        std::fprintf(stderr, "[eden-smoke] FAIL: %d present(s) found the wrong renderbuffer bound.\n",
+                     eden_native_gl_present_guard_fires());
         return 1;
     }
     return 0;
@@ -955,6 +965,40 @@ int run_empty_bit_selftest() {
     std::printf("[eden-empty] %s (%d failure(s))\n",
                 g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
     return g_selftestFailures ? 1 : 0;
+}
+
+
+// ---- S.0(a) THROWAWAY: --save-bench=1,10,50,144 (dirty-column save cost; never merged) ----------
+static std::string g_saveBenchList = "1,10,50,144";
+int run_save_bench() {
+    g_selftestTag = "eden-savebench";
+    const char* name = g_opt.world.empty() ? "S0 W64" : g_opt.world.c_str();
+    if (!open_world(name, g_opt.height)) return 1;
+    eden_console_teleport(g_opt.at[0], g_opt.at[1], g_opt.at[2]);
+    tick(g_opt.frames / 2);
+    if (const char* th = std::getenv("SAVEBENCH_THRESHOLD")) { eden_set_save_inplace_threshold(strtoull(th, 0, 10)); }
+    const PlayerState ps = player_state();
+    const int px = ((int)ps.x / 16) * 16 + 8, pz = ((int)ps.z / 16) * 16 + 8;
+    std::printf("[eden-savebench] world=%s player=(%d,%d)\n", name, (int)ps.x, (int)ps.z);
+    { const char* r = eden_bench_save(); std::printf("[eden-savebench] warmup(no dirt) %s\n", r); }
+    int flip = 0;
+    std::string list = g_saveBenchList;
+    for (size_t pos = 0; pos < list.size();) {
+        size_t c = list.find(',', pos); if (c == std::string::npos) c = list.size();
+        int n = atoi(list.substr(pos, c - pos).c_str()); pos = c + 1;
+        for (int rep = 0; rep < 3; ++rep) {
+            ++flip;
+            int side = 1; while (side * side < n) ++side;
+            int placed = 0;
+            for (int i = 0; i < side && placed < n; ++i)
+                for (int j = 0; j < side && placed < n; ++j, ++placed)
+                    eden_console_setblock(px + (i - side / 2) * 16, pz + (j - side / 2) * 16, 30, 10 + (flip % 20));
+            tick(3);
+            const char* r = eden_bench_save();
+            std::printf("[eden-savebench] cols=%d rep=%d %s\n", n, rep, r);
+        }
+    }
+    return 0;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -3659,6 +3703,7 @@ static int parse_one_arg(const char* a) {
         else if (!std::strcmp(a, "--p1-gate"))        { g_opt.mode = "p1-gate";  g_opt.headless = true; }
         else if (!std::strcmp(a, "--stage1"))         g_opt.mode = "stage1";
         else if (!std::strcmp(a, "--smoke"))          g_opt.mode = "smoke";
+        else if (starts_with(a, "--save-bench="))     { g_opt.mode = "save-bench"; g_opt.headless = true; g_saveBenchList = a + 13; }
         else if (!std::strcmp(a, "--input-selftest")) { g_opt.mode = "input-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--audio-selftest")) { g_opt.mode = "audio-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--gamepad-selftest")) { g_opt.mode = "gamepad-selftest"; g_opt.headless = true; }
@@ -3905,6 +3950,7 @@ static int eden_main_after_args(int argc, char** argv) {
         if (!std::strcmp(g_opt.mode, "p1-gate"))            rc = run_p1_gate();
         else if (!std::strcmp(g_opt.mode, "stage1"))        rc = run_stage1();
         else if (!std::strcmp(g_opt.mode, "smoke"))         rc = run_smoke();
+        else if (!std::strcmp(g_opt.mode, "save-bench"))    rc = run_save_bench();
         else if (!std::strcmp(g_opt.mode, "input-selftest")) rc = run_input_selftest();
         else if (!std::strcmp(g_opt.mode, "keybind-selftest")) rc = run_keybind_selftest();
         else if (!std::strcmp(g_opt.mode, "ui-selftest")) rc = run_ui_selftest();

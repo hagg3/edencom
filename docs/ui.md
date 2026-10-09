@@ -103,7 +103,7 @@ rail, this is its few-words sibling) and `GLW::progressBar()` (`.eden-progress`:
     `glFlush`, per button per frame.
 - **Text entry — `GLW::TextField` + the `eden_text_input_*` seam (N.4.5, 2026-10-04).** The first
   text entry on any port target (`VKeyboard.mm` is a UIKit overlay and is seam-excluded
-  everywhere). The field draws itself; the platform supplies composed UTF-8 through five C calls
+  everywhere). The field draws itself; the platform supplies composed UTF-8 through six C calls
   declared at the bottom of `GLWidgets.h`: native implements them in
   `native/src/seam/Input_native.cpp` over `SDL_StartTextInput` (which raises the **system keyboard
   on iOS**) and `SDL_EVENT_TEXT_INPUT`, and **while a field has focus every key belongs to it** —
@@ -113,7 +113,12 @@ rail, this is its few-words sibling) and `GLW::progressBar()` (`.eden-progress`:
   seam has no measure call and a drawn caret would drift); editing is append/backspace only,
   UTF-8-aware and capped in **bytes**; and the platform ending input on its own (the iOS keyboard
   dismissed) is `EV_BLURRED`, distinct from Return (`EV_COMMIT`) and Escape (`EV_CANCEL`).
-  `GLDialog::prompt()` is the dialog form of it.  - **Rebind capture is armed in the model, not in the screen** (`eden_keybind_capture_begin`).
+  `GLDialog::prompt()` is the dialog form of it. **Keyboard avoidance (T.B1, 2026-10-08):** the only
+  thing iOS does about an on-screen keyboard is SDL's — it shifts the whole view up until the
+  *bottom of the text-input area* meets the keyboard — so a field also takes
+  `setKeepVisible(rect)`, which the sixth call (`eden_text_input_keep_visible`) folds into
+  that area on iOS only. `GLDialog` passes its whole panel, which keeps its buttons above the
+  keyboard; desktops ignore it so the IME candidate window stays anchored on the field.  - **Rebind capture is armed in the model, not in the screen** (`eden_keybind_capture_begin`).
     The engine's `Input` carries touches and nothing else, so the key that closes a capture arrives
     on a path no GL screen can see: on native it comes through SDL and
     `native/src/seam/Input_native.cpp` feeds it to `eden_keybind_capture_feed()` **ahead of every
@@ -290,7 +295,8 @@ them — the ordering in `World::update` is the arbitration.
   is web-only (`dpr_cap`, `ui_scale`, `display_mode`, `display_layout`, `input_mode`,
   `legacy_menu`) are hidden via `eden_settings_native_hidden()`. `render_scale` was on that list
   until N.4.11 (2026-10-04); native now renders the 3D pass at it (see rendering.md, "Scene-pass
-  bracket"), so the Video page shows it.
+  bracket"), so the Video page shows it. **Not on iOS since 2026-10-09 (N.4.12):** the row is hidden and
+  `eden_get_render_scale_pct()` returns 100 there.
   **Stage 5.3 added the keybinds entry** (the titlebar's "Controls" button since 5.4), which shows
   `KeybindsMenu` and hands it the whole frame until it closes.
 - **`WorldBrowser`** (`Classes/WorldBrowser.{h,mm}`, **added Stage 5.9, 2026-10-07**) — "Get

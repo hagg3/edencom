@@ -227,6 +227,7 @@ void vkeyboard_init() {}
 // "inactive", which commits it unchanged on its next update().
 extern "C" int  eden_text_input_available(void) { return 0; }
 extern "C" void eden_text_input_start(float x, float y, float w, float h) { (void)x; (void)y; (void)w; (void)h; }
+extern "C" void eden_text_input_keep_visible(float x, float y, float w, float h) { (void)x; (void)y; (void)w; (void)h; }
 extern "C" void eden_text_input_stop(void) {}
 extern "C" int  eden_text_input_active(void) { return 0; }
 extern "C" int  eden_text_input_take(char* buf, int cap) { (void)buf; (void)cap; return 0; }

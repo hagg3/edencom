@@ -406,6 +406,10 @@ public:
 
     void setRect(CGRect r);
     CGRect rect() const      { return m_rect; }
+    // What an on-screen keyboard must not cover while this field is focused, the field included —
+    // a dialog passes its whole panel so its buttons stay reachable (T.B1, 2026-10-08). Zero-size
+    // (the default) means just the field.
+    void setKeepVisible(CGRect r);
     void setPointSize(float pt);
     void setText(const char* utf8);
     const std::string& text() const { return m_text; }
@@ -430,9 +434,10 @@ private:
     TextField(const TextField&);
     TextField& operator=(const TextField&);
     void rebuild();
+    void announce() const;
     bool applyInput(const char* bytes, int n, Event* ev);
 
-    CGRect      m_rect;
+    CGRect      m_rect, m_keep;
     float       m_pt;
     int         m_maxBytes;
     std::string m_text, m_placeholder;
@@ -458,6 +463,10 @@ void eden_text_input_start(float x, float y, float w, float h);
 void eden_text_input_stop(void);
 int  eden_text_input_active(void);
 int  eden_text_input_take(char* buf, int cap);
+// T.B1: the region to keep clear of an on-screen keyboard (point space, y up), set before
+// eden_text_input_start(); zero-size = only the field. iOS folds it into the text-input area SDL
+// lifts the view above the keyboard by; desktops ignore it so the IME still anchors on the field.
+void eden_text_input_keep_visible(float x, float y, float w, float h);
 // Stage 5.6: mouse-wheel notches the platform saw while NOT in mouse-look, positive = away from
 // the user (scroll up), drained by the call. Native: Input_native.cpp. Web: 0 (the DOM scrolls).
 int  eden_ui_take_wheel(void);
