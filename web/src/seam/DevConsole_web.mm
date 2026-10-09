@@ -16,7 +16,9 @@
 #include "../../../Classes/FileManagerHelper.h"   // B6 read-path benchmark, below
 #include "../shim/foundation/platform_shims.h"   // EDEN_EXPORT (Phase N Stage 1)
 #include <cstdio>
+#ifdef __APPLE__
 #include <TargetConditionals.h>
+#endif
 #if defined(__APPLE__) && !TARGET_OS_IPHONE
 #include <libproc.h>
 #include <sys/resource.h>
