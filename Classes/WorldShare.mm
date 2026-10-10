@@ -10,6 +10,7 @@
 #include "EdenWorldExport.h"
 
 #include <cstdio>
+#include <cstring>                       // std::strchr (libstdc++ does not pull it in via <string>)
 #include <random>
 #include <string>
 #include <sys/stat.h>
