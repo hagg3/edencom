@@ -16,8 +16,10 @@ the entire audio layer (sound effects, ambience, music, creature voices).
   species×emotion×5, ambience loops, UI clicks, music `Eden_1..6.m4a`).
 
 ## Textures
-- `atlas` — the opaque block atlas: a vertical strip of 32 tiles; the mesher stores
-  a tile index and the texture matrix scales v by 1/32 ([rendering.md](rendering.md)).
+- `atlas` — the opaque block atlas: a vertical strip of `ATLAS_TILES` (64) tiles; the mesher stores
+  a tile index and the texture matrix scales v by 1/`ATLAS_TILES` ([rendering.md](rendering.md)).
+  Tiles 0–31 are stock; 32–47 / 48–63 are blocks 112–127 in colour / greyscale (D.2t, 2026-10-10,
+  from the 2026 game's atlas via `web/tools/atlas-d2t.py`, which also pads `atlas2` to 64).
   `getBlockTexShort(texId)` returns the tile origin/height.
 - `atlas2` — the transparent/animated atlas (water/lava frames, glass, leaves…);
   rows are animation frames advanced by the render pass.
@@ -211,6 +213,6 @@ both swapped in `World::loadWorld`/`exitToMenu`.
 
 ## Safe vs. risky to modify
 - **Safe:** adding sounds/textures via the existing tables, tuning ambience rules.
-- **Caution:** atlas layout (coupled to `blockTypeFaces` and the 1/32 texture-matrix
+- **Caution:** atlas layout (coupled to `blockTypeFaces` and the 1/`ATLAS_TILES` texture-matrix
   scale), load/unload pairing (double-frees on the menu↔game boundary are a classic
   crash here).

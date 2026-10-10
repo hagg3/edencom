@@ -74,6 +74,22 @@ inside a rect at flipped-space `[y0, y0+h]`, send raw
 `y = SCREEN_HEIGHT - (y0 + h/2)` — do not pre-divide by `SCALE_WIDTH`/`SCALE_HEIGHT`
 before sending; the engine does that scaling itself.
 
+## Native: a text field takes the keyboard mid-hold (`native/src/seam/Input_native.cpp`, D.4b)
+
+**A press that opens a GL text prompt must not leave anything held behind.** The SIGN tool opens
+its prompt from a right-click; the prompt frees the cursor (`eden_ui_wants_cursor()` is 1 under a
+`GLDialog`), so the button's release arrived in cursor mode and went to the menu pointer path, and
+the hold-to-act pulse (`g_hold`) never ended: every 200 ms it built again and the prompt re-opened
+(the user on the Mac, 2026-10-10 — the only way out was F, and then the fire tool repeated). The
+field also swallowed key-ups, so a key held at that moment kept walking the player after the prompt
+closed. Fixed three ways: `eden_text_input_start` calls `release_held_input()` (ends the pulse,
+clears every `g_down`, drops the jump touch); `MOUSE_BUTTON_UP` ends a matching hold whatever the
+capture state; `KEY_UP` is no longer filtered while a field is up (releasing a key that isn't down
+is a no-op). And in the engine both picker tools ignore a tap while a dialog is up. Gate:
+`--signs-selftest`'s two right-click legs, with **the button held 6 frames past the prompt** — a
+release in the very frame the prompt opened is processed before capture drops and hides the bug,
+which is exactly how the first draft of the gate passed with the bug put back.
+
 ## Native touch: SDL's second copy of every finger (`native/src/seam/Input_native.cpp`)
 
 **`SDL_HINT_TOUCH_MOUSE_EVENTS` defaults to `"1"` on every SDL platform, so on a touchscreen every

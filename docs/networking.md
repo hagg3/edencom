@@ -43,8 +43,39 @@ sends for Recent; `sort=0` returns a different ordering whose meaning is unknown
 hosts answer HTTPS (CloudFront); `app*` refuse TLS, so the client stays plain HTTP and iOS needs an
 ATS exception (native/ios/Info.plist.in). Neither service sends CORS headers, which is why a browser
 page cannot use them. Worlds can be large: the current server's first Featured world inflated to 1.88 GB
-(2026-10-07). Upload (`upload2.php`, multipart `uploaded` + `uploaded2`)
-and report are not implemented on the port.
+(2026-10-07). Report is not implemented on the port. **Upload is, since S.5c (2026-10-10)** — below.
+
+### Upload: the pinned `upload2.php` contract (S.5c)
+Pinned from stock 2.1.1 (`Classes/FileUpload.mm` + `zpipe.c`'s `compressFile`) and a capture of the
+2026 client (VuencEdit); the same on both hosts:
+- `POST http://app2.edengame.net/upload2.php?uuid=<UUID>` (**Current**) or
+  `http://app.edengame.net/upload2.php?uuid=<UUID>` (**Legacy**). Plain HTTP, as for the lists.
+- `Content-Type: multipart/form-data; boundary=0xasdfasdfasdfasdfasdf`, a real `Content-Length` (no
+  chunking, no `Expect: 100-continue`).
+- Part `uploaded`, `filename="file.bin"`: the world **gzipped** (`deflateInit2(…, 15+16, …)`,
+  `Z_DEFAULT_COMPRESSION`). Stock gzips too — `FileUpload.mm:118` calls `compressFile` before the
+  POST (the "uploads uncompressed" note under `FileArchive.mm` below is about that file only).
+- Part `uploaded2`, `filename="image.bin"`: the preview PNG. Neither part has a Content-Type.
+- The world's header `hash` (offset 96) carries the **MD5 hex of that PNG**, so the server can pair
+  them (stock `ShareUtil`). The reply is the body `YES`.
+- The **Legacy server takes Legacy64z only** (very old devices): the client forces that target there.
+
+The port's side: `Classes/WorldShare.{h,mm}` (the menu's Share > Upload: server, format picker
+defaulting to the world's own format, the pre-flight loss report as the confirm), the body built a
+slice per frame by `emod::begin_upload_body` (`Classes/EdenWorldExport.cpp`) into
+`<world>.upload-body` beside the world — the exporter streamed through gzip between the multipart
+prefix and suffix, never a raw `.eden` on disk — then `eden_net_post_file(url, contentType,
+bodyPath)` (`WorldBrowser.h`; native `Net_native.cpp` over the backend's `post_file`: NSURLSession
+upload-from-file, libcurl `READFUNCTION` + `POSTFIELDSIZE_LARGE`, WinHTTP `WinHttpWriteData`), and
+the temp is deleted. An upload needs `<world file>.png` (camera mode); without it the action says
+so. Fixture mode (`--net-fixtures`) answers a POST from `<root>/<host>/<path>` and saves the body
+beside it as `<path>.posted`, which is how `--browser-selftest` and `TESTERS/s5/upload_gate.py`
+check the bytes offline. **No live upload has been made by a harness**: one per host is the user's
+to do. Web has none (no CORS on either host).
+
+**Get Worlds converts (S.5).** With the `.emod` switch on, a finished download is not unpacked to a
+`.eden`: `WorldBrowser`'s `DL_CONVERT` runs `emod::ImportJob` on it (layers unpacked still
+compressed, the innermost stream converted), lands `<id>.emod`, and deletes the download.
 
 ## Client files
 - `Classes/ShareUtil.mm` — endpoint knowledge and orchestration. Current endpoints
@@ -66,8 +97,8 @@ and report are not implemented on the port.
   `.png` preview in one request; same delegate pattern.
 - `Classes/md5.c` — hashes the preview screenshot; the hash is stored in the world
   header so the server can pair/verify world↔preview.
-- `Classes/FileArchive.mm` — zlib world compression for upload; **fully commented
-  out** in this version (worlds upload uncompressed).
+- `Classes/FileArchive.mm` — zlib world compression; **fully commented out** in this
+  version. Uploads are still gzipped: `FileUpload.mm` calls `compressFile` itself (S.5c).
 
 ## Data formats
 - The world list response is a text blob parsed by `SharedList` into
@@ -76,6 +107,12 @@ and report are not implemented on the port.
 - Downloads land directly in Documents under the shared file name, then appear as
   normal local worlds (this build then runs the usual version-upgrade path on load —
   worlds from 2.2.7 load but are height-truncated, per the repo README).
+- **Port (native Get Worlds, `Classes/WorldBrowser.mm`):** the gzip/zip is unpacked into a
+  full `<id>.eden` in Documents. There is **no free-space check**, so a big 256z world (GBs
+  inflated) fails mid-write on a small device. Planned fix, Stage S (S.3 converter, S.5
+  wiring): convert to `.emod` while inflating, delete the download afterwards, peak temp
+  ~3× the download. See `WORKING/emod-format-implementation-plan-2026-10-03.md` §4
+  *Downloads and imports*.
 - Previews download to `Documents/temp`.
 
 ## Server side (`edenweb/`, repo root — not part of the app build)

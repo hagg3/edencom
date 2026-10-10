@@ -41,6 +41,12 @@ int eden_net_backend_available(void);
 int eden_net_backend_fetch(const char* url, const EdenNetCallbacks* cb, int* httpStatus,
                            char* err, int errcap);
 
+// Stage S / S.5c: POSTs the file at `bodyPath` as the request body (Content-Length = its size, never
+// chunked: upload2.php has never been seen accepting chunked encoding), with `contentType`, and
+// streams a 2xx reply through cb exactly as fetch does. Same return contract.
+int eden_net_backend_post_file(const char* url, const char* contentType, const char* bodyPath,
+                               const EdenNetCallbacks* cb, int* httpStatus, char* err, int errcap);
+
 #ifdef __cplusplus
 }
 #endif

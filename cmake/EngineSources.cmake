@@ -47,6 +47,41 @@ function(eden_collect_engine_sources)
   #   the seam's stubs report no network, so the menu never offers it there.
   list(APPEND _eden_sources "${EDEN_ECS_BASE_DIR}/Classes/WorldBrowser.mm")
 
+  #   Classes/zstd/zstd.c — Stage S / S.2: zstd 1.5.7, single-file amalgamation WITHOUT the
+  #   dictionary builder, threading or legacy decoders (tools/…/zstd-in.c recipe in
+  #   docs/third-party.md). ONE pinned copy on every target, because byte-identical `.emod`
+  #   output across targets depends on it (docs/emod-file-format.md). ASM off, and the
+  #   strategies above level 3's (dfast) are compiled out, which is what keeps it ~150 KB of
+  #   wasm. Level 19 is therefore tools-only (emod.py); the engine never encodes above 4.
+  list(APPEND _eden_sources "${EDEN_ECS_BASE_DIR}/Classes/zstd/zstd.c")
+  set_source_files_properties("${EDEN_ECS_BASE_DIR}/Classes/zstd/zstd.c" PROPERTIES
+    COMPILE_DEFINITIONS "ZSTD_EXCLUDE_GREEDY_BLOCK_COMPRESSOR;ZSTD_EXCLUDE_LAZY_BLOCK_COMPRESSOR;ZSTD_EXCLUDE_LAZY2_BLOCK_COMPRESSOR;ZSTD_EXCLUDE_BTLAZY2_BLOCK_COMPRESSOR;ZSTD_EXCLUDE_BTOPT_BLOCK_COMPRESSOR;ZSTD_EXCLUDE_BTULTRA_BLOCK_COMPRESSOR")
+
+  #   Classes/EdenWorldStore.cpp — Stage S / S.3: the `.emod` container (store + the forward-only
+  #   .eden -> .emod converter). Plain C++, no ObjC, no engine globals; nothing in the game calls
+  #   it until S.4, so web's linker drops it (and zstd with it) from a build without the self-test.
+  #   Classes/EdenWorldStoreSelftest.cpp — its gates (eden_emod_selftest_run); the body compiles
+  #   only with EDEN_DIAGNOSTICS, like the other self-tests.
+  list(APPEND _eden_sources "${EDEN_ECS_BASE_DIR}/Classes/EdenWorldStore.cpp")
+  list(APPEND _eden_sources "${EDEN_ECS_BASE_DIR}/Classes/EdenWorldStoreSelftest.cpp")
+  #   Classes/EdenWorldSource.cpp — Stage S / S.5: the raw `.eden` byte stream out of a plain file, a
+  #   gzip or a zip, forward-only, so an archive converts to `.emod` while it inflates.
+  list(APPEND _eden_sources "${EDEN_ECS_BASE_DIR}/Classes/EdenWorldSource.cpp")
+  #   Classes/EdenWorldExport.cpp — Stage S / S.5 + S.5b: a world (`.emod` or `.eden`) as a pulled
+  #   `.eden` / `.eden.gz` byte stream in a chosen format era, with the exact pre-flight + loss report.
+  list(APPEND _eden_sources "${EDEN_ECS_BASE_DIR}/Classes/EdenWorldExport.cpp")
+  #   Classes/WorldShare.mm — the GL menu's Share action (Export / Upload / Remove original) over it.
+  list(APPEND _eden_sources "${EDEN_ECS_BASE_DIR}/Classes/WorldShare.mm")
+  #   Classes/WorldTrailer.cpp — Stage D / D.3a: the post-directory trailer (signs, command blocks)
+  #   as a model FileManager loads and saves on both containers. Plain C++, no engine globals.
+  list(APPEND _eden_sources "${EDEN_ECS_BASE_DIR}/Classes/WorldTrailer.cpp")
+  #   Classes/SignRenderer.mm — Stage D / D.3b: draws the trailer's signs in the 3D pass.
+  list(APPEND _eden_sources "${EDEN_ECS_BASE_DIR}/Classes/SignRenderer.mm")
+  #   Classes/SignTool.mm — Stage D / D.3c: the picker's SIGN tool and the anchor-removal rule.
+  list(APPEND _eden_sources "${EDEN_ECS_BASE_DIR}/Classes/SignTool.mm")
+  #   Classes/CmdScript.mm — Stage D / D.4c: the command-block interpreter (cmd.html's language).
+  list(APPEND _eden_sources "${EDEN_ECS_BASE_DIR}/Classes/CmdScript.mm")
+
   list(LENGTH _eden_sources_rel _eden_total_count)
   list(LENGTH _eden_sources _eden_kept_count)
   message(STATUS "Eden: ${_eden_kept_count} of ${_eden_total_count} engine sources kept (rest are seam-excluded, see the caller's *_SEAM_EXCLUDE list)")

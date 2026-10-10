@@ -69,8 +69,10 @@
 
 extern "C" int eden_net_backend_available(void) { return 1; }
 
-extern "C" int eden_net_backend_fetch(const char* url, const EdenNetCallbacks* cb, int* httpStatus,
-                                      char* err, int errcap) {
+// GET when contentType is null; otherwise a POST whose body is the file at bodyPath (an upload task
+// from a file: NSURLSession sets Content-Length from it and streams it, never chunked).
+static int eden_net_apple_run(const char* url, const char* contentType, const char* bodyPath,
+                              const EdenNetCallbacks* cb, int* httpStatus, char* err, int errcap) {
     @autoreleasepool {
         *httpStatus = 0;
         NSURL* u = [NSURL URLWithString:[NSString stringWithUTF8String:url]];
@@ -87,7 +89,16 @@ extern "C" int eden_net_backend_fetch(const char* url, const EdenNetCallbacks* c
         NSOperationQueue* q = [[NSOperationQueue alloc] init];
         q.maxConcurrentOperationCount = 1;          // the delegate is not re-entrant
         NSURLSession* s = [NSURLSession sessionWithConfiguration:cfg delegate:t delegateQueue:q];
-        NSURLSessionDataTask* task = [s dataTaskWithURL:u];
+        NSURLSessionTask* task;
+        if (contentType) {
+            NSMutableURLRequest* req = [NSMutableURLRequest requestWithURL:u];
+            req.HTTPMethod = @"POST";
+            [req setValue:[NSString stringWithUTF8String:contentType] forHTTPHeaderField:@"Content-Type"];
+            NSURL* body = [NSURL fileURLWithPath:[NSString stringWithUTF8String:bodyPath]];
+            task = [s uploadTaskWithRequest:req fromFile:body];
+        } else {
+            task = [s dataTaskWithURL:u];
+        }
         [task resume];
 
         bool cancelSent = false;
@@ -108,4 +119,14 @@ extern "C" int eden_net_backend_fetch(const char* url, const EdenNetCallbacks* c
         }
         return 1;
     }
+}
+
+extern "C" int eden_net_backend_fetch(const char* url, const EdenNetCallbacks* cb, int* httpStatus,
+                                      char* err, int errcap) {
+    return eden_net_apple_run(url, nullptr, nullptr, cb, httpStatus, err, errcap);
+}
+
+extern "C" int eden_net_backend_post_file(const char* url, const char* contentType, const char* bodyPath,
+                                          const EdenNetCallbacks* cb, int* httpStatus, char* err, int errcap) {
+    return eden_net_apple_run(url, contentType, bodyPath, cb, httpStatus, err, errcap);
 }

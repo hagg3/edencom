@@ -38,6 +38,7 @@
 #import "../../../Classes/Resources.h"
 #import "../../../Classes/Input.h"
 #import "../../../Classes/SimpleAudioEngine.h"
+#include <cstdlib>   // getenv (S.5e: EDEN_UPGRADE_256Z)
 #import "DisplayProfile_web.h"
 #include "../shim/foundation/platform_shims.h"   // EDEN_EXPORT (Phase N Stage 1)
 #include <cstdio>
@@ -155,12 +156,18 @@ static const Setting kSettings[] = {
   { "fly",               "Fly mode",          "Experiments", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Free flight. Space/Ctrl to rise and fall. (F)",                   NULL },
   { "fps_normalize",     "Frame-rate normalize", "Experiments", KIND_TOGGLE, -1,        0,   1,   1,   1,  "Keep walk speed the same at any refresh rate (PC audit F1).",     NULL },
   { "advanced_movement", "Advanced movement (bhop)", "Experiments", KIND_TOGGLE, -1,     0,   1,   1,   0,  "Opt-in: zero-delay bunny-hop and wheel-jump. Off by default.",    NULL },
+  { "emod_format",       "New .emod world format", "Experiments", KIND_TOGGLE, -1,      0,   1,   1,   1,  "New worlds are saved as .emod, and .eden worlds are converted to .emod when you open them. Legacy .eden support will be removed once this is proven.", NULL },
   { "crouch",            "Crouch mode",       "Experiments", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Adds a crouch key/button (halves hitbox height for 1-block gaps). Off by default.", NULL },
 
   { "save_backup",       "Keep a save backup", "Saves",      KIND_TOGGLE, -1,           0,   1,   1,   1,  "Keep a '.bak' copy of a world's previous save so a corrupted or interrupted save can be recovered. Roughly doubles the disk write per save below the in-place threshold. On by default -- this is what a corrupted-load recovery prompt offers to restore.", NULL },
+  // Stage S / S.5e (the user, 2026-10-10): every `.emod` is 256z by default. Read through
+  // eden_get_upgrade_256z() by FileManager's convert-on-play, native Get Worlds and the web Storage
+  // tab's import; the convert prompt's "Keep 64z" overrides it for one world.
+  { "upgrade_256z",      "Upgrade 64z worlds to 256z when converting", "Saves", KIND_TOGGLE, -1, 0, 1, 1, 1, "A Classic 64-tall world becomes a New Dawn 256-tall one when it is converted to .emod: the same blocks, with room to build up to y 255. Costs about 46 MB more memory while it is open on an iPad; disk is about the same. Off keeps every world its own height.", NULL },
 };
 static const int kSettingCount = (int)(sizeof(kSettings) / sizeof(kSettings[0]));
 
+extern int g_world_format, g_world_format_pinned;   // Classes/FileManager.mm
 static float g_value[kSettingCount];
 static bool  g_loaded = false;
 // Row #14: did NSUserDefaults actually have a value for this (port-owned) row at load time? Used
@@ -215,6 +222,8 @@ float eden_gamepad_deadzone = 0.15f;
 // recoverable through eden_load_restore_backup(), so OFF is an explicit opt-out of that safety
 // net, not a neutral default.
 float eden_save_backup      = 1.0f;
+// S.5e: read once per conversion through eden_get_upgrade_256z(). Default ON (the user's decision).
+float eden_upgrade_256z     = 1.0f;
 
 // ---------------------------------------------------------------------------------------------
 // Phase 2 — input mode: Auto(0) / Touch(1) / Keyboard+Mouse(2). "Auto" defers to whatever the
@@ -412,6 +421,10 @@ static void eden_apply_setting(int i, bool commitEngine) {
         eden_gamepad_deadzone = v;
     } else if (std::strcmp(s.key, "save_backup") == 0) {
         eden_save_backup = v;
+    } else if (std::strcmp(s.key, "emod_format") == 0) {
+        if (!g_world_format_pinned) g_world_format = (v != 0.0f) ? 1 : 0;
+    } else if (std::strcmp(s.key, "upgrade_256z") == 0) {
+        eden_upgrade_256z = v;
     } else if (std::strcmp(s.key, "input_mode") == 0) {
         g_inputMode = (int)lroundf(v);
         eden_apply_input_profile();
@@ -616,6 +629,15 @@ int eden_get_advanced_movement(void) { return eden_advanced_movement != 0.0f; }
 // which is the actual reason this is a function and not a direct extern of the float above.
 EDEN_EXPORT
 int eden_get_save_backup(void) { return eden_save_backup != 0.0f; }
+// S.5e: "Upgrade 64z worlds to 256z when converting". EDEN_UPGRADE_256Z=0|1 wins over the setting:
+// a harness pins the height so a gate does not depend on whatever the save directory's settings say
+// (eden_main_native.cpp sets it to 0 for every scripted mode unless --upgrade-256z is given).
+EDEN_EXPORT
+int eden_get_upgrade_256z(void) {
+    const char* e = getenv("EDEN_UPGRADE_256Z");
+    if (e && e[0]) return e[0] != '0';
+    return eden_upgrade_256z != 0.0f;
+}
 
 // Audit item #6. Returned as integer percent / hundredths rather than floats so the page does no
 // index->value mapping of its own (the tables below are the only copy). Out-of-range indexes fall

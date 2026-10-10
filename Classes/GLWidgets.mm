@@ -174,18 +174,20 @@ static const float kAvgGlyphDisplay = 0.42f;
 static int potAtLeast(int v) { int p = 32; while (p < v && p < 2048) p <<= 1; return p; }
 
 Label::Label() : m_pt(15.0f), m_texW(512), m_texH(64), m_align(UITextAlignmentCenter), m_boxW(0),
-                 m_face(FACE_DISPLAY) {}
+                 m_face(FACE_DISPLAY), m_width(0) {}
 Label::~Label() { clear(); }
 
 void Label::clear() {
     for (size_t i = 0; i < m_lines.size(); i++) if (m_lines[i]) delete m_lines[i];
     m_lines.clear();
+    m_width = 0;
 }
 
 float Label::lineHeight() const { return m_pt * 1.28f; }
 float Label::height() const     { return m_lines.size() * lineHeight(); }
 
-void Label::set(const char* text, float pt, UITextAlignment align, float maxWidth, Face face) {
+void Label::set(const char* text, float pt, UITextAlignment align, float maxWidth, Face face,
+                int keepLastLines) {
     clear();
     m_pt = pt;
     m_align = align;
@@ -205,6 +207,15 @@ void Label::set(const char* text, float pt, UITextAlignment align, float maxWidt
         const char* e = p;
         while (*e && *e != ' ') e++;
         std::string word(p, e - p);
+        // The field's mode: a word too long for any line is cut into line-sized pieces.
+        while (keepLastLines > 0 && perLine > 1 && (int)word.size() > perLine) {
+            const int room = cur.empty() ? perLine : perLine - (int)cur.size() - 1;
+            if (room <= 0) { lines.push_back(cur); cur.clear(); continue; }
+            cur += (cur.empty() ? "" : " ") + word.substr(0, (size_t)room);
+            lines.push_back(cur);
+            cur.clear();
+            word = word.substr((size_t)room);
+        }
         if (cur.empty())                                       cur = word;
         else if ((int)(cur.size() + 1 + word.size()) <= perLine) cur += " " + word;
         else { lines.push_back(cur); cur = word; }
@@ -212,6 +223,8 @@ void Label::set(const char* text, float pt, UITextAlignment align, float maxWidt
     }
     if (!cur.empty()) lines.push_back(cur);
     if (lines.empty()) return;
+    if (keepLastLines > 0 && (int)lines.size() > keepLastLines)
+        lines.erase(lines.begin(), lines.end() - keepLastLines);
 
     size_t widest = 0;
     for (size_t i = 0; i < lines.size(); i++) if (lines[i].size() > widest) widest = lines[i].size();
@@ -233,6 +246,10 @@ void Label::set(const char* text, float pt, UITextAlignment align, float maxWidt
         m_lines.push_back(new Texture2D([NSString stringWithUTF8String:lines[i].c_str()],
                                         CGSizeMake(m_texW, m_texH), align,
                                         [UIFont systemFontOfSize:pt * s], density));
+        // N.5.11: measured at the same pixel size the raster used, back to points.
+        float w = eden_text_raster_measure(lines[i].c_str(), pt * s) / s;
+        if (w <= 0.0f) w = lines[i].size() * glyph;
+        if (w > m_width) m_width = w;
     }
     eden_text_raster_set_face(FACE_BODY);
 }
@@ -259,6 +276,69 @@ void Label::drawChrome(float cx, float yTop, Color c, Color shadow) const {
     const float o = u();          // the system's 1u text shadow, down-right => +x / -y
     drawCentered(cx + o, yTop - o, shadow);
     drawCentered(cx, yTop, c);
+}
+
+// --- Toast (N.5.11) ------------------------------------------------------------------------
+// eden-ui.css `.eden-toast`: padding 4u 12u, rgba(44,43,43,.85), a 2u gray-500 keyline,
+// display-sm (22u) white text, a 200 ms opacity transition. The web one sits at top: 12%; this
+// one sits near the bottom edge, where the stock status line was (the user's call, 2026-10-10).
+static const float kToastFade  = 0.2f;
+static const float kToastNever = 1000.0f;   // statusbar.mm's `thresh`: never expires
+
+static float toastMaxTextWidth() { return SCREEN_WIDTH - du(160); }
+
+Toast::Toast() : m_life(0), m_age(0), m_builtU(0) {}
+
+void Toast::show(const char* utf8, float seconds) {
+    const std::string t = utf8 ? utf8 : "";
+    if (t.empty()) { clear(); return; }
+    const bool wasVisible = visible();
+    m_life = seconds;
+    if (wasVisible && t == m_text) return;
+    if (!wasVisible) m_age = 0;
+    m_text = t;
+    m_builtU = u();
+    m_label.set(m_text.c_str(), du(22), UITextAlignmentCenter, toastMaxTextWidth(), FACE_DISPLAY);
+}
+
+void Toast::clear() {
+    m_text.clear();
+    m_label.clear();
+    m_life = 0;
+}
+
+void Toast::update(float etime) {
+    if (m_text.empty()) return;
+    m_age += etime;
+    if (m_life < kToastNever) m_life -= etime;
+    if (m_life <= 0) { clear(); return; }
+    // The window was resized under a showing toast: re-wrap at the new scale.
+    if (u() != m_builtU) {
+        m_builtU = u();
+        m_label.set(m_text.c_str(), du(22), UITextAlignmentCenter, toastMaxTextWidth(), FACE_DISPLAY);
+    }
+}
+
+CGRect Toast::rect() const {
+    float tw = m_label.width();
+    if (tw > toastMaxTextWidth()) tw = toastMaxTextWidth();
+    const float w = tw + 2 * du(12);
+    const float h = m_label.height() + 2 * du(4);
+    return CGRectMake((SCREEN_WIDTH - w) * 0.5f, du(16), w, h);
+}
+
+void Toast::render() const {
+    if (!visible() || m_label.empty()) return;
+    float a = m_age / kToastFade;
+    if (m_life < kToastNever && m_life / kToastFade < a) a = m_life / kToastFade;
+    if (a > 1.0f) a = 1.0f;
+    if (a <= 0.0f) return;
+    const CGRect r = rect();
+    fill(r, C(0x2c2b2b, 0.85f * a));
+    border(r, 2 * u(), C(0x646464, a));
+    Color c = kWhite;
+    c.a = a;
+    m_label.drawCentered(r.origin.x + r.size.width * 0.5f, r.origin.y + r.size.height - du(4), c);
 }
 
 // --- Button --------------------------------------------------------------------------------
@@ -690,7 +770,7 @@ void progressBar(CGRect r, float frac, float phase) {
 // --- TextField -----------------------------------------------------------------------------
 static TextField* s_focused = NULL;
 
-TextField::TextField() : m_pt(16.0f), m_maxBytes(49), m_showingPlaceholder(false) {
+TextField::TextField() : m_pt(16.0f), m_maxBytes(49), m_lines(1), m_showingPlaceholder(false) {
     m_rect = CGRectMake(0, 0, 0, 0);
     m_keep = CGRectMake(0, 0, 0, 0);
 }
@@ -709,16 +789,25 @@ void TextField::rebuild() {
     if (focused()) shown += "|";
     else if (shown.empty() && !m_placeholder.empty()) { shown = m_placeholder; m_showingPlaceholder = true; }
     if (shown.empty()) { m_label.clear(); return; }
-    m_label.set(shown.c_str(), m_pt, UITextAlignmentLeft);
+    if (m_lines > 1 && m_rect.size.width > du(12))
+        m_label.set(shown.c_str(), m_pt, UITextAlignmentLeft, m_rect.size.width - du(12), FACE_DISPLAY, m_lines);
+    else
+        m_label.set(shown.c_str(), m_pt, UITextAlignmentLeft);
 }
+
+void TextField::setLines(int n) { m_lines = n < 1 ? 1 : n; rebuild(); }
+
+float TextField::heightForLines(int n) const { return n * m_pt * 1.28f + du(10); }   // Label::lineHeight
 
 // Re-announces the IME area only when the rect moved: screens lay out every frame, and
 // SDL_StartTextInput per frame is a keyboard re-show request per frame on iOS.
 void TextField::setRect(CGRect r) {
     const bool moved = r.origin.x != m_rect.origin.x || r.origin.y != m_rect.origin.y ||
                        r.size.width != m_rect.size.width || r.size.height != m_rect.size.height;
+    const bool rewrap = m_lines > 1 && r.size.width != m_rect.size.width;
     m_rect = r;
     if (moved && focused()) announce();
+    if (rewrap) rebuild();
 }
 
 void TextField::setKeepVisible(CGRect r) {
@@ -813,7 +902,8 @@ void TextField::render() const {
     fill(m_rect, kContentFace);
     bevel(m_rect, BEVEL_SUNKEN);
     if (m_label.empty()) return;
-    const float yTop = m_rect.origin.y + (m_rect.size.height + m_label.height()) * 0.5f;
+    const float yTop = m_lines > 1 ? m_rect.origin.y + m_rect.size.height - du(5)   // top-aligned
+                                   : m_rect.origin.y + (m_rect.size.height + m_label.height()) * 0.5f;
     m_label.draw(m_rect.origin.x + du(6), yTop, m_showingPlaceholder ? kPlaceholder : kText);
 }
 

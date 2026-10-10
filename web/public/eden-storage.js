@@ -391,7 +391,52 @@
     return bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
   }
 
+  // Stage S / S.5: with the `.emod` switch on (eden_set_world_format(1)) an import never becomes a
+  // `.eden` — the engine's ImportJob converts it, inflating `.gz`/`.zip` on the way, straight to
+  // `<stem>.emod` (plan §4 "Downloads and imports"). The picked bytes go to a MEMFS temp outside
+  // /documents (so nothing of it is mirrored) and the job runs a ~12 ms slice per macrotask.
+  function emodImportWanted() {
+    return ready() && M()._eden_get_world_format && M()._eden_get_world_format() === 1 &&
+      M()._eden_storage_import_begin;
+  }
+
+  function putName(name) {
+    var enc = new TextEncoder().encode(name);
+    var cap = M()._eden_storage_name_buffer_size() - 1;
+    if (enc.length > cap) enc = enc.subarray(0, cap);
+    var p = M()._eden_storage_name_buffer();
+    M().HEAPU8.set(enc, p);
+    M().HEAPU8[p + enc.length] = 0;
+  }
+
+  function importToEmod(name, bytes, cb) {
+    try {
+      FS.writeFile('/tmp/.emod-import', bytes);
+      putName(name);
+      if (!M()._eden_storage_import_begin()) {
+        cb && cb(false, utf8(M()._eden_storage_job_error()));
+        return;
+      }
+    } catch (e) {
+      try { FS.unlink('/tmp/.emod-import'); } catch (e2) {}
+      cb && cb(false, e.message || String(e));
+      return;
+    }
+    (function step() {
+      var r = M()._eden_storage_import_step();
+      if (r === 0) { setTimeout(step, 0); return; }
+      if (r < 0) { cb && cb(false, utf8(M()._eden_storage_job_error())); return; }
+      if (mounted) {
+        try { FS.syncfs(false, function (err) { if (err) reportSyncError(err); }); }
+        catch (e) { reportSyncError(e); }
+      }
+      cb && cb(true, null);
+    })();
+  }
+
   function finishImport(name, bytes, cb) {
+    if (/\.emod$/i.test(name)) { writeWorldFile(name, bytes, cb); return; }
+    if (emodImportWanted()) { importToEmod(name, bytes, cb); return; }
     if (isGzip(bytes)) {
       if (typeof DecompressionStream === 'undefined') {
         cb && cb(false, 'This browser cannot decompress gzip worlds (no DecompressionStream support).');
@@ -411,7 +456,7 @@
   function writeWorldFile(name, bytes, cb) {
     try {
       if (typeof FS === 'undefined') throw new Error('FS unavailable');
-      if (!/\.eden$/i.test(name)) name += '.eden';
+      if (!/\.(eden|emod)$/i.test(name)) name += '.eden';
       FS.writeFile(MOUNT_PATH + '/' + name, bytes);
       if (mounted) {
         try { FS.syncfs(false, function (err) { if (err) reportSyncError(err); }); }
@@ -430,12 +475,6 @@
     return new Response(stream).arrayBuffer().then(function (buf) { return new Uint8Array(buf); });
   }
 
-  function deflateGzip(bytes) {
-    var cs = new CompressionStream('gzip');
-    var stream = new Blob([bytes]).stream().pipeThrough(cs);
-    return new Response(stream).arrayBuffer().then(function (buf) { return new Uint8Array(buf); });
-  }
-
   // Row #18 (perf-audit §6): "the single best answer to my browser cleared my storage" —
   // download a world's real .eden file so the player has an off-device copy, independent of
   // navigator.storage.persist()'s best-effort guarantee above. Reads the file straight out of the
@@ -443,7 +482,7 @@
   // exactly the format docs/eden-file-format.md describes — no engine call needed, this is a pure
   // file copy out of the mount.
   function downloadBytes(bytes, filename) {
-    var blob = new Blob([bytes], { type: 'application/octet-stream' });
+    var blob = bytes instanceof Blob ? bytes : new Blob([bytes], { type: 'application/octet-stream' });
     var url = URL.createObjectURL(blob);
     var a = document.createElement('a');
     a.href = url;
@@ -454,45 +493,66 @@
     setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
   }
 
-  // `compress: true` gzips the raw .eden bytes before handing them to the browser's normal download
-  // flow — same file, smaller download, and losslessly reversible by importFile's gzip detection
-  // above. Kept synchronous-shaped (returns true/false immediately) for the uncompressed path since
-  // that's what the Storage tab's existing caller expects; compression is inherently async
-  // (CompressionStream), so that path takes `cb(ok, errorOrNull)` instead — callers that only care
-  // about the uncompressed case can still ignore the third argument.
-  function exportWorldAt(index, compress, cb) {
-    if (typeof compress === 'function') { cb = compress; compress = false; }
-    if (!ready() || typeof FS === 'undefined') { cb && cb(false, 'not ready'); return false; }
-    var worlds = listWorlds();
-    var w = worlds[index];
-    if (!w) { cb && cb(false, 'no such world'); return false; }
+  // Stage S / S.5 + S.5b: the export goes through the engine's streaming exporter
+  // (Classes/EdenWorldExport.cpp) — it is the only thing that can turn an `.emod` back into a
+  // `.eden`, and the target formats (Legacy64z / NewDawn256z / NewFormat256z) are its job. The wasm
+  // side holds one 1 MB chunk at a time; each is copied out into a Blob part, so the wasm heap delta
+  // is bounded whatever the world's size (gate (5), tools/headless-emod-export-test.js).
+  // `.eden.gz` is the default on every target (plan §4); `compress: false` is the plain `.eden`.
+  // opts: { target: 0 own | 1 Legacy64z | 2 NewDawn256z | 3 NewFormat256z, signs: 0 keep | 1 prune }.
+  var EXPORT_TARGETS = ['Own format', 'Legacy64z', 'NewDawn256z', 'NewFormat256z'];
+
+  function streamingExport() { return ready() && !!M()._eden_storage_export_begin; }
+
+  // The pre-flight: exact output size (before gzip) + every loss, nothing written.
+  function exportReportAt(index, opts) {
+    if (!streamingExport()) return null;
+    opts = opts || {};
     try {
-      var data = FS.readFile(MOUNT_PATH + '/' + w.file);
-      if (!compress) {
-        downloadBytes(data, w.file);
-        cb && cb(true, null);
-        return true;
-      }
-      if (typeof CompressionStream === 'undefined') {
-        cb && cb(false, 'This browser cannot compress worlds (no CompressionStream support).');
-        return false;
-      }
-      deflateGzip(data).then(function (gz) {
-        downloadBytes(gz, w.file + '.gz');
-        cb && cb(true, null);
-      }, function (e) {
-        cb && cb(false, 'gzip compress failed: ' + (e && e.message || e));
-      });
-      return true;
-    } catch (e) {
-      console.warn('[eden-storage] export failed:', e);
-      cb && cb(false, e.message || String(e));
-      return false;
-    }
+      return JSON.parse(utf8(M()._eden_storage_export_begin(index, opts.target | 0, opts.signs | 0, 0, 1)));
+    } catch (e) { return { error: 'malformed report' }; }
   }
 
+  function exportWorldAt(index, compress, cb, opts) {
+    if (typeof compress === 'function') { opts = cb; cb = compress; compress = true; }
+    if (compress === undefined) compress = true;
+    if (!ready() || typeof FS === 'undefined') { cb && cb(false, 'not ready'); return false; }
+    var w = listWorlds()[index];
+    if (!w) { cb && cb(false, 'no such world'); return false; }
+    if (!streamingExport()) { cb && cb(false, 'this build has no exporter'); return false; }
+    opts = opts || {};
+    var rep;
+    try { rep = JSON.parse(utf8(M()._eden_storage_export_begin(index, opts.target | 0, opts.signs | 0, compress ? 1 : 0, 0))); }
+    catch (e) { cb && cb(false, 'malformed report'); return false; }
+    if (rep.error) { cb && cb(false, rep.error); return false; }
+    var parts = [];
+    var stem = w.file.replace(/\.(eden|emod)$/i, '');
+    (function pump() {
+      for (var k = 0; k < 8; k++) {
+        var n = M()._eden_storage_export_next();
+        if (n < 0) {
+          var err = utf8(M()._eden_storage_job_error());
+          M()._eden_storage_export_end();
+          cb && cb(false, err);
+          return;
+        }
+        if (n === 0) {
+          M()._eden_storage_export_end();
+          downloadBytes(new Blob(parts, { type: 'application/octet-stream' }), stem + (compress ? '.eden.gz' : '.eden'));
+          cb && cb(true, null, rep);
+          return;
+        }
+        var p = M()._eden_storage_export_chunk();
+        parts.push(new Uint8Array(M().HEAPU8.subarray(p, p + n)));   // a copy: the buffer is reused
+      }
+      setTimeout(pump, 0);
+    })();
+    return true;
+  }
+
+  // The gzip is done in wasm now (S.5), so this is "is the exporter there", not CompressionStream.
   function canCompress() {
-    return typeof CompressionStream !== 'undefined';
+    return streamingExport();
   }
 
   function formatBytes(n) {
@@ -534,6 +594,8 @@
     convertTo64zAt: convertTo64zAt,
     importFile: importFile,
     exportWorldAt: exportWorldAt,
+    exportReportAt: exportReportAt,
+    exportTargets: EXPORT_TARGETS,
     canCompress: canCompress,
     formatBytes: formatBytes,
     formatDate: formatDate,

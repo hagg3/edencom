@@ -15,6 +15,8 @@
 
 #import "Alert.h"
 #import "GLDialog.h"
+#import "SignRenderer.h"
+#import "CmdScript.h"
 #include <iostream>
 #include <pthread.h>
 
@@ -340,11 +342,57 @@ extern int chunk_load_count;
 void World::loadWorld(NSString* name){
     if(doneLoading==0){
         
+        // Stage S / S.5: a `.eden` is converted to an `.emod` first, a time slice per call (Menu
+        // keeps calling loadWorld every frame while loading==4), then the world loads from the
+        // `.emod` as if it had always been one. The `.eden` is only read; when it is done the
+        // player is asked below whether to delete it. If conversion cannot run (no space, an
+        // unsupported header) the `.eden` simply plays in place, as it always did.
+        if(fm->conversionActive()||fm->worldNeedsConversion(name)){
+            // S.5e: first, the height it converts to (the "Keep 64z?" prompt, when there is one).
+            int g=fm->convertHeightGate(name);
+            if(g==0){
+                menu->sbar->setStatus(@"Converting World...",20);
+                return;
+            }
+            if(g<0){
+                menu->sbar->setStatus(@"",1);
+                menu->loading=0;
+                return;
+            }
+            int pct=0;
+            NSString* converted=nil;
+            int r=fm->convertStep(name,&pct,&converted);
+            if(r==0){
+                menu->sbar->setStatus([NSString stringWithFormat:@"Converting World... %d%%",pct],20);
+                return;
+            }
+            if(r<0&&fm->isArchiveName(name)){
+                // Nothing to fall back to: an archive can only be played converted.
+                NSString* why=fm->conversionError();
+                menu->sbar->setStatus([NSString stringWithFormat:@"Could not convert this world: %@",why?why:@"unknown error"],6);
+                menu->loading=0;
+                return;
+            }
+            if(r==1&&converted){
+                // The load pthread below gets `name`; the autoreleased string must outlive it even
+                // with no selected node to hold it, so keep one reference here.
+                static NSString* lastConverted=nil;
+                [lastConverted release];
+                lastConverted=[converted retain];
+                name=converted;
+                WorldNode* sel=menu->selected_world;
+                if(sel){
+                    [sel->file_name release];
+                    sel->file_name=[converted retain];
+                    sel->needs_convert=FALSE;
+                }
+            }
+        }
         doneLoading=1;
         Resources::getResources->stopMenuTune();
         // The world's HEIGHT has to be known before allocateMemory() sizes blockarray/lightarray
         // and the chunk table, and the only place it is written down is the save file's header.
-        // Probe it here (a 96-byte read of a file we are about to open anyway); a world that does
+        // Probe it here (the header, plus the directory below version 5 -- S.3b; a file we are about to open anyway); a world that does
         // not exist yet is 64z, which is what makes "new worlds stay 64z" true by construction.
         int probed_height=fm->probeWorldHeight(name,TRUE);
         // ROADMAP Phase M / M5.3: a 256z world costs ~+64 MB of window arrays plus 4x the chunk
@@ -424,6 +472,15 @@ void World::loadWorld(NSString* name){
             
             Resources::getResources->loadGameAssets();
             
+            // Stage S / S.5: this world was just converted from a `.eden` -- ask what to do with it.
+            // Skipped (original kept, hidden as paired) by EDEN_CONVERT_PROMPT=0, which headless
+            // harnesses set so a modal does not sit over the HUD they drive.
+            if(fm->pendingOriginal()){
+                const char* e=getenv("EDEN_CONVERT_PROMPT");
+                if(e&&e[0]=='0')fm->resolveOriginal(FALSE);
+                else showAlertDeleteOriginal(fm->pendingOriginal());
+            }
+            
             // [terrain loadTerrain:name];
             doneLoading=0;
             cam->reset();
@@ -450,6 +507,7 @@ void World::exitToMenu(){
     exit_to_menu=FALSE;
    // printg("hihihi\n");
 	terrain->unloadTerrain(TRUE);
+    fm->closeWorld();   // Stage S: release the `.emod` store (after unloadTerrain saved into it)
     if(CREATURES_ON){
         UnloadModels();
     }
@@ -565,7 +623,7 @@ BOOL World::update(float etime){
 		player->preupdate(etime);
          if(!player->dead)
 		effects->update(etime);
-        
+        CmdScript::update(etime); //D.4c: command-block scripts edit before this frame's meshing
         
         terrain->prepareAndLoadGeometry();
         terrain->updateAllImportantChunks();
@@ -639,6 +697,7 @@ void World::renderFrame(BOOL draw){
        // glEnable(GL_TEXTURE_2D);
         if(CREATURES_ON)
             RenderModels();
+        SignRenderer::render(); //D.3b: signs, after the opaque pass, before the sorted transparent one
         terrain->render2();
       //  glShadeModel(GL_FLAT);
        

@@ -35,8 +35,15 @@
    ========================================================================================== */
 
 /* Self-hosted, no network fetch — the game has to work offline and from a plain static server.
-   The kit @imports Rubik from Google Fonts for description text; we deliberately don't (see
-   web/docs/design-system.md "Deviations"), and use the platform sans stack instead. */
+   The kit @imports Rubik from Google Fonts for description text; we self-host the same face
+   (Rubik Regular, static instance of the Google Fonts variable file, SIL OFL) instead. */
+@font-face {
+  font-family: "Rubik";
+  src: url("assets/fonts/Rubik-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
 @font-face {
   font-family: "Jersey 10";
   src: url("assets/fonts/Jersey10-Regular.ttf") format("truetype");
@@ -98,7 +105,7 @@
 
   /* --- type ------------------------------------------------------------------------------- */
   --eden-font-display: "Jersey 10", "Courier New", monospace;
-  --eden-font-body: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --eden-font-body: "Rubik", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --eden-text-display-lg: calc(48 * var(--u));
   --eden-text-display-md: calc(32 * var(--u));
   --eden-text-display-sm: calc(22 * var(--u));
@@ -941,6 +948,13 @@
   text-align: left;
   gap: calc(10 * var(--u));
 }
+/* S.5: the Export dialog's format picker — a native <select>, sized to the stack's buttons. */
+.eden-select {
+  font: inherit;
+  padding: 6px 8px;
+  min-height: 36px;
+}
+
 .eden-stack__text {
   font-family: var(--eden-font-body);
   font-size: var(--eden-text-body-md);

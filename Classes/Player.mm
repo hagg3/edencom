@@ -11,6 +11,8 @@
 #import "Globals.h"
 #import "Model.h"
 #import "TerrainGen2.h" //for sky color change
+#import "SignTool.h"
+#import "CmdScript.h"
 #define MOVE_SPEED 35.0f
 #define CLIMB_SPEED 3.0f
 #define SPEED_M 4.5f
@@ -308,7 +310,7 @@ void Player::processInput(float etime){
                 
                 if(type==TYPE_NONE||(blockinfo[type]&IS_LIQUID&&getLevel(type)<4)){
                     touches[i].preview=point;
-                    touches[i].previewtype=World::getWorld->hud->blocktype;
+                    touches[i].previewtype=hud_picker_is_tool(World::getWorld->hud->blocktype)?TYPE_NONE:World::getWorld->hud->blocktype;
                     touches[i].etime=0;
                     touches[i].build_size=World::getWorld->hud->build_size;
                     
@@ -367,6 +369,18 @@ void Player::processInput(float etime){
 			}
 			if(mode==MODE_MINE||mode==MODE_BUILD||mode==MODE_BURN||mode==MODE_PAINT){
 				if(touches[i].placeBlock){
+                    if(mode==MODE_BUILD&&hud_picker_is_tool(World::getWorld->hud->blocktype)){
+                        // D.3c: a tool armed in the picker, never a block (and never a table index).
+                        if(World::getWorld->hud->blocktype==HUD_TOOL_SIGN)
+                            SignTool::tap(touches[i].mx,touches[i].my,yaw);
+                        else if(World::getWorld->hud->blocktype==HUD_TOOL_CMD)
+                            CmdTool::tap(touches[i].mx,touches[i].my); //D.4b
+                        continue;
+                    }
+                    // D.4c: a build tap on a command block pushes its button (@touch) and builds nothing.
+                    if(mode==MODE_BUILD&&!World::getWorld->hud->holding_creature&&
+                       CmdScript::tap(touches[i].mx,touches[i].my))
+                        continue;
 					Point3D point;
                     if(fwc_result!=-1)printg("hit model: %d\n",fwc_result);
 					if(mode==MODE_BUILD){
@@ -651,7 +665,7 @@ void Player::processInput(float etime){
                     }
                     if((type==TYPE_NONE||(blockinfo[type]&IS_LIQUID&&getLevel(type)<4))&&mode==MODE_BUILD){
                         touches[i].preview=point;
-                        touches[i].previewtype=World::getWorld->hud->blocktype;
+                        touches[i].previewtype=hud_picker_is_tool(World::getWorld->hud->blocktype)?TYPE_NONE:World::getWorld->hud->blocktype;
                         touches[i].build_size=World::getWorld->hud->build_size;
                         //touches[i].etime=0;
                         

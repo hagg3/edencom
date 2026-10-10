@@ -35,7 +35,8 @@
 //                        menu, the in-world HUD and the in-game (ESC) panel — as
 //                        PREFIX-menu.bmp / -settings.bmp (+ -settings-pN.bmp per page) /
 //                        -keybinds.bmp / -hud.bmp / -pausemenu.bmp / -dialog.bmp /
-//                        -menu-world.bmp / -rename.bmp (default prefix eden-shot), and since 5.9
+//                        -menu-world.bmp / -rename.bmp (default prefix eden-shot), -hud-sign.bmp / -sign-prompt.bmp
+//                        (D.3c, where GL text entry exists), and since 5.9
 //                        -browser.bmp / -browser-current.bmp (Get Worlds; live network unless
 //                        --net-fixtures is given).
 //                        The GL UI is native's only UI until Stage 5, so "what does it look like"
@@ -50,7 +51,8 @@
 //                        enum stepper) through real pointer events at the rects the screen
 //                        reports; GLW::TextField through pushed SDL text/key events (UTF-8
 //                        backspace, the byte cap, Return, Escape); and the world rename, checked
-//                        on disk — only WorldFileHeader::name may change. Headless.
+//                        on disk — only WorldFileHeader::name may change; the N.5.11 toast's
+//                        lifetime and statusbar routing. Headless.
 //   --browser-selftest   ROADMAP 5.9: Get Worlds (Classes/WorldBrowser.mm) end to end, OFFLINE —
 //                        it writes fixtures under <docs>/.net-fixtures and points the net seam at
 //                        them, then drives the menu button, the source tabs, the archive filter,
@@ -90,6 +92,15 @@
 //                        legs specifically: the shim Foundation runs outside Emscripten there for
 //                        the first time, and this runtime frees objects without .cxx_destruct.
 //   --height=64|256      world height for a newly created world (default 64).
+//   --convert-prompt-selftest  Stage S / S.5e: Play a 64z `.eden` (--world=NAME, in --docs, with
+//                        --world-format=emod) and answer the "Convert world" prompt with
+//                        --convert-answer=upgrade|keep|cancel through its real buttons.
+//   --upgrade-256z=0|1   Stage S / S.5e: whether a conversion promotes a 64z source to 256z
+//                        (EDEN_UPGRADE_256Z). Scripted modes and --live-cmds default to 0 -- the
+//                        source's height -- whatever the Settings toggle says; a player run follows it.
+//   --world-format=eden|emod  Stage S / S.4 (g_world_format, Classes/FileManager.h): emod = new
+//                        worlds are `.emod`, and a `.eden`/archive converts when played (S.5d).
+//                        Default eden; also EDEN_WORLD_FORMAT=emod. An existing `.emod` always loads.
 //   --empty-shortcut=0   Stage R / R.2's A/B lever: 0 restores the pre-R.2 mesh scheduling (all-air
 //                        chunks scanned and counted against the bulk-reload budget). Default 1.
 //   --read-budget-bands=0  Stage R / R.2b's A/B lever: 0 restores the stock column-read budget
@@ -97,6 +108,33 @@
 //                        counting a landed column by its occupied bands. Default 1.
 //   --empty-bit-selftest R.2: places a block in an all-air chunk and removes it again, asserting the
 //                        empty bit follows both transitions and the block really meshes.
+//   --newblocks-selftest D.2a: builds each of ids 112-127 (the 2026 blocks) through buildBlock,
+//                        asserts each meshes, then saves, reloads and reads every id back.
+//   --trailer-selftest   D.3a: the sign/command-block trailer model (Classes/WorldTrailer.h). Always
+//                        the synthetic legs (ordering, opaque, the 1 MiB refusal, sidecars, the index);
+//                        each --trailer-file=W.eden|W.emod must parse and re-serialise byte-identical;
+//                        with --world=NAME (a world with signs, already in --docs) it edits one sign's
+//                        text, saves with zero dirty columns, reloads and checks the bytes on disk, then
+//                        removes every record (no trailer left; --trailer-keep stops before that, leaving
+//                        the edited world for `emod.py trailer --diff`). --trailer-no-dirty-mark is the
+//                        mutation (edits stop marking the trailer dirty: the save gate must fail).
+//   --signs-selftest     D.3b + D.3c: with --world=NAME (a world with signs, in --docs) and --at near
+//                        them: the sign pass's probe (in range / drawn / hidden), then the SIGN tool
+//                        on a floating anchor — four sides and the top placed through the real prompt
+//                        (typed text, Return), the bottom refused with its toast, an edit, an empty
+//                        edit deleting, the paint colour, a block in front hiding (not deleting) a
+//                        sign; the picker's SIGN cell arming the tool and a real screen tap placing
+//                        one; mining and TNT taking the anchor's signs; a command block's steel mined
+//                        taking only its CMB1 record (+ its signs); save + reload. Either container
+//                        (--world-format=emod). --signs-mutate=bottom|nohook are the mutation legs.
+//   --cmds-selftest      D.4c: with --world=NAME (the 3-bit adder, in --docs) and --at near its keypad:
+//                        the parser on literal scripts, every CMB1 script parses, the adder shows
+//                        3 + 4 = 7 on its own display, then every command, the caps (8 deep, 32 at
+//                        once, the frame budget), the safety rules, @step/@near/@timer, a real screen
+//                        tap, and nothing of a run surviving a reload. --cmds-mutate=nodepth must fail;
+//                        --cmds-trace prints every statement.
+//   --sign-shot[=PREFIX] a REAL WINDOW: --world, --at, --look=YAW,PITCH, then PREFIX-signs.bmp and
+//                        the sign pass's probe line.
 //   --light-selftest     R.3: lightbox place/repaint/break (incl. saturation, the y clip and the
 //                        toroidal seam) through the engine's own edit paths, light hash per step.
 //   --light-selfcheck    R.3: also keep the stock dense light array, written by the stock code,
@@ -104,6 +142,25 @@
 //                        `mismatch`, must be 0). --light-selftest asserts it when present.
 //   --empty-selfcheck    R.2's stale-bit check: rebuild2() scans the chunks the empty bit lets it
 //                        skip and counts any that were not empty. Reported on `.chunkstate`.
+//   --codec-bench        Stage S / S.2: zstd-1/-3/-3+checksum vs zlib-6 encode/decode µs per column over
+//                        ~500 columns of --codec-file=PATH (a RAW .eden; --height=64|256). No world load.
+//   --bundled-map-selftest  Stage S / S.6: every column of the bundled map through the engine's own
+//                        read + decode, once from the RLE `Eden.eden` and once from its bake `Eden.emod`
+//                        (--bundled-eden=PATH --bundled-emod=PATH; default: beside the executable). 0 differ.
+//   --emod-selftest      Stage S / S.3: EdenWorldStore + the streaming converter's gates (Classes/
+//                        EdenWorldStoreSelftest.cpp). --emod-fixtures=DIR (web/tools/fixtures/emod: the
+//                        emod.py byte comparison + the cross-target gate), --emod-work=DIR (scratch,
+//                        default ./emod-work), --emod-quick. With --emod-file=W.eden[.gz] [--emod-ref=R.emod]
+//                        it instead stream-converts one real world and compares it with emod.py's output.
+//   --export=SRC         Stage S / S.5(b): export a world (`.emod` or `.eden`) with --export-out=PATH,
+//                        --export-target=own|Legacy64z|NewDawn256z|NewFormat256z, --export-signs=keep|prune,
+//                        --export-gz, --export-dry (pre-flight only). Prints `export-report {json}`.
+//   --import=SRC         Stage S / S.5: convert a `.eden`/`.gz`/`.zip` to --import-out=W.emod through
+//                        the production ImportJob (pre-flight, free-space floor, 500 MB cap; the
+//                        EDEN_TEST_FREE_BYTES / EDEN_TEST_TEMP_CAP hooks). --import-kill-after=BYTES
+//                        _exit()s mid-run (the kill gate). See src/seam/WorldTools_native.cpp.
+//   --upload-*           Stage S / S.5c: build (and, with --upload-url, POST) an upload body; see
+//                        WorldTools_native.cpp.
 //   --world=NAME         world display name to create or reuse (default depends on the mode).
 //   --at=X,Y,Z           teleport target. FIXED BY DEFAULT AND THAT MATTERS: a new world spawns
 //                        the player tens of columns away each run, and chunk contents differ by
@@ -130,6 +187,7 @@
 #include "../seam/SimpleAudioEngine_native.h"
 #include "save_backup.h"                 // web/src/shim/foundation — the shared backup rules
 #include "../../../Classes/FileManager.h"  // eden_save_backup_hook
+#include "../../../Classes/EdenWorldStore.h" // --background-selftest's `.emod` leg
 #include "../../../Classes/SimpleAudioEngine.h"
 #include "../../../Classes/Resources.h"
 #include "../../../Classes/Constants.h"    // CHUNK_SIZE / T_SIZE, for the map-border arithmetic below
@@ -137,6 +195,17 @@
 #include "../../../Classes/Menu.h"         // Menu::settings, for --shot's keybinds capture
 #include "../../../Classes/SettingsMenu.h" // SettingsMenu::showKeybinds()
 #include "../../../Classes/GLDialog.h"    // --ui-selftest drives GLDialog::prompt
+#include "../../../Classes/WorldShare.h"  // --browser-selftest's Share legs (S.5 / S.5c)
+#include "../../../Classes/EdenWorldExport.h"
+#include "../../../Classes/WorldTrailer.h"   // --trailer-selftest (D.3a)
+#include "../../../Classes/SignRenderer.h"   // --signs-selftest / --sign-shot (D.3b)
+#include "../../../Classes/SignTool.h"       // --signs-selftest (D.3c)
+#include "../../../Classes/CmdScript.h"      // --cmds-selftest (D.4c)
+#include "../../../Classes/Model.h"          // --cmds-selftest: CountActiveCreatures
+extern Vector colorTable[256];               // --cmds-selftest: the night sky (palette 54)
+#include "../../../Classes/Terrain.h"
+#include "../../../Classes/Player.h"
+#include "../../../Classes/Camera.h"
 #include "gl_es1_shim.h"   // also gives glGetString (renamed to the shim's guarded form)
 #include "platform_shims.h"
 #include "../eden_app_identity.h"   // Emod is not Eden — see that file
@@ -231,11 +300,16 @@ const char* eden_debug_mesh_checksum(void);
 const char* eden_debug_chunk_state(void);
 const char* eden_debug_light_state(void);
 int   eden_debug_light_edit(int op, int x, int z, int y, int color);
+void  eden_set_save_inplace_threshold(unsigned long long);   // N.8
 void  eden_debug_set_light_selfcheck(int on);
 void  eden_debug_set_empty_selfcheck(int on);
 long long eden_debug_chunk_empty(int x, int z, int y);
+int   eden_debug_build_block(int x, int z, int y, int type);
+void* eden_debug_world_trailer(void);                    // WorldTrailer* (D.3a)
+const char* eden_debug_world_file(void);
+int   eden_debug_modified_chunks(void);
+const char* eden_debug_trailer_refusal_toast(int result);
 int   eden_console_getblock(int x, int z, int y);
-const char* eden_bench_save(void);   // S.0(a) throwaway
 void  eden_debug_set_mesh_checksum(int on);
 const char* eden_debug_world_format(void);
 const char* eden_debug_heap(void);
@@ -254,11 +328,27 @@ extern float eden_gamepad_deadzone;
 // Classes/Alert.h — the native seam (seam_link_stubs_native.mm) implements this as a GLDialog.
 void showAlertWarpHome();
 
-void eden_set_save_inplace_threshold(unsigned long long);   // S.0(a) throwaway
+extern "C++" int eden_codec_bench(const char* path, int height, int want);   // CodecBench_native.cpp
+extern "C++" int eden_world_tool_main(int argc, char** argv);                 // WorldTools_native.cpp
+int fmh_selftestCompare(const char* edenPath, const char* emodPath, int* compared);   // Classes/FileManagerHelper.mm (S.6)
+#if defined(EDEN_DIAGNOSTICS)
+extern "C" int eden_emod_selftest_run(const char* fixtureDir, const char* workDir, int flags,
+                                      const char* file, const char* ref);       // Classes/EdenWorldStoreSelftest.cpp
+#endif
+
 namespace {
+
+void eden_setenv(const char* k, const char* v) {
+#if defined(_WIN32)
+    _putenv_s(k, v);
+#else
+    setenv(k, v, 1);
+#endif
+}
 
 struct Options {
     bool headless = false;
+    bool saveInplace = false;            // --save-inplace: N.8, --save-roundtrip forces the journaled in-place save
     const char* mode = nullptr;          // "p1-gate" | "stage1" | "save-roundtrip" | nullptr
     int  height = 64;
     std::string world;
@@ -271,8 +361,21 @@ struct Options {
     std::string docs;
     std::string bundle;
     std::string shot;                    // --shot=PREFIX: file prefix for --shot's captures
+    std::string codecFile;               // --codec-file=PATH: the raw .eden --codec-bench samples
+    std::string emodFixtures, emodWork, emodFile, emodRef;   // --emod-selftest's inputs
+    std::string bundledEden, bundledEmod;                    // --bundled-map-selftest's inputs
+    bool emodQuick = false;
     std::string liveCmds;                // --live-cmds=FILE: see src/seam/LiveCommands_native.mm
+    bool trailerNoDirty = false;         // --trailer-no-dirty-mark: the mutation (live leg only)
+    bool trailerKeep = false;            // --trailer-keep: stop after the reload (leave the edited world for emod.py --diff)
+    std::vector<std::string> trailerFiles;   // --trailer-file=W.eden|W.emod (repeatable): --trailer-selftest's byte gate
+    std::string signsMutate;             // --signs-mutate=bottom|nohook: --signs-selftest's mutation legs
+    std::string cmdsMutate;              // --cmds-mutate=nodepth: --cmds-selftest's mutation leg
+    bool cmdsTrace = false;              // --cmds-trace: print every command-block statement
+    float look[2] = {0.0f, 0.0f};        // --look=YAW,PITCH (degrees): --sign-shot's view
+    bool haveLook = false;
     int  renderScalePct = 0;             // --render-scale=50|75|100|125: 0 leaves the setting alone
+    std::string convertAnswer;           // --convert-answer=upgrade|keep|cancel: --convert-prompt-selftest
 };
 
 Options g_opt;
@@ -704,8 +807,13 @@ int run_shot() {
 
     // The HUD's status line (statusbar.mm, the full-width box). It printed two and a bit copies
     // side by side until Stage 5.6 (Texture2D_web.mm's text-texture cap); this is the artefact.
+    // N.5.11: it is the GL kit's toast now, which fades in over 0.2 s of etime — and etime is
+    // wall clock here, so a fixed tick count catches it part-way. Wait out the fade in real time.
     World::getWorld->hud->sb->setStatus(@"World Saved", 30);
-    tick(4);
+    {
+        const Uint64 t0 = SDL_GetTicks();
+        do tick(1); while (SDL_GetTicks() - t0 < 400);
+    }
     capture("hud-status");
     World::getWorld->hud->sb->clear();
 
@@ -714,7 +822,52 @@ int run_shot() {
     tap_hud(1);
     tick(20);
     capture("picker-blocks");
-    tap_hud(1);
+    // D.2p: page 2, turned the way [ ] and the wheel turn it.
+    World::getWorld->hud->pickerPageStep(1);
+    tick(10);
+    capture("picker-blocks-p2");
+    // ...and a page-2 block picked (117, cheese): the HUD's current-block icon and the held block.
+    {
+        const CGRect c = World::getWorld->hud->blockBounds[5];
+        ui_tap(c.origin.x + c.size.width * 0.5f, c.origin.y + c.size.height * 0.5f);
+    }
+    tick(20);
+    capture("hud-newblock");
+    // D.3c: SIGN armed (the HUD's current-block button shows its caption), then its prompt.
+    if (Hud::pickerToolEnabled(HUD_TOOL_SIGN)) {
+        tap_hud(1);
+        tick(10);
+        const CGRect c = World::getWorld->hud->blockBounds[16];
+        ui_tap(c.origin.x + c.size.width * 0.5f, c.origin.y + c.size.height * 0.5f);
+        tick(20);
+        capture("hud-sign");
+        tap_hud(1);                    // D.4b: the picker again, SIGN now the selected cell
+        tick(20);
+        capture("picker-blocks-p2-sign");
+        static const char* const kBtn[] = {"OK", "Cancel"};
+        GLDialog::prompt("New sign", NULL, "Welcome to my world, traveller. Mind the lava pit past the second door!",
+                         95, kBtn, 2, nullptr, 3);
+        tick(20);
+        capture("sign-prompt");
+        GLDialog::dismiss();
+        tick(2);
+        // D.4b: CMD armed, then the command-block script prompt (multi-line, scrolled to the caret).
+        {
+            const CGRect c = World::getWorld->hud->blockBounds[17];
+            ui_tap(c.origin.x + c.size.width * 0.5f, c.origin.y + c.size.height * 0.5f);
+        }
+        tick(20);
+        capture("hud-cmd");
+        GLDialog::prompt("Command block", "Statements separated by ;  Empty clears the script.",
+                         "@touch; say Adding...; set ~0 ~2 ~0 gold; wait 1; fill ~-2 ~0 ~-2 ~2 ~3 ~2 glass; "
+                         "wait 2; fill ~-2 ~0 ~-2 ~2 ~3 ~2 air; sound door; flash; say Done!",
+                         511, kBtn, 2, nullptr, 6);
+        tick(20);
+        capture("cmd-prompt");
+        GLDialog::dismiss();
+        tick(2);
+        World::getWorld->hud->blocktype = TYPE_STONE;
+    }
     tap_hud(2);
     tick(20);
     capture("picker-colors");
@@ -967,38 +1120,1423 @@ int run_empty_bit_selftest() {
     return g_selftestFailures ? 1 : 0;
 }
 
-
-// ---- S.0(a) THROWAWAY: --save-bench=1,10,50,144 (dirty-column save cost; never merged) ----------
-static std::string g_saveBenchList = "1,10,50,144";
-int run_save_bench() {
-    g_selftestTag = "eden-savebench";
-    const char* name = g_opt.world.empty() ? "S0 W64" : g_opt.world.c_str();
+// ---------------------------------------------------------------------------------------------
+// --newblocks-selftest  (Stage D / D.2a, ids 112-127 in the engine's tables)
+// ---------------------------------------------------------------------------------------------
+// Until D.2a, NUM_BLOCKS was 111 and rebuild2()'s corrupt-byte repair turned every 2026 block it
+// meshed into stone, in the world, kept by the next save (D.2c). This builds each new id through
+// the real build path in air near the player, asserts it stays itself and meshes, saves, reloads
+// and asserts every id comes back. Runs on either container (add --world-format=emod).
+int run_newblocks_selftest() {
+    g_selftestTag = "eden-newblocks";
+    const char* name = g_opt.world.empty() ? "newblocks-selftest" : g_opt.world.c_str();
     if (!open_world(name, g_opt.height)) return 1;
     eden_console_teleport(g_opt.at[0], g_opt.at[1], g_opt.at[2]);
     tick(g_opt.frames / 2);
-    if (const char* th = std::getenv("SAVEBENCH_THRESHOLD")) { eden_set_save_inplace_threshold(strtoull(th, 0, 10)); }
+
+    // Top band, off the player's REAL position (see --empty-bit-selftest), two apart so every
+    // block has all six faces exposed.
     const PlayerState ps = player_state();
-    const int px = ((int)ps.x / 16) * 16 + 8, pz = ((int)ps.z / 16) * 16 + 8;
-    std::printf("[eden-savebench] world=%s player=(%d,%d)\n", name, (int)ps.x, (int)ps.z);
-    { const char* r = eden_bench_save(); std::printf("[eden-savebench] warmup(no dirt) %s\n", r); }
-    int flip = 0;
-    std::string list = g_saveBenchList;
-    for (size_t pos = 0; pos < list.size();) {
-        size_t c = list.find(',', pos); if (c == std::string::npos) c = list.size();
-        int n = atoi(list.substr(pos, c - pos).c_str()); pos = c + 1;
-        for (int rep = 0; rep < 3; ++rep) {
-            ++flip;
-            int side = 1; while (side * side < n) ++side;
-            int placed = 0;
-            for (int i = 0; i < side && placed < n; ++i)
-                for (int j = 0; j < side && placed < n; ++j, ++placed)
-                    eden_console_setblock(px + (i - side / 2) * 16, pz + (j - side / 2) * 16, 30, 10 + (flip % 20));
-            tick(3);
-            const char* r = eden_bench_save();
-            std::printf("[eden-savebench] cols=%d rep=%d %s\n", n, rep, r);
+    const int x0 = (int)ps.x + 5, z = (int)ps.z + 5, y = g_opt.height - 3;
+    char d[256];
+    for (int id = 112; id <= 127; id++) {
+        const int x = x0 + (id - 112) * 2;
+        const long long v0 = eden_debug_chunk_empty(x, z, y) >> 2;
+        eden_debug_build_block(x, z, y, id);
+        tick(30);
+        const long long v1 = eden_debug_chunk_empty(x, z, y) >> 2;
+        std::snprintf(d, sizeof(d), "id %d at (%d,%d,%d): getblock %d, vertices %lld -> %lld",
+                      id, x, z, y, eden_console_getblock(x, z, y), v0, v1);
+        check(eden_console_getblock(x, z, y) == id && v1 > v0, "a new id builds, stays itself and meshes", d);
+    }
+    save_world();
+    if (!quit_to_menu()) return 1;
+    tick(120);
+    if (!open_world(name, g_opt.height)) return 1;
+    eden_console_teleport(g_opt.at[0], g_opt.at[1], g_opt.at[2]);
+    tick(g_opt.frames / 2);
+    int back = 0;
+    for (int id = 112; id <= 127; id++) {
+        const int x = x0 + (id - 112) * 2;
+        const int got = eden_console_getblock(x, z, y);
+        const long long v = eden_debug_chunk_empty(x, z, y) >> 2;
+        std::snprintf(d, sizeof(d), "id %d at (%d,%d,%d): getblock %d, chunk vertices %lld", id, x, z, y, got, v);
+        check(got == id && v > 0, "after save + reload the id is still there and meshes", d);
+        back += (got == id);
+    }
+    std::printf("[eden-newblocks] %d/16 ids back after reload\n", back);
+    std::printf("[eden-newblocks] %s (%d failure(s))\n",
+                g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
+    return g_selftestFailures ? 1 : 0;
+}
+
+// ---------------------------------------------------------------------------------------------
+// --trailer-selftest  (Stage D / D.3a, the trailer model on both containers)
+// ---------------------------------------------------------------------------------------------
+namespace trailer_test {
+
+bool is_emod_file(const std::string& path) {
+    FILE* f = emod::io::fopen_utf8(path.c_str(), "rb");
+    if (!f) return false;
+    char m[8] = {0};
+    const bool ok = std::fread(m, 1, 8, f) == 8 && std::memcmp(m, "EMODWLD", 8) == 0;
+    std::fclose(f);
+    return ok;
+}
+
+// The trailer exactly as the file holds it: a `.eden`'s gate-failing directory tail (the engine's own
+// layout reader) or an `.emod`'s live SIGN_TRAILER record. `cols` gets one digest over every column.
+bool read_world(const std::string& path, std::vector<uint8_t>& trailer, std::string* colDigest, std::string& err) {
+    trailer.clear();
+    emod::Sha256 h;
+    if (is_emod_file(path)) {
+        emod::EdenWorldStore st;
+        if (!st.open(path.c_str(), false)) { err = st.error(); return false; }
+        if (st.hasRecord(emod::T_SIGN_TRAILER) && st.readRecord(emod::T_SIGN_TRAILER, trailer) != emod::EdenWorldStore::READ_OK) {
+            err = "SIGN_TRAILER does not decode"; return false;
+        }
+        if (colDigest) {
+            std::vector<uint8_t> col((size_t)st.bands() * emod::BAND);
+            for (const auto& k : st.columnKeys()) {
+                st.readColumn(k.first, k.second, &col[0]);
+                h.update(&k, sizeof(k));
+                h.update(&col[0], col.size());
+            }
+        }
+    } else {
+        FILE* f = emod::io::fopen_utf8(path.c_str(), "rb");
+        if (!f) { err = "cannot open"; return false; }
+        const uint64_t size = emod::io::file_size(f);
+        uint8_t hdr[emod::EDEN_HEADER];
+        emod::io::seek_to(f, 0);
+        if (std::fread(hdr, 1, sizeof(hdr), f) != sizeof(hdr)) { std::fclose(f); err = "short header"; return false; }
+        uint64_t dirOff; std::memcpy(&dirOff, hdr + 32, 8);
+        if (dirOff < sizeof(hdr) || dirOff > size) { std::fclose(f); err = "bad directory offset"; return false; }
+        std::vector<uint8_t> dir((size_t)(size - dirOff));
+        emod::io::seek_to(f, dirOff);
+        if (!dir.empty() && std::fread(&dir[0], 1, dir.size(), f) != dir.size()) { std::fclose(f); err = "short directory"; return false; }
+        emod::EdenLayout L;
+        if (!emod::eden_read_layout(hdr, size, dir, L)) { std::fclose(f); err = "layout"; return false; }
+        trailer = L.trailer;
+        if (colDigest) {
+            std::vector<emod::EdenLayoutCol> cols = L.cols;
+            std::sort(cols.begin(), cols.end(), [](const emod::EdenLayoutCol& a, const emod::EdenLayoutCol& b) {
+                return a.x != b.x ? a.x < b.x : a.z < b.z; });
+            std::vector<uint8_t> col((size_t)L.bands * emod::BAND);
+            for (const auto& c : cols) {
+                std::fill(col.begin(), col.end(), 0);
+                emod::io::seek_to(f, c.off);
+                std::fread(&col[0], 1, (size_t)std::min<uint64_t>(c.span, col.size()), f);
+                int32_t k[2] = {c.x, c.z};
+                h.update(k, sizeof(k));
+                h.update(&col[0], col.size());
+            }
+        }
+        std::fclose(f);
+    }
+    if (colDigest) {
+        uint8_t d[32]; h.final(d);
+        char hex[65];
+        for (int i = 0; i < 32; i++) std::snprintf(hex + 2 * i, 3, "%02x", d[i]);
+        *colDigest = hex;
+    }
+    return true;
+}
+
+std::vector<uint8_t> rows_of(const std::vector<uint8_t>& payload) {   // tag a payload into rows
+    std::vector<uint8_t> p = payload, out;
+    p.resize((p.size() + 11) / 12 * 12, 0);
+    for (size_t i = 0; i < p.size(); i += 12) {
+        static const uint8_t tag[4] = {0xff, 0xff, 0xff, 0xff};
+        out.insert(out.end(), tag, tag + 4);
+        out.insert(out.end(), p.begin() + i, p.begin() + i + 12);
+    }
+    return out;
+}
+
+void synthetic() {
+    char d[256];
+    // 1. a new world: CMB1 goes in front of SGN1 whatever order the edits come in; empty = no trailer
+    WorldTrailer t;
+    check(t.parsed() && !t.dirty() && t.encode().empty(), "a cleared trailer is empty, editable and clean", "");
+    const TrailerPos p0 = TrailerPos::fromTerrainArgs(65600, 65610, 40);
+    check(t.addSign(p0, 3, 45, 2, "hello") == WorldTrailer::TR_OK, "addSign on a new world", "");
+    check(t.addCmd(p0, "@touch;say hi") == WorldTrailer::TR_OK, "addCmd on a new world", "");
+    std::vector<uint8_t> e = t.encode();
+    check(t.dirty() && e.size() == (size_t)(24 + 528 + 24 + 120) / 12 * 16 && e.size() % 16 == 0,
+          "a new world's trailer is CMB1 + SGN1 rows", "");
+    check(e.size() > 8 && std::memcmp(&e[4], "CMB1", 4) == 0, "CMB1 is written first (the 2026 game's order)", "");
+    WorldTrailer r;
+    check(r.load(e.data(), e.size()) && r.signCount() == 1 && r.cmdCount() == 1 && r.rebuild() == e,
+          "it reads back, and re-serialises byte-identical", r.describe().c_str());
+    // 2. the coordinate helper: file (x,y,z) = Terrain (x,z,y) = engine (x, y_up=z, z=y)
+    int ex, ey, ez; p0.toEngine(&ex, &ey, &ez);
+    TrailerPos back = TrailerPos::fromEngine(ex, ey, ez);
+    std::snprintf(d, sizeof(d), "engine (%d,%d,%d)", ex, ey, ez);
+    check(ex == 65600 && ey == 40 && ez == 65610 && back == p0, "file <-> engine coordinates", d);
+    // 3. the index, and the anchor-removal hook
+    check(t.hasAnchored(p0) && !t.hasAnchored(TrailerPos::fromTerrainArgs(65600, 65610, 41)), "hasAnchored is exact", "");
+    check(t.addSign(p0, 3, 45, 2, "again") == WorldTrailer::TR_EXISTS && t.addSign(p0, 1, 45, 2, "side") == WorldTrailer::TR_OK,
+          "one sign per (anchor, face)", "");
+    check(t.addSign(p0, 6, 45, 2, "x") == WorldTrailer::TR_BAD && t.addSign(p0, 0, 0, 2, "x") == WorldTrailer::TR_BAD &&
+          t.addSign(p0, 0, 45, 2, "tab\there") == WorldTrailer::TR_BAD &&
+          t.addSign(p0, 0, 45, 2, std::string(96, 'x').c_str()) == WorldTrailer::TR_BAD &&
+          t.addSign(p0, 0, 45, 2, std::string(95, 'x').c_str()) == WorldTrailer::TR_OK,
+          "face/colour/text validated (95 printable ASCII fits, 96 does not)", "");
+    std::snprintf(d, sizeof(d), "removed %d", t.removeAnchored(p0));
+    check(t.signCount() == 0 && t.cmdCount() == 0 && t.encode().empty(), "removeAnchored takes every sign and the command block", d);
+    // 4. an edit that empties a section drops it; the untouched section stays as read; markSaved holds
+    WorldTrailer m;
+    m.load(e.data(), e.size());
+    m.removeCmd(0);
+    std::vector<uint8_t> me = m.encode();
+    check(me.size() == (size_t)(24 + 120) / 12 * 16 && std::memcmp(&me[4], "SGN1", 4) == 0, "an emptied CMB1 is left out", "");
+    m.markSaved();
+    check(!m.dirty() && m.rebuild() == me && m.encode() == me, "after markSaved the model rebuilds to what was written", "");
+    // 5. opaque: kept verbatim, every edit refused
+    std::vector<uint8_t> bad = e;
+    bad[16] = 0;                                    // the second row's tag
+    WorldTrailer o;
+    check(!o.load(bad.data(), bad.size()) && o.rebuild() == bad && o.encode() == bad && !o.dirty(),
+          "an unreadable trailer is opaque and kept byte for byte", o.why().c_str());
+    check(o.addSign(p0, 3, 45, 0, "x") == WorldTrailer::TR_OPAQUE && o.removeAnchored(p0) == 0 && o.encode() == bad,
+          "an opaque trailer refuses every edit", "");
+    // an unknown section is carried verbatim in its slot through an edit
+    std::vector<uint8_t> pay;
+    const char unk[] = "XYZ1";
+    pay.insert(pay.end(), unk, unk + 4);
+    uint32_t w[2] = {12, 0}; pay.insert(pay.end(), (uint8_t*)w, (uint8_t*)w + 8);
+    for (int i = 0; i < 12; i++) pay.push_back((uint8_t)(0xa0 + i));
+    std::vector<uint8_t> ep;
+    for (size_t i = 0; i < e.size(); i += 16) ep.insert(ep.end(), e.begin() + i + 4, e.begin() + i + 16);
+    pay.insert(pay.end(), ep.begin(), ep.end());
+    pay.insert(pay.end(), 24, 0);                   // a zero tail
+    std::vector<uint8_t> mixed = rows_of(pay);
+    WorldTrailer u;
+    check(u.load(mixed.data(), mixed.size()) && u.rebuild() == mixed, "unknown section + zero tail: parse -> serialise identical",
+          u.describe().c_str());
+    u.setSignText(0, "edited");
+    std::vector<uint8_t> ue = u.rebuild();
+    size_t diff = 0;
+    for (size_t i = 0; i < std::min(ue.size(), mixed.size()); i++) diff += ue[i] != mixed[i];
+    std::snprintf(d, sizeof(d), "%zu B differ, sizes %zu/%zu", diff, ue.size(), mixed.size());
+    check(ue.size() == mixed.size() && diff > 0 && diff <= 6, "an edit changes only that record's text bytes", d);
+    // 6. sidecars: a bare section, adopted only when the trailer has none of that magic
+    std::vector<uint8_t> side;
+    const char sg[] = "SGN1"; side.insert(side.end(), sg, sg + 4);
+    uint32_t vc[2] = {1, 2}; side.insert(side.end(), (uint8_t*)vc, (uint8_t*)vc + 8);
+    TrailerSign s2[2]; std::memset(s2, 0, sizeof(s2));
+    s2[0].x = 1; s2[0].a = 3; s2[0].b = 2; std::strcpy(s2[0].text, "one");
+    s2[1].x = 2; s2[1].a = 5; s2[1].b = 2; std::strcpy(s2[1].text, "two");
+    side.insert(side.end(), (uint8_t*)s2, (uint8_t*)s2 + sizeof(s2));
+    WorldTrailer sc;
+    check(sc.adoptSidecar(side.data(), side.size()) == WorldTrailer::TR_OK && sc.signCount() == 2 && sc.dirty(),
+          "a sidecar is adopted into an empty trailer (dirty)", sc.describe().c_str());
+    WorldTrailer sc2; sc2.load(e.data(), e.size());
+    check(sc2.adoptSidecar(side.data(), side.size()) == WorldTrailer::TR_EXISTS && sc2.signCount() == 1 && !sc2.dirty(),
+          "the world's own SGN1 wins over a sidecar", "");
+    // 7. the 1 MiB refusal: (786,432 payload bytes - 24) / 120 = 6,553 signs fit, the next is refused
+    WorldTrailer full;
+    int n = 0;
+    WorldTrailer::Result rr = WorldTrailer::TR_OK;
+    for (; n < 10000; n++) {
+        rr = full.addSign(TrailerPos::fromTerrainArgs(60000 + n % 100, 60000 + n / 100, 10), 3, 45, 0, "x");
+        if (rr != WorldTrailer::TR_OK) break;
+    }
+    const std::vector<uint8_t> before = full.encode();
+    const WorldTrailer::Result again = full.addSign(TrailerPos::fromTerrainArgs(1, 1, 1), 3, 45, 0, "x");
+    const WorldTrailer::Result cmdFull = full.addCmd(TrailerPos::fromTerrainArgs(1, 1, 1), "@touch");
+    std::snprintf(d, sizeof(d), "%d signs, %zu B, refused with %d/%d/%d", n, before.size(), (int)rr, (int)again, (int)cmdFull);
+    check(n == 6553 && rr == WorldTrailer::TR_FULL && again == WorldTrailer::TR_FULL && cmdFull == WorldTrailer::TR_FULL &&
+          before.size() <= WorldTrailer::MAX_BYTES && full.encode() == before && full.signCount() == 6553,
+          "past 1 MiB a new sign / command block is refused, nothing truncated", d);
+}
+
+}  // namespace trailer_test
+
+int run_trailer_selftest() {
+    using namespace trailer_test;
+    g_selftestTag = "eden-trailer";
+    char d[512];
+    synthetic();
+
+    // Gate 1: every real specimen parses and re-serialises byte-identical.
+    for (const std::string& f : g_opt.trailerFiles) {
+        std::vector<uint8_t> t;
+        std::string err;
+        const bool ok = read_world(f, t, nullptr, err);
+        WorldTrailer w;
+        const bool parsed = ok && w.load(t.data(), t.size());
+        std::snprintf(d, sizeof(d), "%s: %zu B, %s", f.c_str(), t.size(), ok ? w.describe().c_str() : err.c_str());
+        check(parsed && !t.empty() && w.rebuild() == t, "a real trailer: parse -> serialise byte-identical", d);
+        std::printf("[eden-trailer] %s\n", d);
+    }
+
+    if (!g_opt.world.empty()) {
+        // Gates 2 + 3: one sign's text edited in play, saved with zero dirty columns, reloaded.
+        WorldTrailer::testNoDirtyMark = g_opt.trailerNoDirty;
+        if (!open_world(g_opt.world.c_str(), g_opt.height)) return 1;
+        tick(60);
+        WorldTrailer* t = (WorldTrailer*)eden_debug_world_trailer();
+        const std::string path = eden_debug_world_file();
+        std::printf("[eden-trailer] %s: %s (%s)\n", path.c_str(), t ? t->describe().c_str() : "no trailer", eden_debug_world_format());
+        if (!t || !t->parsed() || t->signCount() == 0) {
+            check(false, "the world has a readable trailer with signs", path.c_str());
+            std::printf("[eden-trailer] FAILURES (%d failure(s))\n", g_selftestFailures);
+            return 1;
+        }
+        std::vector<uint8_t> disk0;
+        std::string cols0, err;
+        check(read_world(path, disk0, &cols0, err), "read the world back from disk", err.c_str());
+        if (t->dirty()) {
+            // Adopted sidecars: the first save must write them in.
+            std::printf("[eden-trailer] sidecars adopted at load: %s\n", t->describe().c_str());
+            const std::vector<uint8_t> want = t->encode();
+            save_world();
+            std::vector<uint8_t> disk;
+            read_world(path, disk, nullptr, err);
+            check(!t->dirty() && disk == want, "adopted sidecars are written into the world by the first save", "");
+            disk0 = disk;
+        }
+        check(t->encode() == disk0, "the model holds what the file holds", "");
+        const std::string old0 = t->sign(0).text;
+        WorldTrailer scratch;
+        scratch.load(disk0.data(), disk0.size());
+        scratch.setSignText(0, "D3A edited sign");
+        const std::vector<uint8_t> want = scratch.rebuild();
+        size_t diff = 0;
+        for (size_t i = 0; i < std::min(want.size(), disk0.size()); i++) diff += want[i] != disk0[i];
+
+        const int dirtyChunks = eden_debug_modified_chunks();
+        std::snprintf(d, sizeof(d), "%d modified chunks", dirtyChunks);
+        check(dirtyChunks == 0, "no column is dirty before the save (the trailer alone must force it)", d);
+        check(t->setSignText(0, "D3A edited sign") == WorldTrailer::TR_OK, "edit sign 0's text in play", old0.c_str());
+        const std::string toast = eden_debug_trailer_refusal_toast(WorldTrailer::TR_FULL);
+        check(toast == WorldTrailer::resultMessage(WorldTrailer::TR_FULL), "a refusal shows its toast", toast.c_str());
+        save_world();
+        std::vector<uint8_t> disk1;
+        std::string cols1;
+        read_world(path, disk1, &cols1, err);
+        std::snprintf(d, sizeof(d), "disk %zu B (was %zu), %zu B of the text differ, dirty %d", disk1.size(), disk0.size(), diff,
+                      t->dirty() ? 1 : 0);
+        check(disk1 == want && want.size() == disk0.size() && diff > 0 && diff <= 96,
+              "a zero-dirty-column save writes the edited trailer, only that sign's text changed", d);
+        check(cols1 == cols0, "the save left every column byte-identical", cols1.c_str());
+
+        if (!quit_to_menu()) return 1;
+        tick(60);
+        if (!open_world(g_opt.world.c_str(), g_opt.height)) return 1;
+        tick(60);
+        t = (WorldTrailer*)eden_debug_world_trailer();
+        std::vector<uint8_t> disk2;
+        std::string cols2;
+        read_world(path, disk2, &cols2, err);
+        check(t && t->encode() == want && !t->dirty() && std::strcmp(t->sign(0).text, "D3A edited sign") == 0 &&
+              disk2 == want && cols2 == cols0, "after reload: the edit is there, nothing else changed", t ? t->describe().c_str() : "");
+
+        // Remove every record: no trailer at all, on both containers.
+        if (g_opt.trailerKeep) t = nullptr;
+        while (t && t->signCount()) t->removeSign(t->signCount() - 1);
+        while (t && t->cmdCount()) t->removeCmd(t->cmdCount() - 1);
+        save_world();
+        std::vector<uint8_t> disk3;
+        read_world(path, disk3, nullptr, err);
+        std::snprintf(d, sizeof(d), "%zu B on disk", disk3.size());
+        if (!g_opt.trailerKeep) {
+        check(t && t->encode().empty() && disk3.empty(), "removing every record leaves no trailer", d);
+        if (!quit_to_menu()) return 1;
+        tick(60);
+        if (!open_world(g_opt.world.c_str(), g_opt.height)) return 1;
+        tick(30);
+        t = (WorldTrailer*)eden_debug_world_trailer();
+        check(t && t->signCount() == 0 && t->cmdCount() == 0 && t->encode().empty(), "...and it reloads empty",
+              t ? t->describe().c_str() : "");
         }
     }
+    std::printf("[eden-trailer] %s (%d failure(s))\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
+    return g_selftestFailures ? 1 : 0;
+}
+
+// ---------------------------------------------------------------------------------------------
+// --signs-selftest / --sign-shot  (Stage D / D.3b + D.3c, drawing and placing signs)
+// ---------------------------------------------------------------------------------------------
+void push_text(const char* utf8);            // --ui-selftest's helpers, defined below
+void push_tap_key(SDL_Scancode sc);
+void ui_pointer(int phase, float x, float yUp);
+void ui_tap_rect(CGRect r);
+
+namespace signs_test {
+
+std::string toast() {
+    NSString* t = World::getWorld->hud->sb->current();
+    return t ? std::string([t UTF8String]) : std::string();
+}
+// The tool, answered through the REAL prompt: typed text (a literal: SDL keeps the pointer), the
+// field's prefill erased first when `erase` > 0, then Return.
+int sign_with(int x, int z, int y, int dx, int dy, int dz, float yaw, const char* typed, int erase) {
+    const int r = SignTool::use(x, z, y, dx, dy, dz, yaw);
+    tick(2);
+    if (GLDialog::active()) {
+        for (int i = 0; i < erase; ++i) push_tap_key(SDL_SCANCODE_BACKSPACE);
+        if (typed && *typed) push_text(typed);
+        tick(2);
+        push_tap_key(SDL_SCANCODE_RETURN);
+        tick(3);
+    }
+    return r;
+}
+std::string text_of(const TrailerSign& s) { char b[96]; std::memcpy(b, s.text, 95); b[95] = 0; return b; }
+// The top solid block of column (x, z), or -1.
+int ground(int x, int z) {
+    for (int y = T_HEIGHT - 1; y >= 0; --y) if (World::getWorld->terrain->getLand(x, z, y) > 0) return y;
+    return -1;
+}
+// A floating stone with air all around: (x, z, y) in Terrain order, near (px, pz).
+bool floating_anchor(int px, int pz, int* ox, int* oz, int* oy) {
+    Terrain* t = World::getWorld->terrain;
+    for (int k = 0; k < 40; ++k) {
+        const int x = px + 4 + (k % 8) * 3, z = pz + (k / 8) * 3;
+        const int g = ground(x, z);
+        const int y = (g < 0 ? 40 : g) + 4;
+        if (y + 2 >= T_HEIGHT) continue;
+        bool clear = true;
+        for (int dx = -1; dx <= 1 && clear; ++dx)
+            for (int dz = -1; dz <= 1 && clear; ++dz)
+                for (int dy = -1; dy <= 1 && clear; ++dy)
+                    if (t->getLand(x + dx, z + dz, y + dy) != 0) clear = false;
+        if (!clear) continue;
+        t->updateChunks(x, z, y, TYPE_STONE);
+        *ox = x; *oz = z; *oy = y;
+        return true;
+    }
+    return false;
+}
+
+}  // namespace signs_test
+
+int run_signs_selftest() {
+    using namespace signs_test;
+    g_selftestTag = "eden-signs";
+    g_tickInput = true;   // the prompt's typed keys reach the field only through the input tick
+    SignTool::testAllowBottom = g_opt.signsMutate == "bottom";
+    SignTool::testNoAnchorHook = g_opt.signsMutate == "nohook";
+    char d[512];
+    if (g_opt.world.empty()) { check(false, "--world=NAME (a world with signs) is given", ""); return 1; }
+    if (!open_world(g_opt.world.c_str(), g_opt.height)) return 1;
+    if (g_opt.haveAt) eden_console_teleport(g_opt.at[0], g_opt.at[1], g_opt.at[2]);
+    tick(g_opt.frames / 4);
+    // --world-format=emod converts the .eden on first play and asks "World converted": the tools
+    // (rightly, since D.4b) do nothing under a modal, so it goes first. Keep the original.
+    if (GLDialog::active()) { GLDialog::dismiss(); tick(2); }
+    WorldTrailer* t = (WorldTrailer*)eden_debug_world_trailer();
+    Hud* hud = World::getWorld->hud;
+    Terrain* ter = World::getWorld->terrain;
+    PlayerState ps = player_state();
+    std::printf("[eden-signs] world %s: %s; player %.1f,%.1f,%.1f\n", eden_debug_world_file(),
+                t ? t->describe().c_str() : "no trailer", ps.x, ps.y, ps.z);
+
+    // ---- D.3b: the pass's probe. inRange is compared with emod.py's count in the results file.
+    const SignRenderer::Stats s0 = SignRenderer::stats();
+    std::printf("[eden-signs] probe %s\n", SignRenderer::describe());
+    std::snprintf(d, sizeof(d), "%s", SignRenderer::describe());
+    check(t && s0.records == (int)t->signCount() && s0.inRange > 0 &&
+          s0.drawn + s0.hiddenAir + s0.hiddenFront == s0.inRange && s0.drawn > 0,
+          "the sign pass sees the trailer's signs in range and draws them", d);
+
+    // ---- D.3c: the tool on a floating anchor A.
+    hud->block_paintcolor = 0;
+    int ax, az, ay;
+    if (!floating_anchor((int)ps.x, (int)ps.z, &ax, &az, &ay)) { check(false, "a floating anchor near the player", ""); return 1; }
+    tick(10);
+    const TrailerPos A = TrailerPos::fromTerrainArgs(ax, az, ay);
+    const size_t n0 = t->signCount();
+    struct Face { int dx, dy, dz, a, c; const char* text; };
+    const Face faces[] = { {-1, 0, 0, 0, 0, "west"}, {1, 0, 0, 1, 2, "east"}, {0, 0, -1, 4, 1, "north"},
+                           {0, 0, 1, 5, 3, "south"}, {0, 1, 0, 3, 1, "top sign, longer text that wraps over lines"} };
+    for (const Face& f : faces) {
+        const int r = sign_with(ax, az, ay, f.dx, f.dy, f.dz, 90.0f, f.text, 0);   // yaw 90: looking +z
+        const int i = t->findSign(A, f.a);
+        std::snprintf(d, sizeof(d), "face a=%d: use %d, record %d%s", f.a, r, i,
+                      i >= 0 ? (" b=" + std::to_string(t->sign(i).b) + " c=" + std::to_string(t->sign(i).c) +
+                                " '" + text_of(t->sign(i)) + "'").c_str() : "");
+        check(r == SignTool::USE_PROMPT_NEW && i >= 0 && text_of(t->sign(i)) == f.text && t->sign(i).b == 45 &&
+              t->sign(i).c == f.c, "a sign placed through the prompt: a, b = 45 (no paint), c, text", d);
+    }
+    hud->sb->clear();
+    {
+        const int r = sign_with(ax, az, ay, 0, -1, 0, 90.0f, "under", 0);
+        std::snprintf(d, sizeof(d), "use %d, record %d, toast '%s'", r, t->findSign(A, 2), toast().c_str());
+        check(r == SignTool::USE_REFUSED_BOTTOM && t->findSign(A, 2) < 0 && !GLDialog::active() &&
+              toast() == "Can't place a sign under the block", "the bottom face is refused with the toast", d);
+    }
+    tick(4);
+    const SignRenderer::Stats s1 = SignRenderer::stats();
+    std::snprintf(d, sizeof(d), "drawn %d -> %d, records %d", s0.drawn, s1.drawn, s1.records);
+    check(t->signCount() == n0 + 5 && s1.drawn == s0.drawn + 5, "the five new signs are drawn", d);
+
+    // Edit (prefilled, erased, retyped), keeping its colour; edit with a paint picked recolours.
+    {
+        const int r = sign_with(ax, az, ay, -1, 0, 0, 90.0f, "WEST edited", 4);
+        const int i = t->findSign(A, 0);
+        std::snprintf(d, sizeof(d), "use %d, '%s' b=%d", r, i >= 0 ? text_of(t->sign(i)).c_str() : "-", i >= 0 ? t->sign(i).b : -1);
+        check(r == SignTool::USE_PROMPT_EDIT && i >= 0 && text_of(t->sign(i)) == "WEST edited" && t->sign(i).b == 45,
+              "tapping a sign again edits it (prefilled), colour kept", d);
+        hud->block_paintcolor = 19;
+        sign_with(ax, az, ay, 1, 0, 0, 90.0f, "", 0);   // Return on the prefill: same text, new paint
+        const int j = t->findSign(A, 1);
+        std::snprintf(d, sizeof(d), "'%s' b=%d", j >= 0 ? text_of(t->sign(j)).c_str() : "-", j >= 0 ? t->sign(j).b : -1);
+        check(j >= 0 && text_of(t->sign(j)) == "east" && t->sign(j).b == 19, "an edit with a paint picked takes its colour", d);
+        hud->block_paintcolor = 0;
+        const int r2 = sign_with(ax, az, ay, 0, 0, -1, 90.0f, "", 12);
+        std::snprintf(d, sizeof(d), "use %d, record %d, signs %zu", r2, t->findSign(A, 4), t->signCount());
+        check(r2 == SignTool::USE_PROMPT_EDIT && t->findSign(A, 4) < 0 && t->signCount() == n0 + 4,
+              "an empty edit deletes the sign", d);
+    }
+    // A block in front of a sign hides it; the record stays.
+    {
+        ter->updateChunks(ax, az + 1, ay, TYPE_STONE);   // in front of "south"
+        tick(3);
+        const SignRenderer::Stats h = SignRenderer::stats();
+        ter->updateChunks(ax, az + 1, ay, TYPE_NONE);
+        tick(3);
+        std::snprintf(d, sizeof(d), "hiddenFront %d -> %d, south record %d, drawn back %d", s1.hiddenFront, h.hiddenFront,
+                      t->findSign(A, 5), SignRenderer::stats().drawn);
+        check(h.hiddenFront == s1.hiddenFront + 1 && t->findSign(A, 5) >= 0, "a block in front hides a sign, never deletes it", d);
+    }
+
+    // The real path: the picker's SIGN cell arms the tool, a screen tap at the crosshair places one.
+    {
+        tap_hud(1);
+        tick(10);
+        hud->pickerPageStep(1);
+        tick(4);
+        int cell = -1;
+        for (int i = 0; i < Hud::pickerCellCount(1); ++i) if (Hud::pickerCell(1, i) == HUD_TOOL_SIGN) cell = i;
+        if (cell >= 0) ui_tap_rect(hud->blockBounds[cell]);
+        tick(10);
+        std::snprintf(d, sizeof(d), "mode %d blocktype %d", hud->mode, hud->blocktype);
+        check(hud->mode == MODE_BUILD && hud->blocktype == HUD_TOOL_SIGN, "the picker's SIGN cell arms the tool", d);
+        // Aim at A's free bottom-less -z face... it was just deleted: aim the crosshair at its centre.
+        Player* pl = World::getWorld->player;
+        Camera* cam = World::getWorld->cam;
+        const float fx = ax + 0.5f, fy = ay + 0.5f, fz = (float)az;
+        pl->pos.x = fx; pl->pos.z = fz - 3.0f; pl->pos.y = fy;
+        pl->vel.x = pl->vel.y = pl->vel.z = 0;
+        for (int k = 0; k < 4; ++k) {
+            tick(1);
+            const float dx = fx - cam->px, dy = fy - cam->py, dz = fz - cam->pz;
+            pl->yaw = std::atan2(dz, dx) * 180.0f / (float)M_PI;
+            pl->pitch = std::atan2(dy, std::sqrt(dx * dx + dz * dz)) * 180.0f / (float)M_PI;
+        }
+        tick(1);
+        ui_pointer(0, SCREEN_WIDTH * 0.5f, SCREEN_HEIGHT * 0.5f); tick(1);
+        ui_pointer(2, SCREEN_WIDTH * 0.5f, SCREEN_HEIGHT * 0.5f); tick(2);
+        const bool prompted = GLDialog::active();
+        if (prompted) { push_text("tapped"); tick(2); push_tap_key(SDL_SCANCODE_RETURN); tick(3); }
+        const int i = t->findSign(A, 4);
+        std::snprintf(d, sizeof(d), "prompt %d, -z record %d%s, cam %.2f,%.2f,%.2f", prompted, i,
+                      i >= 0 ? (" '" + text_of(t->sign(i)) + "'").c_str() : "", cam->px, cam->py, cam->pz);
+        check(prompted && i >= 0 && text_of(t->sign(i)) == "tapped" && t->sign(i).c == 1,
+              "a screen tap with the tool places a sign on the face it hits", d);
+        // Back to an ordinary block, so nothing below builds a sign by accident.
+        hud->blocktype = TYPE_STONE;
+    }
+
+    // The user's Mac bug (2026-10-10): a RIGHT-CLICK that opened the sign prompt left the hold-to-
+    // build pulse running (its release arrived with the cursor freed and went to the menu path), so
+    // the prompt re-opened every 200 ms; a key held at the time kept walking the player after it
+    // closed. Real SDL events through the input translator, real wall-clock time. Twice: the click
+    // alone (the prompt must not come back), then with S held as well (the player must not walk).
+    for (int withKey = 0; withKey < 2; ++withKey) {
+        int qx, qz, qy;
+        floating_anchor(ax - 8 - 8 * withKey, az - 8, &qx, &qz, &qy);
+        tick(4);
+        hud->mode = MODE_BUILD;
+        hud->blocktype = HUD_TOOL_SIGN;
+        Player* pl = World::getWorld->player;
+        Camera* cam = World::getWorld->cam;
+        const float fx = qx + 0.5f, fy = qy + 0.5f, fz = (float)qz;
+        pl->pos.x = fx; pl->pos.z = fz - 3.0f; pl->pos.y = fy;
+        pl->vel.x = pl->vel.y = pl->vel.z = 0;
+        for (int k = 0; k < 4; ++k) {
+            tick(1);
+            const float dx = fx - cam->px, dy = fy - cam->py, dz = fz - cam->pz;
+            pl->yaw = std::atan2(dz, dx) * 180.0f / (float)M_PI;
+            pl->pitch = std::atan2(dy, std::sqrt(dx * dx + dz * dz)) * 180.0f / (float)M_PI;
+        }
+        if (withKey) push_key(SDL_SCANCODE_S, true);     // walking backwards, as the user was
+        push_mouse_button(SDL_BUTTON_RIGHT, true);
+        bool opened = false;
+        for (int k = 0; k < 60 && !opened; ++k) { tick(1); opened = GLDialog::active(); }
+        tick(6);   // a human click outlasts the frame that opened the prompt: the release must
+                   // arrive AFTER the dialog freed the cursor, which is what routed it astray
+        if (withKey) push_key(SDL_SCANCODE_S, false);
+        push_mouse_button(SDL_BUTTON_RIGHT, false);
+        tick(2);
+        push_tap_key(SDL_SCANCODE_ESCAPE);               // cancel: no sign
+        tick(3);
+        pl->vel.x = pl->vel.y = pl->vel.z = 0;           // in the air nothing brakes the steps taken
+        const PlayerState p0 = player_state();           // before the prompt; a held key re-accelerates
+        int reopened = 0;
+        for (int k = 0; k < 40; ++k) {
+            SDL_Delay(20);
+            tick(1);
+            if (GLDialog::active()) { ++reopened; push_tap_key(SDL_SCANCODE_ESCAPE); }
+        }
+        if (GLDialog::active()) GLDialog::dismiss();
+        const PlayerState p1 = player_state();
+        const float moved = std::sqrt((p1.x - p0.x) * (p1.x - p0.x) + (p1.z - p0.z) * (p1.z - p0.z));
+        std::snprintf(d, sizeof(d), "%s: prompt opened %d, frames with a prompt in 0.8 s after cancel %d, walked %.2f",
+                      withKey ? "click + S" : "click", opened, reopened, moved);
+        check(opened && reopened == 0 && moved < 0.3f,
+              withKey ? "a right-click + held key that open the prompt leave no key held behind"
+                      : "a right-click that opens the prompt leaves no build pulse behind (it never re-opens)", d);
+        hud->blocktype = TYPE_STONE;
+    }
+
+    // ---- D.4b: the CMD tool. Placing (steel + an empty CMB1 record), the skin, editing through the
+    // multi-line prompt (cap 511, empty clears), the running button, the per-world cap, a sign on
+    // its face, the picker cell + a real screen tap, mining.
+    TrailerPos keptCmd = {0, 0, 0};
+    std::string keptScript;
+    {
+        int ex, ez, ey;
+        floating_anchor(ax + 16, az - 8, &ex, &ez, &ey);
+        {   // stand by it: the anchor sits at its column's ground + 4, which can be far above or below
+            Player* pl = World::getWorld->player;
+            pl->pos.x = ex + 0.5f; pl->pos.y = ey + 0.5f; pl->pos.z = ez - 3.0f;
+            pl->vel.x = pl->vel.y = pl->vel.z = 0;
+        }
+        tick(4);
+        const SignRenderer::Stats k0 = SignRenderer::stats();
+        hud->mode = MODE_BUILD;
+        hud->blocktype = HUD_TOOL_CMD;
+        hud->block_paintcolor = 19;
+        const size_t c0 = t->cmdCount();
+        const int r = CmdTool::use(ex, ez, ey, 1, 0, 0);          // on the stone's +x face
+        const TrailerPos P = TrailerPos::fromTerrainArgs(ex + 1, ez, ey);
+        const int i = t->findCmd(P);
+        tick(3);
+        const SignRenderer::Stats k1 = SignRenderer::stats();
+        std::snprintf(d, sizeof(d), "use %d, voxel %d colour %d, record %d of %zu, script '%s'; hud type %d paint %d; "
+                      "skinned %d -> %d, faces +%d", r, ter->getLand(ex + 1, ez, ey), ter->getColor(ex + 1, ez, ey),
+                      i, t->cmdCount(), i >= 0 ? t->cmd(i).script : "-", hud->blocktype, hud->block_paintcolor,
+                      k0.cmdInRange, k1.cmdInRange, k1.cmdFaces - k0.cmdFaces);
+        check(r == CmdTool::USE_PLACED && ter->getLand(ex + 1, ez, ey) == TYPE_STEEL && ter->getColor(ex + 1, ez, ey) == 0 &&
+              i >= 0 && t->cmdCount() == c0 + 1 && t->cmd(i).script[0] == 0 && t->cmd(i).flags == 0 &&
+              hud->blocktype == HUD_TOOL_CMD && hud->block_paintcolor == 19,
+              "the CMD tool places unpainted steel + an empty CMB1 record, the tool stays armed", d);
+        {
+            const PlayerState pq = player_state();
+            char more[160];
+            std::snprintf(more, sizeof(more), "; block %d,%d,%d (file x,y,z) player %.1f,%.1f,%.1f", P.x, P.y, P.z, pq.x, pq.y, pq.z);
+            std::strncat(d, more, sizeof(d) - std::strlen(d) - 1);
+        }
+        check(k1.cmdInRange == k0.cmdInRange + 1 && k1.cmdFaces - k0.cmdFaces == 5,
+              "the new command block is skinned on its 5 exposed faces (not the one against the stone)", d);
+        hud->block_paintcolor = 0;
+        // A second tap in the cell it filled: refused (occupied), nothing added.
+        const int rr = CmdTool::use(ex, ez, ey, 1, 0, 0);
+        // ...whereas tapping the command block itself is an edit.
+        // (rr: the stone's +x face now leads into the steel, which is not air.)
+        std::snprintf(d, sizeof(d), "use %d, cmds %zu", rr, t->cmdCount());
+        check(rr == CmdTool::USE_REFUSED_CELL && t->cmdCount() == c0 + 1, "a CMD tap into an occupied cell is refused", d);
+
+        // Edit through the real prompt.
+        const int re = CmdTool::use(ex + 1, ez, ey, 0, 1, 0);
+        tick(2);
+        const bool up = GLDialog::active();
+        push_text("say hello; wait 1; say bye");
+        tick(2);
+        push_tap_key(SDL_SCANCODE_RETURN);
+        tick(3);
+        int j = t->findCmd(P);
+        std::snprintf(d, sizeof(d), "use %d, prompt %d, script '%s'", re, up, j >= 0 ? t->cmd(j).script : "-");
+        check(re == CmdTool::USE_PROMPT_EDIT && up && j >= 0 && std::string(t->cmd(j).script) == "say hello; wait 1; say bye",
+              "tapping a command block edits its script through the prompt", d);
+        // Over-long: the field stops at 511 bytes.
+        CmdTool::use(ex + 1, ez, ey, -1, 0, 0);
+        tick(2);
+        push_text("fill ~1 ~0 ~1 ~4 ~4 ~4 stone; fill ~1 ~0 ~1 ~4 ~4 ~4 stone; fill ~1 ~0 ~1 ~4 ~4 ~4 stone; "
+                  "fill ~1 ~0 ~1 ~4 ~4 ~4 stone; fill ~1 ~0 ~1 ~4 ~4 ~4 stone; fill ~1 ~0 ~1 ~4 ~4 ~4 stone; "
+                  "fill ~1 ~0 ~1 ~4 ~4 ~4 stone; fill ~1 ~0 ~1 ~4 ~4 ~4 stone; fill ~1 ~0 ~1 ~4 ~4 ~4 stone; "
+                  "fill ~1 ~0 ~1 ~4 ~4 ~4 stone; fill ~1 ~0 ~1 ~4 ~4 ~4 stone; fill ~1 ~0 ~1 ~4 ~4 ~4 stone; "
+                  "fill ~1 ~0 ~1 ~4 ~4 ~4 stone; fill ~1 ~0 ~1 ~4 ~4 ~4 stone; fill ~1 ~0 ~1 ~4 ~4 ~4 stone; "
+                  "fill ~1 ~0 ~1 ~4 ~4 ~4 stone; fill ~1 ~0 ~1 ~4 ~4 ~4 stone; fill ~1 ~0 ~1 ~4 ~4 ~4 stone; ");
+        tick(2);
+        push_tap_key(SDL_SCANCODE_RETURN);
+        tick(3);
+        j = t->findCmd(P);
+        const size_t longLen = j >= 0 ? std::strlen(t->cmd(j).script) : 0;
+        std::snprintf(d, sizeof(d), "script length %zu", longLen);
+        check(longLen == CmdTool::MAX_SCRIPT && std::string(t->cmd(j).script).compare(0, 26, "say hello; wait 1; say bye") == 0,
+              "a script stops at 511 bytes (the prefill kept, the rest cut)", d);
+        // Empty: the block stays, its script is cleared (cmd.html).
+        CmdTool::use(ex + 1, ez, ey, 0, 0, 1);
+        tick(2);
+        for (int k = 0; k < CmdTool::MAX_SCRIPT + 4; ++k) push_key(SDL_SCANCODE_BACKSPACE, true);
+        tick(2);
+        push_tap_key(SDL_SCANCODE_RETURN);
+        tick(3);
+        j = t->findCmd(P);
+        std::snprintf(d, sizeof(d), "voxel %d, record %d, script '%s'", ter->getLand(ex + 1, ez, ey), j,
+                      j >= 0 ? t->cmd(j).script : "-");
+        check(ter->getLand(ex + 1, ez, ey) == TYPE_STEEL && j >= 0 && t->cmd(j).script[0] == 0,
+              "an empty edit keeps the command block and clears its script", d);
+        if (GLDialog::active()) GLDialog::dismiss();
+
+        // The button: green while running (D.4c's hook), red otherwise.
+        CmdTool::setRunning(P, true);
+        tick(2);
+        const int runOn = SignRenderer::stats().cmdRunning;
+        CmdTool::setRunning(P, false);
+        tick(2);
+        const int runOff = SignRenderer::stats().cmdRunning;
+        std::snprintf(d, sizeof(d), "running %d -> %d", runOn, runOff);
+        check(runOn == 1 && runOff == 0, "a running command block draws the green button, idle the red", d);
+
+        // A sign on its face sits over the panel (the D.3b board).
+        const int onCmd0 = SignRenderer::stats().onCmd;
+        sign_with(ex + 1, ez, ey, 1, 0, 0, 0.0f, "GO", 0);
+        tick(3);
+        std::snprintf(d, sizeof(d), "onCmd %d -> %d", onCmd0, SignRenderer::stats().onCmd);
+        check(t->findSign(P, 1) >= 0 && SignRenderer::stats().onCmd == onCmd0 + 1, "a sign on a command block's face is its panel board", d);
+
+        // The per-world cap: filler records far away up to 512, then the tool refuses with a toast.
+        {
+            std::vector<TrailerPos> filler;
+            for (int k = 0; (int)t->cmdCount() < CmdTool::MAX_PER_WORLD; ++k) {
+                const TrailerPos F = {P.x + 1000 + k, P.y + 1000, 1};
+                if (t->addCmd(F, "") != WorldTrailer::TR_OK) break;
+                filler.push_back(F);
+            }
+            hud->sb->clear();
+            int fx2, fz2, fy2;
+            floating_anchor(ax + 24, az, &fx2, &fz2, &fy2);
+            const int rf = CmdTool::use(fx2, fz2, fy2, 0, 1, 0);
+            std::snprintf(d, sizeof(d), "cmds %zu, use %d, cell %d, toast '%s'", t->cmdCount(), rf,
+                          ter->getLand(fx2, fz2, fy2 + 1), toast().c_str());
+            check(t->cmdCount() == CmdTool::MAX_PER_WORLD && rf == CmdTool::USE_REFUSED_FULL &&
+                  ter->getLand(fx2, fz2, fy2 + 1) == 0 && toast() == "This world has 512 command blocks already",
+                  "the 513th command block is refused with a toast, nothing built", d);
+            for (const TrailerPos& F : filler) { const int k = t->findCmd(F); if (k >= 0) t->removeCmd((size_t)k); }
+            ter->updateChunks(fx2, fz2, fy2, TYPE_NONE);
+        }
+
+        // The real path: the picker's CMD cell arms the tool; a screen tap on a face places one.
+        {
+            hud->blocktype = TYPE_STONE;
+            tap_hud(1);
+            tick(10);
+            hud->pickerPageStep(1);
+            tick(4);
+            int cell = -1;
+            for (int k = 0; k < Hud::pickerCellCount(1); ++k) if (Hud::pickerCell(1, k) == HUD_TOOL_CMD) cell = k;
+            if (cell >= 0) ui_tap_rect(hud->blockBounds[cell]);
+            tick(10);
+            const bool armed = hud->mode == MODE_BUILD && hud->blocktype == HUD_TOOL_CMD;
+            int gx, gz, gy;
+            floating_anchor(ax - 24, az + 8, &gx, &gz, &gy);
+            tick(4);
+            Player* pl = World::getWorld->player;
+            Camera* cam = World::getWorld->cam;
+            const float fx = gx + 0.5f, fy = gy + 0.5f, fz = (float)gz;   // its -z face
+            pl->pos.x = fx; pl->pos.z = fz - 3.0f; pl->pos.y = fy;
+            pl->vel.x = pl->vel.y = pl->vel.z = 0;
+            for (int k = 0; k < 4; ++k) {
+                tick(1);
+                const float dx = fx - cam->px, dy = fy - cam->py, dz = fz - cam->pz;
+                pl->yaw = std::atan2(dz, dx) * 180.0f / (float)M_PI;
+                pl->pitch = std::atan2(dy, std::sqrt(dx * dx + dz * dz)) * 180.0f / (float)M_PI;
+            }
+            tick(1);
+            ui_pointer(0, SCREEN_WIDTH * 0.5f, SCREEN_HEIGHT * 0.5f); tick(1);
+            ui_pointer(2, SCREEN_WIDTH * 0.5f, SCREEN_HEIGHT * 0.5f); tick(2);
+            const TrailerPos G = TrailerPos::fromTerrainArgs(gx, gz - 1, gy);
+            std::snprintf(d, sizeof(d), "armed %d, cell %d, record %d, prompt %d", armed, ter->getLand(gx, gz - 1, gy),
+                          t->findCmd(G), GLDialog::active());
+            check(armed && ter->getLand(gx, gz - 1, gy) == TYPE_STEEL && t->findCmd(G) >= 0 && !GLDialog::active(),
+                  "the picker's CMD cell arms the tool and a screen tap places a command block (no prompt)", d);
+            // Kept for the reload check, with a script.
+            CmdTool::use(gx, gz - 1, gy, 0, 1, 0);
+            tick(2);
+            push_text("say kept");
+            tick(2);
+            push_tap_key(SDL_SCANCODE_RETURN);
+            tick(3);
+            keptCmd = G;
+            keptScript = t->findCmd(G) >= 0 ? t->cmd(t->findCmd(G)).script : "";
+            hud->blocktype = TYPE_STONE;
+        }
+
+        // Mining the command block takes the record, its sign and its running flag.
+        CmdTool::setRunning(P, true);
+        ter->destroyBlock(P.x, P.y, P.z);
+        tick(3);
+        std::snprintf(d, sizeof(d), "voxel %d, record %d, signs %zu, running %d", ter->getLand(P.x, P.y, P.z), t->findCmd(P),
+                      t->signsOn(P).size(), CmdTool::running(P));
+        check(ter->getLand(P.x, P.y, P.z) == 0 && t->findCmd(P) < 0 && t->signsOn(P).empty() && !CmdTool::running(P),
+              "mining a placed command block removes its record, its sign and its running flag", d);
+    }
+
+    // Mining an anchor and blowing one up take their signs.
+    {
+        int bx, bz, by, cx, cz, cy;
+        floating_anchor(ax + 8, az + 8, &bx, &bz, &by);
+        floating_anchor(ax - 16, az + 16, &cx, &cz, &cy);
+        tick(4);
+        sign_with(bx, bz, by, 0, 1, 0, 0.0f, "mine me", 0);
+        sign_with(cx, cz, cy, 1, 0, 0, 0.0f, "blow me up", 0);
+        const TrailerPos B = TrailerPos::fromTerrainArgs(bx, bz, by), C = TrailerPos::fromTerrainArgs(cx, cz, cy);
+        const bool placed = t->findSign(B, 3) >= 0 && t->findSign(C, 1) >= 0;
+        ter->destroyBlock(bx, bz, by);
+        tick(3);
+        std::snprintf(d, sizeof(d), "placed %d, B block %d, B signs %zu", placed, ter->getLand(bx, bz, by), t->signsOn(B).size());
+        check(placed && ter->getLand(bx, bz, by) == 0 && t->signsOn(B).empty(), "mining the anchor removes its sign", d);
+        ter->updateChunks(cx - 1, cz, cy, TYPE_TNT);
+        ter->burnBlock(cx - 1, cz, cy, TRUE);   // lit as a blast lights it: a 0.5-0.8 s fuse,
+        tick(420);                              // which Terrain::update runs at a quarter speed
+        std::snprintf(d, sizeof(d), "C block %d, C signs %zu", ter->getLand(cx, cz, cy), t->signsOn(C).size());
+        check(ter->getLand(cx, cz, cy) == 0 && t->signsOn(C).empty(), "TNT next to the anchor removes its sign", d);
+    }
+
+    // A command block's steel mined: its CMB1 record (and its signs) go, every other record stays.
+    TrailerPos minedCmd = {0, 0, 0};
+    size_t cmdsAfter = t->cmdCount();
+    size_t firstOld = 0;   // not the one D.4b's leg placed and keeps for the reload check
+    while (firstOld < t->cmdCount() && t->cmd(firstOld).pos() == keptCmd) ++firstOld;
+    if (firstOld < t->cmdCount()) {
+        const TrailerCmd c0 = t->cmd(firstOld);
+        const TrailerPos P = c0.pos();
+        std::vector<TrailerCmd> otherCmds;
+        std::vector<TrailerSign> otherSigns;
+        for (size_t i = 0; i < t->cmdCount(); ++i) if (i != firstOld) otherCmds.push_back(t->cmd(i));
+        for (size_t i = 0; i < t->signCount(); ++i) if (!(t->sign(i).pos() == P)) otherSigns.push_back(t->sign(i));
+        const size_t onIt = t->signsOn(P).size();
+        ter->destroyBlock(P.x, P.y, P.z);
+        tick(3);
+        bool same = t->cmdCount() == otherCmds.size() && t->signCount() == otherSigns.size();
+        for (size_t i = 0; same && i < otherCmds.size(); ++i) same = std::memcmp(&t->cmd(i), &otherCmds[i], sizeof(TrailerCmd)) == 0;
+        for (size_t i = 0; same && i < otherSigns.size(); ++i) same = std::memcmp(&t->sign(i), &otherSigns[i], sizeof(TrailerSign)) == 0;
+        std::snprintf(d, sizeof(d), "steel at %d,%d,%d -> %d; cmds %zu, signs on it %zu -> %zu, the rest identical %d",
+                      P.x, P.y, P.z, ter->getLand(P.x, P.y, P.z), t->cmdCount(), onIt, t->signsOn(P).size(), same);
+        check(ter->getLand(P.x, P.y, P.z) == 0 && t->findCmd(P) < 0 && t->signsOn(P).empty() && same,
+              "mining a command block removes only its CMB1 record (and its signs)", d);
+        minedCmd = P;
+        cmdsAfter = t->cmdCount();
+    }
+
+    // Save, reload: A's four signs with their a/b/c and text, the removals kept.
+    std::vector<TrailerSign> want;
+    for (int i : t->signsOn(A)) want.push_back(t->sign(i));
+    const size_t signsAfter = t->signCount();
+    save_world();
+    if (!quit_to_menu()) return 1;
+    tick(60);
+    if (!open_world(g_opt.world.c_str(), g_opt.height)) return 1;
+    if (g_opt.haveAt) eden_console_teleport(g_opt.at[0], g_opt.at[1], g_opt.at[2]);
+    tick(30);
+    t = (WorldTrailer*)eden_debug_world_trailer();
+    {
+        bool ok = t && t->signCount() == signsAfter && t->cmdCount() == cmdsAfter && t->signsOn(A).size() == want.size();
+        for (size_t k = 0; ok && k < want.size(); ++k) {
+            const int i = t->findSign(A, want[k].a);
+            ok = i >= 0 && std::memcmp(&t->sign(i), &want[k], sizeof(TrailerSign)) == 0;
+        }
+        if (ok && cmdsAfter) ok = t->findCmd(minedCmd) < 0;
+        if (ok) {   // D.4b: the command block placed by a screen tap, with its script
+            const int k = t->findCmd(keptCmd);
+            ok = k >= 0 && keptScript == "say kept" && std::string(t->cmd(k).script) == keptScript;
+        }
+        std::snprintf(d, sizeof(d), "%s; A has %zu (want %zu)", t ? t->describe().c_str() : "no trailer",
+                      t ? t->signsOn(A).size() : 0, want.size());
+        check(ok, "after save + reload: the placed/edited signs byte-identical, the removed ones gone", d);
+    }
+    std::printf("[eden-signs] file %s anchor A %d,%d,%d\n", eden_debug_world_file(), A.x, A.y, A.z);
+    std::printf("[eden-signs] %s (%d failure(s))\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
+    return g_selftestFailures ? 1 : 0;
+}
+
+// A real window at --at looking --look=YAW,PITCH: PREFIX-signs.bmp and the probe line. Frames are
+// ticked until every sign in range has its text (textures are built a few per frame).
+int run_sign_shot() {
+    SDL_GL_SetSwapInterval(0);
+    if (g_opt.world.empty()) { std::fprintf(stderr, "[eden-shot] --sign-shot needs --world\n"); return 1; }
+    tick(30);
+    if (!open_world(g_opt.world.c_str(), g_opt.height)) return 1;
+    Player* pl = World::getWorld->player;
+    for (int k = 0; k < g_opt.frames; ++k) {
+        if (g_opt.haveAt) eden_console_teleport(g_opt.at[0], g_opt.at[1], g_opt.at[2]);
+        if (g_opt.haveLook) { pl->yaw = g_opt.look[0]; pl->pitch = g_opt.look[1]; }
+        tick(1);
+    }
+    const SignRenderer::Stats& s = SignRenderer::stats();
+    for (int k = 0; k < 120 && s.withText < s.drawn; ++k) tick(1);
+    std::printf("[eden-shot] signs %s\n", SignRenderer::describe());
+    eden_mem_trace("signs");
+    capture("signs");
     return 0;
+}
+
+// ---------------------------------------------------------------------------------------------
+// --cmds-selftest  (Stage D / D.4c, the command-block interpreter)
+// ---------------------------------------------------------------------------------------------
+// With --world=NAME (the 3-bit adder, in --docs) and --at near its keypad: a parser leg on literal
+// scripts; every CMB1 script in the world parses with no bad statement; the adder computes 3 + 4 = 7
+// on its own seven-segment display when its buttons are pressed; then every command, the caps and
+// the triggers on command blocks this test places in open air; a real screen tap on a command block
+// with a block armed pushes it and builds nothing; save + reload keeps no runtime state. Fixed
+// 1/60 s etime: waits, timers and fuses are engine time. --cmds-mutate=nodepth (run ignores the
+// 8-deep cap) must fail the depth leg; --cmds-trace prints every statement.
+namespace cmds_test {
+
+Terrain* ter() { return World::getWorld->terrain; }
+WorldTrailer* tr() { return (WorldTrailer*)eden_debug_world_trailer(); }
+// Engine order (x, y_up, z) throughout this test.
+int land(int x, int y, int z) { return ter()->getLand(x, z, y); }
+int paint(int x, int y, int z) { return ter()->getColor(x, z, y); }
+void put(int x, int y, int z, int type) { ter()->updateChunks(x, z, y, type); }
+TrailerPos P(int x, int y, int z) { return TrailerPos::fromEngine(x, y, z); }
+// A command block at (x, y, z) with this script (steel + record, as the CMD tool makes one).
+TrailerPos make(int x, int y, int z, const char* script) {
+    put(x, y, z, TYPE_STEEL);
+    ter()->setColor(x, z, y, 0);
+    const TrailerPos p = P(x, y, z);
+    const int i = tr()->findCmd(p);
+    if (i >= 0) tr()->setCmdScript((size_t)i, script);
+    else tr()->addCmd(p, script);
+    return p;
+}
+void secs(float s) { tick((int)(s * 60.0f + 0.5f)); }
+std::string toast() {
+    NSString* t = World::getWorld->hud->sb->current();
+    return t ? std::string([t UTF8String]) : std::string();
+}
+// An all-air box (w x h x d) starting 3 above the highest ground under it, near (px, pz). Engine order.
+bool open_air(int px, int pz, int w, int h, int d, int* ox, int* oy, int* oz) {
+    // East of the adder (it spans x 65512..65581), inside the resident window.
+    for (int k = 0; k < 16; ++k) {
+        const int x = px + 50 + (k % 4) * (w + 2), z = pz - 20 + (k / 4) * (d + 2);
+        int top = -1;
+        for (int a = 0; a < w; ++a)
+            for (int c = 0; c < d; ++c)
+                for (int y = T_HEIGHT - 1; y > top; --y)
+                    if (land(x + a, y, z + c) > 0) { top = y; break; }
+        const int y0 = top + 3;
+        if (top < 0 || y0 + h + 1 >= T_HEIGHT) continue;
+        *ox = x; *oy = y0; *oz = z;
+        return true;
+    }
+    return false;
+}
+
+// The adder's units display: a seven-segment digit on the plane x = 65512 (engine order), each
+// segment's cells read off the scripts at x = 65521 that light it ("fill -9 9 -1 -9 9 1 lamp 9"...).
+struct Seg { const char* name; int z0, z1, y0, y1; };
+const Seg kSegs[7] = {
+    {"top", 65532, 65534, 42, 42}, {"top-left", 65535, 65535, 39, 41}, {"top-right", 65531, 65531, 39, 41},
+    {"center", 65532, 65534, 38, 38}, {"bottom-left", 65535, 65535, 35, 37},
+    {"bottom-right", 65531, 65531, 35, 37}, {"bottom", 65532, 65534, 34, 34}};
+// Bit i = segment i lit (every cell lamp 9, the off colour is 54); -1 if a segment is mixed or not lamps.
+int segments(std::string* why) {
+    int bits = 0;
+    bool bad = false;
+    for (int i = 0; i < 7; ++i) {
+        int lit = 0, off = 0, other = 0;
+        for (int z = kSegs[i].z0; z <= kSegs[i].z1; ++z)
+            for (int y = kSegs[i].y0; y <= kSegs[i].y1; ++y) {
+                const int t = land(65512, y, z), c = paint(65512, y, z);
+                if (t == TYPE_LIGHTBOX && c == 9) ++lit;
+                else if (t == TYPE_LIGHTBOX && c == 54) ++off;
+                else ++other;
+            }
+        if (why) *why += std::string(kSegs[i].name) + "=" + std::to_string(lit) + "/" + std::to_string(off) +
+                         (other ? "/?" + std::to_string(other) : "") + " ";
+        if (other || (lit && off)) bad = true;
+        if (lit) bits |= 1 << i;
+    }
+    return bad ? -1 : bits;
+}
+int digitOf(int bits) {
+    // bit order: top, top-left, top-right, center, bottom-left, bottom-right, bottom
+    static const int kDigits[10] = {0x77, 0x24, 0x5D, 0x6D, 0x2E, 0x6B, 0x7B, 0x25, 0x7F, 0x6F};
+    for (int d = 0; d < 10; ++d) if (kDigits[d] == bits) return d;
+    return -1;
+}
+
+}  // namespace cmds_test
+
+int run_cmds_selftest() {
+    using namespace cmds_test;
+    g_selftestTag = "eden-cmds";
+    CmdScript::testNoDepthCap = g_opt.cmdsMutate == "nodepth";
+    CmdScript::trace = g_opt.cmdsTrace;
+    char d[1024];
+
+    // ---- the parser, on literal scripts
+    {
+        CmdScript::Program p;
+        CmdScript::parse("say WELCOME TRAVELER;wait 1;set 0 3 0 lamp;gold 1", &p);
+        check(p.errors == 0 && p.trigger == CmdScript::TRIG_TOUCH && p.stmts.size() == 4 &&
+              p.stmts[0].op == CmdScript::OP_SAY && p.stmts[0].text == "WELCOME TRAVELER" &&
+              p.stmts[1].op == CmdScript::OP_WAIT && p.stmts[1].f == 1.0f && p.stmts[2].op == CmdScript::OP_SET &&
+              p.stmts[2].v[1] == 3 && p.stmts[2].type == TYPE_LIGHTBOX && p.stmts[3].op == CmdScript::OP_GOLD,
+              "parse: cmd.html's first example", p.firstError.c_str());
+        CmdScript::parse("@timer .1; if 0 -1 0 2; run 0 -2 0; set 0 -1 0 0", &p);
+        check(p.errors == 0 && p.trigger == CmdScript::TRIG_TIMER && std::fabs(p.triggerArg - 0.1f) < 1e-6f &&
+              p.stmts.size() == 3 && p.stmts[0].op == CmdScript::OP_IF && p.stmts[0].type == TYPE_STONE &&
+              p.stmts[1].op == CmdScript::OP_RUN && p.stmts[1].v[1] == -2,
+              "parse: a header, block numbers, negative heights", p.firstError.c_str());
+        CmdScript::parse("@near 6;set ~ ~3 ~ glass;fill -1 0 -1 1 2 1 brick 19", &p);
+        check(p.errors == 0 && p.trigger == CmdScript::TRIG_NEAR && p.triggerArg == 6 && p.stmts[0].v[0] == 0 &&
+              p.stmts[0].v[1] == 3 && p.stmts[0].type == TYPE_GLASS && p.stmts[1].op == CmdScript::OP_FILL &&
+              p.stmts[1].color == 19, "parse: tildes, fill with a colour", p.firstError.c_str());
+        CmdScript::parse("frob 1 2; fill 0 0 0 16 16 16 stone; say ok; @step; set 0 0 0 voidstone; wait 9999; colour", &p);
+        std::snprintf(d, sizeof(d), "errors %d, first '%s', wait %.0f", p.errors, p.firstError.c_str(),
+                      p.stmts.size() > 5 ? p.stmts[5].f : -1.0f);
+        check(p.errors == 5 && p.firstError == "Unknown command: frob" && p.stmts.size() == 7 &&
+              p.stmts[2].op == CmdScript::OP_SAY && p.stmts[5].op == CmdScript::OP_WAIT && p.stmts[5].f == 600.0f,
+              "parse: unknown command, fill > 4096, late trigger, unknown block; wait capped at 600", d);
+        CmdScript::parse("fill 0 0 0 15 15 15 stone; spawn moof; spawn charger 1 2 3; spawn dragon; sound 72; sound 73; "
+                         "time 0.5; time 2; paint 0 0 0 54; paint 0 0 0 55", &p);
+        std::snprintf(d, sizeof(d), "errors %d, first '%s'", p.errors, p.firstError.c_str());
+        check(p.errors == 4 && p.stmts.size() == 10 && p.stmts[0].op == CmdScript::OP_FILL && p.stmts[2].hasPos &&
+              p.stmts[2].type == M_CHARGER && p.stmts[3].op == CmdScript::OP_BAD && p.stmts[4].op == CmdScript::OP_SOUND &&
+              p.stmts[5].op == CmdScript::OP_BAD && p.stmts[7].op == CmdScript::OP_BAD &&
+              p.stmts[8].op == CmdScript::OP_PAINT && p.stmts[9].op == CmdScript::OP_BAD,
+              "parse: fill at exactly 4096, creatures, sound/time/colour ranges", d);
+    }
+
+    if (g_opt.world.empty()) { check(false, "--world=NAME (the 3-bit adder) is given", ""); return 1; }
+    if (!open_world(g_opt.world.c_str(), g_opt.height)) return 1;
+    if (g_opt.haveAt) eden_console_teleport(g_opt.at[0], g_opt.at[1], g_opt.at[2]);
+    tick(g_opt.frames / 4);
+    if (GLDialog::active()) { GLDialog::dismiss(); tick(2); }   // --world-format=emod's "World converted"
+    g_app->viewController.setFixedEtime(1.0f / 60.0f);
+    WorldTrailer* t = tr();
+    Hud* hud = World::getWorld->hud;
+    Player* pl = World::getWorld->player;
+    std::printf("[eden-cmds] world %s: %s\n", eden_debug_world_file(), t ? t->describe().c_str() : "no trailer");
+
+    // ---- every script in the world parses
+    {
+        int bad = 0;
+        std::string first;
+        for (size_t i = 0; t && i < t->cmdCount(); ++i) {
+            CmdScript::Program p;
+            CmdScript::parse(t->cmd(i).script, &p);
+            bad += p.errors;
+            if (p.errors && first.empty()) first = std::string(t->cmd(i).script) + " -> " + p.firstError;
+        }
+        std::snprintf(d, sizeof(d), "%zu scripts, %d bad statements%s%s", t ? t->cmdCount() : 0, bad,
+                      first.empty() ? "" : ": ", first.c_str());
+        check(t && t->cmdCount() > 0 && bad == 0, "every CMB1 script parses (0 bad statements)", d);
+    }
+
+    // ---- the adder: Reset, 3, +, 4, =. The keypad, file order (x, y, z) -> engine (x, z, y).
+    // The answer is the digit on the units display.
+    {
+        struct Key { const char* name; int x, y, z; };
+        const Key keys[] = {{"Reset", 65531, 33, 65524}, {"3", 65531, 34, 65523}, {"+", 65531, 33, 65522},
+                            {"4", 65531, 35, 65525}, {"=", 65531, 33, 65523}};
+        std::string log;
+        bool allPressed = true;
+        for (const Key& k : keys) {
+            const int r = CmdScript::press(P(k.x, k.y, k.z));
+            allPressed = allPressed && r == CmdScript::PRESS_STARTED;
+            secs(3.0f);
+            std::string why;
+            const int bits = segments(&why);
+            log += std::string(k.name) + ":" + std::to_string(r) + "->" + std::to_string(digitOf(bits)) + " ";
+            std::printf("[eden-cmds] adder after %-5s %s| %s\n", k.name, why.c_str(), CmdScript::describe());
+        }
+        secs(4.0f);
+        std::string why;
+        const int digit = digitOf(segments(&why));
+        const CmdScript::Stats s = CmdScript::stats();
+        std::snprintf(d, sizeof(d), "%s| final %d (%s) depth-refused %d unknown %d", log.c_str(), digit, why.c_str(),
+                      s.refusedDepth, s.unknown);
+        check(allPressed && digit == 7 && s.refusedDepth == 0 && s.unknown == 0 && s.refusedFull == 0,
+              "the 3-bit adder: Reset, 3, +, 4, = shows 7", d);
+        // ... and the keys light their own digit on the way (3 after "3", 4 after "4").
+        check(log.find("3:1->3") != std::string::npos && log.find("4:1->4") != std::string::npos,
+              "the adder's keys show their digit as they are pressed", log.c_str());
+        std::printf("[eden-cmds] adder %s\n", CmdScript::describe());
+
+        // More sums, so "7" is the adder adding and not a coincidence: the tens display is a "1" at
+        // z = 65538 (the TEN script), lit or not.
+        const Key digitKeys[8] = {{"0", 65531, 33, 65525}, {"1", 65531, 34, 65525}, {"2", 65531, 34, 65524},
+                                  {"3", 65531, 34, 65523}, {"4", 65531, 35, 65525}, {"5", 65531, 35, 65524},
+                                  {"6", 65531, 35, 65523}, {"7", 65531, 36, 65525}};
+        auto tens = [&]() {
+            int lit = 0, off = 0;
+            for (int y = 35; y <= 41; ++y) {
+                if (y == 38) continue;
+                const int ty = land(65512, y, 65538), c = paint(65512, y, 65538);
+                if (ty == TYPE_LIGHTBOX && c == 9) ++lit;
+                else if (ty == TYPE_LIGHTBOX && c == 54) ++off;
+            }
+            return lit == 6 ? 1 : off == 6 ? 0 : -1;
+        };
+        const int sums[][2] = {{0, 0}, {1, 6}, {2, 3}, {5, 2}, {5, 5}, {7, 7}, {6, 7}, {7, 1}};
+        std::string all;
+        int wrong = 0;
+        for (const auto& ab : sums) {
+            const Key seq[] = {keys[0], digitKeys[ab[0]], keys[2], digitKeys[ab[1]], keys[4]};
+            for (const Key& k : seq) { CmdScript::press(P(k.x, k.y, k.z)); secs(3.0f); }
+            secs(3.0f);
+            const int u = digitOf(segments(NULL)), tn = tens();
+            const int got = (u < 0 || tn < 0) ? -1 : tn * 10 + u;
+            all += std::to_string(ab[0]) + "+" + std::to_string(ab[1]) + "=" + std::to_string(got) + " ";
+            if (got != ab[0] + ab[1]) ++wrong;
+        }
+        std::snprintf(d, sizeof(d), "%s| maxDepth %d, depth-refused %d", all.c_str(), CmdScript::stats().maxDepth,
+                      CmdScript::stats().refusedDepth);
+        check(wrong == 0 && CmdScript::stats().refusedDepth == 0, "the adder adds: eight more sums, 0..14", d);
+    }
+
+    // ---- the commands, on blocks placed in open air. The player is parked out of every written cell.
+    const PlayerState ps = player_state();
+    int ox, oy, oz;
+    if (!open_air((int)ps.x, (int)ps.z, 16, 12, 16, &ox, &oy, &oz)) { check(false, "an open-air test site", ""); return 1; }
+    auto park = [&]() {
+        pl->pos = MakeVector(ox - 30.5f, (float)oy + 6.0f, oz - 30.5f);
+        pl->vel = MakeVector(0, 0, 0);
+    };
+    park();
+    tick(10);
+    std::printf("[eden-cmds] site %d,%d,%d (engine order)\n", ox, oy, oz);
+    const int X = ox + 2, Y = oy + 2, Z = oz + 2;   // the first block; legs use offsets from it
+
+    // set / fill / paint / a lamp, and the skin's green button while it runs (min 0.25 s)
+    {
+        const TrailerPos A = make(X, Y, Z, "set 0 2 0 glass; fill 1 0 0 2 1 1 brick 19; paint 1 0 0 30; set 0 1 0 lamp 9");
+        tick(2);
+        const int r = CmdScript::press(A);
+        tick(1);
+        const bool green = CmdTool::running(A);
+        std::snprintf(d, sizeof(d), "press %d; glass %d; brick %d/%d %d/%d; lamp %d/%d; green %d",
+                      r, land(X, Y + 2, Z), land(X + 1, Y, Z), paint(X + 1, Y, Z), land(X + 2, Y + 1, Z + 1),
+                      paint(X + 2, Y + 1, Z + 1), land(X, Y + 1, Z), paint(X, Y + 1, Z), green);
+        check(r == CmdScript::PRESS_STARTED && land(X, Y + 2, Z) == TYPE_GLASS && land(X + 1, Y, Z) == TYPE_BRICK &&
+              paint(X + 1, Y, Z) == 30 && land(X + 2, Y + 1, Z + 1) == TYPE_BRICK && paint(X + 2, Y + 1, Z + 1) == 19 &&
+              land(X, Y + 1, Z) == TYPE_LIGHTBOX && paint(X, Y + 1, Z) == 9 && green,
+              "set, fill (+colour), paint, a lamp; the button goes green", d);
+        secs(0.5f);
+        std::snprintf(d, sizeof(d), "green %d, busy %d", CmdTool::running(A), CmdScript::busy(A));
+        check(!CmdTool::running(A) && !CmdScript::busy(A), "a script with no wait is done; green fades after 0.25 s", d);
+        // clean up for the next legs: air through set (the record on A goes too, like mining)
+        const TrailerPos C = make(X + 8, Y, Z, "fill -8 0 0 -6 2 1 air");
+        CmdScript::press(C);
+        tick(2);
+        std::snprintf(d, sizeof(d), "A voxel %d record %d; brick %d", land(X, Y, Z), tr()->findCmd(A), land(X + 1, Y, Z));
+        check(land(X, Y, Z) == 0 && tr()->findCmd(A) < 0 && land(X + 1, Y, Z) == 0 && land(X, Y + 1, Z) == 0,
+              "fill air clears blocks and takes a command block's record with its steel", d);
+    }
+
+    // wait: non-blocking, the button stays green while it waits, other blocks keep running
+    {
+        const TrailerPos A = make(X, Y, Z, "set 0 2 0 stone; wait 1; set 0 2 0 air");
+        const TrailerPos B = make(X + 2, Y, Z, "set 0 2 0 dirt");
+        CmdScript::press(A);
+        tick(3);
+        const bool mid = land(X, Y + 2, Z) == TYPE_STONE && CmdScript::busy(A) && CmdTool::running(A);
+        const int rb = CmdScript::press(A);   // busy: no re-entry
+        CmdScript::press(B);
+        tick(2);
+        const bool other = land(X + 2, Y + 2, Z) == TYPE_DIRT && land(X, Y + 2, Z) == TYPE_STONE;
+        secs(1.2f);
+        std::snprintf(d, sizeof(d), "mid %d, re-press %d, other %d, after: %d busy %d green %d", mid, rb, other,
+                      land(X, Y + 2, Z), CmdScript::busy(A), CmdTool::running(A));
+        check(mid && rb == CmdScript::PRESS_BUSY && other && land(X, Y + 2, Z) == 0 && !CmdScript::busy(A) &&
+              !CmdTool::running(A), "wait holds only its own script; a busy block ignores a press", d);
+    }
+
+    // if / unless gate the next statement; a skipped if takes its gated statement along
+    {
+        put(X, Y + 2, Z, 0);
+        const TrailerPos A = make(X, Y, Z, "if 0 2 0 air; set 0 3 0 dirt; unless 0 2 0 air; set 0 4 0 dirt; "
+                                           "if 0 2 0 stone; if 0 2 0 air; set 0 5 0 dirt; set 0 6 0 dirt; "
+                                           "unless 0 2 0 stone; unless 0 3 0 stone; set 0 7 0 dirt");
+        CmdScript::press(A);
+        tick(2);
+        std::snprintf(d, sizeof(d), "y+3 %d y+4 %d y+5 %d y+6 %d y+7 %d", land(X, Y + 3, Z), land(X, Y + 4, Z),
+                      land(X, Y + 5, Z), land(X, Y + 6, Z), land(X, Y + 7, Z));
+        check(land(X, Y + 3, Z) == TYPE_DIRT && land(X, Y + 4, Z) == 0 && land(X, Y + 5, Z) == 0 &&
+              land(X, Y + 6, Z) == TYPE_DIRT && land(X, Y + 7, Z) == TYPE_DIRT, "if / unless, and chained (AND)", d);
+        for (int y = 3; y <= 7; ++y) put(X, Y + y, Z, 0);
+    }
+
+    // run chains 8 deep: ten blocks in a row, each "run 1 0 0; set 0 1 0 stone" -- the first nine set
+    // their stone (depth 0..8), the tenth is refused. The mutation runs all ten.
+    {
+        const CmdScript::Stats s0 = CmdScript::stats();
+        for (int k = 0; k < 10; ++k) make(X + k, Y + 4, Z + 4, "run 1 0 0; set 0 1 0 stone");
+        tick(2);
+        CmdScript::press(P(X, Y + 4, Z + 4));
+        tick(2);
+        int n = 0;
+        for (int k = 0; k < 10; ++k) n += land(X + k, Y + 5, Z + 4) == TYPE_STONE;
+        const CmdScript::Stats s1 = CmdScript::stats();
+        std::snprintf(d, sizeof(d), "%d of 10 ran, depth refusals %d, toast '%s'", n, s1.refusedDepth - s0.refusedDepth,
+                      toast().c_str());
+        check(n == 9 && land(X + 9, Y + 5, Z + 4) == 0 && s1.refusedDepth - s0.refusedDepth == 1,
+              "run chains 8 deep, the 9th run is refused", d);
+        CmdScript::press(make(X + 12, Y + 4, Z + 4, "fill -12 0 0 -2 1 0 air"));
+        tick(2);
+    }
+
+    // 32 at once: 40 blocks with "wait 2", pressed in one frame
+    {
+        const CmdScript::Stats s0 = CmdScript::stats();
+        std::vector<TrailerPos> v;
+        for (int k = 0; k < 40; ++k) v.push_back(make(X + (k % 10), Y + 7, Z + 6 + k / 10, "wait 2"));
+        tick(1);
+        for (const TrailerPos& p : v) CmdScript::press(p);
+        const int live = CmdScript::liveCount();
+        const CmdScript::Stats s1 = CmdScript::stats();
+        secs(2.3f);
+        std::snprintf(d, sizeof(d), "live %d, refused %d, after %d", live, s1.refusedFull - s0.refusedFull, CmdScript::liveCount());
+        check(live == 32 && s1.refusedFull - s0.refusedFull == 8 && CmdScript::liveCount() == 0,
+              "at most 32 scripts run at once", d);
+        CmdScript::press(make(X + 12, Y + 7, Z + 6, "fill -12 0 0 -3 0 3 air"));
+        tick(2);
+    }
+
+    // the safety rules: bedrock, the player's cell, another command block, unresident cells
+    {
+        int by = -1;
+        for (int y = 0; y < 4; ++y) if (land(X, y, Z) == TYPE_BEDROCK) { by = y; break; }
+        const TrailerPos B = make(X + 3, Y, Z, "");
+        char sc[200];
+        std::snprintf(sc, sizeof(sc), "set 0 %d 0 air; set 3 0 0 stone; set 0 0 400 stone; fill 0 -1 0 0 -1 0 stone", by - Y);
+        const TrailerPos A = make(X, Y, Z, sc);
+        // the player stands in the cell below A (where the fill writes)
+        pl->pos = MakeVector(X + 0.5f, (float)(Y - 1) + pl->boxheight / 2 + 0.001f, Z + 0.5f);
+        pl->vel = MakeVector(0, 0, 0);
+        const int below = land(X, Y - 1, Z);
+        CmdScript::press(A);
+        park();
+        tick(2);
+        std::snprintf(d, sizeof(d), "bedrock y=%d -> %d; cmd B %d/%d; far %d; player cell %d (was %d)", by,
+                      by >= 0 ? land(X, by, Z) : -9, land(X + 3, Y, Z), tr()->findCmd(B), land(X, Y, Z + 400),
+                      land(X, Y - 1, Z), below);
+        check(by >= 0 && land(X, by, Z) == TYPE_BEDROCK && land(X + 3, Y, Z) == TYPE_STEEL && tr()->findCmd(B) >= 0 &&
+              land(X, Y - 1, Z) == below, "set/fill never touch bedrock, a command block or the player's cell", d);
+        CmdScript::press(make(X + 1, Y, Z, "set -1 0 0 air; set 2 0 0 air"));
+        tick(2);
+    }
+
+    // an unknown command shows its message; the rest still runs
+    {
+        const TrailerPos A = make(X, Y, Z, "frob 1; set 0 2 0 dirt");
+        const CmdScript::Stats s0 = CmdScript::stats();
+        CmdScript::press(A);
+        tick(1);
+        const std::string msg = toast();
+        std::snprintf(d, sizeof(d), "toast '%s', dirt %d", msg.c_str(), land(X, Y + 2, Z));
+        check(msg == "Unknown command: frob" && land(X, Y + 2, Z) == TYPE_DIRT && CmdScript::stats().unknown == s0.unknown + 1,
+              "an unknown command shows a message and the rest still runs", d);
+        put(X, Y + 2, Z, 0);
+    }
+
+    // say, tp, gold, heal, hurt (only with Health on), flash, night / day, sound, spawn
+    {
+        const TrailerPos A = make(X, Y, Z, "say HELLO there; tp 0 3 0; gold 5; heal; flash; sound 8");
+        const int g0 = hud->goldencubes;
+        pl->life = 0.5f;
+        CmdScript::press(A);
+        tick(1);
+        const PlayerState p1 = player_state();
+        const float feet = pl->pos.y - pl->boxheight / 2;
+        std::snprintf(d, sizeof(d), "toast '%s', player %.2f,%.2f,%.2f feet %.3f, gold %d->%d, life %.2f, flash %.2f",
+                      toast().c_str(), p1.x, p1.y, p1.z, feet, g0, hud->goldencubes, pl->life, hud->flash);
+        check(toast() == "HELLO there" && std::fabs(pl->pos.x - (X + 0.5f)) < 0.01f && std::fabs(pl->pos.z - (Z + 0.5f)) < 0.01f &&
+              std::fabs(feet - (Y + 3)) < 0.05f && hud->goldencubes == std::min(999, g0 + 5) && pl->life == 1.0f && hud->flash > 0,
+              "say, tp (feet at the cell), gold, heal, flash", d);
+        park();
+        const BOOL h0 = pl->health_option;
+        pl->health_option = FALSE;
+        tr()->setCmdScript((size_t)tr()->findCmd(A), "hurt 25");
+        CmdScript::press(A);
+        tick(1);
+        const float offLife = pl->life;
+        pl->health_option = TRUE;
+        CmdScript::press(A);
+        tick(1);
+        const float onLife = pl->life;
+        pl->health_option = h0;
+        pl->life = 1;
+        std::snprintf(d, sizeof(d), "health off %.2f, on %.2f", offLife, onLife);
+        check(offLife == 1.0f && std::fabs(onLife - 0.75f) < 0.01f, "hurt bites only with Health on", d);
+        tr()->setCmdScript((size_t)tr()->findCmd(A), "night");
+        CmdScript::press(A);
+        tick(2);
+        const bool night = v_equals(ter()->final_skycolor, colorTable[54]);
+        tr()->setCmdScript((size_t)tr()->findCmd(A), "time 0.5");
+        CmdScript::press(A);
+        tick(2);
+        const bool day = !v_equals(ter()->final_skycolor, colorTable[54]);
+        check(night && day, "night paints the sky night, time 0.5 gives the day back",
+              night && day ? "" : night ? "day failed" : "night failed");
+        tr()->setCmdScript((size_t)tr()->findCmd(A), "spawn moof; spawn stumpy 0 1 3");
+        const int c0 = CountActiveCreatures();
+        CmdScript::press(A);
+        tick(2);
+        std::snprintf(d, sizeof(d), "creatures %d -> %d", c0, CountActiveCreatures());
+        check(!CREATURES_ON || CountActiveCreatures() >= c0 + 1, "spawn puts creatures in the world", d);
+    }
+
+    // fire and explode: a wood block burns; a lit TNT drops and blows (taking the command block)
+    {
+        put(X + 4, Y, Z, TYPE_WOOD);
+        const TrailerPos A = make(X, Y, Z, "fire 4 0 0; explode 0 0 0");
+        tick(1);
+        CmdScript::press(A);
+        tick(2);
+        const bool burning = isOnFire(X + 4, Z, Y);
+        const bool tnt = land(X, Y, Z) == TYPE_TNT && isOnFire(X, Z, Y);
+        bool gone = false;
+        for (int k = 0; k < 2400 && !gone; ++k) { tick(1); gone = land(X, Y, Z) == 0; }
+        std::snprintf(d, sizeof(d), "wood burning %d, tnt lit %d, blown %d, record %d", burning, tnt, gone, tr()->findCmd(A));
+        check(burning && tnt && gone && tr()->findCmd(A) < 0, "fire lights a burnable block; explode drops lit TNT", d);
+        tick(240);
+    }
+
+    // triggers: @step, @near, @timer (only within 48 blocks)
+    {
+        const int sx = X + 6, sy = Y, sz = Z + 10;
+        const TrailerPos S = make(sx, sy, sz, "@step; set 2 0 0 dirt");
+        const TrailerPos N = make(sx + 8, sy, sz, "@near 3; set 0 2 0 dirt");
+        tick(2);
+        auto standOn = [&](int x, int y, int z) {
+            pl->pos = MakeVector(x + 0.5f, (float)(y + 1) + pl->boxheight / 2 + 0.001f, z + 0.5f);
+            pl->vel = MakeVector(0, 0, 0);
+        };
+        standOn(sx, sy, sz);
+        tick(2);
+        const bool s1 = land(sx + 2, sy, sz) == TYPE_DIRT;
+        put(sx + 2, sy, sz, 0);
+        standOn(sx, sy, sz);
+        tick(5);
+        const bool sStay = land(sx + 2, sy, sz) == 0;   // standing still does not re-fire
+        park();
+        tick(2);
+        standOn(sx, sy, sz);
+        tick(2);
+        const bool s2 = land(sx + 2, sy, sz) == TYPE_DIRT;   // re-armed by stepping off
+        park();
+        std::snprintf(d, sizeof(d), "first %d, still %d, again %d", s1, sStay, s2);
+        check(s1 && sStay && s2, "@step fires on stepping on, once, and re-arms off the block", d);
+
+        pl->pos = MakeVector(sx + 8 + 0.5f + 2.0f, sy + 0.5f, sz + 0.5f);   // 2 blocks away
+        pl->vel = MakeVector(0, 0, 0);
+        tick(2);
+        const bool n1 = land(sx + 8, sy + 2, sz) == TYPE_DIRT;
+        put(sx + 8, sy + 2, sz, 0);
+        tick(5);
+        const bool nStay = land(sx + 8, sy + 2, sz) == 0;
+        park();
+        tick(2);
+        pl->pos = MakeVector(sx + 8 + 0.5f, sy + 0.5f, sz + 0.5f - 2.5f);
+        pl->vel = MakeVector(0, 0, 0);
+        tick(2);
+        const bool n2 = land(sx + 8, sy + 2, sz) == TYPE_DIRT;
+        park();
+        tick(2);
+        std::snprintf(d, sizeof(d), "first %d, still %d, again %d", n1, nStay, n2);
+        check(n1 && nStay && n2, "@near fires on approach, once, and re-arms when the player leaves", d);
+
+        // Counted in golden cubes: the adder's own @timer .1 relays fire too while it is within 48.
+        const TrailerPos T = make(sx + 4, sy, sz + 3, "@timer 0.5; gold 1");
+        hud->goldencubes = 0;
+        pl->pos = MakeVector(sx + 4.5f, sy + 0.5f, sz + 3.5f + 20.0f);   // 20 blocks: in range
+        pl->vel = MakeVector(0, 0, 0);
+        secs(3.0f);
+        const int near = hud->goldencubes;
+        pl->pos = MakeVector(sx + 4.5f, sy + 0.5f, sz + 3.5f + 60.0f);   // 60 blocks: asleep
+        pl->vel = MakeVector(0, 0, 0);
+        tick(1);
+        const int g1 = hud->goldencubes;
+        secs(3.0f);
+        const int far = hud->goldencubes - g1;
+        hud->goldencubes = 10;
+        std::snprintf(d, sizeof(d), "in range %d fires in 3 s, at 60 blocks %d", near, far);
+        check(near >= 5 && near <= 7 && far == 0, "@timer 0.5 fires every 0.5 s, only within 48 blocks", d);
+        park();
+        for (const TrailerPos& p : {S, N, T}) put(p.x, p.z, p.y, 0);
+        put(sx + 2, sy, sz, 0);
+        put(sx + 8, sy + 2, sz, 0);
+        tick(2);
+    }
+
+    // a real screen tap with a block armed pushes a command block and builds nothing
+    {
+        const TrailerPos A = make(X, Y, Z, "set 0 2 0 dirt");
+        tick(4);
+        hud->mode = MODE_BUILD;
+        hud->blocktype = TYPE_STONE;
+        Camera* cam = World::getWorld->cam;
+        const float fx = X + 0.5f, fy = Y + 0.5f, fz = (float)Z + 1.0f;   // its +z face
+        for (int k = 0; k < 4; ++k) {
+            pl->pos = MakeVector(fx, fy, fz + 3.0f);
+            pl->vel = MakeVector(0, 0, 0);
+            tick(1);
+            const float dx = fx - cam->px, dy = fy - cam->py, dz = fz - cam->pz;
+            pl->yaw = std::atan2(dz, dx) * 180.0f / (float)M_PI;
+            pl->pitch = std::atan2(dy, std::sqrt(dx * dx + dz * dz)) * 180.0f / (float)M_PI;
+        }
+        tick(1);
+        const int presses0 = CmdScript::stats().presses;
+        ui_pointer(0, SCREEN_WIDTH * 0.5f, SCREEN_HEIGHT * 0.5f); tick(1);
+        ui_pointer(2, SCREEN_WIDTH * 0.5f, SCREEN_HEIGHT * 0.5f); tick(2);
+        std::snprintf(d, sizeof(d), "presses +%d, dirt %d, built in front %d", CmdScript::stats().presses - presses0,
+                      land(X, Y + 2, Z), land(X, Y, Z + 1));
+        check(CmdScript::stats().presses == presses0 + 1 && land(X, Y + 2, Z) == TYPE_DIRT && land(X, Y, Z + 1) == 0,
+              "a build tap on a command block pushes it (and builds nothing)", d);
+        park();
+        put(X, Y + 2, Z, 0);
+        tick(2);
+    }
+
+    // the frame budget: five 4096-cell fills in one script pause and finish on the next frames
+    {
+        const CmdScript::Stats s0 = CmdScript::stats();
+        const TrailerPos A = make(X - 1, Y - 1, Z - 1, "fill 0 1 0 15 16 15 air; fill 0 1 0 15 16 15 air; "
+                                                       "fill 0 1 0 15 16 15 air; fill 0 1 0 15 16 15 air; "
+                                                       "fill 0 1 0 15 16 15 air; set 0 1 0 dirt");
+        CmdScript::press(A);
+        const bool paused = CmdScript::busy(A) && CmdScript::stats().suspended > s0.suspended;
+        tick(4);
+        std::snprintf(d, sizeof(d), "paused %d, done %d, dirt %d", paused, !CmdScript::busy(A), land(X - 1, Y, Z - 1));
+        check(paused && !CmdScript::busy(A) && land(X - 1, Y, Z - 1) == TYPE_DIRT,
+              "past 20,000 statements + cells a frame scripts pause and resume", d);
+        put(X - 1, Y, Z - 1, 0);
+        put(X - 1, Y - 1, Z - 1, 0);
+    }
+
+    // a script still waiting when the world closes: nothing of it survives the reload
+    const TrailerPos W = make(X, Y, Z, "wait 30; set 0 2 0 dirt");
+    CmdScript::press(W);
+    tick(2);
+    const bool wasGreen = CmdTool::running(W);
+    g_app->viewController.setFixedEtime(0.0f);
+    save_world();
+    if (!quit_to_menu()) return 1;
+    std::snprintf(d, sizeof(d), "green before %d; after quit: live %d, green %d", wasGreen, CmdScript::liveCount(), CmdTool::running(W));
+    check(wasGreen && CmdScript::liveCount() == 0 && !CmdTool::running(W), "closing the world stops every script", d);
+    tick(30);
+    if (!open_world(g_opt.world.c_str(), g_opt.height)) return 1;
+    if (g_opt.haveAt) eden_console_teleport(g_opt.at[0], g_opt.at[1], g_opt.at[2]);
+    tick(30);
+    t = tr();
+    std::snprintf(d, sizeof(d), "%s; W record %d, live %d", t ? t->describe().c_str() : "no trailer",
+                  t ? t->findCmd(W) : -1, CmdScript::liveCount());
+    check(t && t->findCmd(W) >= 0 && CmdScript::liveCount() == 0 && !CmdTool::running(W),
+          "after reload: the command block is kept, its run is not", d);
+    std::printf("[eden-cmds] %s\n", CmdScript::describe());
+    std::printf("[eden-cmds] %s (%d failure(s))\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
+    return g_selftestFailures ? 1 : 0;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2141,7 +3679,8 @@ int run_menu_selftest() {
         check(eden_menu_world_count() == total - 1 && !listed, "Delete -> Delete removes the world", detail);
     }
 
-    // Play: the button, then the stock world-type + height dialogs (Flat, Classic), to a world.
+    // Play: the button, then the stock world-type + height dialogs (Flat, then the height's first
+    // button -- New Dawn 256, the default since S.5e), to a world.
     {
         const int idx = eden_menu_world_count() - 1;
         eden_menu_select(idx);
@@ -2152,10 +3691,12 @@ int run_menu_selftest() {
         const bool asked = tick_until([] { return GLDialog::active(); }, 600, "world-type dialog");
         if (asked && GLDialog::buttonRect(0, &b)) ui_tap_rect(b);            // Flat
         tick(3);
-        if (GLDialog::active() && GLDialog::buttonRect(0, &b)) ui_tap_rect(b); // Classic 64
+        if (GLDialog::active() && GLDialog::buttonRect(0, &b)) ui_tap_rect(b); // New Dawn 256 (S.5e)
         const bool played = tick_until([] { return game_mode() == 1; }, 60000, "game_mode == PLAY");
-        check(asked && played, "Play -> Flat -> Classic loads the selected world", name.c_str());
+        check(asked && played, "Play -> Flat -> the default height loads the selected world", name.c_str());
         if (!played) return 1;
+        std::snprintf(detail, sizeof(detail), "g_world_height %d", g_world_height);
+        check(g_world_height == 256, "the height dialog's default (button 0) is New Dawn 256 (S.5e)", detail);
         tick(60);
         if (!quit_to_menu()) return 1;
         tick(30);
@@ -2181,8 +3722,86 @@ int run_menu_selftest() {
     return 0;
 }
 
+// --convert-prompt-selftest (Stage S / S.5e): the "Convert world" prompt, through its real buttons.
+// --docs holds a 64z `.eden` whose display name is --world=NAME; --world-format=emod;
+// --convert-answer=upgrade|keep|cancel picks the button. The toggle and the prompt are forced on
+// (EDEN_UPGRADE_256Z=1, EDEN_CONVERT_PROMPT unset), so this is the player's path, not a harness's.
+// One answer per process: a converted source is paired and never asks again.
+int run_convert_prompt_selftest() {
+    g_selftestTag = "eden-convert";
+    char d[320];
+    const std::string ans = g_opt.convertAnswer;
+    const int btn = ans == "upgrade" ? 0 : ans == "keep" ? 1 : ans == "cancel" ? 2 : -1;
+    if (btn < 0) { check(false, "--convert-answer=upgrade|keep|cancel is given", ans.c_str()); return 1; }
+    tick(5);
+    int idx = -1;
+    for (int i = 0; i < eden_menu_world_count(); ++i) if (g_opt.world == eden_menu_world_name(i)) idx = i;
+    std::snprintf(d, sizeof(d), "\"%s\"", g_opt.world.c_str());
+    check(idx >= 0, "the source world is listed", d);
+    if (idx < 0) return 1;
+    const std::string docs = eden_platform_documents_root();
+    const std::string src = eden_menu_world_file(idx);
+    auto emodCount = [&docs]() {
+        int n = 0;
+        for (int i = 0; i < eden_menu_world_count(); ++i) {
+            const std::string f = eden_menu_world_file(i);
+            n += f.size() > 5 && f.compare(f.size() - 5, 5, ".emod") == 0;
+        }
+        (void)docs;
+        return n;
+    };
+    const int emod0 = emodCount();
+    auto play = [&]() {
+        eden_menu_select(idx);
+        tick(2);
+        return eden_menu_play() == 1 && tick_until([] { return GLDialog::active(); }, 600, "the convert prompt");
+    };
+    // The prompt, not "World converted" (which a conversion that never asked would show next): no
+    // `.emod` beside the source yet, and no original waiting on that question.
+    auto converted = [&]() {
+        const std::string stem = src.substr(0, src.find_last_of('.'));
+        FILE* f = std::fopen((docs + "/" + stem + ".emod").c_str(), "rb");
+        if (f) std::fclose(f);
+        return f != nullptr || World::getWorld->fm->pendingOriginal() != nil;
+    };
+    const bool asked = play() && !converted();
+    std::snprintf(d, sizeof(d), "%s, game_mode %d, converted %d", src.c_str(), game_mode(), converted() ? 1 : 0);
+    check(asked && game_mode() != 1, "Play on a 64z source asks before converting", d);
+    if (!asked) return 1;
+    CGRect b;
+    if (GLDialog::buttonRect(btn, &b)) ui_tap_rect(b);
+    if (btn == 2) {
+        const bool back = tick_until([] { return World::getWorld->menu->loading == 0; }, 600, "loading back to 0");
+        tick(30);
+        World::getWorld->menu->loadWorlds();
+        tick(2);
+        std::snprintf(d, sizeof(d), "loading %d, game_mode %d, .emod %d -> %d", World::getWorld->menu->loading, game_mode(),
+                      emod0, emodCount());
+        check(back && game_mode() != 1 && !GLDialog::active() && emodCount() == emod0, "Cancel backs out to the menu, nothing converted", d);
+        idx = -1;
+        for (int i = 0; i < eden_menu_world_count(); ++i) if (src == eden_menu_world_file(i)) idx = i;
+        const bool again = idx >= 0 && play() && !converted();
+        check(again, "the next Play asks again", "");
+        if (again && GLDialog::buttonRect(2, &b)) ui_tap_rect(b);
+        tick_until([] { return World::getWorld->menu->loading == 0; }, 600, "loading back to 0");
+        return 0;
+    }
+    const bool played = tick_until([] { return game_mode() == 1; }, 60000, "game_mode == PLAY");
+    const std::string file = eden_debug_world_file();
+    emod::EdenWorldStore st;
+    const bool opened = st.open(file.c_str(), false);
+    const int want = btn == 0 ? 256 : 64;
+    std::snprintf(d, sizeof(d), "%s: g_world_height %d, bands %d", file.c_str(), g_world_height, opened ? st.bands() : -1);
+    check(played && opened && g_world_height == want && st.bands() == want / 16,
+          btn == 0 ? "Upgrade to 256 converts to a 16-band .emod and plays 256z" : "Keep 64 converts to a 4-band .emod and plays 64z", d);
+    st.close();
+    if (GLDialog::active()) { GLDialog::dismiss(); tick(2); }   // "World converted": keep the original
+    return 0;
+}
+
 // Stage 5.7: the pickers kept stock's hit path; prove a tap on a cell still picks, through the
 // HUD's own rects, and that the current choice is what a build would use.
+extern "C" const int hudBlocksMap[NUM_BLOCKS+1];   // Classes/Hud.mm
 int run_picker_selftest() {
     char detail[200];
     Hud* hud = World::getWorld->hud;
@@ -2202,6 +3821,108 @@ int run_picker_selftest() {
     tick(5);
     std::snprintf(detail, sizeof(detail), "blocktype %d -> %d", picked, hud->blocktype);
     check(hud->mode == MODE_BUILD && hud->blocktype != picked, "a different cell picks a different block", detail);
+    const int page1Pick = hud->blocktype;
+
+    // --- D.2p: page 2 ------------------------------------------------------------------------
+    tap_hud(1);
+    tick(5);
+    std::snprintf(detail, sizeof(detail), "page %d", hud->pickerPage);
+    check(hud->pickerPage == 0, "the picker opens on page 1 when the current block is a page-1 one", detail);
+    ui_tap_rect(hud->pickerNext);
+    tick(5);
+    std::snprintf(detail, sizeof(detail), "mode %d page %d", hud->mode, hud->pickerPage);
+    check(hud->mode == MODE_PICK_BLOCK && hud->pickerPage == 1, "> turns to page 2 and keeps the picker open", detail);
+    {
+        int got[16], reopenedOn2 = 0;
+        bool inOrder = true;
+        for (int i = 0; i < 16; ++i) {
+            ui_tap_rect(hud->blockBounds[i]);
+            tick(5);
+            got[i] = hud->mode == MODE_BUILD ? hud->blocktype : -1;
+            inOrder &= got[i] == TYPE_ORE_SAND + i;
+            tap_hud(1);                                    // reopen: lands on the current block's page
+            tick(5);
+            reopenedOn2 += hud->pickerPage == 1;
+        }
+        std::snprintf(detail, sizeof(detail), "first %d last %d, reopened on page 2: %d/16", got[0], got[15], reopenedOn2);
+        check(inOrder, "page 2's cells pick 112..127 in id order", detail);
+        check(reopenedOn2 == 16, "the picker reopens on page 2 while a page-2 block is current", detail);
+    }
+    {
+        // D.3c / D.4b: SIGN and CMD are live where GL text entry exists (here).
+        ui_tap_rect(hud->blockBounds[17]);                 // CMD
+        tick(5);
+        const bool cmdArmed = hud->mode == MODE_BUILD && hud->blocktype == HUD_TOOL_CMD;
+        tap_hud(1);                                        // reopen: the tool's page
+        tick(5);
+        ui_tap_rect(hud->blockBounds[16]);                 // SIGN
+        tick(5);
+        const bool signArmed = hud->mode == MODE_BUILD && hud->blocktype == HUD_TOOL_SIGN;
+        tap_hud(1);
+        tick(5);
+        std::snprintf(detail, sizeof(detail), "cells %d %d, CMD armed %d, SIGN armed %d, reopened on page %d",
+                      Hud::pickerCell(1, 16), Hud::pickerCell(1, 17), cmdArmed, signArmed, hud->pickerPage);
+        check(Hud::pickerCell(1, 16) == HUD_TOOL_SIGN && Hud::pickerCell(1, 17) == HUD_TOOL_CMD && cmdArmed &&
+              signArmed && hud->mode == MODE_PICK_BLOCK && hud->pickerPage == 1,
+              "SIGN and CMD sit after 127 and each arms its tool", detail);
+    }
+    ui_tap_rect(hud->pickerPrev);
+    tick(5);
+    const int afterPrev = hud->pickerPage;
+    ui_tap_rect(hud->blockBounds[3]);
+    tick(5);
+    std::snprintf(detail, sizeof(detail), "page after < %d, blocktype %d (stock pick %d)", afterPrev, hud->blocktype, page1Pick);
+    check(afterPrev == 0 && hud->mode == MODE_BUILD && hud->blocktype == page1Pick,
+          "< returns to page 1 and its picks are unchanged", detail);
+
+    // [ ] and the wheel, as real SDL events through the translator; < on page 1 wraps.
+    tap_hud(1);
+    tick(5);
+    push_key(SDL_SCANCODE_RIGHTBRACKET, true); push_key(SDL_SCANCODE_RIGHTBRACKET, false);
+    tick(3);
+    const int afterKey = hud->pickerPage;
+    push_key(SDL_SCANCODE_LEFTBRACKET, true); push_key(SDL_SCANCODE_LEFTBRACKET, false);
+    tick(3);
+    const int afterKey2 = hud->pickerPage;
+    push_wheel(-1.0f);                                     // toward the user = next page
+    tick(3);
+    const int afterWheel = hud->pickerPage;
+    push_wheel(1.0f);
+    tick(3);
+    const int afterWheel2 = hud->pickerPage;
+    ui_tap_rect(hud->pickerPrev);
+    tick(5);
+    std::snprintf(detail, sizeof(detail), "] %d [ %d wheel %d/%d, < from page 1 %d",
+                  afterKey, afterKey2, afterWheel, afterWheel2, hud->pickerPage);
+    check(afterKey == 1 && afterKey2 == 0 && afterWheel == 1 && afterWheel2 == 0 && hud->pickerPage == 1,
+          "] / [ and the wheel page the picker; < wraps", detail);
+    tap_hud(1);                                            // close
+    tick(5);
+
+    // Block TNT's second pick: no page-2 cell has a BT variant, so all are veiled; SIGN/CMD too.
+    {
+        tap_hud(1);
+        tick(5);
+        if (hud->pickerPage != 0) { ui_tap_rect(hud->pickerNext); tick(5); }
+        int tnt = -1;
+        for (int i = 0; i < Hud::pickerCellCount(0); ++i) if (Hud::pickerCell(0, i) == TYPE_BLOCK_TNT) tnt = i;
+        if (tnt >= 0) ui_tap_rect(hud->blockBounds[tnt]);
+        tick(5);
+        ui_tap_rect(hud->pickerNext);
+        tick(5);
+        int bt = 0;
+        for (int i = 0; i < 16; ++i) bt += hudBlocksMap[Hud::pickerCell(1, i)] != -1;
+        ui_tap_rect(hud->blockBounds[16]);                 // SIGN mid-pick: nothing
+        tick(5);
+        const int modeAfterSign = hud->mode;
+        ui_tap_rect(hud->blockBounds[0]);                  // 112: the stock fallback, a plain block
+        tick(5);
+        std::snprintf(detail, sizeof(detail), "tnt cell %d, page-2 BT variants %d, mode after SIGN %d, then %d blocktype %d",
+                      tnt, bt, modeAfterSign, hud->mode, hud->blocktype);
+        check(tnt >= 0 && bt == 0 && modeAfterSign == MODE_PICK_BLOCK && hud->mode == MODE_BUILD &&
+              hud->blocktype == TYPE_ORE_SAND,
+              "Block TNT's second pick survives a page turn and veils every page-2 cell", detail);
+    }
 
     tap_hud(2);
     tick(5);
@@ -2240,6 +3961,39 @@ int run_ui_selftest() {
         check(moved && !again && std::fabs(lo - 0.25f) < 1e-4f && std::fabs(hi - 3.0f) < 1e-4f &&
               std::fabs(steps - std::floor(steps + 0.5f)) < 1e-3f,
               "Slider pins to its ends, snaps to min+k*step, reports only real changes", detail);
+    }
+
+    // --- N.5.11: the toast's lifetime, and the HUD-style statusbar routed through it ----------
+    {
+        GLW::Toast t;
+        t.show("Can't place a sign under the block", 2.0f);
+        const bool shown = t.visible() && t.rect().size.width > 0.0f;
+        const float w1 = t.rect().size.width;
+        t.update(1.5f);
+        t.show("Can't place a sign under the block", 2.0f);   // same text: lifetime reset only
+        t.update(1.5f);
+        const bool refreshed = t.visible();
+        t.show("World Saved", 2.0f);
+        const float w2 = t.rect().size.width;                 // shrink-wrapped: shorter text, narrower
+        t.update(2.5f);
+        const bool expired = !t.visible() && t.text().empty();
+        t.show("Loading", 1000.0f);
+        t.update(5000.0f);
+        const bool sticky = t.visible();
+        t.clear();
+        statusbar sb(CGRectMake(0, 0, 0, 0));
+        sb.useToast();
+        sb.setStatus(@"World Saved", 1.0f);
+        const bool sbShown = sb.current() != nil;
+        sb.update(2.0f);
+        const bool sbGone = sb.current() == nil;
+        sb.setStatus(@"World Saved", 1.0f);                  // same text after expiry re-shows
+        const bool sbAgain = sb.current() != nil;
+        std::snprintf(detail, sizeof(detail), "shown=%d w %.1f>%.1f refreshed=%d expired=%d sticky=%d "
+                      "sb %d/%d/%d", shown, w1, w2, refreshed, expired, sticky, sbShown, sbGone, sbAgain);
+        check(shown && w1 > w2 && w2 > 0.0f && refreshed && expired && sticky && sbShown && sbGone &&
+              sbAgain, "Toast shows, refreshes on the same text, expires, honours >=1000 s, "
+              "shrink-wraps; statusbar::useToast() routes through it", detail);
     }
 
     // --- the settings screen, through real pointer events -------------------------------------
@@ -2510,6 +4264,37 @@ int menu_index_of_file(const char* file) {
     return -1;
 }
 
+// Stage S / S.5: with --world-format=emod a download lands as `<id>.emod` (converted while it
+// inflated) — so "the same world" means its `.eden` export equals what was served.
+const char* world_ext() { return FileManager::conversionEnabled() ? ".emod" : ".eden"; }
+bool world_bytes(const std::string& path, std::vector<unsigned char>* out) {
+    if (path.size() < 5 || path.compare(path.size() - 5, 5, ".emod") != 0) return read_file(path, out);
+    emod::EdenExporter ex;
+    if (!ex.begin(path, emod::ExportOptions())) return false;
+    out->clear();
+    unsigned char buf[1 << 16];
+    for (size_t n; (n = ex.read(buf, sizeof buf)) > 0;) out->insert(out->end(), buf, buf + n);
+    return !ex.failed();
+}
+std::vector<unsigned char> gunzip_bytes(const std::vector<unsigned char>& in) {
+    z_stream z;
+    std::memset(&z, 0, sizeof(z));
+    inflateInit2(&z, 15 + 32);
+    std::vector<unsigned char> out;
+    unsigned char buf[1 << 16];
+    z.next_in = (Bytef*)in.data();
+    z.avail_in = (uInt)in.size();
+    int rc;
+    do {
+        z.next_out = buf;
+        z.avail_out = sizeof buf;
+        rc = inflate(&z, Z_NO_FLUSH);
+        out.insert(out.end(), buf, buf + (sizeof buf - z.avail_out));
+    } while (rc == Z_OK);
+    inflateEnd(&z);
+    return rc == Z_STREAM_END ? out : std::vector<unsigned char>();
+}
+
 bool browser_wait_list(WorldBrowser* b) {
     return tick_until([b] { return !b->listLoading(); }, 3000, "the browser's list");
 }
@@ -2615,7 +4400,7 @@ int run_browser_selftest_body(bool live) {
     int src = -1;
     for (int i = 0; i < eden_menu_world_count(); ++i) if (!std::strcmp(eden_menu_world_name(i), name)) src = i;
     std::vector<unsigned char> world;
-    const bool haveWorld = src >= 0 && read_file(docs + "/" + eden_menu_world_file(src), &world);
+    const bool haveWorld = src >= 0 && world_bytes(docs + "/" + eden_menu_world_file(src), &world);
     check(haveWorld && world.size() > 192, "a saved world to serve", "");
     if (!haveWorld) return 1;
 
@@ -2703,25 +4488,36 @@ int run_browser_selftest_body(bool live) {
 
     // --- downloads: deflate zip, nested zip, no overwrite --------------------------------------
     struct Want { const char* id; const char* file; const char* what; int source; };
+    const std::string X = world_ext();
+    const std::string f1 = "1600000001" + X, f2 = "1600000002" + X, f1b = "1600000001-2" + X, f3 = "1600000103" + X;
     const Want wants[] = {
-        { "1600000001", "1600000001.eden",   "a streamed deflate zip imports as a world", WorldBrowser::SRC_ARCHIVE },
-        { "1600000002", "1600000002.eden",   "a zip inside a zip imports as a world", WorldBrowser::SRC_ARCHIVE },
-        { "1600000001", "1600000001-2.eden", "a second download never replaces the first", WorldBrowser::SRC_ARCHIVE },
+        { "1600000001", f1.c_str(),  "a streamed deflate zip imports as a world", WorldBrowser::SRC_ARCHIVE },
+        { "1600000002", f2.c_str(),  "a zip inside a zip imports as a world", WorldBrowser::SRC_ARCHIVE },
+        { "1600000001", f1b.c_str(), "a second download never replaces the first", WorldBrowser::SRC_ARCHIVE },
     };
     std::vector<std::string> made;
     for (const Want& w : wants) {
         if (!m->showbrowser) { ui_tap_rect(m->controlRect("getworlds")); tick(3); browser_wait_list(b); }
         const bool done = browser_download(b, m, w.id);
+        // The converted case (S.5) runs a time slice per frame; wait for it to hand back.
+        tick_until([m, b] { return !m->showbrowser || !b->busy(); }, 6000, "the conversion");
         const int at = menu_index_of_file(w.file);
         std::vector<unsigned char> got;
-        const bool same = read_file(docs + "/" + w.file, &got) && got == world;
+        const bool same = world_bytes(docs + "/" + w.file, &got) && got == world;
         std::snprintf(detail, sizeof(detail), "%s: listed %d selected %d same-bytes %d browser %d status \"%s\"", w.file,
                       at, eden_menu_selected_index(), same ? 1 : 0, m->showbrowser ? 1 : 0, b->statusText());
         check(done && at >= 0 && eden_menu_selected_index() == at && same && !m->showbrowser, w.what, detail);
         if (at >= 0) made.push_back(w.file);
     }
+    if (FileManager::conversionEnabled()) {
+        // S.5 plan §4: the download is converted while it inflates and is gone after the commit.
+        bool stray = false;
+        for (const char* f : { "1600000001.eden", "1600000002.eden", "1600000001-2.eden", "1600000001.eden.zip", "1600000002.eden.zip" })
+            if (FILE* t = std::fopen((docs + "/" + f).c_str(), "rb")) { std::fclose(t); stray = true; }
+        check(!stray, "converted downloads leave no .eden and no download behind", "");
+    }
     {
-        const int at = menu_index_of_file("1600000001.eden");
+        const int at = menu_index_of_file(f1.c_str());
         std::snprintf(detail, sizeof(detail), "\"%s\"", at >= 0 ? eden_menu_world_name(at) : "-");
         check(at >= 0 && !std::strcmp(eden_menu_world_name(at), name), "a downloaded world is named from its own header", detail);
     }
@@ -2757,12 +4553,13 @@ int run_browser_selftest_body(bool live) {
           "Return runs a server search", detail);
     {
         const bool done = browser_download(b, m, "1600000103");
+        tick_until([m, b] { return !m->showbrowser || !b->busy(); }, 6000, "the conversion");
         std::vector<unsigned char> got;
-        const bool same = read_file(docs + "/1600000103.eden", &got) && got == world;
-        std::snprintf(detail, sizeof(detail), "listed %d same-bytes %d status \"%s\"", menu_index_of_file("1600000103.eden"),
+        const bool same = world_bytes(docs + "/" + f3, &got) && got == world;
+        std::snprintf(detail, sizeof(detail), "listed %d same-bytes %d status \"%s\"", menu_index_of_file(f3.c_str()),
                       same ? 1 : 0, b->statusText());
         check(done && same && !m->showbrowser, "a two-member gzip from the server imports as a world", detail);
-        if (same) made.push_back("1600000103.eden");
+        if (same) made.push_back(f3);
     }
     ui_tap_rect(m->controlRect("getworlds"));
     tick(3);
@@ -2795,13 +4592,53 @@ int run_browser_selftest_body(bool live) {
 
     // --- a downloaded world plays -------------------------------------------------------------
     {
-        const int at = menu_index_of_file("1600000002.eden");
+        const int at = menu_index_of_file(f2.c_str());
         if (at >= 0) eden_menu_select(at);
         tick(2);
         ui_tap_rect(m->controlRect("play"));
         const bool played = at >= 0 && tick_until([] { return game_mode() == 1; }, 60000, "game_mode == PLAY");
         check(played, "a downloaded world loads and plays", "");
         if (played) { tick(60); quit_to_menu(); tick(20); }
+    }
+
+    // --- Share (S.5 / S.5c): export to Exports/ as .eden.gz, and the upload, offline -----------
+    {
+        const std::string srcFile = docs + "/" + eden_menu_world_file(src);
+        eden_menu_select(src);
+        tick(2);
+        WorldNode* node = m->selected_world;
+        check(node && m->shareShown(), "the menu offers Share on a selected world", "");
+        const bool started = node && WorldShare::startExport(node, emod::X_OWN, emod::SIGNS_KEEP);
+        tick_until([] { return !WorldShare::busy(); }, 6000, "the export");
+        std::string out = WorldShare::lastResult();
+        const size_t at = out.find("Exports/");
+        std::string path = at == std::string::npos ? std::string() : docs + "/" + out.substr(at, out.find(" (", at) - at);
+        std::vector<unsigned char> gz;
+        const bool same = !path.empty() && read_file(path, &gz) && gunzip_bytes(gz) == world;
+        std::snprintf(detail, sizeof(detail), "\"%s\"", out.c_str());
+        check(started && out.compare(0, 4, "ok: ") == 0 && same, "Share > Export writes the world as Exports/<name>.eden.gz", detail);
+        if (!path.empty()) { std::remove(path.c_str()); SDL_RemovePath((docs + "/Exports").c_str()); }
+
+        // Upload: refused with no preview, then the multipart POST to the fixture upload2.php.
+        write_bytes(app2 + "/upload2.php", bytes_of("YES"));
+        const bool refused = node && !WorldShare::startUpload(node, emod::UPLOAD_CURRENT, emod::X_OWN, emod::SIGNS_KEEP) &&
+                             std::strstr(WorldShare::lastResult(), "failed");
+        check(refused, "an upload without a preview PNG is refused", WorldShare::lastResult());
+        if (havePng) write_bytes(srcFile + ".png", png);
+        const bool up = node && WorldShare::startUpload(node, emod::UPLOAD_CURRENT, emod::X_OWN, emod::SIGNS_KEEP);
+        tick_until([] { return !WorldShare::busy(); }, 6000, "the upload");
+        std::vector<unsigned char> posted, ignored;
+        const bool gotPost = read_file(app2 + "/upload2.php.posted", &posted);
+        g_fixtureFiles.push_back(app2 + "/upload2.php.posted");
+        const std::string head = std::string("--") + emod::UPLOAD_BOUNDARY + "\r\nContent-Disposition: form-data; name=\"uploaded\"; filename=\"file.bin\"\r\n\r\n";
+        const bool shape = gotPost && posted.size() > head.size() && std::memcmp(posted.data(), head.data(), head.size()) == 0 &&
+                           posted[head.size()] == 0x1f && posted[head.size() + 1] == 0x8b;
+        const bool bodyGone = !read_file(srcFile + ".upload-body", &ignored);
+        std::snprintf(detail, sizeof(detail), "\"%s\", posted %zu B, multipart+gzip %d, temp body gone %d", WorldShare::lastResult(),
+                      posted.size(), shape ? 1 : 0, bodyGone ? 1 : 0);
+        check(!havePng || (up && !std::strcmp(WorldShare::lastResult(), "ok: Uploaded") && shape && bodyGone),
+              "Share > Upload POSTs the pinned upload2.php multipart and reads YES", detail);
+        std::remove((srcFile + ".png").c_str());
     }
 
     // --- clean up: the downloads (through the menu's own delete), the fixtures, the world -------
@@ -3219,10 +5056,21 @@ int run_background_selftest() {
             std::fclose(f);
         }
     }
-    char detail[128];
+    char detail[1200];
     std::snprintf(detail, sizeof(detail), "%s = %lld bytes", path[0] ? path : "(not found)", bytes);
-    // 192-byte header + 200*60 creature block + at least one 32,768-byte column + a directory.
-    check(bytes >= 192 + 200 * 60 + 32768, "the world file on disk holds at least one column", detail);
+    const size_t plen = std::strlen(path);
+    if (plen > 5 && !std::strcmp(path + plen - 5, ".emod")) {
+        // Stage S / S.4 (--world-format=emod): a compressed append log has no size floor worth
+        // asserting, so ask the store itself -- a committed batch holding at least one column.
+        emod::EdenWorldStore st;
+        const bool ok = st.open(path, false) && st.columnCount() >= 1;
+        std::snprintf(detail + std::strlen(detail), sizeof(detail) - std::strlen(detail),
+                      ", %u column(s), %u commit(s)", (unsigned)st.columnCount(), (unsigned)st.lastSeq());
+        check(ok, "the world file on disk holds at least one column", detail);
+    } else {
+        // 192-byte header + 200*60 creature block + at least one 32,768-byte column + a directory.
+        check(bytes >= 192 + 200 * 60 + 32768, "the world file on disk holds at least one column", detail);
+    }
 
     // Foreground and background again: the round trip must not wedge, and the second departure
     // must still save. On a phone this is the common case, not an edge case.
@@ -3256,6 +5104,7 @@ int run_save_roundtrip() {
     // proving that WRITTEN data comes back rather than that an untouched file is unchanged.
     // Terrain's own argument order is (x, z, y) with y vertical — CLAUDE.md convention #1.
     const int bx = (int)g_opt.at[0] + 2, bz = (int)g_opt.at[2] + 2, by = (int)g_opt.at[1];
+    if (g_opt.saveInplace) eden_set_save_inplace_threshold(0);   // N.8: force the journaled path
     eden_console_setblock(bx, bz, by, 1);
     tick(60);
 
@@ -3279,6 +5128,11 @@ int run_save_roundtrip() {
     eden_console_teleport(g_opt.at[0], g_opt.at[1], g_opt.at[2]);
     tick(g_opt.frames);
     std::printf("[eden-stage1] postload.checksum %s\n", eden_debug_mesh_checksum());
+    if (g_opt.saveInplace) {   // N.8: the edit must have been WRITTEN by the journaled in-place path
+        const int got = eden_console_getblock(bx, bz, by);
+        std::printf("[eden-stage1] inplace.edit block=%d (want 1) %s\n", got, got == 1 ? "PASS" : "FAIL");
+        if (got != 1) return 1;
+    }
     std::printf("[eden-stage1] postload.geometry %s\n", eden_debug_terrain_geometry());
     std::fflush(stdout);
     return 0;
@@ -3369,7 +5223,7 @@ std::string default_bundle(const char* argv0) {
     // finds its assets when it is run from a different build tree or a symlink.
     for (int up = 0; up < 6; ++up) {
         struct stat st;
-        if (stat((dir + "/Eden.eden").c_str(), &st) == 0) return dir;
+        if (stat((dir + "/Eden.emod").c_str(), &st) == 0) return dir;
         dir += "/..";
     }
     return ".";
@@ -3612,6 +5466,10 @@ static int eden_main_after_args(int argc, char** argv);
 static int parse_arg_string(const char* text);
 
 int main(int argc, char** argv) {
+    // Stage S / S.4: EDEN_WORLD_FORMAT=emod is --world-format=emod for a whole session of runs (a
+    // harness script, or a phone, which has no command line). Read first so an argument wins.
+    if (const char* wf = std::getenv("EDEN_WORLD_FORMAT"))
+        { g_world_format = (!std::strcmp(wf, "emod") || !std::strcmp(wf, "1")) ? 1 : 0; g_world_format_pinned = 1; }
     for (int i = 1; i < argc; ++i) {
         if (int rc = parse_one_arg(argv[i])) return rc;
     }
@@ -3703,28 +5561,62 @@ static int parse_one_arg(const char* a) {
         else if (!std::strcmp(a, "--p1-gate"))        { g_opt.mode = "p1-gate";  g_opt.headless = true; }
         else if (!std::strcmp(a, "--stage1"))         g_opt.mode = "stage1";
         else if (!std::strcmp(a, "--smoke"))          g_opt.mode = "smoke";
-        else if (starts_with(a, "--save-bench="))     { g_opt.mode = "save-bench"; g_opt.headless = true; g_saveBenchList = a + 13; }
         else if (!std::strcmp(a, "--input-selftest")) { g_opt.mode = "input-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--audio-selftest")) { g_opt.mode = "audio-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--gamepad-selftest")) { g_opt.mode = "gamepad-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--touch-selftest")) { g_opt.mode = "touch-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--empty-bit-selftest")) { g_opt.mode = "empty-bit-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--newblocks-selftest")) { g_opt.mode = "newblocks-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--trailer-selftest")) { g_opt.mode = "trailer-selftest"; g_opt.headless = true; }
+        else if (starts_with(a, "--trailer-file="))  g_opt.trailerFiles.push_back(a + 15);
+        else if (!std::strcmp(a, "--trailer-no-dirty-mark")) g_opt.trailerNoDirty = true;
+        else if (!std::strcmp(a, "--trailer-keep"))  g_opt.trailerKeep = true;
+        else if (!std::strcmp(a, "--signs-selftest")) { g_opt.mode = "signs-selftest"; g_opt.headless = true; }
+        else if (starts_with(a, "--signs-mutate="))  g_opt.signsMutate = a + 15;
+        else if (!std::strcmp(a, "--cmds-selftest"))  { g_opt.mode = "cmds-selftest"; g_opt.headless = true; }
+        else if (starts_with(a, "--cmds-mutate="))   g_opt.cmdsMutate = a + 14;
+        else if (!std::strcmp(a, "--cmds-trace"))     g_opt.cmdsTrace = true;
+        else if (starts_with(a, "--signs="))         SignRenderer::enabled = atoi(a + 8) != 0;
+        else if (!std::strcmp(a, "--sign-shot"))      g_opt.mode = "sign-shot";
+        else if (starts_with(a, "--sign-shot="))      { g_opt.mode = "sign-shot"; g_opt.shot = a + 12; }
+        else if (starts_with(a, "--look=")) {
+            g_opt.haveLook = std::sscanf(a + 7, "%f,%f", &g_opt.look[0], &g_opt.look[1]) == 2;
+        }
+        else if (!std::strcmp(a, "--codec-bench"))   { g_opt.mode = "codec-bench"; g_opt.headless = true; }
+        else if (starts_with(a, "--codec-file="))    g_opt.codecFile = a + 13;
+        else if (!std::strcmp(a, "--bundled-map-selftest")) { g_opt.mode = "bundled-map-selftest"; g_opt.headless = true; }
+        else if (starts_with(a, "--bundled-eden="))  g_opt.bundledEden = a + 15;
+        else if (starts_with(a, "--bundled-emod="))  g_opt.bundledEmod = a + 15;
+        else if (!std::strcmp(a, "--emod-selftest")) { g_opt.mode = "emod-selftest"; g_opt.headless = true; }
+        else if (starts_with(a, "--emod-fixtures=")) g_opt.emodFixtures = a + 16;
+        else if (starts_with(a, "--emod-work="))     g_opt.emodWork = a + 12;
+        else if (starts_with(a, "--emod-file="))     g_opt.emodFile = a + 12;
+        else if (starts_with(a, "--emod-ref="))      g_opt.emodRef = a + 11;
+        else if (!std::strcmp(a, "--emod-quick"))    g_opt.emodQuick = true;
         else if (!std::strcmp(a, "--light-selftest")) { g_opt.mode = "light-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--keybind-selftest")) { g_opt.mode = "keybind-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--ui-selftest"))   { g_opt.mode = "ui-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--convert-prompt-selftest")) { g_opt.mode = "convert-prompt-selftest"; g_opt.headless = true;
+                                                        eden_setenv("EDEN_UPGRADE_256Z", "1"); }
+        else if (starts_with(a, "--convert-answer=")) g_opt.convertAnswer = a + 17;
         else if (!std::strcmp(a, "--browser-selftest")) { g_opt.mode = "browser-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--net-live-selftest")) { g_opt.mode = "net-live-selftest"; g_opt.headless = true; }
         else if (starts_with(a, "--net-fixtures="))  eden_net_set_fixture_root(a + 15);
         else if (!std::strcmp(a, "--objc-selftest")) { g_opt.mode = "objc-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--save-roundtrip")) g_opt.mode = "save-roundtrip";
+        else if (!std::strcmp(a, "--save-inplace")) g_opt.saveInplace = true;
         else if (!std::strcmp(a, "--background-selftest")) { g_opt.mode = "background-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--shot"))           g_opt.mode = "shot";
         else if (starts_with(a, "--shot="))           { g_opt.mode = "shot"; g_opt.shot = a + 7; }
         else if (starts_with(a, "--height="))         g_opt.height = atoi(a + 9);
+        else if (starts_with(a, "--world-format="))   { g_world_format = !std::strcmp(a + 15, "emod") ? 1 : 0; g_world_format_pinned = 1; }
+        else if (starts_with(a, "--upgrade-256z="))   eden_setenv("EDEN_UPGRADE_256Z", atoi(a + 15) ? "1" : "0");
         else if (starts_with(a, "--empty-shortcut=")) { extern bool g_empty_shortcut; g_empty_shortcut = atoi(a + 17) != 0; }
         else if (std::strcmp(a, "--empty-selfcheck") == 0) eden_debug_set_empty_selfcheck(1);
         else if (std::strcmp(a, "--light-selfcheck") == 0) eden_debug_set_light_selfcheck(1);
         else if (starts_with(a, "--read-budget-bands=")) { extern bool g_read_budget_bands; g_read_budget_bands = atoi(a + 20) != 0; }
+        else if (starts_with(a, "--export") || starts_with(a, "--import") || starts_with(a, "--upload-"))
+                                                      { g_opt.mode = "world-tool"; g_opt.headless = true; }   // WorldTools_native.cpp
         else if (starts_with(a, "--world="))          g_opt.world = a + 8;
         else if (starts_with(a, "--frames="))         g_opt.frames = atoi(a + 9);
         else if (!std::strcmp(a, "--touch-profile")) g_opt.touchProfile = true;
@@ -3781,6 +5673,14 @@ static int parse_one_arg(const char* a) {
 }
 
 static int eden_main_after_args(int argc, char** argv) {
+    // S.5e: harness modes pin the height a conversion writes: the source's, unless --upgrade-256z=1
+    // (or EDEN_UPGRADE_256Z) says otherwise -- never the Settings toggle, which a --docs directory
+    // starts at its default (on) and which would silently change what every convert gate measures.
+    if ((g_opt.mode || !g_opt.liveCmds.empty()) && !getenv("EDEN_UPGRADE_256Z")) eden_setenv("EDEN_UPGRADE_256Z", "0");
+    // Harness modes keep the pre-default-on world format (.eden) unless --world-format says otherwise.
+    if ((g_opt.mode || !g_opt.liveCmds.empty()) && !g_world_format_pinned) { g_world_format = 0; g_world_format_pinned = 1; }
+    // Stage S / S.5: the world-file tools need no engine, no window and no save directory.
+    if (g_opt.mode && !std::strcmp(g_opt.mode, "world-tool")) return eden_world_tool_main(argc, argv);
     (void)argc;
     // `--touch-selftest --window=WxH` runs WINDOWED, and that is the whole point of the
     // combination: headless has no window, so the letterbox is degenerate and the mapping under
@@ -3950,17 +5850,43 @@ static int eden_main_after_args(int argc, char** argv) {
         if (!std::strcmp(g_opt.mode, "p1-gate"))            rc = run_p1_gate();
         else if (!std::strcmp(g_opt.mode, "stage1"))        rc = run_stage1();
         else if (!std::strcmp(g_opt.mode, "smoke"))         rc = run_smoke();
-        else if (!std::strcmp(g_opt.mode, "save-bench"))    rc = run_save_bench();
         else if (!std::strcmp(g_opt.mode, "input-selftest")) rc = run_input_selftest();
         else if (!std::strcmp(g_opt.mode, "keybind-selftest")) rc = run_keybind_selftest();
         else if (!std::strcmp(g_opt.mode, "ui-selftest")) rc = run_ui_selftest();
+        else if (!std::strcmp(g_opt.mode, "convert-prompt-selftest")) {
+#if !defined(_WIN32)
+            unsetenv("EDEN_CONVERT_PROMPT");
+#else
+            _putenv_s("EDEN_CONVERT_PROMPT", "");
+#endif
+            rc = run_convert_prompt_selftest();
+            if (g_selftestFailures) rc = 1;
+            std::printf("[eden-convert] %s (%d failure(s))\n", rc ? "FAILURES" : "ALL PASS", g_selftestFailures);
+        }
+        else if (!std::strcmp(g_opt.mode, "bundled-map-selftest")) {
+            int n = 0;
+            int bad = fmh_selftestCompare(g_opt.bundledEden.c_str(), g_opt.bundledEmod.c_str(), &n);
+            std::printf("[bundled-map] %d columns compared, %d differ -> %s\n", n, bad, bad == 0 ? "ALL PASS" : "FAILURES");
+            rc = bad == 0 ? 0 : 1;
+        }
         else if (!std::strcmp(g_opt.mode, "browser-selftest")) rc = run_browser_selftest(false);
         else if (!std::strcmp(g_opt.mode, "net-live-selftest")) rc = run_browser_selftest(true);
         else if (!std::strcmp(g_opt.mode, "audio-selftest")) rc = run_audio_selftest();
         else if (!std::strcmp(g_opt.mode, "gamepad-selftest")) rc = run_gamepad_selftest();
         else if (!std::strcmp(g_opt.mode, "touch-selftest")) rc = run_touch_selftest();
         else if (!std::strcmp(g_opt.mode, "empty-bit-selftest")) rc = run_empty_bit_selftest();
+        else if (!std::strcmp(g_opt.mode, "newblocks-selftest")) rc = run_newblocks_selftest();
+        else if (!std::strcmp(g_opt.mode, "trailer-selftest")) rc = run_trailer_selftest();
+        else if (!std::strcmp(g_opt.mode, "signs-selftest")) rc = run_signs_selftest();
+        else if (!std::strcmp(g_opt.mode, "sign-shot"))     rc = run_sign_shot();
+        else if (!std::strcmp(g_opt.mode, "cmds-selftest")) rc = run_cmds_selftest();
         else if (!std::strcmp(g_opt.mode, "light-selftest")) rc = run_light_selftest();
+        else if (!std::strcmp(g_opt.mode, "codec-bench"))   rc = eden_codec_bench(g_opt.codecFile.c_str(), g_opt.height, 500);
+#if defined(EDEN_DIAGNOSTICS)
+        else if (!std::strcmp(g_opt.mode, "emod-selftest"))
+            rc = eden_emod_selftest_run(g_opt.emodFixtures.c_str(), g_opt.emodWork.c_str(), g_opt.emodQuick ? 1 : 0,
+                                        g_opt.emodFile.c_str(), g_opt.emodRef.c_str());
+#endif
         else if (!std::strcmp(g_opt.mode, "objc-selftest")) rc = run_objc_selftest();
         else if (!std::strcmp(g_opt.mode, "save-roundtrip")) rc = run_save_roundtrip();
         else if (!std::strcmp(g_opt.mode, "background-selftest")) rc = run_background_selftest();

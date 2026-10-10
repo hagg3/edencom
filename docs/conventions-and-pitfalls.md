@@ -120,7 +120,7 @@ Read this before writing any code. These are the implicit rules the codebase fol
 
 | If you change… | Also check… |
 |---|---|
-| Block type enum / tables | Save compat (raw bytes on disk!), `blockinfo`, `blockTypeFaces`, `blockColor`, atlas, `blockTntMap`, HUD picker list |
+| Block type enum / tables | Save compat (raw bytes on disk!), `blockinfo`, `blockTypeFaces`, `blockColor`, atlas, `blockTntMap`, `hudBlocksMap`, HUD picker list, `web/public/eden-hotbar.js`'s `MAX_BLOCK_TYPE`. **The id space is full at 127** (`block8` is signed; ids 112–127 since Stage D.2a): there is no room to append another type |
 | `colorTable` generation | Every painted block in every existing world re-tints |
 | `T_SIZE`/`CHUNK_SIZE` | `SIZEOF_COLUMN` (file format!), progress divisors, `INDICES_MAX` sizing, streaming threshold |
 | `T_HEIGHT`/`CHUNKS_PER_COLUMN` (now **runtime** globals) | Anything sized at COMPILE time must use `T_HEIGHT_MAX`/`CHUNKS_PER_COLUMN_MAX`/`MAX_CREATURES_SAVED_MAX` instead — a file-scope VLA is a build error, a stack one is not |

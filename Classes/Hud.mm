@@ -9,12 +9,14 @@
 #import "Hud.h"
 #import "GLWidgets.h"
 #include <algorithm>
+#include <cstring>
 #import "Globals.h"
 #import "Frustum.h"
 #import "TerrainGen2.h"
 
 
 #import "Alert.h"
+#import "GLDialog.h"
 
 extern float SCREEN_WIDTH; 
 extern float SCREEN_HEIGHT;
@@ -127,8 +129,55 @@ extern "C" const int hudBlocksMap[NUM_BLOCKS+1]={
     [TYPE_LIGHTBOX]=-1,
     [TYPE_STEEL]=TYPE_BTSTEEL,
     [TYPE_PORTAL_TOP]=-1,
+    // 112-127 (D.2a): the id space is full, so there are no BT variants to pick.
+    [TYPE_ORE_SAND]=-1,
+    [TYPE_SPACE_STONE]=-1,
+    [TYPE_CARPET]=-1,
+    [TYPE_SNAKESKIN]=-1,
+    [TYPE_OBSIDIAN]=-1,
+    [TYPE_CHEESE]=-1,
+    [TYPE_SPACE_DIRT]=-1,
+    [TYPE_SPACE_GRASS]=-1,
+    [TYPE_MOSS]=-1,
+    [TYPE_DARK_MATTER]=-1,
+    [TYPE_SPACE_SAND]=-1,
+    [TYPE_SNOW]=-1,
+    [TYPE_MOONROCK]=-1,
+    [TYPE_BASALT]=-1,
+    [TYPE_DARK_TILE]=-1,
+    [TYPE_ALGAE]=-1,
     
 };
+
+// D.2p: the picker's page 2 — the 2026 game's second page in ID ORDER (the user's call; the
+// game's screenshot starts 113, 112), then its two tool cells. Laid out in the first 18 slots of
+// the same blockBounds[] grid as page 1.
+static const int hudBlocks2[NUM_PICKER_PAGE2_CELLS]={
+    TYPE_ORE_SAND,TYPE_SPACE_STONE,TYPE_CARPET,TYPE_SNAKESKIN,TYPE_OBSIDIAN,TYPE_CHEESE,TYPE_SPACE_DIRT,
+    TYPE_SPACE_GRASS,TYPE_MOSS,TYPE_DARK_MATTER,TYPE_SPACE_SAND,TYPE_SNOW,TYPE_MOONROCK,TYPE_BASALT,
+    TYPE_DARK_TILE,TYPE_ALGAE,HUD_TOOL_SIGN,HUD_TOOL_CMD,
+};
+int Hud::pickerCellCount(int page){ return page==1?NUM_PICKER_PAGE2_CELLS:NUM_DISPLAY_BLOCKS; }
+int Hud::pickerCell(int page,int i){
+    if(i<0||i>=pickerCellCount(page)) return -1;
+    return page==1?hudBlocks2[i]:hudBlocks[i];
+}
+// SIGN landed with D.3c, CMD with D.4b. Both need a text prompt (a sign's text, a command block's
+// script), so both stay veiled on a host with no GL text input (web, until 5.9's web text-input
+// seam -- un-veiling there is this line's job); a veiled cell's tap does nothing.
+bool Hud::pickerToolEnabled(int type){
+    if(type==HUD_TOOL_SIGN||type==HUD_TOOL_CMD) return GLDialog::textEntryAvailable();
+    return false;
+}
+// The BT ("second block") variant of a picker cell, -1 for none — and always -1 for a tool,
+// which must never index hudBlocksMap.
+static int picker_bt(int type){ return hud_picker_is_tool(type)?-1:hudBlocksMap[type]; }
+static CGRect picker_hit(CGRect r){
+    const float h=std::max((float)r.size.height,GLW::touchFloor());
+    // Grown DOWNWARD only: centred, it would reach into the grid's last row and steal its taps.
+    return CGRectMake(r.origin.x,r.origin.y+r.size.height-h,r.size.width,h);
+}
+static int picker_page_of(int type){ return (type>=TYPE_ORE_SAND&&type<=TYPE_ALGAE)||hud_picker_is_tool(type)?1:0; }
 
 static int marginVert=10;
 static int marginLeft=10;
@@ -243,6 +292,7 @@ Hud::Hud(){
 	hideui=FALSE;
 	ttime=0;
     blocktype_pressed=-1;
+    pickerPage=0;
     justLoaded=1;
     inmenu=FALSE;
     underLiquid=FALSE;
@@ -260,6 +310,7 @@ Hud::Hud(){
     // Joystick's own rects are screen-independent), so they are constructed once here and merely
     // repositioned on a later re-layout rather than being rebuilt.
 	sb= new statusbar(CGRectMake(0,0,0,0));
+    sb->useToast();   // N.5.11: every HUD message is the GL kit's toast (GLWidgets.h)
 	//gamepad=[[Gamepad alloc] init];
 	joystick=new Joystick();
 
@@ -384,6 +435,15 @@ void Hud::layoutForScreen(){
 			r++;
 		}
 	}
+    // D.2p: the page strip, under the grid's last row: ◀ under the first column, ▶ under the
+    // last, the page dots between them (renderBlockScreen). The grid itself is untouched, so page
+    // 1's hit rects stay byte-identical (headless-display-profile-test pins them).
+    {
+        const CGRect first=blockBounds[NUM_DISPLAY_BLOCKS-7], last=blockBounds[NUM_DISPLAY_BLOCKS-1];
+        const float h=22.0f;
+        pickerPrev=CGRectMake(first.origin.x,first.origin.y-6.0f-h,first.size.width,h);
+        pickerNext=CGRectMake(last.origin.x,last.origin.y-6.0f-h,last.size.width,h);
+    }
 
     c=r=0;
     for(int i=0;i<NUM_COLORS;i++){
@@ -578,6 +638,11 @@ BOOL Hud::update(float etime){
     }
    //if(mode==MODE_PICK_BLOCK){
     
+    // D.2p: the wheel over an open block picker turns its page (away from the user = back).
+    // Native only: eden_ui_take_wheel() is 0 on web, whose wheel reaches eden_picker_page_step.
+    if(mode==MODE_PICK_BLOCK){
+        if(int wheel=eden_ui_take_wheel()) pickerPageStep(wheel>0?-1:1);
+    }
     if(mode==MODE_PICK_BLOCK){
         at2+=etime*9;
         if(at2>=1)
@@ -832,6 +897,7 @@ BOOL Hud::update(float etime){
                 }else
                     if(mode!=MODE_PICK_BLOCK){
                         mode=MODE_PICK_BLOCK;
+                        pickerPage=picker_page_of(blocktype);   // D.2p: open on the current block's page
                         pickSecondBlock=FALSE;
                         sb->clear();
                         inmenu=FALSE;
@@ -1129,12 +1195,27 @@ BOOL Hud::handlePickMenu(int x,int y){
     return handled;
 }
 
+BOOL Hud::pickerPageStep(int delta){
+    if(mode!=MODE_PICK_BLOCK||delta==0) return FALSE;
+    pickerPage=((pickerPage+delta)%NUM_PICKER_PAGES+NUM_PICKER_PAGES)%NUM_PICKER_PAGES;
+    blocktype_pressed=-1;
+    return TRUE;
+}
+
 BOOL Hud::handlePickBlock(int x,int y){
 	BOOL handled=FALSE;
-	
-	for(int i=0;i<NUM_DISPLAY_BLOCKS;i++){
+	// D.2p: the page arrows. A page turn keeps the picker (and a pending second-block pick) open.
+	// The art is 22 points tall; the hit box meets the touch floor (design-system.md).
+	if(inbox(x,y,picker_hit(pickerPrev))) return pickerPageStep(-1);
+	if(inbox(x,y,picker_hit(pickerNext))) return pickerPageStep(1);
+	const int* cells=pickerPage==1 ? hudBlocks2 : hudBlocks;
+	for(int i=0;i<pickerCellCount(pickerPage);i++){
 		if(inbox(x,y,blockBounds[i])){
-            if(hudBlocks[i]==TYPE_BLOCK_TNT){
+            if(hud_picker_is_tool(cells[i])){
+                // A tool cell: consumed either way, picks only once its row has landed.
+                if(pickerToolEnabled(cells[i])&&!pickSecondBlock) blocktype_pressed=cells[i];
+            }else
+            if(cells[i]==TYPE_BLOCK_TNT){
                // sb->setStatus(@"Pick second block type",999);
                 pickSecondBlock=TRUE;
                 handled=TRUE;
@@ -1172,11 +1253,11 @@ BOOL Hud::handlePickBlock(int x,int y){
                  TYPE_BTLIGHTBOX=110,
                  TYPE_BTSTEEL=111,*/
                 if(pickSecondBlock){
-                    int nr=hudBlocksMap[hudBlocks[i]];
+                    int nr=picker_bt(cells[i]);
                     
                     
                     if(nr==-1){
-                        blocktype_pressed=hudBlocks[i];
+                        blocktype_pressed=cells[i];
                         printf("derp: %d\n",nr);
                     }else{ blocktype_pressed=nr;
                         printf("derp: %d\n",nr);
@@ -1187,7 +1268,7 @@ BOOL Hud::handlePickBlock(int x,int y){
                     
                     
                 }else{
-                    blocktype_pressed=hudBlocks[i];
+                    blocktype_pressed=cells[i];
                     printf("derp: %d\n",blocktype_pressed);
                 }
                 // printg("set pressed: %d\n",i);
@@ -1274,8 +1355,16 @@ void Hud::renderColorPickScreen(){
     glColor4f(1.0f,1.0f,1.0f,1.0f);
     glEnable(GL_BLEND);
 }
+static void hud_draw_tool_caption(int type,CGRect r);   // D.3c, after HudPickerKit below
 void Hud::renderBlockAndBorder(CGRect recto){
     int type=blocktype;
+    if(hud_picker_is_tool(type)){
+        // D.3c: a tool is never a table index -- the build background, then its caption.
+        glColor4f(1.0f,1.0f,1.0f,1.0f);
+        Resources::getResources->getTex((mode==MODE_BUILD||mode==MODE_PICK_BLOCK)?ICO_BUILD2_ACTIVE:ICO_BUILD2)->drawTextHalfsies(recto);
+        hud_draw_tool_caption(type,recto);
+        return;
+    }
     
     
 	glColor4f(1.0f,1.0f,1.0f,1.0f);
@@ -1460,6 +1549,8 @@ void Hud::renderBlockAndBorder(CGRect recto){
         if (block_paintcolor==0){
           if(type==TYPE_BRICK)
                 tp=Resources::getResources->getBlockTex(TEX_BRICK_COLOR);
+            else if(IS_NEWBLOCK_TEX(blockTypeFaces[type][5]))
+                tp=Resources::getResources->getBlockTex(NEWBLOCK_COLOR_TEX(blockTypeFaces[type][5]));   // D.2t
             else
                 tp=Resources::getResources->getBlockTex(blockTypeFaces[type][5]);
         }else
@@ -1619,7 +1710,7 @@ void Hud::renderBlockAndBorder(CGRect recto){
         Vector clr=colorTable[block_paintcolor];
         glColor4f(clr.x,clr.y,clr.z,1.0f);
     }
-    else if(type==TYPE_GRASS2||type==TYPE_GRASS3||type==TYPE_TNT||type==TYPE_FIREWORK||type==TYPE_BRICK||type==TYPE_VINE)
+    else if(type==TYPE_GRASS2||type==TYPE_GRASS3||type==TYPE_TNT||type==TYPE_FIREWORK||type==TYPE_BRICK||type==TYPE_VINE||(type>=TYPE_ORE_SAND&&type<=TYPE_ALGAE))
         glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
     else
         glColor4ub(blockColor[type][0], blockColor[type][1], blockColor[type][2], 255);
@@ -1781,6 +1872,26 @@ void Hud::renderMenuScreen(){
 }
 
 
+// D.2p: the page strip's chrome and the tool cells' captions. Rasterised once (and the arrows
+// again only when the layout moves them), never per frame.
+struct HudPickerKit {
+    GLW::Button prev,next;
+    GLW::Label  sign,cmd;
+    CGRect      prevAt,nextAt;
+    bool        built;
+    HudPickerKit() : built(false) { prevAt=nextAt=CGRectMake(0,0,0,0); }
+};
+static HudPickerKit* pickerKit=NULL;
+// D.3c: the HUD's current-block button with a tool armed shows the tool's picker caption.
+static void hud_draw_tool_caption(int type,CGRect r){
+    if(!pickerKit||!pickerKit->built) return;   // the picker has to have been opened to arm one
+    const GLW::Label& l=type==HUD_TOOL_SIGN?pickerKit->sign:pickerKit->cmd;
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    l.drawCentered(r.origin.x+r.size.width*0.5f,r.origin.y+(r.size.height+l.height())*0.5f,GLW::rgb(0x000000));
+    glColor4f(1.0f,1.0f,1.0f,1.0f);
+}
+
 void Hud::renderBlockScreen(){
     if(mode!=MODE_PICK_BLOCK) return;
     using namespace GLW;
@@ -1789,18 +1900,41 @@ void Hud::renderBlockScreen(){
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    bevel(picker_panel(blockBounds,NUM_DISPLAY_BLOCKS),BEVEL_WINDOW);
+    if(!pickerKit) pickerKit=new HudPickerKit();
+    HudPickerKit* k=pickerKit;
+    if(!k->built){
+        k->prev.setLabel("<",18.0f);
+        k->next.setLabel(">",18.0f);
+        // D.4b: the body face, no chrome shadow. The display face (a pixel font) at 12pt plus the
+        // 1u white shadow turned "SIGN" into a smudge ("SI3N", the user on the Mac); CMD survived.
+        k->sign.set("SIGN",12.0f,UITextAlignmentCenter,0.0f,FACE_BODY);
+        k->cmd.set("CMD",12.0f,UITextAlignmentCenter,0.0f,FACE_BODY);
+        k->built=true;
+    }
+    if(memcmp(&k->prevAt,&pickerPrev,sizeof(CGRect))){ k->prevAt=pickerPrev; k->prev.setRect(pickerPrev); }
+    if(memcmp(&k->nextAt,&pickerNext,sizeof(CGRect))){ k->nextAt=pickerNext; k->next.setRect(pickerNext); }
+
+    // The window is page 1's on both pages (the 2026 game's), grown down over the page strip.
+    {
+        CGRect cells[NUM_DISPLAY_BLOCKS+2];
+        memcpy(cells,blockBounds,sizeof(blockBounds));
+        cells[NUM_DISPLAY_BLOCKS]=pickerPrev;
+        cells[NUM_DISPLAY_BLOCKS+1]=pickerNext;
+        bevel(picker_panel(cells,NUM_DISPLAY_BLOCKS+2),BEVEL_WINDOW);
+    }
+    const int* hudBlocks=pickerPage==1 ? hudBlocks2 : ::hudBlocks;
+    const int ncells=pickerCellCount(pickerPage);
 
     // Pass 1, chrome: the second-block ring, then the cell. TYPE_CUSTOM is a blank slot, as stock.
     // "Current" is the block a build would place; while a second block is being picked there is
     // no current one (the TNT cell is what started the pick).
     int golden_cubei=-1;
-    for(int i=0;i<NUM_DISPLAY_BLOCKS;i++){
+    for(int i=0;i<ncells;i++){
         const int type=hudBlocks[i];
         if(type==TYPE_GOLDEN_CUBE) golden_cubei=i;
         if(type==TYPE_CUSTOM) continue;
         const bool on=(blocktype_pressed==type)||(!pickSecondBlock&&type==blocktype);
-        if(pickSecondBlock&&hudBlocksMap[type]!=-1){
+        if(pickSecondBlock&&picker_bt(type)!=-1){
             const float g=du(3);
             const CGRect c=blockBounds[i];
             fill(CGRectMake(c.origin.x-g,c.origin.y-g,c.size.width+g*2.0f,c.size.height+g*2.0f),rgb(0x89c31f));
@@ -1810,11 +1944,18 @@ void Hud::renderBlockScreen(){
 
     // Pass 2, art: the atlas face (or the item's own icon) inside each cell.
     glEnable(GL_TEXTURE_2D);
-    for(int i=0;i<NUM_DISPLAY_BLOCKS;i++){
+    for(int i=0;i<ncells;i++){
         const int type=hudBlocks[i];
         if(type==TYPE_CUSTOM) continue;
         const bool on=(blocktype_pressed==type)||(!pickSecondBlock&&type==blocktype);
         const CGRect in=picker_inner(blockBounds[i],on);
+        if(hud_picker_is_tool(type)){
+            // D.2p: the 2026 game's tool cells are captioned, not pictured.
+            const GLW::Label& l=type==HUD_TOOL_SIGN?k->sign:k->cmd;
+            l.drawCentered(in.origin.x+in.size.width*0.5f,in.origin.y+(in.size.height+l.height())*0.5f,
+                           rgb(0x000000));
+            continue;
+        }
         if(type==TYPE_FLOWER||type==TYPE_GOLDEN_CUBE||type==TYPE_PORTAL_TOP||type==TYPE_DOOR_TOP){
             int tid=ICO_FLOWER_ICO;
             if(type==TYPE_GOLDEN_CUBE)     tid=ICO_GOLDCUBE;
@@ -1831,9 +1972,10 @@ void Hud::renderBlockScreen(){
         else if(type==TYPE_BLOCK_TNT)      tp=res->getBlockTex(TEX_BLOCKTNT);
         else if(type==TYPE_LADDER)         tp=res->getBlockTex(blockTypeFaces[type][3]);
         else if(type==TYPE_BRICK)          tp=res->getBlockTex(TEX_BRICK_COLOR);
+        else if(IS_NEWBLOCK_TEX(blockTypeFaces[type][5])) tp=res->getBlockTex(NEWBLOCK_COLOR_TEX(blockTypeFaces[type][5]));
         else                               tp=res->getBlockTex(blockTypeFaces[type][5]);
         // Faces whose art already carries its colour draw white; the rest take blockColor, as stock.
-        if(type==TYPE_FIREWORK||type==TYPE_GRASS2||type==TYPE_GRASS3||type==TYPE_TNT||type==TYPE_BLOCK_TNT||type==TYPE_BRICK||type==TYPE_VINE)
+        if(type==TYPE_FIREWORK||type==TYPE_GRASS2||type==TYPE_GRASS3||type==TYPE_TNT||type==TYPE_BLOCK_TNT||type==TYPE_BRICK||type==TYPE_VINE||(type>=TYPE_ORE_SAND&&type<=TYPE_ALGAE))
             glColor4f(1.0f,1.0f,1.0f,1.0f);
         else
             glColor4ub(blockColor[type][0],blockColor[type][1],blockColor[type][2],255);
@@ -1848,11 +1990,30 @@ void Hud::renderBlockScreen(){
 
     // Pass 3: blocks the second-block pick will not take are veiled rather than faded — the kit's
     // chrome stays solid (design-system.md, "Placeholders and disabled controls").
-    if(pickSecondBlock){
-        for(int i=0;i<NUM_DISPLAY_BLOCKS;i++)
-            if(hudBlocks[i]!=TYPE_CUSTOM&&hudBlocksMap[hudBlocks[i]]==-1)
-                fill(blockBounds[i],rgb(0xc9c9c9,0.6f));
+    // D.2p: a tool cell is veiled the same way until its row lands, and always during that pick.
+    for(int i=0;i<ncells;i++){
+        const int type=hudBlocks[i];
+        if(type==TYPE_CUSTOM) continue;
+        const bool veiled=hud_picker_is_tool(type)?(pickSecondBlock||!pickerToolEnabled(type))
+                                                  :(pickSecondBlock&&picker_bt(type)==-1);
+        if(veiled) fill(blockBounds[i],rgb(0xc9c9c9,0.6f));
     }
+
+    // D.2p: the page strip — the arrows (kit buttons) and one dot per page, the current one filled.
+    k->prev.render();
+    k->next.render();
+    {
+        const float d=du(8),gap=du(8);
+        const float x0=(pickerPrev.origin.x+pickerPrev.size.width+pickerNext.origin.x)*0.5f
+                       -(NUM_PICKER_PAGES*d+(NUM_PICKER_PAGES-1)*gap)*0.5f;
+        const float y=pickerPrev.origin.y+(pickerPrev.size.height-d)*0.5f;
+        for(int p=0;p<NUM_PICKER_PAGES;p++){
+            const float x=x0+p*(d+gap);
+            fill(CGRectMake(x,y,d,d),rgb(0x000000));
+            if(p!=pickerPage) fill(CGRectMake(x+u(),y+u(),d-2.0f*u(),d-2.0f*u()),rgb(0xc9c9c9));
+        }
+    }
+    glColor4f(1.0f,1.0f,1.0f,1.0f);
 
     // The golden-cube count, where stock put it on that cell.
     if(golden_cubei>=0){

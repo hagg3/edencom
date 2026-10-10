@@ -13,7 +13,20 @@ with OpenGL by the game itself. There is **no UIKit UI** beyond the GL view (and
 - `Button` (struct in `Texture2D.h` area; used via `inbox2/inbox3` in `Util.mm`) —
   rectangle + pressed/animation state.
 - `statusbar` (`Classes/statusbar.mm`) — the reusable toast/progress line
-  (`setStatus(text, priority)`, `clear()`); instances owned by Hud, Menu, SharedList.
+  (`setStatus(text, seconds)`, `clear()`; `seconds >= 1000` never expires, so the engine's `999`
+  messages do, after ~16 min); instances owned by Hud, Menu, SharedList.
+  **Modified from stock (N.5.11, 2026-10-10): Hud's bar calls `useToast()` and draws as
+  `GLW::Toast`** (GLWidgets.h, `.eden-toast` in eden-ui.css): a dark 85% box with the 2u grey
+  keyline, white Jersey 10 text, shrink-wrapped to the text and centred `du(16)` above the bottom
+  edge, 0.2 s fade in/out. Every `hud->sb->setStatus()` ("World Saved", "Loading World 47%") is
+  therefore a toast, and that is the call a new in-game message makes. The stock line was a
+  screen-wide body-face raster with a 1 px shadow — hard to read over terrain, and it printed
+  twice at opposite ends of the screen. `pos` and the alignment argument are ignored in toast
+  mode; the Menu/SharedList/ShareMenu bars are stock. The pill's width comes from the raster
+  seam's `eden_text_raster_measure()` (native: the stb_truetype advance loop the rasteriser
+  itself uses; web: canvas `measureText`; 0 headless, where `GLW::Label::width()` falls back to
+  the `kAvgGlyph` estimate). `--shot`'s `hud-status` is the artefact; `--ui-selftest` covers the
+  lifetime rules.
 - `VKeyboard` (`Classes/VKeyboard.mm`) — custom GL keyboard for world names and
   search (the app predates reliable transparent UIKit overlays on GL).
 - `Alert` (`Classes/Alert.mm`) — the original iOS `UIAlertView` modals (delete world, warp-home
@@ -38,7 +51,7 @@ system's "pressed == selected"; the web's `.eden-tabrail` is the settings screen
 rail, this is its few-words sibling) and `GLW::progressBar()` (`.eden-progress`: SUNKEN track, lime
 12% fill; a negative fraction draws an indeterminate block). **Two faces (2026-10-05):** `GLW::Label` takes a `GLW::Face` —
   `FACE_DISPLAY` (the default: Jersey 10, the design system's pixel face, for every piece of
-  chrome) or `FACE_BODY` (the platform sans, for descriptive sentences — `GLDialog`'s body). The
+  chrome) or `FACE_BODY` (Rubik, for descriptive sentences — `GLDialog`'s body). The
   face reaches the raster through a sticky seam switch, `eden_text_raster_set_face()`, which
   `Label` sets around its own rasters and puts back to body, so `statusbar`/`SharedList` text is
   unchanged. Native loads `Jersey10-Regular.ttf` from the bundle (linked there by
@@ -202,6 +215,56 @@ Responsibilities:
   it is what opens the thing.
 - **Block picker** (`renderBlockScreen` / `handlePickBlock`): `NUM_DISPLAY_BLOCKS 35`
   tiles; picking a second block for ramps (`pickSecondBlock`). Sets `blocktype`.
+  **Two pages since D.2p (2026-10-10).** Page 1 is the stock 35 (`hudBlocks[]`); page 2
+  (`hudBlocks2[]`, 18 cells in the first 18 `blockBounds[]` slots) is ids 112…127 in **id order**
+  (the 2026 game shows 113 first; the user chose id order), then the tools `HUD_TOOL_SIGN` (1000)
+  and `HUD_TOOL_CMD` (1001). The tools are **sentinels, not block ids** — `hud_picker_is_tool()`
+  guards every table read (`picker_bt()` for `hudBlocksMap`), they draw as captioned cells, and
+  `Hud::pickerToolEnabled()` keeps a tool veiled (a tap is consumed, picks nothing) until its row
+  turns it on. **SIGN is on since D.3c (2026-10-10) wherever GL text entry exists**
+  (`GLDialog::textEntryAvailable()` — native and iOS; web stays veiled until 5.9's web text-input
+  seam); **CMD since D.4b**, under the same rule. Both cells (and the HUD's current-block button
+  with a tool armed) are captioned in the **body** face without the chrome shadow: the display
+  face at 12pt with its 1u white shadow smudged "SIGN" (the user, D.4b). Picking an enabled tool goes through `Hud::update`'s ordinary release
+  path, so `mode` = `MODE_BUILD` and `blocktype` = the sentinel; `Player::processInput` hands a
+  build tap with a tool armed to the tool (`SignTool::tap` / `CmdTool::tap`) and never lets the
+  sentinel become a preview type, and `renderBlockAndBorder` draws the build background + the
+  tool's caption instead of an atlas face. **A sentinel must never index a block table** — note
+  that `Player::test` reads `blockinfo[hud->blocktype]`, so `CmdTool` swaps in `TYPE_STEEL` around
+  it. Both tools do nothing while a `GLDialog` is up (a tap under a modal never re-opens it).
+  **The CMD tool** (`CmdTool`, in `Classes/SignTool.{h,mm}`): a tap on a command block (a non-air
+  block with a `CMB1` record) opens a 6-line prompt prefilled with its script (511 bytes, printable
+  ASCII; OK with an empty/blank answer keeps the block and clears the script, as cmd.html says); a
+  tap on anything else places one in the cell in front of the face — the build rules (air or a
+  liquid below level 4, not inside the player), unpainted `TYPE_STEEL` through `buildBlock`, plus a
+  record with an empty script and `flags` 0 — refused with a toast at 512 per world. No prompt on
+  placing: tap it again to write the script. The skin is docs/rendering.md's.
+  **Pushing a command block (D.4c, `Classes/CmdScript.{h,mm}`):** a build tap with a *block* armed
+  (not a tool, not holding a creature) whose `FC_DESTROY` hit is a command block runs its script —
+  `CmdScript::tap`, checked in `Player::processInput` right after the tool branch — plays the door
+  sound (the 2026 game's), and builds nothing. A tap on a block whose script is still running (a
+  `wait`) does nothing. SIGN armed still hangs a sign on it, CMD armed still edits it. The
+  hold-to-act pulse re-presses every 200 ms while held, like a held build. The language and every
+  rule Emod chose where cmd.html is silent: the header comment of `CmdScript.h`;
+  docs/eden-file-format.md "Command-block scripts".
+  **Multi-line prompts (D.4b):** `GLDialog::prompt(..., lines)` / `GLW::TextField::setLines(n)`
+  wrap the field to its width (`Label::set`'s `keepLastLines`, which also cuts a word longer than a
+  line) and keep the caret's last n lines in view; Return still commits. Signs use 3, scripts 6. **The SIGN tool** (`Classes/SignTool.{h,mm}`): the face is the
+  `FC_PLACE` − `FC_DESTROY` cell delta; the bottom is refused with the toast "Can't place a sign
+  under the block"; otherwise `GLDialog::prompt` (95 bytes, printable ASCII kept) — a new sign,
+  or, on a face that already has one, an edit prefilled with its text, where an empty answer
+  deletes it. Colour = the build paint (`block_paintcolor`, set by tapping build in paint mode)
+  or 45 (charcoal); an edit recolours only when a paint is picked. Refusals from the trailer
+  (full, unreadable) toast through `fm->reportTrailerRefusal`. `pickerPage` + the ◀ ▶ strip (`pickerPrev` /
+  `pickerNext`, laid out by `layoutForScreen()` under the grid's last row; hit boxes grow DOWNWARD
+  to `touchFloor()` so they never steal the last row's taps) are the only additions: page 1's
+  `blockBounds[]` are byte-identical. The window keeps page 1's size on both pages, grown over the
+  strip; page dots sit between the arrows. `Hud::pickerPageStep(delta)` (wraps) is the one entry
+  point: the arrows, native `[` `]` (`Input_native.cpp`, fixed keys, not keybind rows) and the
+  wheel (`eden_ui_take_wheel()` in `Hud::update`), web `[` `]` + wheel (`eden-input.js` →
+  `eden_picker_page_step`, which answers 0 when the picker is closed so the key/wheel keeps its
+  usual meaning). Reopening the picker lands on the current block's page. A page turn keeps a
+  pending Block-TNT second pick; no page-2 cell has a BT variant, so all of page 2 is veiled during it.
 - **Color picker** (`renderColorPickScreen` / `handlePickColor`): the 54-color grid +
   "no color"; sets `block_paintcolor`.
 - **Both pickers draw on `GLWidgets` since Stage 5.7 (2026-10-06); the hit path is stock.**
@@ -247,7 +310,14 @@ them — the ordering in `World::update` is the arbitration.
   `loading`'s ladder in `render()`, `showAlertDeleteConfirm` → `a_deleteConfirm`, `showsettings`
   — so web's `Menu_web.mm` accessors are unaffected. The stock rects (`rect_options`,
   `rect_create`, the arrows …) are still computed by `layoutForScreen()` and nothing reads them.
-  **Share is not offered** (inert stubs on every host that runs this screen). **Get Worlds is,
+  **Share** (`kit_share`, beside Rename; **S.5, 2026-10-10**, native only — `WorldShare::offered`)
+  opens `Classes/WorldShare.{h,mm}`'s GLDialog chain: **Export** / **Upload** / **Remove original**
+  (only for an `.emod` with its `.eden` kept) → a format picker (own format first, Legacy64z,
+  NewDawn256z, NewFormat256z) → the signs question, only when pruning would drop any → a confirm
+  showing the pre-flight size and loss sentence → a time-sliced job on the status bar. Export
+  writes `Documents/Exports/<name>.eden.gz`; Upload is networking.md § Upload. The stock
+  `rect_share`/ShareMenu flow stays unused. `WorldShare::startExport/startUpload/lastResult` skip
+  the dialogs for `--browser-selftest`. **Get Worlds is,
   since Stage 5.9 (2026-10-07)**, wherever the host can fetch (`Menu::browserOffered()` =
   `WorldBrowser::available()`; never on web): a titlebar button beside New (the "Worlds" title
   yields when the two would collide) opening `WorldBrowser` — below. `controlRect(name)` (incl.

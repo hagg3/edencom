@@ -15,11 +15,14 @@
 #import "zpipe.h"
 #import "FileArchive.h"
 #import "Alert.h"
+#import "WorldShare.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <string>
+#include <sys/stat.h>
+#include <vector>
 
 
 //@synthesize loading,showsettings,sbar,is_sharing,
@@ -106,6 +109,7 @@ void Menu::layoutKit(){
         k->play.setTone(GLW::Button::TONE_POSITIVE);
         k->del.setLabel("Delete",du(22));
         rect_rename.setLabel("Rename",du(22));
+        kit_share.setLabel("Share",du(22));
         k->empty.set("No worlds yet",du(24),UITextAlignmentCenter);
         k->emptyHint.set("Choose New to make one.",du(15),UITextAlignmentCenter,0,FACE_BODY);
     }
@@ -160,12 +164,14 @@ void Menu::layoutKit(){
     const float actY=py+pad;
     k->del.setRect(CGRectMake(left,actY,du(96),k->btnH));
     rect_rename.setRect(CGRectMake(left+du(96)+gap,actY,du(110),k->btnH));
+    kit_share.setRect(CGRectMake(left+du(96)+gap+du(110)+gap,actY,du(100),k->btnH));
     k->play.setRect(CGRectMake(right-du(120),actY,du(120),k->btnH));
 
     const bool idle=(loading==0);
     k->play.setEnabled(idle&&selected_world!=NULL);
     k->del.setEnabled(idle&&selected_world!=NULL);
     rect_rename.setEnabled(idle&&selected_world!=NULL);
+    kit_share.setEnabled(idle&&WorldShare::offered(selected_world));
     k->create.setEnabled(idle);
     k->settings.setEnabled(idle);
     k->getWorlds.setEnabled(idle&&browserOffered());
@@ -180,7 +186,16 @@ void Menu::layoutKit(){
     const int first=k->scroll.first();
     for(int r=0;r<vis;r++){
         WorldNode* n=menu_node_at(this,first+r);
-        const std::string t=n?cpstring(n->display_name):std::string();
+        std::string t=n?cpstring(n->display_name):std::string();
+        if(n&&n->needs_convert)t+="  (needs conversion)";
+        if(n&&n->original_bytes>0){
+            // S.5: the hidden original the player kept when it was converted (Share... > Remove original).
+            char b[48];
+            const double v=(double)n->original_bytes;
+            if(v>=1073741824.0) snprintf(b,sizeof(b),"  (+%.1f GB original kept)",v/1073741824.0);
+            else snprintf(b,sizeof(b),"  (+%.0f MB original kept)",std::max(1.0,v/1048576.0));
+            t+=b;
+        }
         if(!k->rowBuilt[r]||t!=k->rowText[r]){
             k->rowBuilt[r]=true;
             k->rowText[r]=t;
@@ -210,6 +225,7 @@ CGRect Menu::controlRect(const char* which){
     if(!strcmp(which,"play"))     return kit->play.rect();
     if(!strcmp(which,"delete"))   return kit->del.rect();
     if(!strcmp(which,"rename"))   return rect_rename.rect();
+    if(!strcmp(which,"share"))    return kit_share.rect();
     if(!strcmp(which,"list"))     return kit->list;
     if(!strcmp(which,"scrollbar"))return kit->scroll.barRect();
     if(!strcmp(which,"getworlds"))return kit->getWorlds.rect();
@@ -455,6 +471,8 @@ void Menu::deactivate(){
 	
 }
 void Menu::loadWorlds(){
+	World::getWorld->fm->cleanConversionTemps();   // a killed conversion's .spill/.converting
+	std::vector<std::pair<std::string,long long> > hidden_originals;   // S.5: (paired .emod, original's bytes)
 	world_list=NULL;
 	selected_world=NULL;
 	NSError* err;
@@ -495,8 +513,27 @@ void Menu::loadWorlds(){
         if([wut isEqualToString:@"PNG"]){
             continue;
         }
-        if(![wut isEqualToString:@"EDEN"])
+        // Archives are listed only where playing one converts it (S.5d; FileManager::conversionEnabled:
+        // g_world_format on, not web) -- with the flag off this list is exactly what it was.
+        BOOL is_archive=([wut isEqualToString:@"GZ"]||[wut isEqualToString:@"ZIP"])
+            &&FileManager::conversionEnabled()&&FileManager::isArchiveName(file_name);
+        if(![wut isEqualToString:@"EDEN"]&&![wut isEqualToString:@"EMOD"]&&!is_archive)
             continue;
+        // Stage S / S.5: a `.eden` that already has a paired `.emod` is the same world -- the
+        // `.emod` lists, the original stays hidden (the player kept it when asked, or has not been
+        // asked yet). One that does not is listed and flagged: it converts when it is played.
+        BOOL needs_convert=FALSE;
+        if([wut isEqualToString:@"EDEN"]||is_archive){
+            NSString* paired=World::getWorld->fm->pairedEmodFor(file_name);
+            if(paired){
+                // Hidden; its size goes on the `.emod`'s row once the list is built (below).
+                struct stat sb;
+                long long b=(stat([[NSString stringWithFormat:@"%@/%@",World::getWorld->fm->documents,file_name] UTF8String],&sb)==0)?(long long)sb.st_size:0;
+                hidden_originals.push_back(std::make_pair(cpstring(paired),b));
+                continue;
+            }
+            needs_convert=World::getWorld->fm->worldNeedsConversion(file_name);
+        }
         
 		NSString* real_name=World::getWorld->fm->getName(file_name);
         if(real_name==NULL){
@@ -513,6 +550,7 @@ void Menu::loadWorlds(){
 		memset(node, 0, sizeof(WorldNode));
 		node->display_name=real_name;
 		node->file_name=file_name;
+		node->needs_convert=needs_convert;
 		[node->display_name retain];
 		[node->file_name retain];
 		if(world_list_end==NULL){
@@ -527,6 +565,11 @@ void Menu::loadWorlds(){
 		}
 		
 		
+	}
+	for(size_t i=0;i<hidden_originals.size();i++){
+		for(WorldNode* n=world_list;n;n=n->next){
+			if(cpstring(n->file_name)==hidden_originals[i].first){n->original_bytes=hidden_originals[i].second;break;}
+		}
 	}
 	// An empty Documents folder used to synthesise one placeholder world here (a name from
 	// settings->getNewWorldName() and a fresh genhash() file name) so the stock iOS carousel was
@@ -589,6 +632,16 @@ bool Menu::renameOffered(){
     return true;
 }
 
+// Stage S / S.5: Share sits beside Rename on the hosts that have it (native; WorldShare::offered
+// also wants a playable world selected and nothing running). Drawn disabled while it cannot act.
+bool Menu::shareShown(){
+#if defined(__EMSCRIPTEN__)
+    return false;
+#else
+    return selected_world!=NULL&&!delete_mode&&!share_mode;
+#endif
+}
+
 // ---------------------------------------------------------------------------------------------
 // Stage 5.9: Get Worlds
 // ---------------------------------------------------------------------------------------------
@@ -641,6 +694,7 @@ bool Menu::renameSelected(const char* utf8){
 }
 void Menu::update(float etime){
 	menu_back->update(etime);
+	WorldShare::update();   // S.5: a running export/upload advances a slice per menu frame
 	if(is_sharing){
 		share_menu->update(etime);
 		return;
@@ -691,6 +745,7 @@ void Menu::update(float etime){
 			k->play.setPressed(k->play.hit(mx,my));
 			k->del.setPressed(k->del.hit(mx,my));
 			if(renameOffered()) rect_rename.setPressed(rect_rename.hit(mx,my));
+			if(shareShown()) kit_share.setPressed(kit_share.hit(mx,my));
 			if(loading) continue;
 			if(k->barTouch<0&&k->scroll.hitBar(mx,my)){
 				k->barTouch=i;
@@ -718,6 +773,8 @@ void Menu::update(float etime){
 			const bool playHit=k->play.pressed()&&k->play.hit(mx,my);
 			const bool delHit=k->del.pressed()&&k->del.hit(mx,my);
 			const bool renameHit=renameOffered()&&rect_rename.pressed()&&rect_rename.hit(mx,my);
+			const bool shareHit=shareShown()&&kit_share.pressed()&&kit_share.hit(mx,my);
+			kit_share.setPressed(false);
 			k->settings.setPressed(false); k->create.setPressed(false); k->play.setPressed(false);
 			k->getWorlds.setPressed(false);
 			k->del.setPressed(false); rect_rename.setPressed(false);
@@ -739,6 +796,10 @@ void Menu::update(float etime){
 			if(renameHit){
 				beginRename();
 				return;                 // the dialog owns input from the next frame
+			}
+			if(shareHit&&!loading&&WorldShare::offered(selected_world)){
+				WorldShare::begin(selected_world);
+				return;
 			}
 			if(settingsHit){
 				settings->resetView();
@@ -762,7 +823,7 @@ void Menu::update(float etime){
 				new_world=(WorldNode*)malloc(sizeof(WorldNode));
 				memset(new_world,0,sizeof(WorldNode));
 				new_world->display_name=settings->getNewWorldName();
-				new_world->file_name=[NSString stringWithFormat:@"%@.eden",genhash()];
+				new_world->file_name=FileManager::newWorldFileName();   // .eden, or .emod (S.4 g_world_format)
 				[new_world->file_name retain];
 				[new_world->display_name retain];
 				addWorld(new_world);
@@ -892,6 +953,7 @@ void Menu::renderKit(){
 
     k->del.render();
     if(renameOffered()) rect_rename.render();
+    if(shareShown()) kit_share.render();
     k->play.render();
 
     // The status line, over the background art: in-game chrome's inverted palette (light text,

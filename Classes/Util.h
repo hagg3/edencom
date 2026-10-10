@@ -17,6 +17,12 @@
 typedef struct _worldnode{
 	NSString* display_name;
 	NSString* file_name;
+	// Stage S / S.5: a `.eden` with no paired `.emod` -- listed, flagged "needs conversion", and
+	// converted when it is played (World::loadWorld). memset 0 everywhere a node is made.
+	BOOL needs_convert;
+	// S.5: an `.emod` whose original `.eden` (or archive) is kept beside it, hidden: its size, for the
+	// list's "+3.8 GB original kept" badge. 0 = none.
+	long long original_bytes;
 	Button rect;
 	Button anim;
     

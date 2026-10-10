@@ -46,7 +46,7 @@
     releaseFocus: null,
     loadingEl: null,
     newWorldType: 1,     // 1 = flat, 0 = normal. Index 0 of the generator rail.
-    heightFormat: 0,     // 0 = Legacy 64z (default), 1 = New Dawn 256z
+    heightFormat: null,  // 0 = Legacy 64z, 1 = New Dawn 256z; null = not yet shown (defaultHeightFormat)
     selected: -1,
     // Get Worlds screen state — kept here (not screen-local) so the manifest fetch and any
     // in-flight download survive a re-render, e.g. after a search-box keystroke.
@@ -365,10 +365,10 @@
   }
 
   /**
-   * Export — download the selected world's raw .eden file, with a choice between the file exactly
-   * as stored and a gzip-compressed copy (see eden-storage.js's exportWorldAt/deflateGzip; there is
-   * no reusable encoder for the engine's own RLE variant — docs/eden-file-format.md's "RLE variant"
-   * is decode-only and bundled-default-world-only — so gzip is the compressed option here).
+   * Export — download the selected world as a `.eden.gz` (the default everywhere, Stage S plan §4) or
+   * a plain `.eden`, in a chosen format (S.5b: own format · Legacy64z · NewDawn256z ·
+   * NewFormat256z). The engine's exporter does the work (eden-storage.js exportWorldAt); its
+   * pre-flight report — exact size and every loss — is shown before anything is downloaded.
    */
   function confirmExport() {
     var UI = window.EdenUI;
@@ -376,6 +376,7 @@
     if (S.selected < 0 || !ES) return;
     var name = worldName(S.selected);
     var target = S.selected;
+    var opts = { target: 0, signs: 0 };
 
     var scrim = UI.scrim({
       onDismiss: function () { scrim.remove(); if (release) release(); },
@@ -384,7 +385,38 @@
     var dlg = UI.window({ title: 'Export world', variant: 'dialog', scrollbar: false, role: 'alertdialog' });
     var stack = UI.el('div', 'eden-stack');
     stack.appendChild(UI.el('p', 'eden-stack__text',
-      'Download "' + name + '" as a .eden file you can keep or move to another browser.'));
+      'Download "' + name + '" as a .eden file you can keep, move to another browser or open in the original game.'));
+
+    var fmt = UI.el('select', 'eden-select');
+    fmt.setAttribute('aria-label', 'Format');
+    ES.exportTargets.forEach(function (label, i) {
+      var o = document.createElement('option');
+      o.value = String(i);
+      o.textContent = i === 0 ? label + ' (unchanged)' : label;
+      fmt.appendChild(o);
+    });
+    stack.appendChild(fmt);
+    var prune = document.createElement('label');
+    var pruneBox = document.createElement('input');
+    pruneBox.type = 'checkbox';
+    prune.appendChild(pruneBox);
+    prune.appendChild(document.createTextNode(' Leave out signs outside this world'));
+    stack.appendChild(prune);
+    var report = UI.el('p', 'eden-stack__text', '');
+    stack.appendChild(report);
+
+    function refresh() {
+      opts.target = +fmt.value;
+      opts.signs = pruneBox.checked ? 1 : 0;
+      var r = ES.exportReportAt(target, opts);
+      if (!r) { report.textContent = ''; return; }
+      if (r.error) { report.textContent = 'Cannot export: ' + r.error; return; }
+      prune.style.display = (r.signsIn + r.cmdsIn) > 0 && (opts.target === 0 || opts.target === 3) ? '' : 'none';
+      report.textContent = ES.formatBytes(r.bytes) + ' before compression. ' + (r.summary || '');
+    }
+    fmt.addEventListener('change', refresh);
+    pruneBox.addEventListener('change', refresh);
+    refresh();
 
     var busy = false;
     function doExport(compress) {
@@ -395,18 +427,19 @@
         scrim.remove();
         if (release) release();
         if (!ok) window.alert('Export failed' + (err ? ': ' + err : '.'));
-      });
+      }, opts);
     }
 
     stack.appendChild(UI.button({
-      size: 'md', tone: 'positive', icon: 'download', label: 'Download uncompressed',
-      onClick: function () { doExport(false); },
+      size: 'md', tone: 'positive', icon: 'download', label: 'Download (.eden.gz)',
+      disabled: !ES.canCompress(),
+      title: ES.canCompress() ? '' : 'Not supported by this build',
+      onClick: function () { doExport(true); },
     }));
     stack.appendChild(UI.button({
-      size: 'md', icon: 'download', label: 'Download compressed (.gz)',
+      size: 'md', icon: 'download', label: 'Download uncompressed (.eden)',
       disabled: !ES.canCompress(),
-      title: ES.canCompress() ? '' : 'Not supported in this browser',
-      onClick: function () { doExport(true); },
+      onClick: function () { doExport(false); },
     }));
     stack.appendChild(UI.button({
       size: 'md', label: 'Cancel',
@@ -656,8 +689,17 @@
     root.appendChild(centered(win.root));
   }
 
+  // S.5e (the user, 2026-10-10): New World defaults to New Dawn 256z -- except on a low-memory
+  // device (eden-host.js's EDEN_LOW_MEMORY), where World::loadWorld refuses a 256z world outright, so
+  // a 256z default would make the first Create fail. Resolved on first render, not at load: this file
+  // must not depend on eden-host.js having run first. The player's pick sticks for the session.
+  function defaultHeightFormat() {
+    return (typeof EDEN_LOW_MEMORY !== 'undefined' && EDEN_LOW_MEMORY) ? 0 : 1;
+  }
+
   /** New World — name field, generator-type rail, height format. */
   function renderNewWorld(root) {
+    if (S.heightFormat === null) S.heightFormat = defaultHeightFormat();
     var UI = window.EdenUI;
     var TYPES = [
       { icon: 'square', label: 'Flat', flat: 1, title: 'New Flat World' },
@@ -704,8 +746,8 @@
       // the player has already answered on this screen (see Menu_web.mm's world-type section).
       M()._eden_menu_set_pending_world_type(S.newWorldType);
       // Same one-shot parking for height: consumed by FileManager::probeWorldHeight() the moment
-      // this world is first loaded (Play, right after create). 64z stays the default -- this only
-      // ever requests 256 when the player picked "New Dawn 256z" above.
+      // this world is first loaded (Play, right after create). The screen defaults to 256z (S.5e);
+      // a world created without this screen (no pending height) is still 64z.
       M()._eden_menu_set_pending_world_height(S.heightFormat === 1 ? 256 : 64);
       writeNameBuffer(nameInput.value.trim());
       var idx = M()._eden_menu_create_world();

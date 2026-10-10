@@ -1,4 +1,4 @@
-// Headless verification of the lazy (range-fetched) Eden.eden FS node — perf-audit ROI row 9,
+// Headless verification of the lazy (range-fetched) Eden.emod FS node — perf-audit ROI row 9,
 // src/seam/js/eden_default_world.pre.js. Follows PORT-STATUS's documented vm.runInThisContext
 // harness (plain require() does not share Module) and the same "never call _eden_debug_tick, drive
 // on real wall-clock waits" methodology as tools/headless-menu-flow-test.js.
@@ -16,7 +16,7 @@
 //      still holds <= MAX_BLOCKS blocks, and a real world load transfers a small fraction of the
 //      file rather than all of it.
 //   3. BEHAVIOURAL EQUIVALENCE. A NORMAL (not flat) world is created and played — the world type
-//      whose terrain is streamed out of Eden.eden by fmh_readColumnFromDefault — and the player's
+//      whose terrain is streamed out of Eden.emod by fmh_readColumnFromDefault — and the player's
 //      settled position is compared against the same run performed with the old whole-file eager
 //      path (`--eager`, spawned as a child process). Identical spawn + identical settled Y means
 //      the terrain the engine actually received was the same bytes. A player over empty terrain
@@ -40,7 +40,7 @@ const SWEEP = args.includes('--sweep');
 const NO_COMPARE = args.includes('--no-compare') || MEASURE;
 const edenJsPath = path.resolve(args.find((a) => !a.startsWith('--')) || path.join(__dirname, '..', 'build-st', 'eden.js'));
 const edenDir = path.dirname(edenJsPath);
-const edenFilePath = path.resolve(edenDir, '..', '..', 'Eden.eden'); // same resolution the pre-js uses
+const edenFilePath = path.resolve(edenDir, '..', '..', 'Eden.emod'); // same resolution the pre-js uses
 
 // Settle time after GAME_MODE_PLAY before sampling the player position. The player spawns above
 // the terrain and falls; both legs of the A/B use the same value.
@@ -165,19 +165,21 @@ global.Module.postRun.push(async () => {
         check('lazy node installed (mode = lazy-fs)', wfs.mode === 'lazy-fs', wfs.mode);
         check('node reports the real file size', wfs.size === realStat.size, wfs.size + ' vs ' + realStat.size);
 
-        const st = global.FS.stat('/bundle/Eden.eden');
+        const st = global.FS.stat('/bundle/Eden.emod');
         check('FS.stat reports the real size (fmh_init/NSBundle depend on this)', st.size === realStat.size, st.size);
 
         // fmh_init has already run inside main() at this point: header + the 518,400-byte
         // ColumnIndex directory. That is the entire cost of booting with this file.
         console.log('after boot (fmh_init read header + directory):', JSON.stringify(boot));
-        check('boot did NOT read the whole file', boot.bytesFetched < 4 * 1024 * 1024,
-              boot.bytesFetched + ' bytes fetched at boot');
-        check('boot fetched at least the 518 KB directory', boot.bytesFetched > 500 * 1024, boot.bytesFetched);
+        // S.6: the file is Eden.emod, and EdenWorldStore::open() scans every record (CRC), so boot reads the
+        // file once, front to back -- no more (a second pass would mean the scan re-reads). Nothing is
+        // lazy about it any more; the node's cache is what is still under test below.
+        check('boot read the whole .emod exactly once', boot.bytesFetched >= realStat.size && boot.bytesFetched < realStat.size * 1.05,
+              boot.bytesFetched + ' bytes fetched at boot of ' + realStat.size);
 
         // 1. Read correctness, whole file, through the node.
         const t0 = Date.now();
-        const viaFS = hashThroughFS('/bundle/Eden.eden', realStat.size);
+        const viaFS = hashThroughFS('/bundle/Eden.emod', realStat.size);
         const real = crypto.createHash('sha1').update(fs.readFileSync(edenFilePath)).digest('hex');
         console.log('whole-file read-back through the FS node: ' + viaFS.bytes + ' bytes in ' + (Date.now() - t0) + ' ms');
         check('read-back length matches the real file', viaFS.bytes === realStat.size, viaFS.bytes);
@@ -201,7 +203,7 @@ global.Module.postRun.push(async () => {
     }
 
     // 3. Create + play a NORMAL world (type 0) — the one whose terrain is streamed out of
-    //    Eden.eden — and sample where the player ends up.
+    //    Eden.emod — and sample where the player ends up.
     const ok = await waitUntil(() => !menuState().error, 5000, 'World/Menu to exist');
     if (!ok) { console.log('FATAL: no World/Menu'); process.exit(1); }
 
@@ -227,12 +229,12 @@ global.Module.postRun.push(async () => {
     if (EAGER || MEASURE) { process.exit(0); }
 
     console.log('after loading a normal world:', JSON.stringify(wfs.stats));
-    check('the world load did NOT pull the whole file',
+    check('the world load did NOT pull the whole file again',
           wfs.stats.bytesFetched < 8 * 1024 * 1024,
           wfs.stats.bytesFetched + ' bytes');
     check('cache still bounded after a real world load', wfs.blocksResident() <= wfs.maxBlocks);
     check('player did not fall through empty terrain (y > -50)', p.pos[1] > -50, JSON.stringify(p.pos));
-    check('player came to rest ON terrain streamed from Eden.eden', settled,
+    check('player came to rest ON terrain streamed from Eden.emod', settled,
           p.pos[1] + ' -> ' + p2.pos[1]);
 
     if (!NO_COMPARE) {

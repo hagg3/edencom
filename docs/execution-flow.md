@@ -94,6 +94,11 @@ Order matters and is load-bearing:
 3. `UpdateModels` (creatures) unless dead or `CREATURES_ON==false`.
 4. `player->preupdate` — **this is where input is processed and blocks are edited**.
 5. `effects->update`.
+5b. **`CmdScript::update(etime)` — not stock (D.4c, 2026-10-10):** command-block scripts resume their
+   `wait`s and `@step`/`@near`/`@timer` triggers fire. Their edits go through `updateChunks` like a
+   build, so they land before this frame's meshing (edit-before-mesh). A tap on a command block runs
+   its script earlier, inside step 4's input processing. `Terrain::unloadTerrain` (exit, warp, the
+   `do_reload` path — never ordinary streaming) calls `CmdScript::reset()`: no run survives it.
 6. `terrain->prepareAndLoadGeometry()` — streaming + chunk re-meshing (CPU). A bulk window
    reload (the `count>140` path) is **spread over several frames** on a fixed per-frame chunk
    budget rather than done inside this one call — modified from stock, 2026-08-13; see

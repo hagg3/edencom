@@ -409,7 +409,7 @@
     var ES = window.EdenStorage;
     var worlds = ES ? ES.listWorlds() : [];
 
-    var totalBytes = worlds.reduce(function (n, w) { return n + (w.bytes || 0); }, 0);
+    var totalBytes = worlds.reduce(function (n, w) { return n + (w.bytes || 0) + (w.originalBytes || 0); }, 0);
     var persistText;
     if (!ES) {
       persistText = 'Storage info unavailable.';
@@ -500,7 +500,11 @@
     worlds.forEach(function (w, index) {
       var exportBtn = UI.button({ size: 'sm', label: 'Export' });
       exportBtn.addEventListener('click', function () {
-        if (!ES || !ES.exportWorldAt(index)) window.alert('Export failed.');
+        // S.5: a streamed `.eden.gz` in the world's own format (the menu's Export dialog has the
+        // format picker); failures can arrive after the call returns, hence the callback.
+        if (!ES || !ES.exportWorldAt(index, true, function (ok, err) {
+          if (!ok) window.alert('Export failed' + (err ? ': ' + err : '.'));
+        })) { /* the callback already reported it */ }
       });
 
       var del = UI.button({ size: 'sm', label: 'Delete' });
@@ -574,7 +578,11 @@
         title: w.name,
         sub: (ES ? ES.formatBytes(w.bytes) : w.bytes + ' B') + ' · edited ' +
           (ES ? ES.formatDate(w.mtime) : w.mtime) +
-          (w.height === 256 ? ' · 256z (uses much more memory to load)' : ''),
+          (w.height === 256 ? ' · 256z (uses much more memory to load)' : '') +
+          // Stage S / S.5 (plan §4 "What the world list shows"): the container, and an original
+          // `.eden` kept beside a converted world (it lists through its `.emod`, never on its own).
+          (w.format === 'emod' ? ' · .emod' : '') +
+          (w.originalBytes > 0 ? ' · +' + (ES ? ES.formatBytes(w.originalBytes) : w.originalBytes + ' B') + ' original kept' : ''),
         actions: convertBtn ? [exportBtn, convertBtn, del] : [exportBtn, del],
       }));
     });

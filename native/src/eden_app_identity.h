@@ -17,8 +17,17 @@
 //     Those are the thing this fork IS a port of, and renaming them would be both a lie and a
 //     format break.
 //
+//   * **A world FILE EXTENSION follows the same rule (Stage S / S.5, 2026-10-10).** `.eden` names the
+//     game's format and stays. `.emod` is the fork's own container: the shipped game cannot read
+//     it, Files/Finder/Explorer show the extension, and so it is OS-facing and fork-owned —
+//     **Emod**. It must never be `.eden`: the shipped app lists every `*.eden`, reads a foreign
+//     header's version field as garbage and runs its in-place 1.x rewrite over the file. Symbols
+//     still say Eden (`EdenWorldStore`, `eden_*`), and the bundled map in the new container is
+//     `Eden.emod` — Eden's map in Emod's container. The constant is `EMOD_WORLD_EXTENSION` in
+//     Classes/Constants.h, where the engine can see it.
+//
 // So: `~/Library/Application Support/Emod/`, `%APPDATA%\Emod\`, `~/.local/share/emod/`, holding
-// `prefs` and `Documents/<world>.eden`. On iOS the container is per-bundle-identifier and the
+// `prefs` and `Documents/<world>.eden` / `<world>.emod`. On iOS the container is per-bundle-identifier and the
 // question does not arise inside it, but the identifier itself still has to be distinct — see
 // native/ios/Info.plist.in.
 #ifndef EDEN_APP_IDENTITY_H

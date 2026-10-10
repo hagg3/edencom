@@ -237,7 +237,7 @@ void BlockBreak::render(){
    // glEnable(GL_TEXTURE_2D);
    // glEnable(GL_SMOOTH);
     glMatrixMode(GL_TEXTURE);
-    glScalef(1,1.0f/32.0f,1);
+    glScalef(1,1.0f/ATLAS_TILES,1);
     glEnable(GL_LIGHTING);
     
     //PVRTVec4 lightSpecular = PVRTVec4(0.2f, 0.2f, 0.2f, 1.0f);
@@ -264,7 +264,7 @@ void BlockBreak::render(){
    // glColor4f(1.0f,1,1,1.0f);
   
 	glDrawElements(GL_TRIANGLES,num_particles*12,GL_UNSIGNED_SHORT,pindices);
-    glScalef(1,32.0f,1);
+    glScalef(1,(float)ATLAS_TILES,1);
     glMatrixMode(GL_MODELVIEW);
 
     glDisableClientState(GL_NORMAL_ARRAY);
@@ -355,7 +355,7 @@ void BlockBreak::addBlockExplode(int x,int z,int y,int type, int color) {
             bf=blockTypeFaces[TYPE_CLOUD][arc4random()%6];
         for(int j=0;j<12;j++){
             if(color==0){
-                if(bf==TEX_GRASS_SIDE||type==TYPE_GRASS3||type==TYPE_TNT||type==TYPE_BRICK||type==TYPE_VINE||type==TYPE_FIREWORK)
+                if(bf==TEX_GRASS_SIDE||type==TYPE_GRASS3||type==TYPE_TNT||type==TYPE_BRICK||type==TYPE_VINE||type==TYPE_FIREWORK||IS_NEWBLOCK_TEX(bf))
                 {
                     useColorTex=TRUE;
                     pbuffer2[pvbi+j].colors[0]=255;
@@ -387,6 +387,8 @@ void BlockBreak::addBlockExplode(int x,int z,int y,int type, int color) {
                 bf=TEX_TNT_TOP_COLOR;
             else if(bf==TEX_BRICK)
                 bf=TEX_BRICK_COLOR;
+            else if(IS_NEWBLOCK_TEX(bf))
+                bf=NEWBLOCK_COLOR_TEX(bf);   // D.2t
         }
         tp=Resources::getResources->getBlockTexShort(bf);
         
@@ -631,6 +633,8 @@ void BlockBreak::addCreatureVanish2(float x,float z,float y,int color,int type){
                 bf=TEX_TNT_TOP_COLOR;
             else if(bf==TEX_BRICK)
                 bf=TEX_BRICK_COLOR;
+            else if(IS_NEWBLOCK_TEX(bf))
+                bf=NEWBLOCK_COLOR_TEX(bf);   // D.2t
         }
         tp=Resources::getResources->getBlockTexShort(bf);
         
@@ -700,7 +704,7 @@ void BlockBreak::addBlockBreak(int x,int z,int y,int type,int color){
             bf=blockTypeFaces[TYPE_CLOUD][arc4random()%6];
         for(int j=0;j<12;j++){
             if(color==0){
-                if(bf==TEX_GRASS_SIDE||type==TYPE_GRASS3||type==TYPE_TNT||type==TYPE_BRICK||type==TYPE_VINE||type==TYPE_FIREWORK)
+                if(bf==TEX_GRASS_SIDE||type==TYPE_GRASS3||type==TYPE_TNT||type==TYPE_BRICK||type==TYPE_VINE||type==TYPE_FIREWORK||IS_NEWBLOCK_TEX(bf))
                 {
                     useColorTex=TRUE;
                     pbuffer2[pvbi+j].colors[0]=255;
@@ -732,9 +736,11 @@ void BlockBreak::addBlockBreak(int x,int z,int y,int type,int color){
             bf=TEX_TNT_TOP_COLOR;
         else if(bf==TEX_BRICK)
             bf=TEX_BRICK_COLOR;
+        else if(IS_NEWBLOCK_TEX(bf))
+            bf=NEWBLOCK_COLOR_TEX(bf);   // D.2t
         }
         tp=Resources::getResources->getBlockTexShort(bf);
-       
+
         static int triTextureCustom[6]={0,0,
                                         0,1,
                                         1,1,};

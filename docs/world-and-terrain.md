@@ -15,7 +15,7 @@ top of the voxel grid.
 | `T_RADIUS` | 9 | Half the window, in chunks |
 | `CHUNKS_PER_SIDE` | 18 | Window edge in chunks |
 | `CHUNKS_PER_COLUMN` | **4 or 16, runtime** | Vertical chunks |
-| `NUM_BLOCKS` | 111 | Highest block type id |
+| `NUM_BLOCKS` | 127 | Highest block type id (111 until Stage D.2a; the signed-byte id space is now full) |
 | `BLOCK_SIZE` | 1.0f | World units per block |
 
 ## Runtime world height (2026-08-06)
@@ -89,6 +89,22 @@ Per-type static properties live in `Globals.mm`:
 - `blockTypeFaces[type][6]` — which atlas tile each of the 6 faces uses.
 - `blockColor[type][3]` — intrinsic tint.
 
+**Ids 112–127 (Stage D.2a, 2026-10-10)** are the 16 blocks the 2026 game added to NewFormat256z
+worlds: `TYPE_ORE_SAND`=112, `SPACE_STONE`, `CARPET`, `SNAKESKIN`, `OBSIDIAN`, `CHEESE`,
+`SPACE_DIRT`, `SPACE_GRASS`, `MOSS`, `DARK_MATTER`, `SPACE_SAND`, `SNOW`, `MOONROCK`, `BASALT`,
+`DARK_TILE`, `TYPE_ALGAE`=127 (names from VuencEdit). **Textures since D.2t (2026-10-10):** the
+2026 game's art, appended to `atlas.png` as tiles 32–47 (colour) and 48–63 (greyscale) —
+`blockTypeFaces` = `TEX_NEWBLOCK+i`×6 and unpainted faces swap to `TEX_NEWBLOCK_COLOR+i` drawn white,
+exactly as grass/TNT/brick swap to their `_COLOR` tiles ([rendering.md](rendering.md)). `blockColor`
+keeps VuencEdit's `BLOCK_RGB` for every place one flat colour stands in. (D.2a drew them as
+`TEX_CLOUD`×6 — the pure-white tile 25 — times `blockColor`.) `blockinfo` = plain solid
+(`IS_HARD`, like stone; nothing flammable), `hudBlocksMap` = −1 (no BT variants exist, so the TNT
+second-block pick veils them), `blockTntMap` = 0 (only read for `IS_BLOCKTNT` types). Before D.2a,
+`rebuild2()`'s `type>NUM_BLOCKS` repair turned every one of them into stone in the world and the
+next save kept it (D.2c); it now fires only for bytes 128–255 (negative as `block8`).
+`block8` is a signed char, so **127 is the last id**: no further block type can be appended, and
+these 16 can never get BT shadows. Regression: `eden_native --newblocks-selftest`.
+
 ## The toroidal resident window
 
 The world is conceptually huge (chunk coordinates are packed into 15 bits each by
@@ -155,7 +171,19 @@ Write path — always go through these, never poke arrays directly:
   the owning chunk's `pblocks` + `modified` flag. Does **not** mark meshes dirty.
 - `Terrain::updateChunks(x,z,y,type)` (`Terrain.mm:1394`) — the standard "place a
   block" primitive: clears color if erasing, calls `setLand`, then marks the chunk
-  and all 6 face-neighbouring chunks dirty via `addToUpdateList2`.
+  and all 6 face-neighbouring chunks dirty via `addToUpdateList2`. **Modified from stock
+  (D.3c, 2026-10-10):** erasing (type 0) also calls `SignTool::anchorBecameAir`, which drops
+  every sign and the command-block (`CMB1`) record anchored on that block (and, since D.4b, its
+  runtime "running" flag) — mining, TNT
+  (`explodeBlock`), fire and receding liquids all write air through here, so this is the one
+  hook. Load and column streaming never come through it, so out-of-window records are never
+  touched; a block placed *in front* of a sign only hides it (docs/rendering.md).
+  Command-block scripts (D.4c, `CmdScript::setCell`) write through the same pair as a build
+  (`updateChunks` + `setColor`, lightbox light out/in, liquid sources removed/added), so their `set
+  … air` takes a command block's record too. They never write a non-resident cell (the toroidal
+  arrays would wrap it onto another column: `CmdScript.mm`'s `resident()` checks the chunk's
+  `pbounds`), bedrock, a door/portal half, the player's cell or (with a solid block) another command
+  block.
 - `Terrain::setColor` — writes chunk color, returns whether it changed.
 
 Dirty-list mechanics: `chunksToUpdate[]` (per chunk) + `columnsToUpdate[]` (per

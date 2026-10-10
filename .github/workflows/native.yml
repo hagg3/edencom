@@ -139,6 +139,13 @@ jobs:
           # not depend on edengame.net being up) — tabs, both list parsers, gzip / zip / zip-in-zip
           # unpacking, the import, and loading a downloaded world.
           run_gate "browser selftest" $B --browser-selftest --docs="$PWD/browser-docs"
+          # Stage S / S.3: the .emod store + streaming converter. --emod-fixtures is the checked-in
+          # pack emod.py wrote; every target must reproduce its SHA-256s byte for byte, which is
+          # the cross-target .emod gate (macOS, Linux, Windows here; wasm in the `web` job).
+          run_gate "emod selftest" $B --emod-selftest --emod-fixtures=../web/tools/fixtures/emod --emod-work="$PWD/emod-work"
+          # Stage S / S.6: the bundled map. Every column of Eden.emod through the engine's own read +
+          # decode, against the RLE Eden.eden it was baked from (0 may differ).
+          run_gate "bundled map" $B --bundled-map-selftest --bundled-eden=../Eden.eden --bundled-emod=../Eden.emod
 
           # The stage's leak obligation. The shim Foundation runs outside Emscripten on this leg
           # for the first time and this runtime's object_dispose() has no .cxx_destruct, so a shim
@@ -288,6 +295,10 @@ jobs:
           # not depend on edengame.net being up) — tabs, both list parsers, gzip / zip / zip-in-zip
           # unpacking, the import, and loading a downloaded world.
           run_gate "browser selftest" $B --browser-selftest --docs="$PWD/browser-docs"
+          # Stage S / S.3: the .emod store + streaming converter. --emod-fixtures is the checked-in
+          # pack emod.py wrote; every target must reproduce its SHA-256s byte for byte, which is
+          # the cross-target .emod gate (macOS, Linux, Windows here; wasm in the `web` job).
+          run_gate "emod selftest" $B --emod-selftest --emod-fixtures=../web/tools/fixtures/emod --emod-work="$PWD/emod-work"
 
           # See the Linux job for why the leak probe is a stage obligation. Windows has the one
           # honest gap in the statistic — the mingw CRT publishes no live-bytes figure, so
@@ -395,7 +406,7 @@ jobs:
           # ...and ASSERT the two things a silent miss above would leave behind. Both of these
           # failures shipped a zip that looked fine in the log and could not start.
           test -f dist/SDL3.dll || { echo "::error::SDL3.dll is not in the package"; exit 1; }
-          test -f dist/Eden.eden || { echo "::error::Eden.eden is not in the package"; exit 1; }
+          test -f dist/Eden.emod || { echo "::error::Eden.emod is not in the package"; exit 1; }
           n=$(find dist -type f | wc -l)
           [ "$n" -gt 800 ] || { echo "::error::only $n files in the package; expected ~880"; exit 1; }
           ls -l dist | head -20
@@ -454,6 +465,7 @@ jobs:
           ./build/eden_native --audio-selftest
           ./build/eden_native --background-selftest --world=bg --docs="$PWD/bg-docs"
           ./build/eden_native --browser-selftest --docs="$PWD/browser-docs"
+          ./build/eden_native --emod-selftest --emod-fixtures=../web/tools/fixtures/emod --emod-work="$PWD/emod-work"
           rm -rf leak-docs && mkdir -p leak-docs
           ./build/eden_native --leak-probe --docs="$PWD/leak-docs"
 
@@ -594,16 +606,17 @@ jobs:
         # links can still be uninstallable: the wrong platform in the load command, a deployment
         # target something quietly raised, a missing Info.plist key, or the world file left
         # outside the .app because the asset step symlinked instead of copying (which is what it
-        # does on every other platform — see the CMake comment). Stage 4.4: iOS bundles
-        # Eden.eden.gz (~8 MiB), not the 52 MiB raw Eden.eden every other target ships — see the
-        # `if(IOS)` branch in native/CMakeLists.txt and FileManagerHelper.mm's fmh_init().
+        # does on every other platform — see the CMake comment). S.6: every target bundles
+        # Eden.emod (11.8 MB, read in place) -- no Eden.eden.gz, no inflated cache; see
+        # native/CMakeLists.txt and FileManagerHelper.mm's fmh_init().
         run: |
           set -e
           APP=build-ios-device/Emod.app
           test -x "$APP/Emod"            || { echo "::error::no executable in the bundle"; exit 1; }
           test -f "$APP/Info.plist"      || { echo "::error::no Info.plist"; exit 1; }
-          test -f "$APP/Eden.eden.gz"    || { echo "::error::Eden.eden.gz is not inside the .app"; exit 1; }
-          ! test -f "$APP/Eden.eden"     || { echo "::error::raw Eden.eden shipped alongside Eden.eden.gz -- Stage 4.4's whole point was not paying for both"; exit 1; }
+          test -f "$APP/Eden.emod"       || { echo "::error::Eden.emod is not inside the .app"; exit 1; }
+          ! test -f "$APP/Eden.eden"     || { echo "::error::raw Eden.eden shipped in the .app -- S.6 bundles only Eden.emod"; exit 1; }
+          ! test -f "$APP/Eden.eden.gz"  || { echo "::error::Eden.eden.gz shipped in the .app -- S.6 retired it"; exit 1; }
           n=$(find "$APP" -type f | wc -l | tr -d ' ')
           [ "$n" -gt 800 ] || { echo "::error::only $n files in the .app; expected ~880"; exit 1; }
           # `-type l` deliberately: a symlink here would point at this runner's filesystem and be
@@ -890,7 +903,7 @@ jobs:
                    headless-recolor-test headless-display-profile-test headless-shim-selftest \
                    headless-256z-test headless-save-trailer-test headless-save-inplace-test \
                    headless-256z-authoring-test headless-256z-convert-crosscheck \
-                   headless-opfs-mirror-test headless-save-on-background-test; do
+                   headless-opfs-mirror-test headless-save-on-background-test headless-emod-store-test; do
             echo "--- $t"
             node "tools/$t.js" build-st/eden.js
           done

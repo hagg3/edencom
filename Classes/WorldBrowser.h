@@ -92,6 +92,9 @@ const char* eden_net_error(int job);
 const unsigned char* eden_net_body(int job, int* len);
 // Cancels a running job and forgets it; the id is dead afterwards. Safe on 0 and on a dead id.
 void eden_net_release(int job);
+// Stage S / S.5c: POST the file at `bodyPath` with `contentType`; the reply lands in memory
+// (eden_net_body). Native only; web's stub answers 0 (no network).
+int  eden_net_post_file(const char* url, const char* contentType, const char* bodyPath);
 }
 
 #endif

@@ -947,7 +947,7 @@ int TerrainChunk::rebuild2(){   //here be dragons//
                     }
                     
                     if(clr==0){
-                        if(type==TYPE_GRASS||type==TYPE_GRASS2||type==TYPE_GRASS3||type==TYPE_TNT||type==TYPE_FIREWORK||type==TYPE_BRICK||type==TYPE_VINE||type==TYPE_TRAMPOLINE){
+                        if(type==TYPE_GRASS||type==TYPE_GRASS2||type==TYPE_GRASS3||type==TYPE_TNT||type==TYPE_FIREWORK||type==TYPE_BRICK||type==TYPE_VINE||type==TYPE_TRAMPOLINE||(type>=TYPE_ORE_SAND&&type<=TYPE_ALGAE)){
                             coloring=TRUE;
                         }
                         for(int i=0;i<3;i++)
@@ -1126,6 +1126,8 @@ int TerrainChunk::rebuild2(){   //here be dragons//
                                 bf=TEX_TNT_TOP_COLOR;
                             else if(bf==TEX_BRICK)
                                 bf=TEX_BRICK_COLOR;
+                            else if(IS_NEWBLOCK_TEX(bf))
+                                bf=NEWBLOCK_COLOR_TEX(bf);   // D.2t
                             else if(bf==TEX_DIRT){
                                 for(int i=0;i<3;i++)
                                     paint[i]=(float)blockColor[TEX_DIRT][i]/255;
@@ -1277,7 +1279,7 @@ int TerrainChunk::rebuild2(){   //here be dragons//
         }
         
         if(clr==0){
-            if(type==TYPE_GRASS||type==TYPE_GRASS2||type==TYPE_GRASS3||type==TYPE_TNT||type==TYPE_FIREWORK||type==TYPE_BRICK||type==TYPE_VINE||type==TYPE_TRAMPOLINE||blockinfo[type]&IS_BLOCKTNT){
+            if(type==TYPE_GRASS||type==TYPE_GRASS2||type==TYPE_GRASS3||type==TYPE_TNT||type==TYPE_FIREWORK||type==TYPE_BRICK||type==TYPE_VINE||type==TYPE_TRAMPOLINE||blockinfo[type]&IS_BLOCKTNT||(type>=TYPE_ORE_SAND&&type<=TYPE_ALGAE)){
                 coloring=TRUE;
             }
             if(blockinfo[type]&IS_BLOCKTNT){
@@ -1471,6 +1473,8 @@ int TerrainChunk::rebuild2(){   //here be dragons//
                     bf=TEX_TNT_TOP_COLOR;
                 else if(bf==TEX_BRICK){
                     bf=TEX_BRICK_COLOR;
+                }else if(IS_NEWBLOCK_TEX(bf)){
+                    bf=NEWBLOCK_COLOR_TEX(bf);   // D.2t: the colour art, drawn white
                 }else if(blockinfo[type]&IS_BLOCKTNT){
                     extern  int blockTntMap[NUM_BLOCKS+1];
                     for(int i=0;i<3;i++){

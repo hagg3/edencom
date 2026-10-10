@@ -32,6 +32,15 @@
 #define NUM_DISPLAY_BLOCKS 35
 #define NUM_COLORS (6*9)
 
+// D.2p: the block picker's second page (the 2026 game's layout, in id order): 112..127, then the
+// SIGN and CMD tools. The tools are SENTINELS, not block ids: they can never be a block8 or index
+// a [NUM_BLOCKS+1] table, so every table read on a picker cell goes through hud_picker_is_tool().
+#define NUM_PICKER_PAGES 2
+#define NUM_PICKER_PAGE2_CELLS 18
+#define HUD_TOOL_SIGN 1000
+#define HUD_TOOL_CMD 1001
+static inline bool hud_picker_is_tool(int type){ return type>=HUD_TOOL_SIGN; }
+
 // Host hook: return false to suppress the built-in in-game menu screen (the 4-icon GL panel
 // Hud::renderMenuScreen draws over the world). NULL — the default, and the only value the iOS
 // target ever sees — means "always draw", i.e. stock behaviour. The web port installs a hook that
@@ -89,6 +98,10 @@ public:
     
     float var1,var2,var3;
 	CGRect blockBounds[NUM_DISPLAY_BLOCKS];
+    // D.2p: which picker page is showing, and its ◀ ▶ strip under the grid (layoutForScreen()).
+    // blockBounds[] is the same grid on both pages; page 2 fills its first 18 cells.
+    int pickerPage;
+    CGRect pickerPrev,pickerNext;
 	//Texture2D* blockIcons[NUM_DISPLAY_BLOCKS];
     CGRect colorBounds[NUM_COLORS];
     //Vector hudColor[NUM_COLORS];
@@ -106,6 +119,14 @@ public:
     // top, so calling it twice gives the same answer as calling it once.
     void layoutForScreen();
     BOOL handlePickBlock(int x,int y);
+    // D.2p: step the block picker's page by `delta` (wraps). FALSE (and nothing happens) unless
+    // the block picker is open — the ◀ ▶ taps, [ ] and the wheel all come through here.
+    BOOL pickerPageStep(int delta);
+    // D.2p: the type in picker cell `i` of `page` (-1 = no cell there).
+    static int pickerCell(int page,int i);
+    static int pickerCellCount(int page);
+    // D.2p: a tool cell is selectable only once its row lands (SIGN: D.3c, CMD: D.4b).
+    static bool pickerToolEnabled(int type);
     BOOL handlePickColor(int x,int y);
     BOOL handlePickMenu(int x,int y);
     void worldLoaded();

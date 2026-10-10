@@ -488,8 +488,16 @@ function isTypingTarget(el) {
   const tag = el.tagName;
   return tag === 'INPUT' || tag === 'TEXTAREA';
 }
+// D.2p: page the engine's block picker while it is open (Input_web.mm's eden_picker_page_step
+// answers 0 when it is not, and the key/wheel keeps its usual meaning).
+function pickerPageStep(delta) {
+  return moduleReady && typeof Module._eden_picker_page_step === 'function' &&
+         Module._eden_picker_page_step(delta) === 1;
+}
 window.addEventListener('keydown', (e) => {
   if (isTypingTarget(document.activeElement)) return;
+  if (!e.repeat && (e.code === 'BracketLeft' || e.code === 'BracketRight') &&
+      pickerPageStep(e.code === 'BracketLeft' ? -1 : 1)) { e.preventDefault(); return; }
   const actions = codeToActions(e.code);
   if (!actions.length) return;
   // Space must not scroll the page; Alt alone must not blur it. Keyed off the ACTION (not the
@@ -547,11 +555,11 @@ canvasEl.addEventListener('wheel', (e) => {
   wheelAccum += px;
   const advanced = moduleReady && !!Module._eden_get_advanced_movement();
   while (wheelAccum >= WHEEL_STEP_PX) {
-    advanced ? wheelJumpPulse() : callIfReady(() => Module._eden_hotbar_scroll(1));
+    if (!pickerPageStep(1)) advanced ? wheelJumpPulse() : callIfReady(() => Module._eden_hotbar_scroll(1));
     wheelAccum -= WHEEL_STEP_PX;
   }
   while (wheelAccum <= -WHEEL_STEP_PX) {
-    advanced ? wheelJumpPulse() : callIfReady(() => Module._eden_hotbar_scroll(-1));
+    if (!pickerPageStep(-1)) advanced ? wheelJumpPulse() : callIfReady(() => Module._eden_hotbar_scroll(-1));
     wheelAccum += WHEEL_STEP_PX;
   }
 }, { passive: false });

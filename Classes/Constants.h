@@ -22,7 +22,10 @@
 
 #define EXPLOSION_RADIUS 5
 
-#define NUM_BLOCKS 111
+// 127 since Stage D.2a (2026-10-10): ids 112-127 are the blocks the 2026 game added to
+// NewFormat256z worlds. block8 is a signed char, so the id space is now FULL -- the next block
+// type cannot be appended, and these 16 can never get expansion-TNT ("BT") shadows.
+#define NUM_BLOCKS 127
 
 #define NUM_CREATURES 7
 #define M_MOOF 0
@@ -51,10 +54,15 @@
 // declarations, which must use the *_MAX forms below (see docs/world-and-terrain.md
 // "Runtime world height" and WORKING/256z-format-backport-plan-2026-08-05.md).
 // A 64z world must keep costing exactly what it cost before: the defaults here ARE the
-// old constants, and nothing sets 256 unless a loaded file's header says version>=5.
+// old constants, and nothing sets 256 unless a loaded file is 256z (version>=5, or the creature-gap test -- S.3b).
 #define T_HEIGHT_DEFAULT 64
 #define T_HEIGHT_MAX 256
 #define CHUNKS_PER_COLUMN_MAX (T_HEIGHT_MAX/CHUNK_SIZE)
+
+// Stage S: the fork's own world container. Named "Emod", not "Eden", by the identity rule in
+// native/src/eden_app_identity.h -- the shipped game lists every `*.eden` and would read an `.emod`
+// header as a garbage version and rewrite it in place, so it must never carry that extension.
+#define EMOD_WORLD_EXTENSION ".emod"
 #define MAX_CREATURES_SAVED_MAX 400
 
 #ifdef __cplusplus
@@ -221,6 +229,24 @@ enum BLOCK_TYPES{
     TYPE_BTFIREWORK=109,
     TYPE_BTLIGHTBOX=110,
     TYPE_BTSTEEL=111,
+    // 112-127: the 2026 game's NewFormat256z blocks (Stage D.2a). Names are VuencEdit's
+    // (in-game reports); no stock art exists, so they draw as flat-colour placeholders.
+    TYPE_ORE_SAND=112,
+    TYPE_SPACE_STONE=113,
+    TYPE_CARPET=114,
+    TYPE_SNAKESKIN=115,
+    TYPE_OBSIDIAN=116,
+    TYPE_CHEESE=117,
+    TYPE_SPACE_DIRT=118,
+    TYPE_SPACE_GRASS=119,
+    TYPE_MOSS=120,
+    TYPE_DARK_MATTER=121,
+    TYPE_SPACE_SAND=122,
+    TYPE_SNOW=123,
+    TYPE_MOONROCK=124,
+    TYPE_BASALT=125,
+    TYPE_DARK_TILE=126,
+    TYPE_ALGAE=127,
     
 };
 #define IS_FLAMMABLE       0b00000000000000000001
@@ -241,6 +267,13 @@ enum BLOCK_TYPES{
 #define IS_HARD            0b00001000000000000000
 #define IS_BLOCKTNT        0b00010000000000000000
 
+
+// Tiles per atlas strip (atlas.png and atlas2.png are both 32 x 32*ATLAS_TILES). Stock was 32, baked in
+// as glScalef(1,1/32,1) and type/32 -- every atlas-UV consumer now reads this instead (D.2t).
+#define ATLAS_TILES 64
+// A greyscale 112-127 face, and its unpainted colour twin.
+#define IS_NEWBLOCK_TEX(bf) ((bf)>=TEX_NEWBLOCK&&(bf)<TEX_NEWBLOCK+16)
+#define NEWBLOCK_COLOR_TEX(bf) ((bf)-TEX_NEWBLOCK+TEX_NEWBLOCK_COLOR)
 
 enum BLOCK_TEXTURES{
 	TEX_GRASS_TOP=0,
@@ -273,6 +306,11 @@ enum BLOCK_TEXTURES{
     TEX_SHINGLE=27,
     TEX_GRADIENT=28,
     TEX_ICE=29,
+    // D.2t: the atlas grew to 64 tiles (ATLAS_TILES). 32-47 are blocks 112-127 drawn unpainted (the art
+    // carries its colour, drawn white); 48-63 the same 16 in greyscale, which blockTypeFaces names and the
+    // paint multiplies onto. Art: the 2026 game's atlas (web/tools/atlas-d2t.py).
+    TEX_NEWBLOCK_COLOR=32,
+    TEX_NEWBLOCK=48,
     
     
     TEX_GLASS=0,	

@@ -17,6 +17,12 @@
 //   wait n                     pause the queue for n frames
 //   save                       FileManager::saveWorld(), what the HUD's save button calls
 //   say  text                  print to stdout
+//   press x y z                push the command block there (D.4c's @touch), Vector order
+//   cells x y z x2 y2 z2       print every cell of the box as type:colour (Vector order, x fastest
+//                              then z, then y), one `[live] cells` line
+//   cmdprobe                   print CmdScript::describe() (live / started / refused ... counts)
+//   cmdtrace 0|1               print every command-block statement as it runs
+//   quit                       end the session (an SDL quit event: what closing the window does)
 //
 // `set` goes through Terrain::updateChunks + setColor — the same pair buildBlock ends in — and, for
 // a lightbox, the addlight + refreshChunksInRadius buildBlock does first (DevConsole's setblock
@@ -25,6 +31,9 @@
 #import "../../../web/src/shim/foundation/uikit_stubs.h"
 #include "../../../Classes/World.h"
 #include "../../../Classes/Constants.h"
+#include "../../../Classes/CmdScript.h"
+#include <SDL3/SDL.h>
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -132,6 +141,31 @@ bool run(const std::string& line) {
             if (n == 5) { p->yaw = v[3]; p->pitch = v[4]; }
         } else if (cmd[0] == 'l' && n == 2) { p->yaw = v[0]; p->pitch = v[1]; }
     } else if (!std::strcmp(cmd, "save")) w->fm->saveWorld();
+    else if (!std::strcmp(cmd, "press")) {
+        int x, y, z;
+        if (std::sscanf(rest, "%d %d %d", &x, &y, &z) == 3) {
+            const int r = CmdScript::press(TrailerPos::fromEngine(x, y, z));
+            static const char* const kR[] = {"no command block", "started", "busy", "refused"};
+            std::printf("[live] press %d %d %d: %s\n", x, y, z, kR[r & 3]);
+            std::fflush(stdout);
+        }
+    } else if (!std::strcmp(cmd, "cells")) {
+        int a[6];
+        if (std::sscanf(rest, "%d %d %d %d %d %d", &a[0], &a[1], &a[2], &a[3], &a[4], &a[5]) == 6) {
+            std::string out;
+            char b[24];
+            for (int y = std::min(a[1], a[4]); y <= std::max(a[1], a[4]); ++y)
+                for (int z = std::min(a[2], a[5]); z <= std::max(a[2], a[5]); ++z)
+                    for (int x = std::min(a[0], a[3]); x <= std::max(a[0], a[3]); ++x) {
+                        std::snprintf(b, sizeof(b), "%d:%d ", w->terrain->getLand(x, z, y), w->terrain->getColor(x, z, y));
+                        out += b;
+                    }
+            std::printf("[live] cells %s\n", out.c_str());
+            std::fflush(stdout);
+        }
+    } else if (!std::strcmp(cmd, "cmdprobe")) { std::printf("[live] cmd %s\n", CmdScript::describe()); std::fflush(stdout); }
+    else if (!std::strcmp(cmd, "cmdtrace")) CmdScript::trace = atoi(rest) != 0;
+    else if (!std::strcmp(cmd, "quit")) { SDL_Event e; SDL_zero(e); e.type = SDL_EVENT_QUIT; SDL_PushEvent(&e); }
     else std::fprintf(stderr, "[live] unknown: %s\n", line.c_str());
     return false;
 }

@@ -451,6 +451,16 @@ void eden_tap_hud_button_end(int which) {
     eden_input_pointer_event(2, kHudTapIdentity, cx, SCREEN_HEIGHT - cy);
 }
 
+// D.2p: turn the open block picker's page by `delta` (wraps). 1 = consumed (the picker was open),
+// 0 = not open, so the caller's own meaning for the key/wheel applies. Native: `[` / `]` in
+// Input_native.cpp. Web: `[` / `]` and the wheel in eden-input.js. Native's wheel goes through
+// eden_ui_take_wheel() in Hud::update instead.
+EDEN_EXPORT
+int eden_picker_page_step(int delta) {
+    if (!World::getWorld || !World::getWorld->hud) return 0;
+    return World::getWorld->hud->pickerPageStep(delta) ? 1 : 0;
+}
+
 // Is the engine's own pause-menu state (Hud::inmenu, toggled by a tap on rmenu) currently on?
 // The DOM pause menu (public/eden-pausemenu.js) polls this each frame to know when the player
 // tapped the in-game menu corner icon directly on the canvas (bypassing our DOM entirely, same as

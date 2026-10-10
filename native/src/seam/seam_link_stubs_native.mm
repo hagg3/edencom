@@ -55,16 +55,18 @@ extern "C" void eden_world_type_choice(int flat) {
 static int  s_worldFlat = 0;
 static bool s_heightAlreadyChosen = false;
 
+// S.5e (the user, 2026-10-10): New Dawn 256 is the default, so it is button 0, the first cell of the
+// grid; Classic 64 (the old default) is second.
 static void wt_height_cb(int j) {
     if (!s_heightAlreadyChosen)
-        eden_menu_set_pending_world_height(j == 1 ? 256 : 64);  // consumed by probeWorldHeight()
+        eden_menu_set_pending_world_height(j == 0 ? 256 : 64);  // consumed by probeWorldHeight()
     eden_world_type_choice(s_worldFlat);
 }
 
 static void wt_type_cb(int i) {
     s_worldFlat = (i == 0) ? 1 : 0;                 // button 0 = "Flat", 1 = "Normal"
     if (s_heightAlreadyChosen) { wt_height_cb(0); return; }
-    static const char* const kHeight[] = { "Classic 64", "New Dawn 256" };
+    static const char* const kHeight[] = { "New Dawn 256", "Classic 64" };
     GLDialog::show("Choose height format",
                    "How tall the world is. Classic matches the shipped game; New Dawn is taller "
                    "and its saves are bigger.", kHeight, 2, wt_height_cb);
@@ -120,6 +122,43 @@ void showAlertDeleteConfirm(NSString *name) {
     std::snprintf(body, sizeof(body), "\"%s\" will be deleted from this device. This can't be undone.",
                   name ? [name UTF8String] : "This world");
     GLDialog::show("Delete world?", body, kDelete, 2, delete_cb);
+}
+
+// Stage S / S.5: the question after a `.eden` was converted to an `.emod`. "Delete" removes the
+// original (FileManager::resolveOriginal(TRUE)); "Keep" leaves it, where the world list hides it
+// because it is paired with the `.emod`. Cancel/Escape is the LAST button, so it keeps (the safe
+// answer). Nothing waits on it.
+static void delete_original_cb(int i) {
+    if (World::getWorld && World::getWorld->fm) World::getWorld->fm->resolveOriginal(i == 0 ? TRUE : FALSE);
+}
+
+void showAlertDeleteOriginal(NSString *edenName) {
+    static const char* const kButtons[] = { "Delete original", "Keep it" };
+    static char body[240];
+    std::snprintf(body, sizeof(body),
+                  "\"%s\" was converted to the smaller .emod format. The original .eden is still on "
+                  "this device. Delete it?", edenName ? [edenName UTF8String] : "This world");
+    GLDialog::show("World converted", body, kButtons, 2, delete_original_cb);
+}
+
+// Stage S / S.5e: before a conversion, with Settings' "Upgrade 64z worlds to 256z when converting"
+// on. Three buttons, Cancel LAST (the full-width row): World::loadWorld waits on
+// FileManager::answerConvertHeight and backs out to the menu on Cancel. A 256z source never asks.
+// dismiss() (no callback) would leave it waiting, as it would any loading-screen dialog.
+static void convert_height_cb(int i) {
+    if (World::getWorld && World::getWorld->fm) World::getWorld->fm->answerConvertHeight(i == 0 ? 1 : (i == 1 ? 0 : -1));
+}
+
+void showAlertConvertHeight(NSString *edenName, BOOL known64) {
+    static const char* const kButtons[] = { "Upgrade to 256", "Keep 64", "Cancel" };
+    static char body[320];
+    std::snprintf(body, sizeof(body),
+                  known64 ? "\"%s\" is a Classic 64-tall world. Converting it to .emod can also make it New Dawn "
+                            "256-tall: the same blocks, with room to build up to y 255. Uses more memory while it is open."
+                          : "If \"%s\" is a Classic 64-tall world, converting it to .emod can also make it New Dawn "
+                            "256-tall: the same blocks, with room to build up to y 255. Uses more memory while it is open.",
+                  edenName ? [edenName UTF8String] : "This world");
+    GLDialog::show("Convert world", body, kButtons, 3, convert_height_cb);
 }
 
 // =============================================================================================

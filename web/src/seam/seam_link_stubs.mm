@@ -212,6 +212,16 @@ void showAlertWorldType() {
 // Safe as a no-op: not confirming a delete is the non-destructive default (see the warning above
 // about NOT auto-answering destructive prompts).
 void showAlertDeleteConfirm(NSString *name) { (void)name; }
+// Stage S / S.5: web never converts a `.eden` yet (FileManager's conversionEnabled()), so nothing
+// calls this; it exists so World.mm links. The original is kept either way.
+void showAlertDeleteOriginal(NSString *edenName) { (void)edenName; }
+// S.5e: same -- unreachable on web. Answers at once with the Settings toggle, so a future caller
+// cannot leave World::loadWorld waiting on a prompt nobody drew.
+void showAlertConvertHeight(NSString *edenName, BOOL known64) {
+    (void)edenName; (void)known64;
+    if (World::getWorld && World::getWorld->fm)
+        World::getWorld->fm->answerConvertHeight(FileManager::upgradeOnConvert() ? 1 : 0);
+}
 
 // =============================================================================================
 // VKeyboard  (Classes/VKeyboard.mm, excluded) — TODO P3
@@ -247,6 +257,9 @@ extern "C" int  eden_net_poll(int job, long long* got, long long* total) {
 extern "C" const char* eden_net_error(int job) { (void)job; return "no network on this host"; }
 extern "C" const unsigned char* eden_net_body(int job, int* len) { (void)job; if (len) *len = 0; return 0; }
 extern "C" void eden_net_release(int job) { (void)job; }
+extern "C" int eden_net_post_file(const char* url, const char* contentType, const char* bodyPath) {
+    (void)url; (void)contentType; (void)bodyPath; return 0;   // S.5c: no upload on web (no CORS)
+}
 
 // =============================================================================================
 // SharedList / ShareMenu  (networking cluster, excluded) — TODO P6

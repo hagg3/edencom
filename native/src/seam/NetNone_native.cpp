@@ -14,3 +14,9 @@ extern "C" int eden_net_backend_fetch(const char* url, const EdenNetCallbacks* c
     std::snprintf(err, errcap, "this build has no network support");
     return 0;
 }
+
+extern "C" int eden_net_backend_post_file(const char* url, const char* contentType, const char* bodyPath,
+                                          const EdenNetCallbacks* cb, int* httpStatus, char* err, int errcap) {
+    (void)contentType; (void)bodyPath;
+    return eden_net_backend_fetch(url, cb, httpStatus, err, errcap);
+}

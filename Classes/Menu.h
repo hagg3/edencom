@@ -89,6 +89,9 @@ public:
     bool renameOffered();
     void beginRename();
     bool renameSelected(const char* utf8);
+    // Stage S / S.5: "Share" beside Rename — Export / Upload / Remove original (Classes/WorldShare.h).
+    GLW::Button kit_share;      // (stock's rect_share is the old carousel's share corner, unused)
+    bool shareShown();
 
     // Stage 5.6: the main menu on the GL widget kit — a WINDOW under the logo holding a titlebar
     // (Settings · Worlds · New), the world list (GLW::ListRow in a row-snapped GLW::ScrollView)

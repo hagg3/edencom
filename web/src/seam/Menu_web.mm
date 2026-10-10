@@ -255,7 +255,7 @@ int eden_menu_create_world(void) {
     }
     if (!name) name = m->settings->getNewWorldName();
     nw->display_name = name;
-    nw->file_name = [NSString stringWithFormat:@"%@.eden", genhash()];
+    nw->file_name = FileManager::newWorldFileName();   // .eden, or .emod with g_world_format (Stage S / S.4)
     [nw->file_name retain];
     [nw->display_name retain];
     m->addWorld(nw);

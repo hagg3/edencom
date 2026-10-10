@@ -1830,11 +1830,11 @@ Texture2D* Resources::getMenuTex(int idx){
 	return menutextures[idx];
 }
 CGPoint Resources::getBlockTex(int type){
-	if(type<0||type>31)type=0;
+	if(type<0||type>=ATLAS_TILES)type=0;
 	CGPoint p;	
 	
-    p.x=(double)type/32.0f;
-    p.y=(double)1.0f/32.0f-.00001f;
+    p.x=(double)type/ATLAS_TILES;
+    p.y=(double)1.0f/ATLAS_TILES-.00001f;
 	//p.x=(32.0f/1024.0f)*type+0.5f/1024.0f;
 	//p.y=(32.0f/1024.0f-1.0f/1024.0f);
 	
@@ -1842,7 +1842,7 @@ CGPoint Resources::getBlockTex(int type){
 }
 
 CGPoint Resources::getBlockTexShort(int type){
-	if(type<0||type>31)type=0;
+	if(type<0||type>=ATLAS_TILES)type=0;
 	CGPoint p;	
 	
     p.x=type;

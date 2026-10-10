@@ -8,16 +8,19 @@ format itself is specified in [eden-file-format.md](eden-file-format.md).
 - `Classes/FileManager.mm/.h` — everything: `loadWorld`, `saveWorld`, `readColumn`,
   `saveColumn`, directory management, legacy conversion, plus the offline
   `saveGenColumn`/`writeGenToDisk` used by the world generator.
-- `Classes/FileManagerHelper.mm` — read-only access to the **bundled** default world
-  `Eden.eden` (its own file handle, header and directory hashmap; the comment at the
-  top warns the identically-named statics refer to the *default* world, not the
-  active one). Since Phase N Stage 4.4, `fmh_init()` prefers a bundled `Eden.eden.gz`
-  over the raw file when present (iOS only — `native/CMakeLists.txt` gzips it at
-  build time because the iOS bundle is copied into the `.app`, not symlinked like
-  every other native target): it inflates the bundle asset once, with
-  `Classes/zpipe.c`'s `decompressFile()`, into `<documents>/Eden.eden.cache` and
-  reopens that cache file on every later launch, since the bundle itself is
-  read-only and can't be decompressed in place.
+- `Classes/FileManagerHelper.mm` — read-only access to the **bundled** default world (its own
+  state; the comment at the top warns the identically-named statics refer to the *default*
+  world, not the active one). **Since S.6 (2026-10-10) the bundled map is `Eden.emod`**
+  (repo root; 11.8 MB, 32,400 columns, 4 bands, zstd-19, baked from `Eden.eden` by
+  `web/tools/emod.py bake-default` and checked by `verify-default`). `fmh_init()` opens it with
+  `emod::EdenWorldStore` read-only, in place — on every target, iOS included — and falls back to the
+  RLE `Eden.eden` handle/directory only when the bundle has no `Eden.emod`. The zstd decode runs in
+  `fmh_readColumnRawFromDefault` (main thread: the store is single-owner) and hands the worker's
+  `fmh_decodeColumnBands` ready-made planar bands, flagged `FMH_LEN_PLANAR` in `lens[]`, so the
+  decode step is a copy rather than an RLE expansion + `CC(y,z,x)` transpose. Stage 4.4's
+  `Eden.eden.gz` and the 52.5 MiB `<documents>/Eden.eden.cache` it inflated are gone; `fmh_init()`
+  deletes a leftover cache once. Gate: `eden_native --bundled-map-selftest` decodes all columns both
+  ways through the engine (`fmh_selftestCompare`).
 - `Classes/hashmap.mm` — int-keyed hashmap holding `ColumnIndex*` records.
 - File-scope statics in `FileManager.mm`: `saveFile` (NSFileHandle), `sfh` (in-memory
   header), `indexes` (directory hashmap), `cur_dir_offset`, `file_version`,
@@ -93,10 +96,15 @@ NSFileHandle each streaming event).
      `writeDirectory=TRUE`;
    - write `CHUNKS_PER_COLUMN`×(pblocks, pcolors) raw.
 6. `saveCreatures()` — `SaveModels()` fills `creatureData[]`, written at
-   `directory_offset − sizeof(EntityData)·MAX_CREATURES_SAVED`. (v<3 files get the block
-   appended and become v3+.)
-7. Stamp `version=4` — **unless the file arrived as version ≥ 5**, in which case it keeps its
-   own version. If any column was appended, `fwriteDirectory()` rewrites the whole directory at
+   `directory_offset − sizeof(EntityData)·MAX_CREATURES_SAVED`. (A file with no creature block
+   yet gets the block appended. Stock asked `version<3`; since S.3b (2026-10-09) the flag
+   `creature_block_on_disk` comes from the file in `deriveColumnSpans` — v≥3, or a non-zero
+   whole-slot gap — because the 2026 game's v2 256z worlds already carry 400 slots.)
+7. Stamp `version=4` — **unless the file arrived as version ≥ 5, or the world is 256z** (S.3b: a
+   v2 256z world), in which case it keeps its own version. If any column was appended — **or the
+   world's trailer model is dirty** (Stage D / D.3a: a sign or command block was edited; the
+   directory region is the trailer's only home, so this forces the rewrite with zero dirty columns)
+   — `fwriteDirectory()` rewrites the whole directory at
    `directory_offset` (plus the sign trailer, below), then the header is rewritten at offset 0 —
    **header last**, because it is the only thing that says where the directory is, and on the
    in-place path below it is the nearest thing this format has to a commit record.
@@ -230,6 +238,117 @@ save on native — a desktop window that lost focus is not going anywhere, unlik
 tab. Regression gates: `web/tools/headless-save-on-background-test.js` (the policy) and
 `eden_native --background-selftest` (the SDL wiring).
 
+## `.emod` worlds (Stage S / S.4, 2026-10-09) — modified from stock
+The port's second world container: an append-only log of per-column zstd records
+([emod-file-format.md](emod-file-format.md), `Classes/EdenWorldStore.{h,cpp}`). **A world is an
+`.emod` iff its file name ends in `.emod`**, and every FileManager entry point routes on that one test
+(`isEmodName`), so a `.eden` world takes exactly the code it always did.
+- **The switch, `g_world_format`** (`FileManager.h`): 0 (the default) = new worlds are `.eden`, as
+  before; 1 = new worlds are `<hash>.emod` (`FileManager::newWorldFileName`, used by the GL menu and
+  web's `eden_menu_create_world`), and — S.5d, native/iOS only — a `.eden` or a dropped-in
+  `.gz`/`.zip` converts to `.emod` when played. Native: `--world-format=emod` or
+  `EDEN_WORLD_FORMAT=emod`; web: `eden_set_world_format(1)` (harnesses only; nothing in the page sets it
+  yet — with it on, the Storage tab's import converts too, S.5). An existing
+  `.emod` always loads and saves as one, whatever the flag says. With the flag off the world list,
+  the load path and the save path are byte-for-byte what they were (S.4's gate).
+- **Load** (`loadEmodWorld`): opens the store (scan + recovery; compaction at open only, refused
+  while damaged), takes `WORLD_HEADER` as the header (version kept verbatim, plus the `.eden` path's
+  v3 → v4 fixup), `CREATURES` as the creature block, `bands` as the height (`probeWorldHeight` asks
+  the store, no directory scan). The `.eden` directory maps are cleared. The store stays open, owned
+  like every other FileManager static: by the load pthread during the load, the main thread after —
+  never both (World::loadWorld's `doneLoading>=1` branch touches only `fm->convertingWorld`).
+- **`readColumn`**: one store read into a static column buffer, then the same band loop; a band
+  whose `band_mask` bit is clear is `memset`, and `Terrain::addChunk` sets R.2's empty bit from those
+  zeros (it stays the bit's only writer). A column the store does not have falls through to the
+  default map / generator exactly as for `.eden`. A live record that **fails to decode** loads its
+  previous committed version, or air **without** `modified`, so the next save cannot bury it; both
+  print an `emod:` line on stderr (`printg`/`NSLog` compile out of Release). A record lost to a
+  **frame CRC** failure has no trustworthy key, so that column reads as never saved (the spec's
+  rule); its bytes stay in the file because damage blocks compaction.
+- **Save** (`saveEmodWorld`, from `saveWorld` after `endDynamics`): every resident column with a
+  `modified` chunk, plus `CREATURES` and `WORLD_HEADER`, in **one** committed batch (the store adds
+  `SUMMARY` + `COMMIT`, one write, `fsync`). Flags are cleared only after the commit is durable; a
+  failed commit truncates back and keeps every flag (the `.eden` "save skipped, flags survive"
+  contract). No scratch copy, no journal, no threshold, no backup slot. `PROVENANCE` is never
+  rewritten; `SIGN_TRAILER` only when the trailer model is dirty (D.3a: the batch carries a new
+  record, an empty one when the last record was removed), so an untouched trailer survives every
+  save as committed (alpinecraft's 40,032-byte trailer, measured). The version stamp is the `.eden`
+  writer's rule.
+
+### The trailer model (Stage D / D.3a, 2026-10-10)
+`Classes/WorldTrailer.{h,cpp}` parses the open world's trailer (signs `SGN1`, command blocks `CMB1`,
+unknown sections verbatim; format: eden-file-format.md "The trailer model"). `FileManager` owns one
+instance (`fm->trailer()`), loads it in `loadWorld` (`.eden`: from `dir_trailer` after
+`readDirectory`) and `loadEmodWorld` (the `SIGN_TRAILER` record; an undecodable one loads as none and
+stays clean), and clears it for a new world. Edits mark it dirty; `saveWorld` then swaps the model's
+bytes into `dir_trailer` after its own `readDirectory()` and forces `writeDirectory` (`.eden`, both
+save strategies — phase 1 of the journal already covers the old directory and trailer), or puts a
+`SIGN_TRAILER` record in the batch (`.emod`). `markSaved()` runs only once the save has landed (the
+rename, the journal commit, the `.emod` commit), so a skipped save keeps the mark and the next one
+retries. An untouched trailer is never re-serialised: `encode()` hands back the bytes it was loaded
+from. **Sidecars:** the 2026 game keeps a local world's records in `signs_<world>.eden.dat` /
+`cmd_<world>.eden.dat` (one bare section each); a world loaded with them next to it and no section of
+that magic adopts them (dirty), and the save that writes them in renames them `*.adopted`, so deleting
+every sign later cannot resurrect them. Refused edits (over 1 MiB, an opaque trailer) toast through
+`fm->reportTrailerRefusal()`. Gate: `eden_native --trailer-selftest` (native/README.md).
+- **Rename / image hash / share-name** (`renameWorld`, `setImageHash`, `setName`): a new
+  `WORLD_HEADER` record in its own batch. **Delete** closes the store first (Windows) and removes the
+  converter's temp names. **`convertWorldTo64`** refuses an `.emod`; the Share > Export path's
+  Legacy64z target (below) is how an `.emod` becomes a 64z `.eden`.
+- **Converting, importing, pairing (S.5 / S.5d, 2026-10-10).** One job does every `.eden`/archive →
+  `.emod` conversion: `emod::ImportJob` (`Classes/EdenWorldSource.{h,cpp}`) — convert-on-play
+  (`FileManager::convertStep`), Get Worlds (`WorldBrowser`'s `DL_CONVERT`) and web's Storage-tab
+  import (`eden_storage_import_*`). It sniffs the bytes, not the name (a zip called `.eden` is an
+  archive), unpacks nested gzip/zip layers to `<out>.layerN` temps while still compressed, and
+  streams the innermost `.eden` into the converter, so **no inflated `.eden` is ever written**. The
+  pre-flight wants `need = 6 × archive bytes` (or `2 × columns × 900 B` for a plain `.eden`)
+  `+ 64 MB`, capped at the temp cap + 64 MB, free on the volume, and refuses with "not enough free
+  space (needs about N MB)" before writing a byte. While running it rechecks every 8 MB and stops
+  below 32 MB free; the converter's spill and each layer are held to **500 MB** (`tempCap()`).
+  Test hooks: `EDEN_TEST_FREE_BYTES=<n>` or `<pre-flight>,<later>`, `EDEN_TEST_TEMP_CAP=<n>`. A
+  failure or a kill leaves the source untouched (SHA-256 checked) and only temp names, which
+  `cleanConversionTemps` removes on the next `Menu::loadWorlds` (`.spill`, `.converting`,
+  `.emod.layerN`, `.exporting`, `.upload-body`). Get Worlds deletes the download after the commit.
+- **The height a conversion writes (S.5e, 2026-10-10).** Every `.emod` is 256z by default: Settings
+  › Saves › "Upgrade 64z worlds to 256z when converting" (`upgrade_256z`, on; read through
+  `eden_get_upgrade_256z()`, which `EDEN_UPGRADE_256Z=0|1` overrides) is passed to `ImportJob::begin`
+  by all three callers. Convert-on-play also asks first: `World::loadWorld` calls
+  `FileManager::convertHeightGate(name)` before the first `convertStep`, which — toggle on, source not
+  already 256z (a plain `.eden` is probed; an archive cannot be, so it asks "if it is a Classic
+  64-tall world"), `EDEN_CONVERT_PROMPT` not 0 — raises **"Convert world"** (`showAlertConvertHeight`:
+  Upgrade to 256 · Keep 64 · Cancel) and holds the load until `answerConvertHeight()`; Cancel backs
+  out to the menu with nothing written. The answer is consumed by that one conversion. Get Worlds and
+  the web import follow the toggle only. Exports are unchanged: an upgraded world's own-format export
+  is a canonical 256z v5 `.eden`; Legacy64z is the way back (byte-identical to the source's own
+  Legacy64z export for a v4 source). Native harness modes pin the toggle to 0 unless
+  `--upgrade-256z=1` (gates measure the source's height). Cost: +46 MB per open world on the iPad Air
+  2 (N.4.10), ~0 on disk. Gates: `WORKING/s5e-results-2026-10-10.md`.
+- **The world list (S.5).** A `.eden` whose `.emod` pairs with it (same stem, PROVENANCE
+  `source_size` = its size; archives by name + mtime) is hidden, and the `.emod`'s row says
+  **"(+X MB original kept)"** (`WorldNode::original_bytes`). Share > **Remove original** deletes it
+  (`FileManager::removeOriginal`). A `.eden` re-imported under the same stem with other bytes does
+  not pair, so it lists on its own as "(needs conversion)". Web's `eden_storage_list_worlds` rows
+  carry `format` (`"eden"`/`"emod"`) and `originalBytes`, and every index-based Storage export skips
+  a kept original the same way.
+- **Export (S.5 + S.5b).** `emod::EdenExporter` (`Classes/EdenWorldExport.{h,cpp}`) turns an `.emod`
+  or a `.eden` back into a `.eden` as a pulled byte stream — a pre-flight `begin()` that knows the
+  exact output size and every loss before any byte, then `read()` a column at a time. Four targets:
+  **own format** (byte-identical to the source `.eden`; an `.emod` exports to the `.eden` it was
+  converted from), **Legacy64z** (bands 0–3 with `convertWorldTo64`'s cut rules, version 4 from a
+  256z source, ≤ 200 creature slots), **NewDawn256z** (version 5, 64z padded with air, 400 slots)
+  and **NewFormat256z** (the source's version if 256z, else 5). Legacy64z and NewDawn map ids
+  112–127 to stone (D.2b refines it) and drop the sign trailer (signs and command blocks, counted in
+  the report); own/NewFormat can prune trailer records outside the world's columns. **`.eden.gz` is
+  the default export on every target**: native writes `Documents/Exports/<name>.eden.gz` through a
+  time-sliced `ExportFileJob` (`.exporting` temp, fsync, rename; free space checked up front and every
+  64 MB), web streams 1 MB chunks out of wasm into a Blob (`eden_storage_export_*`; 266 MB W256 with
+  1.1 MB of live wasm allocation). Test CLI: `eden_native --export=… [--export-target= --export-gz
+  --export-dry]`, `--import=…` (native/README.md).
+- Measured (S.4): a 100-column web world is 61 KB as `.emod` vs 3.29 MB as `.eden`; a one-column
+  save mirrors 1,104 B vs 91,584 B in place; a no-edit save 664 B vs 26,024 B.
+  `web/tools/headless-opfs-mirror-test.js --world-format=emod` asserts every save mirrors exactly
+  the bytes it appended.
+
 ## Legacy conversion (`convertFile`, `FileManager.mm:1302`)
 1.x files (version field is garbage) are rewritten: each old column
 (4 chunks × 4096 type bytes, no colors) is mapped through `convertType[31]` /
@@ -353,3 +472,11 @@ point migrates those in once (`migrate_legacy_saves`, `native/src/entry/eden_mai
 - **Caution:** anything that changes `SIZEOF_COLUMN`, the 192-byte header size, the
   append arithmetic, or the `modified`-flag protocol; touching the static file-handle
   state; calling save/load from any thread but the ones that already do.
+
+## `g_world_format` default (2026-10-10)
+
+`g_world_format` now defaults to **1** (new worlds `.emod`; `.eden` files convert when played). Settings >
+Experiments > "New .emod world format" (`emod_format`, default on) drives it. `--world-format=`,
+`EDEN_WORLD_FORMAT` and every native harness mode (`g_opt.mode`, `--live-cmds`) set `g_world_format_pinned`,
+so a Settings value never changes a gate; harness modes stay `.eden` unless `--world-format=emod` is given.
+Plan: once proven, remove legacy `.eden` support (files in Documents stay listed and convert on launch).

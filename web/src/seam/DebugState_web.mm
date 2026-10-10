@@ -19,6 +19,7 @@
 #include "../../../Classes/Constants.h"       // NUM_CREATURES, for the pass-27 model probe
 #include "../../../Classes/PVRTModelPOD.h"    // CPVRTModelPOD, ditto
 #include "../../../Classes/Resources.h"       // audit row 11 (A5) recolor probe
+#include "../../../Classes/SignRenderer.h"    // D.3b sign-pass probe
 #include "DisplayProfile_web.h"               // audit D1/D4 display-profile probe
 #include "../shim/foundation/platform_shims.h"   // EDEN_EXPORT (Phase N Stage 1)
 #include <cstdio>
@@ -331,9 +332,11 @@ extern "C" const char *eden_debug_world_format(void) {
     static char buf[256];
     snprintf(buf, sizeof(buf),
              "{\"height\":%d,\"bands\":%d,\"column_bytes\":%d,\"creature_slots\":%d,"
-             "\"t_blocks\":%d,\"xz_stride\":%d}",
+             "\"t_blocks\":%d,\"xz_stride\":%d,\"container\":\"%s\"}",
              g_world_height, g_chunks_per_column, g_column_bytes, g_max_creatures_saved,
-             g_t_blocks, g_xz_stride);
+             g_t_blocks, g_xz_stride,
+             // Stage S / S.4: which container the open world is in (an `.emod` keeps its store open).
+             (World::getWorld && World::getWorld->fm && World::getWorld->fm->emodOpen()) ? "emod" : "eden");
     return buf;
 }
 
@@ -580,6 +583,72 @@ extern "C" int eden_debug_light_edit(int op, int x, int z, int y, int color) {
     default: return 0;
     }
     return 1;
+}
+
+// D.2a's driver for --newblocks-selftest: build `type` (unpainted) at (x,z,y) through the engine's
+// own build entry point, with the HUD set the way a player who picked that block would have it.
+// Returns 0 if there is no world.
+EDEN_EXPORT
+extern "C" int eden_debug_build_block(int x, int z, int y, int type) {
+    if (!World::getWorld || !World::getWorld->terrain || !World::getWorld->hud) return 0;
+    Hud* h = World::getWorld->hud;
+    const int bt = h->blocktype, bc = h->block_paintcolor;
+    h->blocktype = type;
+    h->block_paintcolor = 0;
+    World::getWorld->terrain->buildBlock(x, z, y);
+    h->blocktype = bt;
+    h->block_paintcolor = bc;
+    return 1;
+}
+
+// Stage D / D.3a: the open world's trailer model (Classes/WorldTrailer.h), for --trailer-selftest,
+// which includes that header and drives the model directly. NULL with no world.
+EDEN_EXPORT
+extern "C" void* eden_debug_world_trailer(void) {
+    if (!World::getWorld || !World::getWorld->fm) return NULL;
+    return World::getWorld->fm->trailer();
+}
+
+// Stage D / D.3b: what the last frame's sign pass did (Classes/SignRenderer.h's Stats as JSON):
+// records, inRange, drawn, hiddenAir, hiddenFront, onCmd, withText, textures, textureBytes.
+EDEN_EXPORT
+extern "C" const char* eden_debug_signs(void) {
+    return SignRenderer::describe();
+}
+
+// The open world's file, as a full path ("" with no world): --trailer-selftest reads it back from disk.
+EDEN_EXPORT
+extern "C" const char* eden_debug_world_file(void) {
+    static char buf[1024];
+    buf[0] = 0;
+    if (!World::getWorld || !World::getWorld->fm || !World::getWorld->terrain || !World::getWorld->terrain->world_name) return buf;
+    snprintf(buf, sizeof(buf), "%s/%s", [World::getWorld->fm->documents UTF8String],
+             [World::getWorld->terrain->world_name UTF8String]);
+    return buf;
+}
+
+// How many resident chunks carry `modified` -- what the next save will write as columns. 0 is the
+// "zero dirty columns" precondition of D.3a's gate 3 (the trailer alone must force the write).
+EDEN_EXPORT
+extern "C" int eden_debug_modified_chunks(void) {
+    extern TerrainChunk** chunkTablec;
+    if (!chunkTablec) return -1;
+    int n = 0;
+    const int total = CHUNKS_PER_SIDE * CHUNKS_PER_SIDE * CHUNKS_PER_COLUMN;
+    for (int i = 0; i < total; i++) if (chunkTablec[i] && chunkTablec[i]->modified) n++;
+    return n;
+}
+
+// D.3a: FileManager::reportTrailerRefusal(result), then the HUD status bar's live text ("" if none).
+EDEN_EXPORT
+extern "C" const char* eden_debug_trailer_refusal_toast(int result) {
+    static char buf[256];
+    buf[0] = 0;
+    if (!World::getWorld || !World::getWorld->fm || !World::getWorld->hud || !World::getWorld->hud->sb) return buf;
+    World::getWorld->fm->reportTrailerRefusal(result);
+    NSString* t = World::getWorld->hud->sb->current();
+    if (t) snprintf(buf, sizeof(buf), "%s", [t UTF8String]);
+    return buf;
 }
 
 // Must be called before the world's memory is allocated (World::loadWorld): it decides whether

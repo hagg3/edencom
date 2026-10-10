@@ -82,6 +82,10 @@
 // redeclared here under a distinct name to avoid any accidental collision if that header ever
 // changes.
 static const int kMaxTextureSize_Eden = 1024;
+// D.2t: the PNG path's cap. The block atlases grew to 32 x 2048 (64 tiles); under the 1024 cap they
+// were halved to 16 x 1024 -- UVs still right, every tile half-res. 2048 is the ES 2.0-class floor every
+// target clears (WebGL2 and ES 3.0 guarantee it). Strings keep kMaxTextureSize_Eden.
+static const int kMaxImageTextureSize_Eden = 2048;
 
 // Diagnostic-only: the per-texture decode line below (and, since N.4.9, the shim's per-texture
 // memory probe, via eden_gl_debug_tex_label) is far more useful with a filename on it, but
@@ -281,8 +285,8 @@ void Texture2D::initFromImage(CGImageRef image, UIImageOrientation orientation, 
     int height = EdenRoundDimension(srcH, sizeToFit);
     // Oversized cap: proportional halving (not a hard clamp to kMaxTextureSize_Eden), matching
     // Texture2D.mm's `while((width>kMax)||(height>kMax)){width/=2;height/=2;...}` — rare in
-    // practice (every current UI/atlas asset is well under 1024) but kept for fidelity.
-    while (width > kMaxTextureSize_Eden || height > kMaxTextureSize_Eden) {
+    // practice (the tallest asset is the 2048-row block atlas, D.2t) but kept for fidelity.
+    while (width > kMaxImageTextureSize_Eden || height > kMaxImageTextureSize_Eden) {
         width /= 2;
         height /= 2;
     }
@@ -413,8 +417,8 @@ Texture2D::Texture2D(CGImageRef image, UIImageOrientation orientation, BOOL size
 // a plain 2D canvas draws top-down already, so unlike the real engine's CGContext version (which
 // has to flip because NSString draws in the UIKit referential) no flip is needed here.
 #if defined(__EMSCRIPTEN__)
-EM_JS(void, eden_rasterize_text_rgba, (const char* textC, int width, int height, float fontPx,
-                                        int align, unsigned char* outPtr), {
+EM_JS(void, eden_rasterize_text_rgba_js, (const char* textC, int width, int height, float fontPx,
+                                           int align, unsigned char* outPtr), {
   if (typeof document === 'undefined' && typeof OffscreenCanvas === 'undefined') return;
   var text = UTF8ToString(textC);
   var canvas = (typeof document !== 'undefined')
@@ -426,9 +430,11 @@ EM_JS(void, eden_rasterize_text_rgba, (const char* textC, int width, int height,
   if (!ctx) return;
   ctx.clearRect(0, 0, width, height);
   ctx.fillStyle = '#fff';
+  // Canvas text never triggers a lazy @font-face fetch; ask for Rubik explicitly (no-op once loaded).
+  if (document.fonts && document.fonts.load) document.fonts.load('16px "Rubik"');
   // Face 1 is the design system's display face, which eden-ui.css already @font-face's; until the
   // page has loaded it the canvas falls back to sans-serif, the same as the DOM's font-display:swap.
-  ctx.font = fontPx + 'px ' + (Module.__edenTextFace === 1 ? '"Jersey 10", sans-serif' : 'sans-serif');
+  ctx.font = fontPx + 'px ' + (Module.__edenTextFace === 1 ? '"Jersey 10", sans-serif' : '"Rubik", sans-serif');
   ctx.textBaseline = 'middle';
   var x;
   if (align === 1) { ctx.textAlign = 'center'; x = width / 2; }
@@ -438,6 +444,12 @@ EM_JS(void, eden_rasterize_text_rgba, (const char* textC, int width, int height,
   var img = ctx.getImageData(0, 0, width, height).data;
   HEAPU8.set(img, outPtr);
 });
+// D.3b: Classes/SignRenderer.mm calls this from another translation unit, so -- the same rule as the
+// two below -- the EM_JS stays private to this file and the seam symbol is a plain function.
+extern "C" void eden_rasterize_text_rgba(const char* textC, int width, int height, float fontPx,
+                                         int align, unsigned char* outPtr) {
+    eden_rasterize_text_rgba_js(textC, width, height, fontPx, align, outPtr);
+}
 // See TextRaster_native.cpp: 0 = body, 1 = display (Jersey 10). Sticky until set again.
 // EM_JS declares an import, not a definition: another translation unit (GLWidgets.mm) that calls
 // it by plain declaration fails to link under Release LTO ("undefined symbol"), so the EM_JS stays
@@ -446,6 +458,24 @@ EM_JS(void, eden_text_raster_set_face_js, (int face), {
   Module.__edenTextFace = (face === 1) ? 1 : 0;
 });
 extern "C" void eden_text_raster_set_face(int face) { eden_text_raster_set_face_js(face); }
+// N.5.11: the width fillText above would draw `textC` at, in pixels at `fontPx`, in the current
+// face (TextRaster_native.cpp has the native twin). 0 with no canvas (headless node), which
+// GLW::Label::width() treats as "estimate instead". Same EM_JS-stays-private rule as above.
+EM_JS(float, eden_text_raster_measure_js, (const char* textC, float fontPx), {
+  if (typeof document === 'undefined' && typeof OffscreenCanvas === 'undefined') return 0;
+  var c = Module.__edenMeasureCanvas;
+  if (!c) {
+    c = (typeof document !== 'undefined') ? document.createElement('canvas') : new OffscreenCanvas(1, 1);
+    Module.__edenMeasureCanvas = c;
+  }
+  var ctx = c.getContext('2d');
+  if (!ctx) return 0;
+  ctx.font = fontPx + 'px ' + (Module.__edenTextFace === 1 ? '"Jersey 10", sans-serif' : '"Rubik", sans-serif');
+  return ctx.measureText(UTF8ToString(textC)).width;
+});
+extern "C" float eden_text_raster_measure(const char* textC, float fontPx) {
+    return eden_text_raster_measure_js(textC, fontPx);
+}
 #else
 // Phase N Stage 1: the ONE genuinely platform-shaped line in this otherwise-portable file. Native
 // gets the same function from native/src/seam/TextRaster_native.cpp (stb_truetype), against this

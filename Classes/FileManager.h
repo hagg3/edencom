@@ -10,6 +10,7 @@
 
 
 #import "Terrain.h"
+#include "WorldTrailer.h"
 
 
 
@@ -93,6 +94,15 @@ extern void (*eden_save_backup_hook)(const char* worldFilePath);
 // chose ~/Library/Application Support/Eden. The returned string must outlive the process.
 extern const char* (*eden_documents_root_hook)(void);
 
+// Stage S / S.4: the `.emod` switch. 0 = `.eden` (the default, so every existing suite is
+// byte-for-byte what it was), 1 = `.emod`: new worlds are created as `.emod`, and (S.5d) a `.eden` or
+// a dropped-in archive is converted to one when played -- on every target except web, whose Storage
+// tab/import/export do not know `.emod` yet (S.5). Whatever the flag says, an existing world keeps
+// the container its file name says: a `.emod` always loads and saves as one. Set by the native
+// `--world-format=emod` / EDEN_WORLD_FORMAT=emod, and web's eden_set_world_format().
+extern int g_world_format;
+extern int g_world_format_pinned;   // 1 = --world-format / EDEN_WORLD_FORMAT / a harness mode set it; Settings leaves it alone
+
 class FileManager {
 public:
     int chunkOffsetX;
@@ -142,7 +152,69 @@ public:
     // saveWorld() uses. Refuses if `name` is the world currently open in this session.
     ConvertTo64Report convertWorldTo64(NSString* name);
 
+    // ---- Stage S: `.emod` worlds (docs/emod-file-format.md; Classes/EdenWorldStore.h) ----
+    // A world is an `.emod` iff its file name ends in ".emod"; every method above routes on that.
+    static BOOL isEmodName(NSString* name);
+    // A dropped-in `.gz` / `.zip` (a compressed `.eden`): only ever a source for convertStep().
+    static BOOL isArchiveName(NSString* name);
+    // The file name for a brand-new world: genhash() + ".emod" or ".eden", per g_world_format.
+    static NSString* newWorldFileName();
+    // Whether a `.eden` / archive converts when played: g_world_format == 1, not web, and not
+    // EDEN_NO_CONVERT. Off means the world list and the load path are exactly what they were.
+    static BOOL conversionEnabled();
+    // The world list's two questions about a `.eden`: is it already converted (a `<stem>.emod`
+    // whose PROVENANCE names a source of the same size -> the list hides the `.eden`), and does it
+    // still need converting.
+    BOOL edenHasPairedEmod(NSString* edenName);
+    BOOL worldNeedsConversion(NSString* name);
+    // S.5: the `.emod` a source is paired with (nil if none), the reverse (the kept original `.eden`
+    // or archive of an `.emod`, nil if none), and the world list's "Remove original" (deletes only
+    // that file; the `.emod` is untouched).
+    NSString* pairedEmodFor(NSString* srcName);
+    NSString* originalOf(NSString* emodName);
+    BOOL removeOriginal(NSString* emodName);
+    // Deletes stale `*.emod.converting` / `.spill` / `.creating` / `.compact` left by a killed run.
+    void cleanConversionTemps();
+    // Convert `name` (a `.eden`) to a new `.emod`, a time slice per call so the loading screen keeps
+    // drawing. Returns 0 while running (`*percent` set), 1 when done (`*outName` = the `.emod`),
+    // -1 when it could not (too little free space, an unsupported header, a write error): the caller
+    // then plays the `.eden` in place exactly as before. Nothing is ever written to the `.eden`.
+    int  convertStep(NSString* name, int* percent, NSString** outName);
+    // S.5e: the height that conversion writes. upgradeOnConvert() is Settings' "Upgrade 64z worlds to
+    // 256z when converting" (EDEN_UPGRADE_256Z overrides it). convertHeightGate(name) runs before the
+    // first convertStep(): 1 = go, 0 = the "Keep 64z?" prompt is up (call again next frame), -1 = the
+    // player cancelled. It asks only when the toggle is on and the source is not already 256z, and
+    // never under EDEN_CONVERT_PROMPT=0. answerConvertHeight() is the prompt's callback: 1 upgrade,
+    // 0 keep the source's height, -1 cancel.
+    static BOOL upgradeOnConvert();
+    int  convertHeightGate(NSString* name);
+    void answerConvertHeight(int choice);
+    BOOL conversionActive();
+    // Why the last convertStep() returned -1 (nil if it did not).
+    NSString* conversionError();
+    // The `.eden` that a finished conversion left behind and the player has not been asked about
+    // yet (nil if none). resolveOriginal(TRUE) deletes it, (FALSE) keeps it (it stays hidden: paired).
+    NSString* pendingOriginal();
+    void resolveOriginal(BOOL deleteIt);
+    // Closes the open `.emod` store (exit to menu, delete, a re-load). A no-op for `.eden` worlds.
+    void closeWorld();
+    // TRUE while the open world is an `.emod` (the store is open). For diagnostics.
+    BOOL emodOpen();
+
+    // ---- Stage D / D.3a: the open world's signs and command blocks (Classes/WorldTrailer.h) ----
+    // Loaded with the world on both containers (and from the 2026 game's `signs_`/`cmd_<world>.dat`
+    // sidecars when the world has no such section). Edit it through this pointer; an edit marks it
+    // dirty, and the next saveWorld() writes it even when no column changed: the `.eden` directory
+    // is rewritten (its only home), an `.emod` gets a new SIGN_TRAILER record. Never NULL.
+    WorldTrailer* trailer();
+    // The toast for a refused trailer edit (WorldTrailer::Result), through the HUD's status bar.
+    // Returns the result so callers can `return reportTrailerRefusal(r)==WorldTrailer::TR_OK`.
+    int reportTrailerRefusal(int result);
+
 private:
+    void loadTrailer(NSString* name,const unsigned char* bytes,unsigned long long len);
+    BOOL loadEmodWorld(NSString* name);
+    void saveEmodWorld(Vector warp);
     int oldOffsetX;
     int oldOffsetZ;
     void LoadCreatures();

@@ -17,6 +17,8 @@
 // the real one: the light store's accessors live there).
 #import "../Lighting.h"
 #import "MeshPool.h"
+#import "SignTool.h"
+#import "CmdScript.h"
 #import "FileManagerHelper.h"   // fmh_defaultBandCount (Stage R / R.2b)
 
 // Repo-root Lighting.h is the built one (Eden.xcodeproj / web CMake); the Classes/ copy next to
@@ -334,6 +336,7 @@ int unloadChunk(any_t passedIn,any_t chunkToUnload){
 
 void Terrain::unloadTerrain(BOOL exitToMenu){
     loaded=FALSE;
+    CmdScript::reset(); //D.4c: a world that closes or warps stops every command-block script
 	if(exitToMenu){
         // Only wipe the portal/firework registries when the mesh cache (troot) is ALSO being
         // discarded. Portal::addPortal only runs when a chunk's mesh is actually rebuilt
@@ -1471,8 +1474,10 @@ void Terrain::updateChunks(int x,int z,int y,int type){
     int pos[3]={x,y,z};
 	int cx,cy,cz;
 	
-    if(type==TYPE_NONE)
+    if(type==TYPE_NONE){
         setColor(x,z,y,0);
+        SignTool::anchorBecameAir(x,z,y); //D.3c: a live edit to air takes the signs + command block on it
+    }
     
     setLand(x,z,y,type,TRUE);
 	
@@ -3071,7 +3076,7 @@ void Terrain::render(){
 	chunks_rendered=chunks_rendered2=0;
     
     glMatrixMode(GL_TEXTURE);
-    glScalef(1,1.0f/32.0f,1);
+    glScalef(1,1.0f/ATLAS_TILES,1);
    // glPushMatrix();
     glMatrixMode(GL_MODELVIEW);
 	glPushMatrix();
@@ -3754,7 +3759,7 @@ void Terrain::render(){
 	glPopMatrix();
     
     glMatrixMode(GL_TEXTURE);
-    glScalef(1,32.0f,1);
+    glScalef(1,(float)ATLAS_TILES,1);
     
     glMatrixMode(GL_MODELVIEW);
 
@@ -3789,7 +3794,7 @@ void Terrain::render2(){
     
     
     glMatrixMode(GL_TEXTURE);
-    glScalef(1,1.0f/32.0f,1);
+    glScalef(1,1.0f/ATLAS_TILES,1);
    
     // glPushMatrix();
     
@@ -3822,7 +3827,7 @@ void Terrain::render2(){
     }
     glMatrixMode(GL_TEXTURE);
     glTranslatef(0,-(int)(frame/16),0);
-    glScalef(1,32.0f,1);
+    glScalef(1,(float)ATLAS_TILES,1);
     
     glMatrixMode(GL_MODELVIEW);
     

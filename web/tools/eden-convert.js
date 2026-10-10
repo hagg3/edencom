@@ -99,8 +99,25 @@ function detectBands(header, entries, fileSize) {
             `(1 byte/block, no colors). Load it in the game once to let convertFile() upgrade it, then retry.`);
     }
     if (header.version >= FILE_VERSION_256) return { bands: BANDS_256, why: `header version ${header.version} >= 5` };
-    // Fallback for a version that lies: the minimum gap between sorted offsets tells the truth.
-    const offs = entries.map((e) => e.offset).sort((a, b) => a - b);
+    // S.3b: below 5 the version is not a height marker (the 2026 game stamps v2 on 256z worlds).
+    // The creature-gap test first -- emod::eden_detect_bands / emod.py detect_bands, restated: over
+    // the LIVE rows (addressable, last row wins), the stride for which directory_offset - (highest
+    // offset + stride) is 0 or a whole number of 60-byte slots <= 24,000, 131072 tried first.
+    const live = new Map();
+    for (const e of entries) {
+        if (e.x >= 0 && e.x < 32768 && e.z >= 0 && e.z < 32768 && e.x * 32768 + e.z !== 0) live.set(e.x * 32768 + e.z, e.offset);
+    }
+    if (live.size) {
+        const maxOff = Math.max(...live.values());
+        for (const [bands, col] of [[BANDS_256, COL_256], [BANDS_64, COL_64]]) {
+            const gap = header.directoryOffset - (maxOff + col);
+            if (gap >= 0 && gap % ENTITY_SIZE === 0 && gap <= CREATURES_256 * ENTITY_SIZE) {
+                return { bands, why: `header version ${header.version}; creature gap ${gap} B at the ${col} B stride` };
+            }
+        }
+    }
+    // Fallback when neither stride leaves a valid gap: the minimum gap between sorted offsets.
+    const offs = [...new Set(live.values())].sort((a, b) => a - b);
     let minGap = Infinity;
     for (let i = 1; i < offs.length; i++) minGap = Math.min(minGap, offs[i] - offs[i - 1]);
     if (offs.length > 1 && minGap >= COL_256) {
@@ -138,7 +155,19 @@ function readDirectory(fd, header, fileSize) {
         }
         read += Math.floor(got / DIR_ENTRY_SIZE);
     }
-    return entries;
+    // S.5b: only rows the engine can address are columns (FileManager's twoToOne gate; key 0 is
+    // invalid). A NewFormat256z sign/command-block trailer is a run of rows tagged x = 0xffffffff
+    // after the real ones (docs/eden-file-format.md); counting them as columns made every such
+    // world fail the stride check ("1897 of 3227 columns are not 131072 B"). The trailer is not
+    // carried over: a converted world is Legacy64z or NewDawn256z, neither of which has one.
+    const live = entries.filter((e) => addressable(e.x, e.z));
+    live.forEach((e, i) => { e.slot = i; });
+    live.droppedRows = entries.length - live.length;
+    return live;
+}
+
+function addressable(x, z) {
+    return x >= 0 && x < 32768 && z >= 0 && z < 32768 && (x * 32768 + z) !== 0;
 }
 
 // The creature block sits between the end of the last column and the directory. Derive its size
@@ -146,16 +175,18 @@ function readDirectory(fd, header, fileSize) {
 // whole format (400 slots was measured from a single specimen), so make it self-checking.
 function deriveCreatureBlock(header, entries, colSize, bands) {
     const defaultSlots = bands === BANDS_256 ? CREATURES_256 : CREATURES_64;
-    if (header.version < 3) return { slots: 0, bytes: 0, why: 'header version < 3: no creature block' };
+    // S.3b: a v1/v2 file has no creature block unless the gap shows one (the 2026 game's v2 256z
+    // worlds carry 400 slots), so for those the fallback is 0 slots rather than the default.
+    const fallbackSlots = header.version < 3 ? 0 : defaultSlots;
     if (entries.length === 0) {
-        return { slots: defaultSlots, bytes: defaultSlots * ENTITY_SIZE, why: 'empty directory: assumed from version' };
+        return { slots: fallbackSlots, bytes: fallbackSlots * ENTITY_SIZE, why: 'empty directory: assumed from version' };
     }
     const lastEnd = Math.max(...entries.map((e) => e.offset)) + colSize;
     const bytes = header.directoryOffset - lastEnd;
     if (bytes < 0 || bytes % ENTITY_SIZE !== 0) {
         return {
-            slots: defaultSlots,
-            bytes: defaultSlots * ENTITY_SIZE,
+            slots: fallbackSlots,
+            bytes: fallbackSlots * ENTITY_SIZE,
             why: `gap of ${bytes} B before the directory is not a whole number of 60-byte slots; assumed from version`,
             suspect: true,
         };

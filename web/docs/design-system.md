@@ -226,7 +226,7 @@ sweep.
 The kit is an honest extraction, but a few things in it are wrong for a real build:
 
 1. **No Rubik.** The kit `@import`s it from Google Fonts. The port self-hosts Jersey 10 and uses the
-   platform sans stack for body text — no external network request, so the game keeps working
+   self-hosted Rubik (Regular) for body text — no external network request, so the game keeps working
    offline and from `file://`.
 2. **Fluid windows, not a fixed 783×587 canvas.** See "Layout contract" above.
 3. **The scrollbar is functional**, not the decorative element the kit shipped.
@@ -258,7 +258,7 @@ What differs, and why:
 | | DOM | GL kit |
 |---|---|---|
 | Scale unit | `--u` = `min(vw/783, vh/587)` clamped 1–2.4 | `GLW::u()`, same formula but against **point space** (~1138×640), clamped 0.7–2.4 — the display profile has already normalised the denominator, so the useful range is narrower |
-| Type | Jersey 10 for chrome, platform sans for body | **the same split** since 2026-10-05: `GLW::Label`'s `FACE_DISPLAY` (default) / `FACE_BODY`, through the raster seam's `eden_text_raster_set_face()`. Native rasterises the bundled `Jersey10-Regular.ttf` with stb_truetype. Jersey's caps are 0.50 of its pixel height against Arial's 0.64, so GL sizes are ~1.3x the body size for the same weight — the CSS's 22u buttons beside 15u body |
+| Type | Jersey 10 for chrome, Rubik Regular for body | **the same split** since 2026-10-05: `GLW::Label`'s `FACE_DISPLAY` (default) / `FACE_BODY`, through the raster seam's `eden_text_raster_set_face()`. Native rasterises the bundled `Jersey10-Regular.ttf` and `Rubik-Regular.ttf` (system sans only if missing) with stb_truetype. Jersey's caps are 0.50 of its pixel height against Arial's 0.64, so GL sizes are ~1.3x the body size for the same weight — the CSS's 22u buttons beside 15u body |
 | Density | `pointer: coarse` raises the hit box to 44px | `GLW::touchFloor()` (44pt on the touch profile, else 0) and `setHitRect()` on every control: rows are ~30u under a mouse and 44pt under a finger, the art stays compact either way |
 | Y axis | down | **up.** Every `--eden-drop-*` is drawn at −y and every `inset a a` is a strip on the TOP and LEFT edges |
 | Wrapping | the browser measures | estimated at `0.52 × pt` per character — there is no measure call in the seam. Costs at worst one extra break in a body sentence |

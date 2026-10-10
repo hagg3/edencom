@@ -336,7 +336,8 @@ file(CREATE_LINK "${EDEN_PARENT_DIR}/media" "${CMAKE_CURRENT_SOURCE_DIR}/public/
 # true byte-range-lazy read; see the .pre.js file's own header and perf-audit item §5b.1 for why
 # a real range-fetch needs either the threaded build or a custom FS node. This paragraph itself
 # used to describe the abandoned FS.createLazyFile approach — corrected per perf-audit Q9.
-file(CREATE_LINK "${EDEN_PARENT_DIR}/Eden.eden" "${CMAKE_CURRENT_SOURCE_DIR}/public/Eden.eden" SYMBOLIC)
+# S.6: Eden.emod (the bake of the repo-root Eden.eden), not the 52 MB RLE file.
+file(CREATE_LINK "${EDEN_PARENT_DIR}/Eden.emod" "${CMAKE_CURRENT_SOURCE_DIR}/public/Eden.emod" SYMBOLIC)
 file(GLOB_RECURSE EDEN_AUDIO_FILES
      RELATIVE "${EDEN_PARENT_DIR}/media"
      "${EDEN_PARENT_DIR}/media/*.caf" "${EDEN_PARENT_DIR}/media/*.mp3"

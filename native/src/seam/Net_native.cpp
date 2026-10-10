@@ -45,6 +45,7 @@ namespace {
 
 struct Job {
     std::string url, dest, part;
+    std::string contentType, bodyPath;    // a POST (S.5c upload) when contentType is set
     std::atomic<int> state{0};            // 0 running, 1 done, -1 failed
     std::atomic<long long> got{0}, total{-1};
     std::atomic<int> cancel{0};
@@ -111,6 +112,28 @@ bool fetch_fixture(const std::string& root, Job* j, int* status, char* err, int 
     return ok;
 }
 
+// A POST in fixture mode: the body is copied to `root/host/path.posted` (the query dropped, so a
+// harness finds it whatever uuid was sent) and the reply is `root/host/path` -- `YES` for upload2.php.
+bool post_fixture(const std::string& root, Job* j, int* status, char* err, int errcap) {
+    std::string resp = fixture_path(root, j->url);
+    const size_t q = resp.find('@', root.size());
+    if (q != std::string::npos) resp.resize(q);
+    FILE* in = std::fopen(j->bodyPath.c_str(), "rb");
+    FILE* out = std::fopen((resp + ".posted").c_str(), "wb");
+    bool ok = in && out;
+    unsigned char buf[65536];
+    size_t n;
+    while (ok && (n = std::fread(buf, 1, sizeof(buf), in)) > 0) ok = std::fwrite(buf, 1, n, out) == n;
+    if (in) std::fclose(in);
+    if (out && std::fclose(out) != 0) ok = false;
+    if (!ok) { *status = 0; std::snprintf(err, errcap, "could not read the upload"); return false; }
+    const std::string saved = j->url;
+    j->url = resp.substr(root.size() + 1);           // fetch_fixture maps it straight back to `resp`
+    const bool r = fetch_fixture(root, j, status, err, errcap);
+    j->url = saved;
+    return r;
+}
+
 void run(std::shared_ptr<Job> j, std::string root) {
     char err[200] = {0};
     int status = 0;
@@ -124,14 +147,18 @@ void run(std::shared_ptr<Job> j, std::string root) {
     }
     bool ok;
     if (!root.empty()) {
-        ok = fetch_fixture(root, j.get(), &status, err, sizeof(err));
+        ok = j->contentType.empty() ? fetch_fixture(root, j.get(), &status, err, sizeof(err))
+                                    : post_fixture(root, j.get(), &status, err, sizeof(err));
     } else {
         EdenNetCallbacks cb;
         cb.ctx = j.get();
         cb.on_total = on_total;
         cb.on_data = on_data;
         cb.cancelled = cancelled;
-        ok = eden_net_backend_fetch(j->url.c_str(), &cb, &status, err, sizeof(err)) != 0;
+        ok = j->contentType.empty()
+            ? eden_net_backend_fetch(j->url.c_str(), &cb, &status, err, sizeof(err)) != 0
+            : eden_net_backend_post_file(j->url.c_str(), j->contentType.c_str(), j->bodyPath.c_str(), &cb, &status,
+                                         err, sizeof(err)) != 0;
     }
     if (j->f) {
         if (std::fclose(j->f) != 0 && ok) { ok = false; std::snprintf(err, sizeof(err), "could not write the download"); }
@@ -173,6 +200,24 @@ EDEN_EXPORT int eden_net_fetch(const char* url, const char* destPath) {
     auto j = std::make_shared<Job>();
     j->url = url;
     if (destPath && *destPath) { j->dest = destPath; j->part = j->dest + ".part"; }
+    int id;
+    {
+        std::lock_guard<std::mutex> lock(g_mu);
+        id = g_next++;
+        g_jobs[id] = j;
+    }
+    std::thread(run, j, fixture_root()).detach();
+    return id;
+}
+
+// Stage S / S.5c: POST the file at `bodyPath` (the upload body WorldShare builds) and keep the reply
+// in memory (eden_net_body). Same job contract as eden_net_fetch.
+EDEN_EXPORT int eden_net_post_file(const char* url, const char* contentType, const char* bodyPath) {
+    if (!url || !*url || !contentType || !bodyPath || !eden_net_available()) return 0;
+    auto j = std::make_shared<Job>();
+    j->url = url;
+    j->contentType = contentType;
+    j->bodyPath = bodyPath;
     int id;
     {
         std::lock_guard<std::mutex> lock(g_mu);

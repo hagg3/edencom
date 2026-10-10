@@ -375,6 +375,9 @@ set(EDEN_NATIVE_SOURCES
   src/seam/seam_link_stubs_native.mm
   src/seam/SimpleAudioEngine_native.mm
   src/seam/TextRaster_native.cpp
+  # Stage S / S.2: --codec-bench (zstd vs zlib per-column timing; no engine dependency).
+  src/seam/CodecBench_native.cpp
+  src/seam/WorldTools_native.cpp
   # ROADMAP 5.9: the eden_net_* seam the world browser polls (job table, worker threads, .part
   # files, offline fixtures). The blocking GET under it is per platform — see the block after
   # this list for which backend each target links.
@@ -544,6 +547,7 @@ endif()
 # include by name (Camera.h, World.h, Graphics.h, ... — angle-bracket includes, which is the only
 # kind that can be redirected this way; see gl_es1_shim.h's framework/ note).
 target_include_directories(eden_native PRIVATE
+  "${EDEN_CLASSES_DIR}/zstd"                        # <zstd.h>: the PINNED 1.5.7, never Homebrew's/the SDK's
   src/shim/gl/framework
   src/shim                                          # CDXMacOSXSupport.h — see that file
   "${EDEN_WEB_DIR}/src/shim/foundation/framework"   # <Foundation/...>, <UIKit/...>, <Availability.h>
@@ -921,7 +925,7 @@ target_link_libraries(eden_native PRIVATE Threads::Threads)
 # stale the moment anyone edits one. The set mirrors web/CMakeLists.txt's --preload-file rules
 # exactly — the same six media/ subdirectories, the same loose PNGs, report_flag.png from the repo
 # ROOT (it is not under media/ and was missing from the web build for months for that reason), the
-# seven .pod models, and Eden.eden. The .psd/.DS_Store/AtlasTool exclusions web applies are
+# seven .pod models, and Eden.emod. The .psd/.DS_Store/AtlasTool exclusions web applies are
 # unnecessary here: a symlink to an unread file costs nothing, where on web it was download weight.
 set(EDEN_BUNDLE_DIR "$<TARGET_FILE_DIR:eden_native>")
 set(EDEN_ASSET_GLOBS "")
@@ -947,28 +951,14 @@ list(APPEND EDEN_ASSET_GLOBS ${_f} "${EDEN_PARENT_DIR}/report_flag.png")
 # The design system's display face (Jersey 10, SIL OFL — OFL.txt beside it), the same file the web
 # UI self-hosts. TextRaster_native.cpp loads it by bare name from the bundle root for GL-kit chrome.
 list(APPEND EDEN_ASSET_GLOBS "${EDEN_PARENT_DIR}/web/public/assets/fonts/Jersey10-Regular.ttf")
+# Rubik Regular (SIL OFL, OFL-Rubik.txt beside it): the body face for all non-Jersey text.
+list(APPEND EDEN_ASSET_GLOBS "${EDEN_PARENT_DIR}/web/public/assets/fonts/Rubik-Regular.ttf")
 
-# Stage 4.4: on iOS the bundle is COPIED into the .app (see the COPY_ON_ERROR comment below), so
-# Eden.eden's 52.47 MiB is charged against install size; on every other target it's a symlink and
-# costs nothing, so it ships raw there. gzip -9 removes 84% of it (measurement:
-# WORKING/phase-n-stage4-4-asset-payload-2026-09-15.md) with a decompressor
-# (Classes/zpipe.c's decompressFile(), auto-detects the gzip container) already linked and already
-# called from Menu::loadShared — Classes/FileManagerHelper.mm's fmh_init() inflates this once into
-# a writable cache file on first launch and reuses it after that.
-if(IOS)
-  set(EDEN_GZ_EDEN "${CMAKE_CURRENT_BINARY_DIR}/Eden.eden.gz")
-  add_custom_command(
-    OUTPUT "${EDEN_GZ_EDEN}"
-    COMMAND sh -c "gzip -9 -c '${EDEN_PARENT_DIR}/Eden.eden' > '${EDEN_GZ_EDEN}'"
-    DEPENDS "${EDEN_PARENT_DIR}/Eden.eden"
-    COMMENT "Eden native (iOS): gzip -9 Eden.eden for the device bundle (Stage 4.4, ~52 MiB -> ~8 MiB)"
-    VERBATIM)
-  add_custom_target(eden_gz_world DEPENDS "${EDEN_GZ_EDEN}")
-  add_dependencies(eden_native eden_gz_world)
-  list(APPEND EDEN_ASSET_GLOBS "${EDEN_GZ_EDEN}")
-else()
-  list(APPEND EDEN_ASSET_GLOBS "${EDEN_PARENT_DIR}/Eden.eden")
-endif()
+# S.6: the bundled default map ships as Eden.emod (11.8 MB, zstd-19, baked by `emod.py bake-default`
+# from the repo-root Eden.eden, which stays as the source and is NOT bundled). It is read in place, so
+# iOS no longer gzips it (Stage 4.4's Eden.eden.gz, 8.4 MB) nor inflates a 52.5 MiB Documents cache
+# from it; a desktop bundle links it like every other asset.
+list(APPEND EDEN_ASSET_GLOBS "${EDEN_PARENT_DIR}/Eden.emod")
 list(REMOVE_DUPLICATES EDEN_ASSET_GLOBS)
 list(LENGTH EDEN_ASSET_GLOBS EDEN_ASSET_COUNT)
 
@@ -978,15 +968,15 @@ list(LENGTH EDEN_ASSET_GLOBS EDEN_ASSET_COUNT)
 #
 # COPY_ON_ERROR, for Windows: a symbolic link there needs Developer Mode or
 # SeCreateSymbolicLinkPrivilege, and a GitHub Actions runner has neither. The fallback copies
-# instead, which costs one 52 MB Eden.eden and ~7 MB of art ONCE — the `if(NOT EXISTS)` guard means
+# instead, which costs one 12 MB Eden.emod and ~7 MB of art ONCE — the `if(NOT EXISTS)` guard means
 # a rebuild does nothing. On macOS and Linux nothing changes and the links stay links, which is
 # what keeps an edited texture live without a rebuild.
 # ON iOS THE ASSETS ARE COPIED, NOT LINKED, and that is not the Windows fallback's reason.
 # A symlink inside an .app points at a path in the BUILD MACHINE's filesystem; the bundle is then
 # installed on a device or a simulator where that path does not exist, so every texture, model and
 # Eden.eden would be a dangling link and the app would boot to a black screen with a missing-asset
-# log. (It also breaks code signing, which walks the bundle.) The cost is real — ~60 MB copied
-# into the .app, 52 of it Eden.eden — and it is what makes Stage 4.4's asset-payload row a row.
+# log. (It also breaks code signing, which walks the bundle.) The cost is real — ~19 MB copied
+# into the .app, 12 of it Eden.emod — and it is what makes Stage 4.4's asset-payload row a row.
 set(EDEN_LINK_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/link-assets.cmake")
 file(WRITE "${EDEN_LINK_SCRIPT}" "# generated by native/CMakeLists.txt — do not edit\n")
 foreach(asset IN LISTS EDEN_ASSET_GLOBS)

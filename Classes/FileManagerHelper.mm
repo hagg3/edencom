@@ -12,6 +12,8 @@
 #import "World.h"
 #import "hashmap.h"
 #import "zpipe.h"
+#include "EdenWorldStore.h"   // S.6: the bundled map is Eden.emod
+#include <vector>
 
 
 FileManager* fm;
@@ -21,6 +23,11 @@ FileManager* fm;
 static NSFileHandle* saveFile;
 static WorldFileHeader* sfh;
 static map_t indexes;
+// S.6: the bundled map is `Eden.emod` (docs/emod-file-format.md; baked by `emod.py bake-default`).
+// When it is present this store answers every column read and the RLE handle/directory above stay
+// empty; `Eden.eden` (the RLE source, "never regenerate" data) is only the fallback for a bundle
+// that has no Eden.emod, and the source `emod.py bake-default` reads.
+static emod::EdenWorldStore* s_store=NULL;
 
 static void fmh_read_directory();
 void fmh_init(FileManager* t_fm){
@@ -36,47 +43,33 @@ void fmh_init(FileManager* t_fm){
      
  //  NSString* file_name=[NSString stringWithFormat:@"%@/Eden.eden",fm.documents];
 
-    // Stage 4.4: iOS ships Eden.eden.gz (8.4 MiB vs. 52.5 MiB raw -- see
-    // WORKING/phase-n-stage4-4-asset-payload-2026-09-15.md) because on-device install size is
-    // charged for every byte the bundle copies in, unlike the symlinked desktop bundles. The
-    // bundle itself is read-only, so a compressed asset has to be inflated to a WRITABLE cache
-    // file once and reopened from there every launch after -- this is the fix for the dead
-    // in-place DecompressWorld() call this replaces, below, which could never work against a
-    // read-only source path. Platforms that still ship the raw file (web, desktop) just don't
-    // find Eden.eden.gz in the bundle and fall through unchanged.
+    // S.6: Eden.eden.gz and its 52.5 MiB inflated Documents/Eden.eden.cache are gone (Stage 4.4 added
+    // them because the bundle is charged against install size; Eden.emod is 11.8 MB and is read in
+    // place from the bundle, so there is nothing to inflate). Delete the cache an earlier build
+    // left behind -- once, here, and silently when there is none.
+    NSFileManager* nsfm=[NSFileManager defaultManager];
+    {
+        NSString* stale=[NSString stringWithFormat:@"%@/Eden.eden.cache",fm->documents];
+        if([nsfm fileExistsAtPath:stale]){
+            if([nsfm removeItemAtPath:stale error:NULL])printg("fmh init: removed the stale Eden.eden.cache\n");
+        }
+    }
     // NSBundle's web shim never returns nil (a miss synthesizes a non-existent path so untouched
     // callers can keep using -fileExistsAtPath:) so the presence check has to be
     // -fileExistsAtPath:, not a nil check against the path string.
-    NSString* gz_name=[[NSBundle mainBundle] pathForResource:@"Eden.eden.gz" ofType:nil];
-    NSFileManager* nsfm=[NSFileManager defaultManager];
-    NSString* file_name=nil;
-    if(gz_name!=nil&&[nsfm fileExistsAtPath:gz_name]){
-        file_name=[NSString stringWithFormat:@"%@/Eden.eden.cache",fm->documents];
-        if(![nsfm fileExistsAtPath:file_name]){
-            printg("fmh init: inflating bundled Eden.eden.gz to cache...\n");
-            FILE* fsource=fopen([gz_name cStringUsingEncoding:NSUTF8StringEncoding],"rb");
-            FILE* fdest=fopen([file_name cStringUsingEncoding:NSUTF8StringEncoding],"wb");
-            if(fsource&&fdest){
-                int ret=decompressFile(fsource,fdest);
-                fclose(fsource);
-                fclose(fdest);
-                if(ret!=Z_OK){
-                    printg("fmh init: failed to inflate Eden.eden.gz (zlib err %d)\n",ret);
-                    remove([file_name cStringUsingEncoding:NSUTF8StringEncoding]);
-                    file_name=nil;
-                }
-            }else{
-                printg("fmh init: could not open Eden.eden.gz or its cache destination\n");
-                if(fsource)fclose(fsource);
-                if(fdest)fclose(fdest);
-                file_name=nil;
-            }
+    NSString* emod_name=[[NSBundle mainBundle] pathForResource:@"Eden.emod" ofType:nil];
+    if(emod_name!=nil&&[nsfm fileExistsAtPath:emod_name]){
+        emod::EdenWorldStore* st=new emod::EdenWorldStore();
+        if(st->open([emod_name UTF8String],false)){
+            s_store=st;
+            printg("fmh init: bundled map Eden.emod, %d columns, %d bands, open %.1f ms\n",
+                   (int)st->columnCount(),st->bands(),st->openMs());
+            return;
         }
-        // A previous launch already inflated it -- reuse the cache file as-is.
+        printg("fmh init: Eden.emod refused (%s); trying Eden.eden\n",st->error().c_str());
+        delete st;
     }
-    if(file_name==nil){
-        file_name=[[NSBundle mainBundle] pathForResource:@"Eden.eden" ofType:nil];
-    }
+    NSString* file_name=[[NSBundle mainBundle] pathForResource:@"Eden.eden" ofType:nil];
 
      saveFile=[NSFileHandle fileHandleForReadingAtPath:file_name];
     [saveFile retain];
@@ -124,6 +117,11 @@ int fmh_defaultBandCount(){
     // regenerated for 256z: the offline TerrainGen2 bake would need ~4 GB and would produce a
     // differently-shaped world needing an art pass (see the 256z plan, Stage 2 item 6). A 256z
     // world seeded from the default map therefore gets those 4 bands and air above them.
+    if(s_store){
+        int b=s_store->bands();
+        if(b>CHUNKS_PER_COLUMN)b=CHUNKS_PER_COLUMN;
+        return b;
+    }
     if(sfh==NULL)return 0;
     int bands=(sfh->version>=FILE_VERSION_256Z)?CHUNKS_PER_COLUMN_MAX:4;
     if(bands>CHUNKS_PER_COLUMN)bands=CHUNKS_PER_COLUMN;
@@ -154,6 +152,22 @@ BOOL fmh_readColumnRawFromDefault(int cx,int cz,unsigned char* raw,int* lens){
     ColumnIndex* colIndex=NULL;
     int n=twoToOne(cx,cz);
     if(n==0)return FALSE;
+    if(s_store){
+        // S.6: the zstd decode happens HERE (main thread: the store is single-owner, like the file
+        // handle below); what reaches fmh_decodeColumnBands is already planar CC(x,z,y), flagged
+        // with FMH_LEN_PLANAR, so the worker's share is a copy instead of an RLE expansion + transpose.
+        if(!s_store->hasColumn(cx,cz))return FALSE;
+        const int bands=fmh_defaultBandCount();
+        std::vector<unsigned char> col((size_t)s_store->bands()*emod::BAND);
+        emod::EdenWorldStore::ReadResult rr=s_store->readColumn(cx,cz,col.data());
+        if(rr==emod::EdenWorldStore::READ_ABSENT)return FALSE;
+        if(rr!=emod::EdenWorldStore::READ_OK)printg("fmh: bundled column %d,%d damaged (%d)\n",cx,cz,(int)rr);
+        for(int cy=0;cy<bands;cy++){
+            memcpy(raw+(size_t)cy*FMH_BAND_RAW_MAX,col.data()+(size_t)cy*emod::BAND,emod::BAND);
+            lens[cy]=emod::BAND|FMH_LEN_PLANAR;
+        }
+        return TRUE;
+    }
     hashmap_get(indexes,n,(any_t*)&colIndex);
     if(colIndex==NULL)return FALSE;
 
@@ -214,6 +228,13 @@ void fmh_decodeColumnBands(const unsigned char* raw,const int* lens,int bands,
                            block8* outBlocks,color8* outColors,int* status){
     for(int cy=0;cy<bands;cy++){
         const unsigned char* buf=raw+(size_t)cy*FMH_BAND_RAW_MAX;
+        if(lens[cy]&FMH_LEN_PLANAR){
+            // S.6: an Eden.emod band -- 4,096 type bytes then 4,096 paint bytes, already CC(x,z,y).
+            memcpy(outBlocks+(size_t)cy*CHUNK_SIZE3,buf,CHUNK_SIZE3*sizeof(block8));
+            memcpy(outColors+(size_t)cy*CHUNK_SIZE3,buf+CHUNK_SIZE3,CHUNK_SIZE3*sizeof(color8));
+            status[cy]=1;
+            continue;
+        }
         const int n=lens[cy];
         block8 tblocks[CHUNK_SIZE3];
         color8 tcolors[CHUNK_SIZE3];
@@ -350,7 +371,7 @@ void fmh_readColumnFromDefault(int cx,int cz){
 
 	hashmap_get(indexes,n, (any_t*)&colIndex);
 
-	if(colIndex==NULL){
+	if(colIndex==NULL&&!(s_store&&s_store->hasColumn(cx,cz))){
         ter->tgen->generateEmptyColumn(cx,cz);
         return;
     }
@@ -362,4 +383,55 @@ void fmh_readColumnFromDefault(int cx,int cz){
     if(!fmh_readColumnRawFromDefault(cx,cz,fmh_raw,lens))return;
     fmh_decodeColumnBands(fmh_raw,lens,bands,fmh_blocks,fmh_colors,status);
     fmh_publishColumnFromDefault(cx,cz,fmh_blocks,fmh_colors,bands,status);
+}
+
+// ---- S.6 gate -----------------------------------------------------------------------------------
+// Both backends through the engine's own read + decode steps, column by column. The statics above are
+// swapped (and restored) rather than duplicated, so what is compared is exactly the code the game runs.
+int fmh_selftestCompare(const char* edenPath,const char* emodPath,int* compared){
+    if(compared)*compared=0;
+    emod::EdenWorldStore st;
+    if(!st.open(emodPath,false)){printg("selftest: %s: %s\n",emodPath,st.error().c_str());return -1;}
+    NSFileHandle* rleFile=[NSFileHandle fileHandleForReadingAtPath:[NSString stringWithUTF8String:edenPath]];
+    if(rleFile==nil){printg("selftest: cannot open %s\n",edenPath);return -1;}
+
+    NSFileHandle* o_file=saveFile; WorldFileHeader* o_sfh=sfh; map_t o_idx=indexes; emod::EdenWorldStore* o_store=s_store;
+    saveFile=rleFile;
+    sfh=(WorldFileHeader*)[[saveFile readDataOfLength:sizeof(WorldFileHeader)] bytes];
+    indexes=hashmap_new();
+    fmh_read_directory();
+    NSData* hdrKeep=[NSData dataWithBytes:sfh length:sizeof(WorldFileHeader)];   // sfh points into a temporary NSData
+    sfh=(WorldFileHeader*)[hdrKeep bytes];
+
+    int rleCols=hashmap_length(indexes);
+    int bad=0,n=0;
+    if(rleCols!=(int)st.columnCount()){printg("selftest: %d RLE columns vs %d in the .emod\n",rleCols,(int)st.columnCount());bad++;}
+    static unsigned char raw[(size_t)CHUNKS_PER_COLUMN_MAX*FMH_BAND_RAW_MAX];
+    static block8 bA[(size_t)CHUNKS_PER_COLUMN_MAX*CHUNK_SIZE3],bB[(size_t)CHUNKS_PER_COLUMN_MAX*CHUNK_SIZE3];
+    static color8 cA[(size_t)CHUNKS_PER_COLUMN_MAX*CHUNK_SIZE3],cB[(size_t)CHUNKS_PER_COLUMN_MAX*CHUNK_SIZE3];
+    std::vector<std::pair<int32_t,int32_t> > keys=st.columnKeys();
+    for(size_t i=0;i<keys.size();i++){
+        const int cx=keys[i].first,cz=keys[i].second;
+        int lensA[CHUNKS_PER_COLUMN_MAX],lensB[CHUNKS_PER_COLUMN_MAX],stA[CHUNKS_PER_COLUMN_MAX],stB[CHUNKS_PER_COLUMN_MAX];
+        for(int k=0;k<CHUNKS_PER_COLUMN_MAX;k++){lensA[k]=lensB[k]=0;stA[k]=stB[k]=0;}
+        s_store=NULL;
+        const int bandsA=fmh_defaultBandCount();
+        BOOL okA=fmh_readColumnRawFromDefault(cx,cz,raw,lensA);
+        if(okA)fmh_decodeColumnBands(raw,lensA,bandsA,bA,cA,stA);
+        s_store=&st;
+        const int bandsB=fmh_defaultBandCount();
+        BOOL okB=fmh_readColumnRawFromDefault(cx,cz,raw,lensB);
+        if(okB)fmh_decodeColumnBands(raw,lensB,bandsB,bB,cB,stB);
+        n++;
+        bool same=okA&&okB&&bandsA==bandsB;
+        for(int cy=0;same&&cy<bandsA;cy++){
+            if(stA[cy]!=1||stB[cy]!=1||
+               memcmp(bA+(size_t)cy*CHUNK_SIZE3,bB+(size_t)cy*CHUNK_SIZE3,CHUNK_SIZE3*sizeof(block8))||
+               memcmp(cA+(size_t)cy*CHUNK_SIZE3,cB+(size_t)cy*CHUNK_SIZE3,CHUNK_SIZE3*sizeof(color8)))same=false;
+        }
+        if(!same){if(bad<10)printg("selftest: column %d,%d differs (ok %d/%d)\n",cx,cz,(int)okA,(int)okB);bad++;}
+    }
+    saveFile=o_file; sfh=o_sfh; indexes=o_idx; s_store=o_store;   // (the RLE directory leaks: a one-shot gate)
+    if(compared)*compared=n;
+    return bad;
 }

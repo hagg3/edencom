@@ -73,6 +73,14 @@ resolved via the shimmed `NSBundle` — same role as the app-bundle copy on iOS.
 **not** resident in memory; see the next section.
 
 ## The bundled default world: a lazy, range-fetched FS node
+> **S.6 (2026-10-10) changed the default.** The bundled map is now **`Eden.emod`** (11.8 MB; the
+> zstd bake of the 52.5 MB RLE `Eden.eden`), at `/bundle/Eden.emod`. `EdenWorldStore::open()` scans
+> the whole file (every record's CRC), so the range node below would cost ~380 synchronous 32 KB
+> XHRs at boot; `eden_default_world.pre.js` therefore serves it **whole** by default (`wantsEager()`:
+> one 12 MB fetch, resident once — `?worldfs=lazy` / `Module.EDEN_WORLD_FS='lazy'` still select the
+> node described below, and `headless-lazy-world-test.js` does). Everything below is the pass-46
+> design and numbers, for the 52 MB file; the properties it lists still hold for either mode.
+
 *(pass 46, perf-audit ROI row 9 / §5b.1b — `src/seam/js/eden_default_world.pre.js`)*
 
 `Eden.eden` is ~52.5 MB and used to be held whole in MEMFS for the entire session (and

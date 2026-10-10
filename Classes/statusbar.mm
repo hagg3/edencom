@@ -9,6 +9,7 @@
 #import "statusbar.h"
 #import "Globals.h"
 #import "OpenGL_Internal.h"
+#import "GLWidgets.h"
 
 static const int thresh=1000; //beyond this don't erase text ever.
 
@@ -20,6 +21,7 @@ statusbar::statusbar(CGRect rect, float font_size_in){
     message=NULL;
 	textlife=0;
 	font_size=font_size_in;
+    toast=NULL;
 	
 }
 statusbar::statusbar(CGRect rect){
@@ -28,6 +30,14 @@ statusbar::statusbar(CGRect rect){
     message=NULL;
     textlife=0;
     font_size=20;
+    toast=NULL;
+}
+statusbar::~statusbar(){
+    clear();
+    delete toast;
+}
+void statusbar::useToast(){
+    if(!toast)toast=new GLW::Toast();
 }
 
 void statusbar::setStatus(NSString* status,float time){
@@ -36,16 +46,20 @@ void statusbar::setStatus(NSString* status,float time){
 extern "C" float eden_ui_raster_density(void);   // web/src/seam/DisplayProfile_web.mm
 void statusbar::setStatus(NSString* status,float time,UITextAlignment align){
    if(message&&[status isEqualToString:message]){
-        textlife=time;       
+        textlife=time;
+        if(toast)toast->show([status UTF8String],time);   // re-shows it if it had expired
         return;
                      
     }
     
-    clear();
+    clearText();   // not clear(): new text on a showing toast must not restart its fade-in
     if(CHECK_GL_ERROR()){}
 	message=status;
     [message retain];
-    if(IS_IPAD){
+    if(toast){
+        toast->show([status UTF8String],time);
+    }
+    else if(IS_IPAD){
 		text=new Texture2D(status,
 									CGSizeMake(pos.size.width*SCALE_WIDTH,
 														  pos.size.height*SCALE_HEIGHT) ,
@@ -65,6 +79,10 @@ void statusbar::setStatus(NSString* status,float time,UITextAlignment align){
 	//printg("message set:%s time:%f\n",[message cString],textlife);
 }
 void statusbar::clear(){
+    clearText();
+    if(toast)toast->clear();
+}
+void statusbar::clearText(){
 	if(text!=NULL){
         delete text;
 		
@@ -79,11 +97,16 @@ void statusbar::clear(){
 void statusbar::update(float etime){
 	if(textlife<thresh)
 	textlife-=etime;
+    if(toast)toast->update(etime);
     
    // printg("message update set:%s time:%f\n",[message cString],textlife);
 }
 void statusbar::render(){
     //glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    if(toast){
+        toast->render();
+        return;
+    }
 	if(text!=NULL&&textlife>0){
 		glColor4f(0.0, 0.0, 0.0, 1.0);
         
@@ -109,6 +132,10 @@ void statusbar::render(){
 	
 }
 void statusbar::renderPlain(){
+    if(toast){
+        toast->render();
+        return;
+    }
     if(text!=NULL&&textlife>0){
 		
         CGPoint p=CGPointMake(pos.origin.x,pos.origin.y);

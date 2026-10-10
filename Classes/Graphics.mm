@@ -701,7 +701,7 @@ void Graphics::drawCube(float x,float y,float z,int type,int buildsize){
 	1, 0 	//1  L back*/
     Resources* res=Resources::getResources;
 	BOOL coloring=FALSE;
-    if(type==TYPE_GRASS||type==TYPE_GRASS2||type==TYPE_GRASS3||type==TYPE_TNT||type==TYPE_BRICK||type==TYPE_VINE||type==TYPE_FIREWORK){
+    if(type==TYPE_GRASS||type==TYPE_GRASS2||type==TYPE_GRASS3||type==TYPE_TNT||type==TYPE_BRICK||type==TYPE_VINE||type==TYPE_FIREWORK||(type>=TYPE_ORE_SAND&&type<=TYPE_ALGAE)){
         if(!World::getWorld->hud->block_paintcolor)
         coloring=TRUE;
     }
@@ -735,6 +735,8 @@ void Graphics::drawCube(float x,float y,float z,int type,int buildsize){
                 bf=TEX_TNT_TOP_COLOR;
             else if(bf==TEX_BRICK)
                 bf=TEX_BRICK_COLOR;
+            else if(IS_NEWBLOCK_TEX(bf))
+                bf=NEWBLOCK_COLOR_TEX(bf);   // D.2t
             
             
         }

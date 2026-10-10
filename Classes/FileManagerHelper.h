@@ -31,6 +31,11 @@ void fmh_readColumnFromDefault(int cx,int cz);
 // Worst case raw bytes for one band's record: a 2-byte length prefix plus one 3-byte run per voxel.
 #define FMH_BAND_RAW_MAX (2+CHUNK_SIZE3*3)
 
+// S.6: set in lens[i] when band i is NOT RLE but a ready-made Eden.emod band (CHUNK_SIZE3 type bytes
+// then CHUNK_SIZE3 paint bytes, CC(x,z,y)); the low bits are its length. Lets the pure decode step
+// tell the two apart without a global.
+#define FMH_LEN_PLANAR 0x10000
+
 // How many RLE bands the BUNDLED map stores per column, clamped to this world's height. Callers
 // size their buffers from this.
 int fmh_defaultBandCount();
@@ -46,6 +51,12 @@ BOOL fmh_readColumnRawFromDefault(int cx,int cz,unsigned char* raw,int* lens);
 // existing voxels alone -- which is what the original did, by simply not writing them.
 void fmh_decodeColumnBands(const unsigned char* raw,const int* lens,int bands,
                            block8* outBlocks,color8* outColors,int* status);
+
+// S.6 gate: opens `edenPath` (the RLE map) and `emodPath` (its bake) side by side and decodes every
+// column through the engine's own read + decode steps, once from each; returns the number of columns
+// that differ (0 = identical), -1 if either file will not open, and puts the compared count in
+// *compared. Leaves the bundled-map state fmh_init set up untouched.
+int fmh_selftestCompare(const char* edenPath,const char* emodPath,int* compared);
 
 // MAIN THREAD. Land a decoded column: re-home each chunk (setBounds), copy the decoded voxels in,
 // mirror them into blockarray, and addChunk() so the dirty lists pick them up. Bands the bundled

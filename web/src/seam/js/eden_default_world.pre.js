@@ -1,15 +1,18 @@
-// eden_default_world.pre.js — the pre-generated default world (Eden.eden), served to the engine
+// S.6 (2026-10-10): the default map is now Eden.emod (11.8 MB; was the 52 MB RLE Eden.eden), served
+// WHOLE by default -- see wantsEager(). Everything below about the 52 MB file and its range node is the
+// pass-46 history, kept because ?worldfs=lazy still runs it.
+// eden_default_world.pre.js — the pre-generated default world (Eden.emod), served to the engine
 // WITHOUT holding its ~52 MB in memory (perf-audit §5b.1b / ROI row 9, pass 46).
 //
 // ---------------------------------------------------------------------------------------------
 // History
 //
-// Eden.eden (~52 MB, repo-root, RLE reference map — docs/eden-file-format.md) was originally
+// Eden.emod (~52 MB, repo-root, RLE reference map — docs/eden-file-format.md) was originally
 // --preload-file'd into eden.data, so first paint was gated on downloading the WHOLE ~54 MB asset
 // package. Pass 30 pulled it out of the package and fetched it separately (this file), which fixed
 // first paint but still held every byte resident in MEMFS for the whole session.
 //
-// Pass 46 makes it a real lazily-read file: /bundle/Eden.eden is now a custom Emscripten FS node
+// Pass 46 makes it a real lazily-read file: /bundle/Eden.emod is now a custom Emscripten FS node
 // whose stream_ops.read is served out of a small LRU of 64 KB blocks, filled on demand by
 // SYNCHRONOUS same-origin HTTP Range requests (browser) or fs.readSync (node). Residency drops
 // from ~52.5 MB to ~2 MB, and a cold boot transfers ~0.6 MB of it instead of 52 MB.
@@ -32,7 +35,7 @@
 // The hard constraint this design has to respect
 //
 // The file must be FULLY OPENABLE AND READABLE, synchronously, before main() runs.
-// FileManagerHelper::fmh_init opens Eden.eden and reads its header + 518 KB directory
+// FileManagerHelper::fmh_init opens Eden.emod and reads its header + 518 KB directory
 // SYNCHRONOUSLY and unconditionally during FileManager's constructor, which runs inside
 // World::World() at app startup. If the file is missing at that point, fmh_init's NSFileHandle
 // ends up nil, and this port's hand-written ObjC runtime (src/shim/objc/objc_runtime.cpp's
@@ -76,8 +79,8 @@ Module['preRun'].push(function () {
   if (typeof FS === 'undefined') return;
 
   var DEP = 'eden-default-world-fetch';
-  var URL_PATH = 'Eden.eden';   // browser: relative to public/eden-st.html (CMakeLists symlinks
-                                // public/Eden.eden -> ../Eden.eden, same trick as public/audio)
+  var URL_PATH = 'Eden.emod';   // browser: relative to public/eden-st.html (CMakeLists symlinks
+                                // public/Eden.emod -> ../Eden.emod, same trick as public/audio)
   // Tunables. These defaults are MEASURED, not guessed — tools/headless-lazy-world-test.js --sweep
   // runs a real boot + initial world load once per combination (each in its own process, since
   // these are read at preRun time). Cold boot + first normal-world load, totals:
@@ -133,9 +136,9 @@ Module['preRun'].push(function () {
   // network path — `read` is a plain subarray copy out of `bytes`).
   function populateEager(bytes) {
     try { FS.mkdirTree('/bundle'); } catch (e) { /* already created by the media preloads */ }
-    try { FS.unlink('/bundle/Eden.eden'); } catch (e) { /* not there yet, the normal case */ }
+    try { FS.unlink('/bundle/Eden.emod'); } catch (e) { /* not there yet, the normal case */ }
     try {
-      var node = FS.createFile('/bundle', 'Eden.eden', {}, true, false);
+      var node = FS.createFile('/bundle', 'Eden.emod', {}, true, false);
       node.contents = null;
       Object.defineProperty(node, 'usedBytes', { get: function () { return bytes.length; }, configurable: true });
 
@@ -154,7 +157,7 @@ Module['preRun'].push(function () {
       Module['EdenWorldFS'].mode = 'eager';
       Module['EdenWorldFS'].size = bytes.length;
     } catch (e) {
-      console.warn('[eden] installing /bundle/Eden.eden failed:', e);
+      console.warn('[eden] installing /bundle/Eden.emod failed:', e);
     }
     doneDep();
   }
@@ -166,7 +169,7 @@ Module['preRun'].push(function () {
   // the whole cache/coalescing/eviction path for real.
   function installLazyNode(size, readRange, mode) {
     try { FS.mkdirTree('/bundle'); } catch (e) { /* already created by the media preloads */ }
-    try { FS.unlink('/bundle/Eden.eden'); } catch (e) { /* not there yet, which is the normal case */ }
+    try { FS.unlink('/bundle/Eden.emod'); } catch (e) { /* not there yet, which is the normal case */ }
 
     var blocks = new Map();   // blockIndex -> Uint8Array (Map iterates in insertion order: LRU
                               // is maintained by delete+re-set on touch, no side list needed)
@@ -264,7 +267,7 @@ Module['preRun'].push(function () {
       return got;
     }
 
-    var node = FS.createFile('/bundle', 'Eden.eden', {}, true, false);
+    var node = FS.createFile('/bundle', 'Eden.emod', {}, true, false);
     node.contents = null;
     // MEMFS's own getattr (attr.size) and llseek (SEEK_END) both read node.usedBytes, so defining
     // it as a getter is all it takes for stat/fseek(SEEK_END)/ftello to report the real size while
@@ -302,7 +305,12 @@ Module['preRun'].push(function () {
     if (Module['EDEN_WORLD_FS'] === 'eager') return true;
     if (Module['EDEN_WORLD_FS'] === 'lazy') return false;
     if (typeof location !== 'undefined' && location.search && /[?&]worldfs=eager\b/.test(location.search)) return true;
-    return false;
+    if (typeof location !== 'undefined' && location.search && /[?&]worldfs=lazy\b/.test(location.search)) return false;
+    // S.6: the default map is Eden.emod, 11.8 MB, and the store SCANS the whole file when it opens
+    // (every record's CRC), so the byte-range node would turn that into ~380 synchronous 32 KB XHRs
+    // at boot. One 12 MB download is the better trade, so eager is the default and the range node is
+    // opt-in (?worldfs=lazy / Module.EDEN_WORLD_FS='lazy' -- headless-lazy-world-test.js does).
+    return true;
   }
 
   if (isNode) {
@@ -313,7 +321,7 @@ Module['preRun'].push(function () {
     try {
       nodeFs = require('fs');
       var nodePath = require('path');
-      p = nodePath.join(__dirname, '..', '..', 'Eden.eden'); // build-st/ -> web/ -> repo root
+      p = nodePath.join(__dirname, '..', '..', 'Eden.emod'); // build-st/ -> web/ -> repo root
       if (wantsEager()) {
         populateEager(nodeFs.readFileSync(p));
       } else {
@@ -331,7 +339,7 @@ Module['preRun'].push(function () {
         }, 'lazy-fs');
       }
     } catch (e) {
-      console.warn('[eden] node Eden.eden open failed (default-world terrain will be empty):', e);
+      console.warn('[eden] node Eden.emod open failed (default-world terrain will be empty):', e);
       doneDep();
     }
   } else if (typeof fetch === 'function') {
@@ -390,7 +398,7 @@ Module['preRun'].push(function () {
       })
         .then(function (buf) { populateEager(new Uint8Array(buf)); })
         .catch(function (e) {
-          console.warn('[eden] Eden.eden fetch failed (default-world terrain will be empty):', e);
+          console.warn('[eden] Eden.emod fetch failed (default-world terrain will be empty):', e);
           doneDep();
         });
     };
@@ -410,7 +418,7 @@ Module['preRun'].push(function () {
       if (xhr.overrideMimeType) xhr.overrideMimeType('text/plain; charset=x-user-defined');
       xhr.send(null);
       if (xhr.status !== 206 && xhr.status !== 200) {
-        throw new Error('Eden.eden range ' + start + '-' + end + ': HTTP ' + xhr.status +
+        throw new Error('Eden.emod range ' + start + '-' + end + ': HTTP ' + xhr.status +
                         ' (Content-Range ' + xhr.getResponseHeader('Content-Range') + ')');
       }
       var text = xhr.responseText || '';
@@ -441,7 +449,7 @@ Module['preRun'].push(function () {
       try {
         return rawSyncRange(start, end);
       } catch (e) {
-        console.error('[eden] Eden.eden lazy read failed at ' + start + '-' + end +
+        console.error('[eden] Eden.emod lazy read failed at ' + start + '-' + end +
                       ' — reporting EIO to the engine rather than unwinding main():', e);
         Module['EdenWorldFS'].degraded = true;
         throw new FS.ErrnoError(29 /* EIO */);
@@ -478,7 +486,7 @@ Module['preRun'].push(function () {
         var enc = r.headers.get('Content-Encoding');
         var m = cr && /\/\s*(\d+)\s*$/.exec(cr);
         if (r.status !== 206 || !m || enc) {
-          console.log('[eden] Eden.eden: server does not do byte serving (status ' + r.status +
+          console.log('[eden] Eden.emod: server does not do byte serving (status ' + r.status +
                       ', Content-Range ' + cr + ', Content-Encoding ' + enc + ') — fetching it whole.');
           eagerFetch();
           return;
@@ -490,14 +498,14 @@ Module['preRun'].push(function () {
             var tail = rawSyncRange(total - 1, total - 1);
             if (tail.length !== 1) throw new Error('tail read returned ' + tail.length + ' bytes, expected 1');
           } catch (e) {
-            console.log('[eden] Eden.eden: byte serving is not usable from synchronous XHR on this ' +
+            console.log('[eden] Eden.emod: byte serving is not usable from synchronous XHR on this ' +
                         'host (' + e.message + ') — fetching it whole. This is the Safari/GitHub-Pages ' +
                         'gzip-range case; see this file\'s probe comment.');
             eagerFetch();
             return;
           }
           installLazyNode(total, syncRange, 'lazy-range');
-          console.log('[eden] Eden.eden: lazy range-fetch active (' + total + ' bytes, ' +
+          console.log('[eden] Eden.emod: lazy range-fetch active (' + total + ' bytes, ' +
                       (BLOCK_SIZE / 1024) + ' KB blocks, ' + MAX_BLOCKS + ' cached).');
         });
       }).catch(function (e) {
@@ -508,10 +516,10 @@ Module['preRun'].push(function () {
         // (which is how the Safari bug first presented). Only fall back if the boot has not
         // actually started yet.
         if (depDone) {
-          console.error('[eden] Eden.eden: error escaped engine startup, not a probe failure:', e);
+          console.error('[eden] Eden.emod: error escaped engine startup, not a probe failure:', e);
           return;
         }
-        console.warn('[eden] Eden.eden range probe failed, falling back to whole-file fetch:', e);
+        console.warn('[eden] Eden.emod range probe failed, falling back to whole-file fetch:', e);
         eagerFetch();
       });
     }

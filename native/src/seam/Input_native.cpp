@@ -68,6 +68,7 @@ void eden_hotbar_scroll(int dir);
 void eden_select_hotbar_slot(int slot);
 int  eden_pick_block_at_crosshair(void);
 void eden_tap_hud_button_begin(int which);
+int  eden_picker_page_step(int delta);   // Input_web.mm (D.2p)
 void eden_tap_hud_button_end(int which);
 void eden_ui_tick(void);
 int  eden_get_hold_to_act(void);
@@ -250,6 +251,21 @@ HoldAction g_hold;
 // eden_set_jump is a synthetic touch held on the jump button's rect, so it has the same
 // straddle-a-tick requirement.
 int  g_jumpFrames = 0;
+
+// Lets go of everything the keyboard and mouse are holding: the hold-to-act pulse (closing an
+// outstanding begin), every continuous key, the jump touch. Called when a GL text field takes the
+// keyboard: from then on the field swallows key-downs AND the mouse is out of capture, so the
+// releases that would have ended these never reach the game. Found the hard way (D.4b, the user on
+// the Mac): a right-click that opened the sign prompt left the build pulse running, so the prompt
+// re-opened every 200 ms, and a key held at the time kept walking the player after it closed.
+void release_held_input() {
+    if (g_hold.active) {
+        if (g_hold.pendingEnd) eden_click_end(g_hold.isBuild ? 1 : 0);
+        g_hold = HoldAction{};
+    }
+    for (int a = 0; a < A_COUNT; ++a) g_down[a] = false;
+    if (g_jumpFrames <= 0) eden_set_jump(0);   // else the tick's deferred end does it
+}
 
 // The mouse identity the menu path uses. Negative on purpose: UITouch::isRealTouch answers
 // "identity >= 0", which is how engine code (Hud.mm, Joystick.mm) tells a real touchscreen gesture
@@ -666,6 +682,7 @@ extern "C" void eden_text_input_keep_visible(float x, float y, float w, float h)
 }
 
 extern "C" void eden_text_input_start(float x, float y, float w, float h) {
+    if (!g_textActive) release_held_input();   // the field owns the keyboard from here (D.4b)
     g_textActive = true;
     if (!g_window) return;
 #if defined(EDEN_PLATFORM_IOS)
@@ -772,6 +789,10 @@ void eden_native_input_handle_event(const SDL_Event& e) {
             // key belongs to IT, not to the game. This has to sit ahead of every dispatch below
             // — including the continuous ones — or binding a key would also walk the player.
             if (eden_keybind_capture_feed((int)e.key.scancode)) return;
+            // D.2p: `[` / `]` page the open block picker. Fixed keys, not keybind rows: they only
+            // mean anything while the picker is up, and then nothing else is bound to them.
+            if (e.key.scancode == SDL_SCANCODE_LEFTBRACKET  && eden_picker_page_step(-1)) return;
+            if (e.key.scancode == SDL_SCANCODE_RIGHTBRACKET && eden_picker_page_step(1))  return;
             resolve_model();
             // ITERATE, do not take the first match. "One key, two actions" is shipped
             // configuration (Ctrl is flyDown AND crouch out of the box) and a rebind can create
@@ -805,7 +826,9 @@ void eden_native_input_handle_event(const SDL_Event& e) {
             return;
         }
         case SDL_EVENT_KEY_UP: {
-            if (g_textActive) return;          // the field swallowed the down edge too
+            // Not filtered while a text field is up: the field swallowed this key's DOWN edge, so
+            // clearing a continuous action here is at worst a no-op -- and it is the release of a
+            // key that was already held when the field opened (release_held_input covers that too).
             resolve_model();
             const int code = (int)e.key.scancode;
             for (int mi = eden_keybind_action_after(-1, code); mi >= 0;
@@ -853,14 +876,23 @@ void eden_native_input_handle_event(const SDL_Event& e) {
 
         case SDL_EVENT_MOUSE_BUTTON_UP: {
             if (is_synthetic_mouse(e.button.which)) return;
+            const bool isBuild = (e.button.button == SDL_BUTTON_RIGHT);
+            // The hold ends on its button's release WHEREVER the cursor is: the press that began it
+            // can open a dialog or a picker, which drops capture before this release arrives.
+            // Routing it to the menu path only (as until D.4b) left the pulse running forever.
+            const bool endsHold = g_hold.active && isBuild == g_hold.isBuild &&
+                                  e.button.button != SDL_BUTTON_MIDDLE;
             if (!g_relativeMouse) {
+                if (endsHold) {
+                    if (g_hold.pendingEnd) eden_click_end(g_hold.isBuild ? 1 : 0);
+                    g_hold = HoldAction{};
+                }
                 float x, y;
                 window_to_point(e.button.x, e.button.y, &x, &y);
                 eden_input_pointer_event(2, kMouseIdentity, x, y);
                 return;
             }
-            const bool isBuild = (e.button.button == SDL_BUTTON_RIGHT);
-            if (!g_hold.active || isBuild != g_hold.isBuild) return;
+            if (!endsHold) return;
             // eden-input.js's holdActStop: if a begin is still outstanding, close it, then drop
             // the action. Leaving an unmatched begin behind is a stuck touch — the same class of
             // bug as the stuck-jump one Input_web.mm's header warns about.

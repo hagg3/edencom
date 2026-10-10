@@ -37,10 +37,10 @@ struct Handles {
 
 }  // namespace
 
-extern "C" int eden_net_backend_available(void) { return 1; }
-
-extern "C" int eden_net_backend_fetch(const char* url, const EdenNetCallbacks* cb, int* httpStatus,
-                                      char* err, int errcap) {
+// GET when contentType is null; otherwise POST the file at bodyPath, its length declared up front
+// (WinHttpSendRequest's dwTotalLength) and its bytes written with WinHttpWriteData.
+static int run(const char* url, const char* contentType, const char* bodyPath, const EdenNetCallbacks* cb,
+               int* httpStatus, char* err, int errcap) {
     *httpStatus = 0;
     const std::wstring wurl = widen(url);
     URL_COMPONENTS uc;
@@ -66,10 +66,33 @@ extern "C" int eden_net_backend_fetch(const char* url, const EdenNetCallbacks* c
     WinHttpSetTimeouts(h.session, 15000, 15000, 30000, 30000);   // resolve, connect, send, receive
     h.connect = WinHttpConnect(h.session, std::wstring(host, uc.dwHostNameLength).c_str(), uc.nPort, 0);
     if (!h.connect) { std::snprintf(err, errcap, "could not connect"); return 0; }
-    h.request = WinHttpOpenRequest(h.connect, L"GET", object.c_str(), nullptr, WINHTTP_NO_REFERER,
+    h.request = WinHttpOpenRequest(h.connect, contentType ? L"POST" : L"GET", object.c_str(), nullptr, WINHTTP_NO_REFERER,
                                    WINHTTP_DEFAULT_ACCEPT_TYPES, secure ? WINHTTP_FLAG_SECURE : 0);
     if (!h.request) { std::snprintf(err, errcap, "could not connect"); return 0; }
-    if (!WinHttpSendRequest(h.request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
+    if (contentType) {
+        const std::wstring wpath = widen(bodyPath);
+        FILE* body = _wfopen(wpath.c_str(), L"rb");
+        if (!body) { std::snprintf(err, errcap, "could not read the upload"); return 0; }
+        _fseeki64(body, 0, SEEK_END);
+        const long long len = _ftelli64(body);
+        _fseeki64(body, 0, SEEK_SET);
+        if (len < 0 || len > 0xFFFFFFFFLL) { std::fclose(body); std::snprintf(err, errcap, "the upload is too large"); return 0; }
+        const std::wstring hdr = L"Content-Type: " + widen(contentType);
+        bool ok = WinHttpSendRequest(h.request, hdr.c_str(), (DWORD)-1L, WINHTTP_NO_REQUEST_DATA, 0, (DWORD)len, 0) != 0;
+        std::vector<char> chunk(65536);
+        while (ok) {
+            if (cb->cancelled && cb->cancelled(cb->ctx)) { std::fclose(body); std::snprintf(err, errcap, "cancelled"); return 0; }
+            const size_t n = std::fread(chunk.data(), 1, chunk.size(), body);
+            if (n == 0) break;
+            DWORD wrote = 0;
+            ok = WinHttpWriteData(h.request, chunk.data(), (DWORD)n, &wrote) != 0;
+        }
+        std::fclose(body);
+        if (!ok || !WinHttpReceiveResponse(h.request, nullptr)) {
+            std::snprintf(err, errcap, "could not send (error %lu)", (unsigned long)GetLastError());
+            return 0;
+        }
+    } else if (!WinHttpSendRequest(h.request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
         !WinHttpReceiveResponse(h.request, nullptr)) {
         std::snprintf(err, errcap, "could not connect (error %lu)", (unsigned long)GetLastError());
         return 0;
@@ -105,4 +128,16 @@ extern "C" int eden_net_backend_fetch(const char* url, const EdenNetCallbacks* c
         if (!cb->on_data(cb->ctx, buf.data(), got)) { std::snprintf(err, errcap, "could not write the download"); return 0; }
     }
     return 1;
+}
+
+extern "C" int eden_net_backend_available(void) { return 1; }
+
+extern "C" int eden_net_backend_fetch(const char* url, const EdenNetCallbacks* cb, int* httpStatus,
+                                      char* err, int errcap) {
+    return run(url, nullptr, nullptr, cb, httpStatus, err, errcap);
+}
+
+extern "C" int eden_net_backend_post_file(const char* url, const char* contentType, const char* bodyPath,
+                                          const EdenNetCallbacks* cb, int* httpStatus, char* err, int errcap) {
+    return run(url, contentType, bodyPath, cb, httpStatus, err, errcap);
 }

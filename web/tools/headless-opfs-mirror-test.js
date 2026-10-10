@@ -21,7 +21,14 @@
 //      and reads back the block this test placed — i.e. the mirror is a real, loadable .eden and
 //      the populate path works. (Phase 2, re-invoked automatically; --phase2 runs it by hand.)
 //
-// Usage: node tools/headless-opfs-mirror-test.js [path/to/eden.js]   (defaults to ../build-st/eden.js)
+//   With --world-format=emod (Stage S / S.4) the world is an `.emod` instead (eden_set_world_format(1)):
+//   (1) and (3) as above, and in place of (2) — whose scratch/in-place/journal strategies do not exist
+//   for an append-only log — every save must mirror EXACTLY the bytes it appended to the file (the
+//   append pattern: nothing a previous commit wrote is ever rewritten), and a no-edit save must stay
+//   under 2 KB.
+//
+// Usage: node tools/headless-opfs-mirror-test.js [path/to/eden.js] [--world-format=emod]
+//        (defaults to ../build-st/eden.js)
 'use strict';
 const fs = require('fs');
 const os = require('os');
@@ -37,6 +44,7 @@ const phase2 = args.includes('--phase2');
 const dirArg = (args.find((a) => a.startsWith('--dir=')) || '').slice(6);
 const MIRROR_DIR = dirArg || fs.mkdtempSync(path.join(os.tmpdir(), 'eden-opfs-'));
 const EXPECT_ARG = (args.find((a) => a.startsWith('--expect=')) || '').slice(9);
+const EMOD = args.includes('--world-format=emod');
 
 let failures = 0;
 function check(name, cond, extra) {
@@ -231,6 +239,10 @@ global.Module.postRun.push(async () => {
     }
 
     // ---- 1. create + first (below-threshold) save -------------------------------------------
+    if (EMOD) {
+        global.Module._eden_set_world_format(1);
+        check('world format switched to .emod', global.Module._eden_get_world_format() === 1);
+    }
     const idx = global.Module._eden_menu_create_world();
     const displayName = utf8(global.Module._eden_menu_world_name(idx));
     global.Module._eden_menu_clear_pending_world_type();
@@ -270,6 +282,28 @@ global.Module.postRun.push(async () => {
     const worldSize = global.FS.stat('/documents/' + wf.file).size;
     console.log(`  world file ${wf.file}: ${worldSize.toLocaleString()} B`);
     console.log(`  below-threshold save mirrored ${scratchSaveBytes.toLocaleString()} B`);
+    if (EMOD) {
+        check('the world file is an .emod', /\.emod$/.test(wf.file), wf.file);
+        // ---- 2'. the append pattern: each save mirrors exactly what it appended ----------------
+        const sizeOf = () => global.FS.stat('/documents/' + wf.file).size;
+        const edits = [Math.max(0, editY - 1), Math.max(0, editY - 2), null];
+        let k = 0;
+        for (const y of edits) {
+            k++;
+            if (y !== null) check('emod setblock #' + k + ' accepted', global.Module._eden_console_setblock(editX, editZ, y, 1) === 1);
+            const size0 = sizeOf();
+            before = bytesWritten();
+            await ensureMenuOpen();
+            await tapHud(3);
+            await flush();
+            const mirrored = bytesWritten() - before, grew = sizeOf() - size0;
+            compareMirror('emod save #' + k + (y === null ? ' (no edit)' : ''));
+            console.log(`  emod save #${k}: file grew ${grew.toLocaleString()} B, mirrored ${mirrored.toLocaleString()} B`);
+            check('emod save #' + k + ': append-only -- mirrored bytes == bytes appended', grew > 0 && mirrored === grew,
+                `grew ${grew}, mirrored ${mirrored}`);
+            if (y === null) check('a no-edit .emod save mirrors under 2 KB', mirrored < 2048, mirrored + ' B');
+        }
+    } else {
 
     // ---- 2. the in-place (B5) save path — the one C2 is about --------------------------------
     // Below the threshold the ENGINE itself rewrites the whole file into a .savetmp scratch copy,
@@ -341,6 +375,7 @@ global.Module.postRun.push(async () => {
         `${journalBytes} vs ${noJournalBytes}`);
     check('...and the in-place save is still a small fraction of the world file',
         journalBytes < worldSize / 10, `${journalBytes} B of ${worldSize} B`);
+    }   // !EMOD
 
     // ---- 4. quit, reload from MEMFS, save again ----------------------------------------------
     await ensureMenuOpen();
@@ -365,8 +400,8 @@ global.Module.postRun.push(async () => {
         !fs.existsSync(path.join(MIRROR_DIR, 'Imported.bin')));
 
     // ---- 7. no scratch files left behind in the mirror ----------------------------------------
-    const leftovers = fs.readdirSync(MIRROR_DIR).filter((n) => /\.savetmp|\.savejrnl/.test(n));
-    check('no .savetmp/.savejrnl leftovers in the mirror', leftovers.length === 0, leftovers.join(','));
+    const leftovers = fs.readdirSync(MIRROR_DIR).filter((n) => /\.savetmp|\.savejrnl|\.creating|\.compact|\.spill|\.converting/.test(n));
+    check('no .savetmp/.savejrnl/.creating/.compact leftovers in the mirror', leftovers.length === 0, leftovers.join(','));
 
     // ---- 8. phase 2: a fresh process boots from the mirror alone ------------------------------
     console.log('--- phase 2: booting a fresh process from the mirror directory ---');

@@ -29,7 +29,13 @@ passes, special objects, sky, and the per-vertex data formats.
   and `Terrain::render2` wraps everything in `glScalef(.25,.25,.25)`; pass 1 relies on
   the modelview already being scaled the same way via `Graphics::beginTerrain`.
   UV shorts are normalized by a **texture matrix** trick: `glMatrixMode(GL_TEXTURE);
-  glScalef(1, 1/32, 1)` around the terrain passes (atlas is a 1×32-tile strip).
+  glScalef(1, 1/ATLAS_TILES, 1)` around the terrain passes and `BlockBreak::render` (each atlas
+  is a 1×`ATLAS_TILES` strip). **Modified from stock (D.2t, 2026-10-10):** stock was 1/32 with
+  32-tile atlases; both grew to 64 (`Constants.h` `ATLAS_TILES`) to carry blocks 112–127 — atlas2's
+  extra 32 tiles are transparent padding so one constant serves both passes. Every consumer reads
+  it: the two passes, `BlockBreak`, `Resources::getBlockTex`/`getBlockTexShort` (normalized
+  `type/ATLAS_TILES` for the HUD icons, picker and `Graphics::drawCube`). The image loader's cap is
+  2048 (`kMaxImageTextureSize_Eden`); at the old 1024 the 2048-row atlas was silently halved.
 - `vertexObject` — float version used for per-frame immediate batches (doors, cubes,
   portals, flowers, creatures env-map).
 - `vertexpStruct` / `vertexpBreak` — point-sprite particles / block-break debris.
@@ -82,8 +88,11 @@ CPU-side, runs on the main thread inside `prepareAndLoadGeometry`. Stages:
    (skylight 0.35 at night + colored `lightarray` contribution), plus special cases:
    burned blocks half-brightness, lava/lightbox fullbright, ramps/side pieces get
    precomputed `gshadows` face shades, water alpha 145. Unpainted (`color==0`)
-   colorable blocks (grass, TNT, brick, vine…) swap to the non-color atlas tile and
-   use `blockColor` tint instead. Liquid blocks rewrite the cube's y-coordinates from
+   colorable blocks (grass, TNT, brick, vine…, and since D.2t blocks 112–127) set `coloring`:
+   their face swaps to the `_COLOR` atlas tile (`TEX_NEWBLOCK`→`TEX_NEWBLOCK_COLOR` for 112–127)
+   drawn with paint = white, since that art carries its own colour; the other unpainted blocks
+   multiply their greyscale tile by `blockColor`, and painted blocks always use the greyscale tile
+   × `colorTable`. Liquid blocks rewrite the cube's y-coordinates from
    the per-level `liquidCube` table so surfaces slope toward the outflow direction
    (chooses one of the 4 `side*Texture` top orientations).
    Face-merging (greedy strips via `face_size`) exists but is **disabled** — the code
@@ -254,6 +263,35 @@ diagrammed above — is untouched; this is purely an intra-chunk optimization.
 Water/lava animation: atlas 2 rows are animation frames; `render2` advances a global
 `frame` counter and translates the texture matrix by `(int)(frame/16)` rows.
 
+**Signs (D.3b, 2026-10-10 — not stock).** `SignRenderer::render()` (`Classes/SignRenderer.mm`) runs
+between `RenderModels()` and `Terrain::render2()` in `World::renderFrame`, so signs sit after the opaque
+pass and under the sorted transparent one. It reads the trailer model (`fm->trailer()`), keeps signs
+within 32 blocks of the player (which also keeps every anchor inside the toroidal window — `getLand`
+wraps outside it), hides one whose anchor is air or whose front cell is opaque (`!IS_NOTSOLID`), and
+builds one dynamic VBO per frame: boards, posts and command-block buttons as untextured vertex-coloured
+boxes (one `glDrawArrays`), then one textured quad per sign's text. Text textures come from the text
+raster seam (`eden_rasterize_text_rgba`, one call per wrapped line, body face), outlined here by
+dilating the coverage, 256 texels across the board, mipmapped; an LRU cache keyed by (board kind, text),
+≤ 64 textures / 8 MB, nearest signs first, ≤ 4 built a frame. Shapes (D.4b resized them to Minecraft's
+2:1, the user 2026-10-10): a standing sign (a = 3) is a 1 × 0.5 board on a 0.5 post facing `c`; a wall
+sign is a 7/8 × 1/2 board centred on the face, 1/32 off it; on a face of a block with a `CMB1` record it
+fills the skin's 0.75 panel instead.
+
+**Command blocks (D.4b, 2026-10-10 — not stock)** are drawn by the same pass: every non-air block with a
+`CMB1` record within 64 blocks gets a fixed skin on each exposed face (neighbour not opaque) — an orange
+frame (four strips), a charcoal panel and a square button box that is red idle / green while
+`CmdTool::running()` (D.4c sets it: while an instance of the script is alive, and for at least
+0.25 s after a press so an instant script still flashes), with a fixed per-face shade (top 1.0, sides
+0.8/0.7, bottom 0.55). While green the button is pushed in to 0.036 (1/32 + 0.005, still in front of a
+board) from 0.047.
+Never the voxel's paint, never meshed: the steel underneath stays stock steel. Frame + panel are a
+separate draw under `glPolygonOffset(-1, -4)` 0.002 off the face — at `P_ZNEAR` 0.012 a 24-bit depth
+step is ~0.02 block at 64, so distance alone would z-fight; the button stands 0.047 out, past a wall
+sign's board (1/32), so a sign on the face never hides it. Buffer layout `[skin | flat | text]`.
+Everything is unlit, with cull face off for the pass; it enters with texture on / lighting off / blend
+off / cull on / `GL_ARRAY_BUFFER` 0 and leaves exactly so. `eden_debug_signs()` reports the last
+frame's counts (`cmds`, `cmdInRange`, `cmdFaces`, `cmdRunning` since D.4b).
+
 The sky is not a skybox mesh — it's screen-space ortho quads (`Texture2D::drawSky`)
 drawn *between* pass 1 and pass 2 at near-far depth, with a colored/B&W crossfade
 state machine for sky-color regions (`Terrain.mm:3073-3170`).
@@ -347,7 +385,8 @@ geometry) is a separate future item (row 24/C2, WebGL2) — not done here.
 ## Safe vs. risky to modify
 - **Safe:** colors/shade tables, fog parameters, adding a new object batch modeled on
   the flower/portal loops, atlas layout changes (update `getBlockTexShort` +
-  `blockTypeFaces`).
+  `blockTypeFaces`; growing the strip past `ATLAS_TILES` means changing that one constant and
+  regenerating both PNGs with `web/tools/atlas-d2t.py`'s pattern).
 - **Caution:** `rebuild2` (counting and fill passes must stay exactly consistent or
   you'll write past `verticesbg`), bucket/`face_idx` bookkeeping, `prepareVBO`
   swap ordering, anything shared with the old threading design.

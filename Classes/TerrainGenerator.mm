@@ -211,10 +211,13 @@ void TerrainGenerator::generateColumn(int cx,int cz,BOOL bgthread){
        for(int x=0;x<CHUNK_SIZE;x++){
             for(int z=0;z<CHUNK_SIZE;z++){
                  setLandt(x ,z ,0,TYPE_BEDROCK);
-                for(int y=1;y<T_HEIGHT/4;y++){
+                // Emod: the slab is a fixed 64z-world slab (grass at 32) whatever the world height —
+                // a 256z world's saved columns sit at 32 too, so T_HEIGHT/4 and T_HEIGHT/2 here put
+                // the unsaved preview 96 blocks above them.
+                for(int y=1;y<T_HEIGHT_DEFAULT/4;y++){
                     setLandt(x,z,y,TYPE_STONE);
                 }
-                for(int y=T_HEIGHT/4;y<T_HEIGHT/2;y++){
+                for(int y=T_HEIGHT_DEFAULT/4;y<T_HEIGHT_DEFAULT/2;y++){
                     setLandt(x,z,y,TYPE_DIRT);
                 }
               /*  int interval=4;
@@ -233,7 +236,7 @@ void TerrainGenerator::generateColumn(int cx,int cz,BOOL bgthread){
                         setColort(x,z,T_HEIGHT/2,44);
                 }*/
               //  setColort(x,z,T_HEIGHT/2,8);
-                setLandt(x,z,T_HEIGHT/2,TYPE_GRASS);
+                setLandt(x,z,T_HEIGHT_DEFAULT/2,TYPE_GRASS);
                 
             }
         }

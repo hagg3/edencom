@@ -24,6 +24,9 @@
 #import "FileManager.h"
 
 #include <zlib.h>
+#include <ctime>
+#include "EdenWorldSource.h"   // emod::ImportJob (S.5)
+extern "C" int eden_get_upgrade_256z(void);   // web/src/seam/Settings_web.mm (S.5e)
 
 #include <algorithm>
 #include <cmath>
@@ -539,7 +542,7 @@ struct SourceState {
     SourceState() : mode(WorldBrowser::MODE_FEATURED), listMode(WorldBrowser::MODE_FEATURED), loaded(false),
                     more(false), listJob(0), listAppend(false), first(0), selected(-1) {}
 };
-enum DlState { DL_IDLE, DL_FETCH, DL_UNPACK };
+enum DlState { DL_IDLE, DL_FETCH, DL_UNPACK, DL_CONVERT };
 }
 
 struct BrowserImpl {
@@ -574,7 +577,8 @@ struct BrowserImpl {
     DlState dl;
     Entry dlEntry;
     Unpacker unpack;
-    std::string dlFile, layerIn, layerOut, dlStatus;
+    emod::ImportJob convert;             // S.5: with g_world_format on, the download converts while it inflates
+    std::string dlFile, layerIn, layerOut, dlStatus, convOut;
     int   dlDepth;
     float dlFrac;
     float clock;
@@ -784,6 +788,7 @@ struct BrowserImpl {
         eden_net_release(dlJob);
         dlJob = 0;
         unpack.end();
+        convert.abort();                 // deletes its spill / .converting / layer
         dl = DL_IDLE;
         cleanTemps();
         dlStatus = why ? why : "";
@@ -814,6 +819,27 @@ struct BrowserImpl {
             eden_net_release(dlJob);
             dlJob = 0;
             dlDepth = 0;
+            if (FileManager::conversionEnabled()) {
+                // Plan §4 *Downloads and imports*: no inflated `.eden` is ever written. The job
+                // unpacks nested layers (still compressed) and converts the innermost stream.
+                // An uncompressed payload gets the same "is it a world" check as the old path.
+                if (sniff(dlFile) == K_RAW && !looks_like_world(dlFile)) {
+                    failDownload("that is not an Eden world file");
+                    return;
+                }
+                const std::string d = documents_dir();
+                for (int k = 1; k < 1000; k++) {
+                    convOut = d + "/" + dlEntry.id + (k == 1 ? std::string() : "-" + std::to_string(k)) + ".emod";
+                    if (file_size(convOut) < 0) break;
+                }
+                // S.5e: Settings' "Upgrade 64z worlds to 256z when converting" (no per-world prompt here).
+                if (!convert.begin(dlFile, convOut, dlEntry.id + ".eden", (int64_t)time(NULL), eden_get_upgrade_256z() != 0)) {
+                    failDownload(convert.error());
+                    return;
+                }
+                dl = DL_CONVERT;
+                return;
+            }
             layerIn = dlFile;                    // layers alternate between the two unpack temp names
             layerOut = documents_dir() + "/.emod-unpack-a";
             const std::string first = dlFile;
@@ -822,6 +848,19 @@ struct BrowserImpl {
             dlDepth = 1;
             if (!unpack.begin(first, layerOut, k)) { failDownload(unpack.err()); return; }
             dl = DL_UNPACK;
+            return;
+        }
+        if (dl == DL_CONVERT) {
+            const int r = convert.step(12);
+            if (r == emod::ImportJob::FAILED) { failDownload(convert.error()); return; }
+            char buf[64];
+            std::snprintf(buf, sizeof(buf), "Converting %d%%", convert.percent());
+            dlStatus = buf;
+            dlFrac = convert.percent() / 100.0f;
+            if (r == emod::ImportJob::RUNNING) return;
+            std::remove(dlFile.c_str());        // the user's call (2026-10-09): the download is discarded
+            dl = DL_IDLE;
+            addImported(convOut.substr(documents_dir().size() + 1));
             return;
         }
         if (dl == DL_UNPACK) {
@@ -856,6 +895,12 @@ struct BrowserImpl {
             if (file_size(d + "/" + file) < 0) break;
         }
         if (std::rename(path.c_str(), (d + "/" + file).c_str()) != 0) { failDownload("could not save the world"); return; }
+        cleanTemps();
+        addImported(file);
+    }
+
+    // The downloaded world is on disk as `file` (a `.eden`, or since S.5 an `.emod`): list it, select it.
+    void addImported(const std::string& file) {
         cleanTemps();
 
         Menu* m = World::getWorld->menu;

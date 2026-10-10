@@ -17,6 +17,9 @@
 #import "MeshPool.h"
 #import "World.h"
 #include <cstddef>   // offsetof, renameWorld
+#include "EdenWorldStore.h"   // emod::eden_detect_bands -- a .eden's height (S.3b)
+#include "EdenWorldSource.h"  // the raw .eden bytes out of a .eden / .gz / .zip (S.5)
+#import "Alert.h"            // showAlertConvertHeight (S.5e)
 
 // See FileManager.h. Both NULL on web — its Foundation shim already answers both questions the
 // way this port wants — and both installed by the native entry point.
@@ -27,6 +30,14 @@ const char* (*eden_documents_root_hook)(void) = NULL;
 #include <algorithm>
 #include <cstring>
 #include <cstdio>
+#include <chrono>
+#include <ctime>
+#include <sys/stat.h>
+#ifndef _WIN32
+#include <sys/statvfs.h>
+#else
+#include <windows.h>
+#endif
 
 //#import "TestFlight.h"
 
@@ -60,6 +71,60 @@ static BOOL writeDirectory;
 static NSString* imgHash;
 static int file_version;
 
+// ---- Stage S / S.4: the open `.emod` world ----------------------------------------------------
+// One store at a time, owned like every other file-scope static here: the world-load pthread while
+// the loading screen shows, the main thread after (plan §1; World.mm has no other thread that
+// reads columns -- its background loader is commented out). NULL whenever the open world is a
+// `.eden` (or none), and every `.eden` code path below is reached only when it is.
+static emod::EdenWorldStore* emodStore=NULL;
+// The 192-byte header the open `.emod` world was loaded with, kept so a save re-emits its
+// reserved bytes verbatim (the spec stores WORLD_HEADER as an opaque record). malloc'd.
+static WorldFileHeader* emodHeader=NULL;
+// One column's decoded bytes (bands * 8192). Static on purpose: readColumn runs on the world-load
+// pthread during a load and on the main thread after it, never both at once (plan §1, checked in
+// S.4: World::loadWorld's doneLoading>=1 branch touches only fm->convertingWorld), so one buffer
+// replaces a 128 KB allocate-and-zero per column read.
+static uint8_t emodColBuf[CHUNKS_PER_COLUMN_MAX*emod::BAND];
+// A finished conversion's source `.eden`, waiting for the player's answer (nil once resolved).
+static NSString* pendingOriginalName=nil;
+// Default ON (the user, 2026-10-10): new worlds are `.emod`, `.eden` files convert when played. Settings >
+// Experiments > "New .emod format" drives it; a harness pins it (g_world_format_pinned) so a setting cannot change a gate.
+int g_world_format=1;
+int g_world_format_pinned=0;
+
+// The 192-byte header of a dropped-in archive (`.eden.gz`, `.zip`), inflated from its first bytes.
+// True only if it reads like a world a conversion could take: a plausible directory_offset and a
+// version this build knows (1.x files and unknown versions have no converter and are not listed).
+static BOOL peekArchiveHeader(const std::string& path,WorldFileHeader* out){
+    emod::WorldSource src;
+    if(!src.open(path)||src.kind()==emod::WorldSource::K_RAW)return FALSE;
+    if(src.read(out,sizeof(*out))!=sizeof(*out)||src.failed())return FALSE;
+    return out->directory_offset>=sizeof(WorldFileHeader)&&out->version>=1&&out->version<=FILE_VERSION_256Z_MAX;
+}
+// Stage S / S.4: rename an `.emod` world on disk -- its display name lives in the WORLD_HEADER
+// record, which is never rewritten in place, so a new one is appended in its own committed batch.
+// Shared by renameWorld (the world list) and setName (the share screen). If that world is the one
+// open, its store is used, so the two handles never disagree about the file's end.
+static BOOL emodSetHeaderName(const std::string& path,const std::string& displayName){
+    emod::EdenWorldStore own;
+    emod::EdenWorldStore* st=(emodStore&&emodStore->path()==path)?emodStore:&own;
+    if(st==&own&&!own.open(path.c_str(),true))return FALSE;
+    std::vector<uint8_t> raw;
+    if(st->readRecord(emod::T_WORLD_HEADER,raw)>emod::EdenWorldStore::READ_FALLBACK||raw.size()!=sizeof(WorldFileHeader))return FALSE;
+    WorldFileHeader h; memcpy(&h,&raw[0],sizeof(h));
+    memset(h.name,0,sizeof(h.name));
+    strncpy(h.name,displayName.c_str(),sizeof(h.name)-1);
+    if(st==emodStore&&emodHeader)memcpy(emodHeader->name,h.name,sizeof(h.name));
+    st->beginBatch();
+    st->putRecord(emod::T_WORLD_HEADER,&h,sizeof(h));
+    return st->commitBatch()?TRUE:FALSE;
+}
+// S.3b: whether the open file already has its creature block between the last column and the
+// directory. Stock code asked `version>=3` (a v1/v2 file had none until its first save appended
+// one and stamped 4) -- but the 2026 game writes version 2 on 256z worlds WITH a 400-slot block,
+// which that test would append a second block after. Set by deriveColumnSpans() from the file.
+static BOOL creature_block_on_disk;
+
 // ---- the post-directory sign trailer (`NewFormat256z` worlds) --------------------------------
 // A 2026-08 game update appends in-game SIGN records inside the chunk-directory region, after the
 // real ColumnIndex entries and before EOF, every row tagged x = 0xffffffff so twoToOne() maps it
@@ -71,16 +136,32 @@ static int file_version;
 // Fix: capture the CONTIGUOUS RUN of gate-failing rows at the END of the directory verbatim and
 // re-emit it after the real entries on every rewrite. Rows that fail the gate *interior* to the
 // real entries are still dropped, exactly as before -- those are corruption, not a trailer.
-// Nothing here parses a sign; the trailer is an opaque blob, which is all round-tripping needs
-// (sign records hold world block coordinates, never file offsets, so relocating columns during a
-// rewrite cannot invalidate them).
+// These bytes are the file's copy. The game's copy is `worldTrailer` below (Stage D / D.3a), parsed
+// from them at load; saveWorld() swaps the model's bytes in only when the model is dirty, so an
+// untouched trailer is still re-emitted exactly as read (sign records hold world block coordinates,
+// never file offsets, so relocating columns during a rewrite cannot invalidate them).
 static unsigned char* dir_trailer=NULL;
 static unsigned long long dir_trailer_len=0;
 // Cap so a wholly-corrupt directory (every row failing the gate) can't be buffered in full. 1 MiB
-// is a multiple of sizeof(ColumnIndex), so it can never split a row, and holds ~8,700 signs. The
-// sibling world editor caps its equivalent at 64 KiB; ours being larger only means we preserve
-// more, never less.
+// is a multiple of sizeof(ColumnIndex), so it can never split a row, and holds ~6,550 signs (a
+// 120-byte record is 10 rows: 12 payload bytes a row). The sibling world editor caps its
+// equivalent at 64 KiB; ours being larger only means we preserve more, never less. WorldTrailer::
+// MAX_BYTES and the `.emod` SIGN_TRAILER limit are the same number.
 #define DIR_TRAILER_MAX (1024*1024)
+static_assert(DIR_TRAILER_MAX==WorldTrailer::MAX_BYTES,"one trailer cap on both containers");
+// Stage D / D.3a: the open world's trailer as a model (signs, command blocks). See WorldTrailer.h and
+// FileManager::trailer(). Loaded by loadWorld()/loadEmodWorld(), written by saveWorld() when dirty.
+static WorldTrailer worldTrailer;
+// Sidecars loadTrailer() adopted and no save has written into the world yet; see trailerSaved().
+static std::vector<std::string> adoptedSidecars;
+// A save that carried the model's bytes has landed: the model is clean, and an adopted sidecar is
+// renamed `<name>.adopted`, so deleting every sign later cannot bring the sidecar's back on reload.
+static void trailerSaved(){
+    worldTrailer.markSaved();
+    for(size_t i=0;i<adoptedSidecars.size();i++)
+        emod::io::replace_file(adoptedSidecars[i],adoptedSidecars[i]+".adopted");
+    adoptedSidecars.clear();
+}
 
 const int defaultRegionSkyColors[4][4]={
      {COLOR_BWG1,COLOR_BLUE1,COLOR_GREEN1,COLOR_RED1},
@@ -168,6 +249,15 @@ static int count=0;
 
 BOOL FileManager::deleteWorld(NSString* name){
     NSFileManager* fm=[NSFileManager defaultManager];
+    if(isEmodName(name)){
+        // The open store holds the file; Windows will not delete an open one. Its temp names go too.
+        this->closeWorld();
+        NSString* base=[NSString stringWithFormat:@"%@/%@",documents,name];
+        // A C array, not an @[...] literal: web's Foundation shim has no arrayWithObjects:count:.
+        static const char* const kTemps[]={".converting",".spill",".creating",".compact"};
+        for(int i=0;i<4;i++)
+            [fm removeItemAtPath:[NSString stringWithFormat:@"%@%s",base,kTemps[i]] error:NULL];
+    }
     NSString* img_name=[NSString stringWithFormat:@"%@/%@.png",documents,name];
     if([fm fileExistsAtPath:img_name]){
         [fm removeItemAtPath:img_name error:NULL];
@@ -201,7 +291,7 @@ void FileManager::LoadCreatures(){
     for(int i=0;i<MAX_CREATURES_SAVED_MAX;i++){
         creatureData[i].type=-1;
     }
-    if(sfh->version<3){
+    if(!creature_block_on_disk){
     }else{
         [saveFile seekToFileOffset:sfh->directory_offset-sizeof(EntityData)*MAX_CREATURES_SAVED];
         for(int i=0;i<MAX_CREATURES_SAVED;i++){
@@ -220,10 +310,11 @@ void FileManager::LoadCreatures(){
 }
 void FileManager::saveCreatures(){
   //  printg("start save:%d\n",sfh->version);
-    if(sfh->version<3){
+    if(!creature_block_on_disk){
     [saveFile seekToFileOffset:sfh->directory_offset];
         sfh->directory_offset+=sizeof(EntityData)*MAX_CREATURES_SAVED;
         writeDirectory=TRUE;
+        creature_block_on_disk=TRUE;
     }
     else
       [saveFile seekToFileOffset:sfh->directory_offset-sizeof(EntityData)*MAX_CREATURES_SAVED];  
@@ -578,7 +669,9 @@ static BOOL beginSaveJournal(NSString* file_name,unsigned long long orig_length,
 	NSMutableData* out=[NSMutableData dataWithCapacity:(NSUInteger)(sizeof(jh)+region_len)];
 	[out appendBytes:&jh length:sizeof(jh)];
 	[out appendData:region];
-	[fm createFileAtPath:jrnl contents:nil attributes:nil]; // S0 BENCH: Apple Foundation returns nil for a missing file
+	// N.8: Apple Foundation's fileHandleForUpdatingAtPath: returns nil for a missing file (the journal was
+	// just removed), so create it first -- otherwise every in-place save (worlds >= 16 MB) was skipped.
+	[fm createFileAtPath:jrnl contents:nil attributes:nil];
 	NSFileHandle* jf=[NSFileHandle fileHandleForUpdatingAtPath:jrnl];
 	if(jf==NULL)return FALSE;
 	[jf writeData:out];
@@ -740,6 +833,12 @@ void FileManager::saveWorld(Vector warp){
 	Terrain* ter=World::getWorld->terrain;
 	NSString* name=ter->world_name;
 	NSString* file_name=[NSString stringWithFormat:@"%@/%@",documents,name];
+	// Stage S / S.4: an `.emod` world appends a committed batch instead of rewriting a file -- no
+	// scratch copy, journal, backup slot or threshold apply (docs/save-load.md, "`.emod` worlds").
+	if(isEmodName(name)){
+		this->saveEmodWorld(warp);
+		return;
+	}
 
 	// PORT SEAM (Phase N Stage 2) — the "previous save" slot, for hosts whose file layer cannot
 	// provide it. See FileManager.h. Deliberately here, before ANY write to file_name and after
@@ -814,7 +913,7 @@ void FileManager::saveWorld(Vector warp){
 			// unloadable. The last complete save stays on disk untouched, every chunk keeps its
 			// `modified` flag, and the next save retries. (Chunks are re-marked by endDynamics
 			// only; nothing above this point has cleared them.)
-			fprintf(stderr,"S0DBG could not journal -- SKIPPING\n");NSLog(@"saveWorld: could not journal %@ -- SKIPPING this save, last one left intact",file_name);
+			NSLog(@"saveWorld: could not journal %@ -- SKIPPING this save, last one left intact",file_name);
 			endSaveJournal(file_name,TRUE);
 			free(sfh);
 			return;
@@ -901,6 +1000,24 @@ void FileManager::saveWorld(Vector warp){
 		free(sfh);
 		return;
 	}
+	// Stage D / D.3a: an edited trailer (signs, command blocks) has one home in a `.eden`, the
+	// directory region, so it forces the directory rewrite even when no column changed.
+	// readDirectory() above just re-captured what is on disk; the model's bytes replace it. (Phase 1
+	// of the journal already holds the whole old directory + trailer, so an in-place rewrite of it is
+	// covered.) The dirty mark is cleared only once the save has landed, below.
+	BOOL trailerSaving=worldTrailer.dirty();
+	if(trailerSaving){
+		std::vector<uint8_t> t=worldTrailer.encode();
+		if(dir_trailer){free(dir_trailer);dir_trailer=NULL;}
+		dir_trailer_len=0;
+		if(!t.empty()){
+			dir_trailer=(unsigned char*)malloc(t.size());
+			memcpy(dir_trailer,&t[0],t.size());
+			dir_trailer_len=t.size();
+		}
+		writeDirectory=TRUE;
+		printg("save: trailer edited -> rewriting the directory with a %llu B trailer\n",dir_trailer_len);
+	}
  //   Player* player=World::getWorld->player;
   //  int scox=player.pos.x/CHUNK_SIZE-T_RADIUS;
    // int scoz=player.pos.z/CHUNK_SIZE-T_RADIUS;
@@ -945,7 +1062,10 @@ void FileManager::saveWorld(Vector warp){
     // world as 64z while its columns were still being written at the 256z stride -- and would have
     // normalised a v6 file to v5's meaning without knowing what v6 changes. A file that arrived
     // >=5 keeps its own version; everything else is stamped 4 exactly as before.
-    if(file_version<FILE_VERSION_256Z){
+    // S.3b: ...unless the world is 256z under a smaller version (the 2026 game writes v2 256z
+    // worlds): its version is kept verbatim too -- the height comes from the file, not from this
+    // field, and 4 would mean nothing more to that game than 2 does.
+    if(file_version<FILE_VERSION_256Z&&g_world_height<T_HEIGHT_MAX){
         sfh->version=FILE_VERSION;
         file_version=FILE_VERSION;
     }else{
@@ -975,6 +1095,7 @@ void FileManager::saveWorld(Vector warp){
 		// Commit. Everything is written, flushed and closed; removing the journal is the point
 		// after which recoverInterruptedSave() will no longer roll this save back.
 		endSaveJournal(file_name,TRUE);
+		if(trailerSaving)trailerSaved();
 	}else{
 	// The atomic swap: temp_name is now a fully-written, closed, valid save. Replace file_name with
 	// it in one rename() — the point at which a crash can no longer produce a half-written world.
@@ -983,6 +1104,8 @@ void FileManager::saveWorld(Vector warp){
 	[fm removeItemAtPath:file_name error:NULL];
 	if(![fm moveItemAtPath:temp_name toPath:file_name error:NULL]){
 		NSLog(@"saveWorld: FAILED to swap in %@ from %@ -- previous save left untouched",file_name,temp_name);
+	}else if(trailerSaving){
+		trailerSaved();
 	}
 	}
 
@@ -1142,8 +1265,11 @@ void FileManager::deriveColumnSpans(){
     this->clearColumnSpans();
     int n=hashmap_length(indexes);
     if(n<=0){
-        // Empty directory: nothing to derive from, fall back to what the version implies.
-        eden_set_creature_slots((sfh->version>=FILE_VERSION_256Z?400:200));
+        // Empty directory: nothing to derive from, fall back to what the height implies. (By
+        // height, not version, since S.3b -- the two agree for every world that can get here: a
+        // new world, which is stamped 2 or 5 to match.)
+        eden_set_creature_slots((g_world_height>=T_HEIGHT_MAX?400:200));
+        creature_block_on_disk=(sfh->version>=3);
         return;
     }
     unsigned long long* offsets=(unsigned long long*)malloc(sizeof(unsigned long long)*n);
@@ -1153,11 +1279,15 @@ void FileManager::deriveColumnSpans(){
 
     // Creature block = whatever is left between the end of the last column and the directory.
     unsigned long long lastEnd=offsets[sc.n-1]+SIZEOF_COLUMN;
-    int slots=(sfh->version>=FILE_VERSION_256Z?400:200);
+    int slots=(g_world_height>=T_HEIGHT_MAX?400:200);
+    // S.3b: a v1/v2 file has no creature block yet -- unless the gap says it does (a 2026-game v2
+    // 256z world carries 400 slots). Every v3+ file has one, as before.
+    creature_block_on_disk=(sfh->version>=3);
     if(sfh->directory_offset>=lastEnd){
         unsigned long long gap=sfh->directory_offset-lastEnd;
         if(gap%sizeof(EntityData)==0&&gap/sizeof(EntityData)<=MAX_CREATURES_SAVED_MAX){
             slots=(int)(gap/sizeof(EntityData));
+            if(gap>0)creature_block_on_disk=TRUE;
         }else{
             printg("creature-block gap %llu B is not a whole number of %d-byte slots -- assuming %d\n",
                    gap,(int)sizeof(EntityData),slots);
@@ -1381,7 +1511,7 @@ void FileManager::saveColumn(int cx,int cz){
 	hashmap_get(indexes, n, (any_t*)&colIndex);
 	if(colIndex==NULL){
 		colIndex=(ColumnIndex*)malloc(sizeof(ColumnIndex));
-        if(sfh->version>=3){
+        if(creature_block_on_disk){
 		colIndex->chunk_offset=sfh->directory_offset-sizeof(EntityData)*MAX_CREATURES_SAVED;
 		
 		
@@ -1454,7 +1584,8 @@ BOOL FileManager::readColumnDeferred(int cx,int cz,NSFileHandle* rcfile){
     if(n!=0&&ter->tgen->LEVEL_SEED==DEFAULT_LEVEL_SEED){
         ColumnIndex* colIndex=NULL;
         hashmap_get(indexes,n,(any_t*)&colIndex);
-        if(colIndex==NULL&&mp_dispatchColumnDecode(cx,cz))return FALSE;
+        BOOL absent=emodStore?!emodStore->hasColumn(cx,cz):(colIndex==NULL);
+        if(absent&&mp_dispatchColumnDecode(cx,cz))return FALSE;
     }
     readColumn(cx,cz,rcfile);
     return TRUE;
@@ -1471,7 +1602,7 @@ void FileManager::readColumn(int cx,int cz,NSFileHandle* rcfile){
     if(indexes_hmm!=indexes)printg("FATAL ERROR: indexes pointer corrupted!!!!\n");
 	hashmap_get(indexes,n, (any_t*)&colIndex);
    
-	if(colIndex==NULL){
+	if(emodStore?!emodStore->hasColumn(cx,cz):(colIndex==NULL)){
 		
 		Terrain* ter=World::getWorld->terrain;
      //   int cx2=cx-chunkOffsetX;
@@ -1545,6 +1676,26 @@ void FileManager::readColumn(int cx,int cz,NSFileHandle* rcfile){
         else 
             printg("attempting to load col from file for bgthread\n");
 */
+		// Stage S / S.4: an `.emod` column arrives as ONE decoded buffer in the `.eden` intra-column
+		// layout (per band: 4096 type bytes, then 4096 paint bytes), so the band loop below copies
+		// from it instead of reading the file. A band the record does not store is zeros -- the
+		// same air a short `.eden` span gets.
+		// R.2 (plan §8): a band whose mask bit is clear is all zero, types AND paint, so it is
+		// memset rather than copied; Terrain::addChunk then sets its empty bit from those zeros.
+		// addChunk stays the bit's one writer on purpose (TerrainChunk.h's rule) -- seeding it here
+		// too would save one ~0.1 us word scan per band and add a second writer to keep honest.
+		uint16_t emodMask=0;
+		if(emodStore){
+			emod::EdenWorldStore::ReadResult rr=emodStore->readColumn(cx,cz,emodColBuf,&emodMask);
+			if(rr==emod::EdenWorldStore::READ_FALLBACK){
+				fprintf(stderr,"emod: column (%d,%d) damaged -- loaded its previous committed version\n",cx,cz);   // stderr: rare, and printg/NSLog compile out of Release
+			}else if(rr!=emod::EdenWorldStore::READ_OK){
+				// READ_AIR_DAMAGED (or a key that vanished): air, and NOT marked modified, so the
+				// next save cannot overwrite the damaged record's earlier versions with it (plan §6).
+				fprintf(stderr,"emod: column (%d,%d) damaged and has no earlier version -- loaded as air (not marked modified)\n",cx,cz);
+				emodMask=0;
+			}
+		}else
 		[rcfile seekToFileOffset:colIndex->chunk_offset];
         TerrainChunk* columns[CHUNKS_PER_COLUMN_MAX];
         // How many bands this record really holds. Normally all of them; a column recorded in
@@ -1645,6 +1796,14 @@ void FileManager::readColumn(int cx,int cz,NSFileHandle* rcfile){
                  }
                 
                  
+             }else if(emodStore){
+                 if(emodMask&(1u<<cy)){
+                     memcpy(chunk->pblocks,&emodColBuf[(size_t)cy*emod::BAND],CHUNK_SIZE3*sizeof(block8));
+                     memcpy(chunk->pcolors,&emodColBuf[(size_t)cy*emod::BAND+CHUNK_SIZE3*sizeof(block8)],CHUNK_SIZE3*sizeof(color8));
+                 }else{
+                     memset(chunk->pblocks,0,CHUNK_SIZE3*sizeof(block8));
+                     memset(chunk->pcolors,0,CHUNK_SIZE3*sizeof(color8));
+                 }
              }else if(cy<bandsInFile){
                  NSData* data=[rcfile readDataOfLength:(CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE*sizeof(block8))];
                  [data getBytes:chunk->pblocks length:(CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE*sizeof(block8))];
@@ -1699,6 +1858,11 @@ void FileManager::setName(std::string fn,std::string dn){
    // NSLog(@"set name request on:%@",file_name);
    // NSString* nofp=file_name;
     
+    // Stage S / S.4: an `.emod` keeps its name in the WORLD_HEADER record -- append a new one.
+    if(fn.size()>5&&fn.compare(fn.size()-5,5,".emod")==0){
+        if(!emodSetHeaderName(docs+"/"+fn,dn))NSLog(@"file to rename not found\n");
+        return;
+    }
     fn=docs+"/"+fn;
     FILE* f;
     if(!(f=fopen(fn.c_str(),"rw"))){
@@ -1747,6 +1911,25 @@ void FileManager::setImageHash(NSString* hash){
     }
     imgHash=hash;
    
+    if(isEmodName(name)){
+        // The hash lives in the WORLD_HEADER record: append a new one in its own committed batch.
+        emod::EdenWorldStore own;
+        emod::EdenWorldStore* st=emodStore;
+        if(!st){
+            if(!own.open([file_name UTF8String],true))return;
+            st=&own;
+        }
+        std::vector<uint8_t> raw;
+        if(st->readRecord(emod::T_WORLD_HEADER,raw)>emod::EdenWorldStore::READ_FALLBACK||raw.size()!=sizeof(WorldFileHeader))return;
+        WorldFileHeader h; memcpy(&h,&raw[0],sizeof(h));
+        memset(h.hash,0,sizeof(h.hash));
+        [hash getCString:h.hash maxLength:33 encoding:NSUTF8StringEncoding];
+        if(emodHeader&&st==emodStore)memcpy(emodHeader->hash,h.hash,sizeof(h.hash));
+        st->beginBatch();
+        st->putRecord(emod::T_WORLD_HEADER,&h,sizeof(h));
+        if(!st->commitBatch())printg("emod: could not record the image hash\n");
+        return;
+    }
     saveFile=[NSFileHandle fileHandleForUpdatingAtPath:file_name];
     if(!saveFile){
         printg("err gettin save file: %s\n",[file_name cStringUsingEncoding:NSUTF8StringEncoding]);
@@ -1790,6 +1973,11 @@ BOOL FileManager::renameWorld(NSString* file_name, NSString* display_name){
     std::string n=cpstring(file_name);
     if(!worldExists(n,FALSE)) return TRUE;
     std::string fn=docs+"/"+n;
+    if(isEmodName(file_name)){
+        // The name is inside the WORLD_HEADER record, which is never rewritten in place: append a
+        // new one. (Called from the world list, where no world -- so no open store -- exists.)
+        return emodSetHeaderName(fn,cpstring(display_name));
+    }
     FILE* f=fopen(fn.c_str(),"r+b");
     if(!f) return FALSE;
     WorldFileHeader fh;
@@ -1808,6 +1996,24 @@ NSString* FileManager::getName(NSString* name){
     std::string n=cpstring(name);
 	if(!worldExists(n,FALSE)) return @"error~";
     std::string fn=docs+"/"+n;
+    if(emod::WorldSource::isArchiveName(n)){
+        // A dropped-in `.eden.gz` / `.zip`: its name is in the first 192 inflated bytes.
+        WorldFileHeader h;
+        if(!peekArchiveHeader(fn,&h))return @"error~";
+        h.name[49]=0;
+        if(!h.name[0])return @"error";
+        return nsstring(std::string(h.name));
+    }
+    if(isEmodName(name)){
+        emod::EdenWorldStore st;
+        if(!st.open(fn.c_str(),false))return @"error~";
+        std::vector<uint8_t> raw;
+        if(st.readRecord(emod::T_WORLD_HEADER,raw)>emod::EdenWorldStore::READ_FALLBACK||raw.size()!=sizeof(WorldFileHeader))return @"error~";
+        WorldFileHeader h; memcpy(&h,&raw[0],sizeof(h));
+        h.name[49]=0;
+        if(!h.name[0])return @"error";
+        return nsstring(std::string(h.name));
+    }
     FILE* sf;
     // "rb", NOT "r", AND THIS ONE IS LOAD-BEARING ON WINDOWS. Menu::loadWorlds calls this for every
     // file in the saves directory to get its display name, so it is on the path of every world
@@ -2051,6 +2257,7 @@ extern float P_ZFAR;
   static int last_spawn_location=-1;
 
 int FileManager::probeWorldHeight(NSString* name,BOOL fromArchive){
+    if(emod::WorldSource::isArchiveName(cpstring(name)))return T_HEIGHT_DEFAULT;   // never opened as a world
     if(!worldExists(cpstring(name),fromArchive)){
         // A world that doesn't exist yet is 64z by default -- unless the New World screen parked
         // an explicit 256z choice for it (see eden_menu_take_pending_world_height's header). This
@@ -2059,6 +2266,12 @@ int FileManager::probeWorldHeight(NSString* name,BOOL fromArchive){
         return (eden_menu_take_pending_world_height()==T_HEIGHT_MAX)?T_HEIGHT_MAX:T_HEIGHT_DEFAULT;
     }
     NSString* file_name=[NSString stringWithFormat:@"%@/%@",documents,name];
+    if(isEmodName(name)){
+        // No probe needed beyond the file header: an `.emod` states its height (bands 4 | 16).
+        emod::EdenWorldStore st;
+        if(!st.open([file_name UTF8String],false))return T_HEIGHT_DEFAULT;
+        return st.bands()==16?T_HEIGHT_MAX:T_HEIGHT_DEFAULT;
+    }
     // Earliest point on the load path that touches this specific file (World::loadWorld calls this
     // before allocateMemory), so it is where an interrupted in-place save gets rolled back --
     // before anything reads the header it would otherwise trust. Idempotent and free when there is
@@ -2071,6 +2284,20 @@ int FileManager::probeWorldHeight(NSString* name,BOOL fromArchive){
     if([headerData length]==sizeof(WorldFileHeader)){
         const WorldFileHeader* h=(const WorldFileHeader*)[headerData bytes];
         if(h->version>=FILE_VERSION_256Z&&h->version<=FILE_VERSION_256Z_MAX)height=T_HEIGHT_MAX;
+        else if(h->version>=1&&h->version<FILE_VERSION_256Z){
+            // S.3b: the version is not a height marker -- the 2026 game stamps v2 on 256z worlds
+            // too. Read the directory (directory_offset..EOF; the load reads it next anyway) and
+            // let the creature gap decide, the sibling editor's rule (emod::eden_detect_bands).
+            // Anything outside 1..6 keeps the 64z answer: loadWorld refuses or legacy-converts it.
+            unsigned long long fileEnd=[fh seekToEndOfFile];
+            if(h->directory_offset>=sizeof(WorldFileHeader)&&h->directory_offset<=fileEnd
+               &&fileEnd-h->directory_offset<=(256ull<<20)){
+                [fh seekToFileOffset:h->directory_offset];
+                NSData* dir=[fh readDataOfLength:(NSUInteger)(fileEnd-h->directory_offset)];
+                if(emod::eden_detect_bands_raw((const uint8_t*)h,(const uint8_t*)[dir bytes],[dir length])==16)
+                    height=T_HEIGHT_MAX;
+            }
+        }
     }
     [fh closeFile];
     return height;
@@ -2095,12 +2322,15 @@ int FileManager::probeWorldHeight(NSString* name,BOOL fromArchive){
 // Everything lands in a scratch file first; the original is only replaced after the scratch file
 // is fully written and closed, same temp+rename pattern saveWorld() uses.
 //
-// Known gap, shared with eden-convert.js (neither implements this): the NewFormat256z post-
-// directory SIGN TRAILER (WORKING/newformat256z-sign-trailer-2026-08-24.md) is not preserved here
-// -- a world with signs loses them on conversion. Signs are not parsed/rendered anywhere in this
-// build yet, so this is a data-preservation gap, not a functional regression.
+// The NewFormat256z post-directory trailer (signs, command blocks) is dropped, as eden-convert.js
+// drops it: the output is Legacy64z, a format that has none (plan §4 *Format eras*; S.5b's
+// exporter applies the same rule and reports it before writing).
 ConvertTo64Report FileManager::convertWorldTo64(NSString* name){
     ConvertTo64Report report; memset(&report,0,sizeof(report));
+    if(isEmodName(name)){
+        snprintf(report.error,sizeof(report.error),"not supported for .emod worlds yet");
+        return report;
+    }
 
     if(!worldExists(cpstring(name),FALSE)){
         snprintf(report.error,sizeof(report.error),"world does not exist");
@@ -2130,12 +2360,6 @@ ConvertTo64Report FileManager::convertWorldTo64(NSString* name){
         return report;
     }
     WorldFileHeader header; memcpy(&header,[headerData bytes],sizeof(WorldFileHeader));
-    if(header.version<FILE_VERSION_256Z){
-        [fh closeFile];
-        snprintf(report.error,sizeof(report.error),
-                 "world is already 64z (header version %d)",header.version);
-        return report;
-    }
     if(header.version>FILE_VERSION_256Z_MAX){
         [fh closeFile];
         snprintf(report.error,sizeof(report.error),
@@ -2148,6 +2372,18 @@ ConvertTo64Report FileManager::convertWorldTo64(NSString* name){
         snprintf(report.error,sizeof(report.error),
                  "directory offset outside file bounds (corrupt or truncated save)");
         return report;
+    }
+    // S.3b: below version 5 the header does not say the height (the 2026 game stamps v2 on 256z
+    // worlds), so ask the file -- the same rule probeWorldHeight uses.
+    if(header.version<FILE_VERSION_256Z){
+        [fh seekToFileOffset:header.directory_offset];
+        NSData* dir=[fh readDataOfLength:(NSUInteger)(fileSize-header.directory_offset)];
+        if(header.version<1||emod::eden_detect_bands_raw((const uint8_t*)&header,(const uint8_t*)[dir bytes],[dir length])!=16){
+            [fh closeFile];
+            snprintf(report.error,sizeof(report.error),
+                     "world is already 64z (header version %d)",header.version);
+            return report;
+        }
     }
 
     const unsigned long long BAND_BYTES=(unsigned long long)CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE*2;
@@ -2167,23 +2403,29 @@ ConvertTo64Report FileManager::convertWorldTo64(NSString* name){
         NSData* d=[fh readDataOfLength:DIR_ENTRY_SIZE];
         if([d length]!=DIR_ENTRY_SIZE)break;
         ColumnIndex ci; memcpy(&ci,[d bytes],sizeof(ci));
+        // S.5b: only addressable rows are columns (readDirectory's twoToOne gate). A NewFormat256z
+        // world's sign/command-block trailer is rows tagged x=0xffffffff after the real ones; read as
+        // columns they failed the stride check below ("1897 of 3227 columns are not ..."). The
+        // trailer is not carried over: the output is Legacy64z, which has none.
+        if(ci.x<0||ci.x>=32768||ci.z<0||ci.z>=32768||(((long long)ci.x<<15)+ci.z)==0)continue;
         Entry e; e.x=ci.x; e.z=ci.z; e.offset=ci.chunk_offset; e.span=0; e.newOffset=0;
         entries.push_back(e);
     }
 
     // ---- derive the creature-block size from the file, exactly like Stage 2 item 4 ----
+    // S.3b: a v1/v2 file has no block unless the gap shows one (the 2026 game's v2 256z worlds
+    // carry 400 slots), so for those the fallback is 0, not the measured 400.
     unsigned long long creatureBytes=0;
-    if(header.version>=3){
-        if(entries.empty()){
-            creatureBytes=400ULL*ENTITY_SIZE; // no columns to derive from: assume the measured default
-        }else{
-            unsigned long long lastEnd=0;
-            for(size_t i=0;i<entries.size();i++)lastEnd=std::max(lastEnd,entries[i].offset);
-            lastEnd+=COL_256;
-            long long gap=(long long)header.directory_offset-(long long)lastEnd;
-            if(gap<0||(unsigned long long)gap%ENTITY_SIZE!=0)creatureBytes=400ULL*ENTITY_SIZE;
-            else creatureBytes=(unsigned long long)gap;
-        }
+    const unsigned long long assumedCreatureBytes=(header.version>=3)?400ULL*ENTITY_SIZE:0;
+    if(entries.empty()){
+        creatureBytes=assumedCreatureBytes; // no columns to derive from: assume the measured default
+    }else{
+        unsigned long long lastEnd=0;
+        for(size_t i=0;i<entries.size();i++)lastEnd=std::max(lastEnd,entries[i].offset);
+        lastEnd+=COL_256;
+        long long gap=(long long)header.directory_offset-(long long)lastEnd;
+        if(gap<0||(unsigned long long)gap%ENTITY_SIZE!=0)creatureBytes=assumedCreatureBytes;
+        else creatureBytes=(unsigned long long)gap;
     }
 
     // ---- per-column spans: the gap to the NEXT column, never assumed to be a full record ----
@@ -2338,6 +2580,14 @@ void FileManager::loadWorld(NSString* name,BOOL fromArchive){
 	Terrain* ter=World::getWorld->terrain;
 		ter->clearBlocks();
 	Player* player=World::getWorld->player;
+    this->closeWorld();   // a previous session's `.emod` store (warp, re-load); no-op for `.eden`
+    worldTrailer.clear(); // D.3a: a brand-new world has none; the two load branches below read theirs
+    if(emod::WorldSource::isArchiveName(cpstring(name))){
+        // An archive that was not converted can't be played, and must never reach the .eden branch
+        // below: its "header" is compressed bytes, which that branch would try to "upgrade" in place.
+        eden_report_load_failure([name UTF8String],"this archive could not be converted to a world");
+        return;
+    }
     if(imgHash!=NULL){
         [imgHash release];
         imgHash=NULL;
@@ -2498,7 +2748,9 @@ void FileManager::loadWorld(NSString* name,BOOL fromArchive){
 		this->saveWorld();
 		//[ter unloadTerrain:FALSE];
 		//[self loadWorld:name];
-	}else{
+	}else if(isEmodName(name)){
+        if(!this->loadEmodWorld(name))return;
+    }else{
               
 		NSString* file_name=[NSString stringWithFormat:@"%@/%@",documents,name];
         
@@ -2604,6 +2856,7 @@ void FileManager::loadWorld(NSString* name,BOOL fromArchive){
             }
         }
 		this->readDirectory();
+		this->loadTrailer(name,dir_trailer,dir_trailer_len);
 		//NSLog(@"indexes: %d",hashmap_length(indexes));
 		//NSLog(@"loading level_seed: %d",ter.level_seed);
 		//NSLog(@"directory offset: %d entries: %d",(int)sfh->directory_offset,hashmap_length(indexes));
@@ -2663,3 +2916,545 @@ void FileManager::loadWorld(NSString* name,BOOL fromArchive){
 
 }
 
+
+// =============================================================================================
+// Stage S / S.4 + S.5: `.emod` worlds -- docs/emod-file-format.md, Classes/EdenWorldStore.h
+// =============================================================================================
+// A world is an `.emod` iff its file name ends in ".emod". Everything above routes on that one
+// test (isEmodName), so an `.eden` world takes exactly the code it always did, and a name that
+// ends in ".emod" never reaches a NSFileHandle or the directory hashmap. The container is
+// append-only: a save appends the dirty columns + header + creatures + a COMMIT in one write and
+// fsyncs; nothing a previous commit wrote is ever overwritten (so no scratch copy, no journal, no
+// threshold -- docs/save-load.md).
+
+BOOL FileManager::isEmodName(NSString* name){
+    return name!=nil&&[name hasSuffix:@EMOD_WORLD_EXTENSION];
+}
+
+BOOL FileManager::isArchiveName(NSString* name){
+    // Never a backup slot or an export the engine itself left beside a world (`.eden.bak.zip`,
+    // stock's CompressWorld `.eden.zip` of a world that is still listed): those are not new worlds.
+    if(name==nil||[name hasSuffix:@".bak.zip"]||[name hasSuffix:@".bak.gz"])return FALSE;
+    return emod::WorldSource::isArchiveName(cpstring(name));
+}
+
+NSString* FileManager::newWorldFileName(){
+    return [NSString stringWithFormat:(g_world_format==1?@"%@.emod":@"%@.eden"),genhash()];
+}
+
+void FileManager::closeWorld(){
+    if(emodStore){delete emodStore;emodStore=NULL;}
+    if(emodHeader){free(emodHeader);emodHeader=NULL;}
+}
+
+BOOL FileManager::emodOpen(){return emodStore!=NULL;}
+
+BOOL FileManager::loadEmodWorld(NSString* name){
+    Terrain* ter=World::getWorld->terrain;
+    Player* player=World::getWorld->player;
+    std::string path=docs+"/"+cpstring(name);
+    emod::EdenWorldStore* st=new emod::EdenWorldStore();
+    if(!st->open(path.c_str(),true)){
+        std::string why="unreadable .emod world: "+st->error();
+        delete st;
+        eden_report_load_failure([name UTF8String],why.c_str());
+        return FALSE;
+    }
+    // Housekeeping lives at open, never mid-play (plan §6): a log that is mostly dead bytes is
+    // rewritten once, here. Refused by the store while damaged, and a failure just leaves the log.
+    // stderr, not printg/NSLog: both compile out of Release, and damage is the one thing worth a line.
+    if(st->damaged())fprintf(stderr,"emod: %s is damaged (%d issue(s), first: %s) -- playing what survives; compaction is off\n",
+                           path.c_str(),(int)st->damage().size(),st->damage()[0].c_str());
+    if(st->shouldCompact()&&!st->damaged()){
+        if(!st->compact())fprintf(stderr,"emod: compaction skipped: %s\n",st->error().c_str());
+    }
+    std::vector<uint8_t> raw;
+    if(st->readRecord(emod::T_WORLD_HEADER,raw)>emod::EdenWorldStore::READ_FALLBACK||raw.size()!=sizeof(WorldFileHeader)){
+        delete st;
+        eden_report_load_failure([name UTF8String],"no readable world header in this .emod (corrupt save)");
+        return FALSE;
+    }
+    if(st->bands()!=CHUNKS_PER_COLUMN){
+        // World::loadWorld probed the height from this same file; a mismatch is a caller bug, and
+        // reading 4-band records into a 16-band window (or the reverse) would corrupt the world.
+        delete st;
+        eden_report_load_failure([name UTF8String],"world height does not match the .emod's band count");
+        return FALSE;
+    }
+    std::vector<uint8_t> craw;
+    if(st->hasRecord(emod::T_CREATURES))st->readRecord(emod::T_CREATURES,craw);
+    // D.3a: an unreadable SIGN_TRAILER (READ_AIR_DAMAGED) loads as none -- and stays clean, so no save
+    // writes an empty one over whatever an earlier version still holds.
+    std::vector<uint8_t> traw;
+    if(st->hasRecord(emod::T_SIGN_TRAILER)&&st->readRecord(emod::T_SIGN_TRAILER,traw)>emod::EdenWorldStore::READ_FALLBACK)traw.clear();
+    closeWorld();
+    // The `.eden` directory maps belong to whatever world was open before: nothing below reads
+    // them for an `.emod`, and leaving a previous world's rows in them is how one would one day.
+    this->clearDirectory();
+    this->clearColumnSpans();
+    emodStore=st;
+    emodHeader=(WorldFileHeader*)malloc(sizeof(WorldFileHeader));
+    memcpy(emodHeader,&raw[0],sizeof(WorldFileHeader));
+    sfh=emodHeader;
+    // The header version is kept verbatim (never normalised): it is not a height marker.
+    file_version=sfh->version;
+    // The `.eden` loader's one-time v3 -> v4 upgrade, the same three fields (a converted v3 world
+    // arrives here with its v3 header verbatim).
+    if(file_version==3){
+        file_version=4;
+        sfh->version=4;
+        sfh->goldencubes=10;
+        for(int i=0;i<4;i++){
+            for(int j=0;j<4;j++){
+                sfh->skycolors[i*4+j]=COLOR_NORMAL_BLUE;
+            }
+        }
+    }
+    printg("FILE VERSION: %d (.emod, %d bands, %u columns)\n",file_version,st->bands(),(unsigned)st->columnCount());
+    {
+        int slots=(int)(craw.size()/sizeof(EntityData));
+        if(craw.size()%sizeof(EntityData)!=0||slots>MAX_CREATURES_SAVED_MAX)slots=(g_world_height>=T_HEIGHT_MAX?400:200);
+        eden_set_creature_slots(slots);
+    }
+    if(imgHash!=NULL){[imgHash release];imgHash=NULL;}
+    imgHash=[[NSString alloc] initWithCString:sfh->hash encoding:NSUTF8StringEncoding];
+    ter->level_seed=sfh->level_seed;
+    ter->tgen->LEVEL_SEED=ter->level_seed;
+    cur_dir_offset=sfh->directory_offset;
+    World::getWorld->hud->goldencubes=sfh->goldencubes;
+    ter->home=sfh->home;
+    player->pos=sfh->pos;
+    player->yaw=sfh->yaw;
+    for(int i=0;i<4;i++){
+        for(int j=0;j<4;j++){
+            regionSkyColors[i][j]=(int)(sfh->skycolors[i*4+j]);
+        }
+    }
+    oldOffsetX=chunkOffsetX;
+    oldOffsetZ=chunkOffsetZ;
+    chunkOffsetX=player->pos.x/CHUNK_SIZE-T_RADIUS;
+    chunkOffsetZ=player->pos.z/CHUNK_SIZE-T_RADIUS;
+    player->pos=sfh->pos;
+    int r=T_RADIUS;
+    for(int x=chunkOffsetX;x<chunkOffsetX+2*r;x++){
+        for(int z=chunkOffsetZ;z<chunkOffsetZ+2*r;z++){
+            readColumn(x,z,nil);
+            World::getWorld->terrain->counter++;
+        }
+    }
+    // LoadCreatures() for a record instead of a file region: start from "no creature in any slot"
+    // (creatureData outlives the world), then copy what the record holds.
+    for(int i=0;i<MAX_CREATURES_SAVED_MAX;i++)creatureData[i].type=-1;
+    {
+        size_t n=craw.size();
+        if(n>sizeof(EntityData)*(size_t)MAX_CREATURES_SAVED)n=sizeof(EntityData)*(size_t)MAX_CREATURES_SAVED;
+        if(n)memcpy(creatureData,&craw[0],n);
+    }
+    LoadModels2();
+    this->loadTrailer(name,traw.empty()?NULL:&traw[0],traw.size());
+    return TRUE;
+}
+
+// ---- Stage D / D.3a: the trailer model ------------------------------------------------------
+WorldTrailer* FileManager::trailer(){return &worldTrailer;}
+
+int FileManager::reportTrailerRefusal(int result){
+    if(result!=WorldTrailer::TR_OK&&World::getWorld&&World::getWorld->hud&&World::getWorld->hud->sb)
+        World::getWorld->hud->sb->setStatus([NSString stringWithUTF8String:WorldTrailer::resultMessage(result)],3);
+    return result;
+}
+
+// The world's captured trailer bytes -> the model, then the 2026 game's sidecars. That game keeps a
+// local world's signs and command blocks in `signs_<file>.dat` / `cmd_<file>.dat` next to it (one bare
+// section each; `<file>` is the world's `.eden` name), and an exported `.eden` does not carry them --
+// so a world copied over together with its sidecars would lose them. A sidecar is adopted only for a
+// section the trailer does not already have (the trailer wins), which marks the model dirty: the
+// first save writes it into the world, after which the sidecar is never read again.
+void FileManager::loadTrailer(NSString* name,const unsigned char* bytes,unsigned long long len){
+    adoptedSidecars.clear();
+    if(!worldTrailer.load(bytes,(size_t)len))
+        printg("trailer: %llu B kept verbatim, not editable: %s\n",len,worldTrailer.why().c_str());
+    std::string stem=emod::WorldSource::stemOf(cpstring(name));
+    static const char* const kinds[2]={"signs_","cmd_"};
+    for(int k=0;k<2;k++){
+        std::string path=docs+"/"+kinds[k]+stem+".eden.dat";
+        FILE* f=emod::io::fopen_utf8(path.c_str(),"rb");
+        if(!f)continue;
+        std::vector<uint8_t> b;
+        uint64_t n=emod::io::file_size(f);   // leaves the stream at EOF
+        if(n>0&&n<=WorldTrailer::MAX_BYTES&&emod::io::seek_to(f,0)){
+            b.resize((size_t)n);
+            if(fread(&b[0],1,b.size(),f)!=b.size())b.clear();
+        }
+        fclose(f);
+        int r=b.empty()?WorldTrailer::TR_BAD:worldTrailer.adoptSidecar(&b[0],b.size());
+        if(r==WorldTrailer::TR_OK)adoptedSidecars.push_back(path);
+        printg("trailer: sidecar %s%s.eden.dat (%llu B): %s\n",kinds[k],stem.c_str(),(unsigned long long)n,
+               r==WorldTrailer::TR_OK?"adopted":r==WorldTrailer::TR_EXISTS?"ignored (the world has its own)":"not readable");
+    }
+    printg("trailer: %s\n",worldTrailer.describe().c_str());
+}
+
+void FileManager::saveEmodWorld(Vector warp){
+    Terrain* ter=World::getWorld->terrain;
+    NSString* name=ter->world_name;
+    std::string path=docs+"/"+cpstring(name);
+
+    if(!emodStore){
+        // A brand-new world (loadWorld's generator branch saves it once, straight away): create the
+        // file. It only becomes visible at the first commit, which carries header + creatures.
+        emod::EdenWorldStore* st=new emod::EdenWorldStore();
+        BOOL ok=worldExists(cpstring(name),FALSE)
+            ?st->open(path.c_str(),true)
+            :st->create(path.c_str(),g_world_height>=T_HEIGHT_MAX?16:4,(uint64_t)time(NULL));
+        if(!ok){
+            printg("saveWorld: could not open %s: %s -- SKIPPING this save\n",path.c_str(),st->error().c_str());
+            delete st;
+            return;
+        }
+        emodStore=st;
+    }
+
+    WorldFileHeader h;
+    if(emodHeader)memcpy(&h,emodHeader,sizeof(h)); else memset(&h,0,sizeof(h));
+    h.level_seed=ter->level_seed;
+    h.goldencubes=World::getWorld->hud->goldencubes;
+    h.home=ter->home;
+    h.pos=warp;
+    h.yaw=World::getWorld->player->yaw;
+    for(int i=0;i<4;i++){
+        for(int j=0;j<4;j++){
+            h.skycolors[i*4+j]=regionSkyColors[i][j];
+        }
+    }
+    WorldNode* sel=World::getWorld->menu->selected_world;
+    if(sel&&sel->display_name){
+        memset(h.name,0,sizeof(h.name));
+        [sel->display_name getCString:h.name maxLength:49 encoding:NSUTF8StringEncoding];
+    }
+    if(imgHash==NULL)imgHash=@"";
+    memset(h.hash,0,sizeof(h.hash));
+    [imgHash getCString:h.hash maxLength:33 encoding:NSUTF8StringEncoding];
+    // Same version rule as the .eden writer: a 64z world is stamped 4, anything else (a >=5 file, or
+    // a 256z world under a smaller version -- S.3b) keeps its own, verbatim.
+    if(file_version<FILE_VERSION_256Z&&g_world_height<T_HEIGHT_MAX){
+        file_version=FILE_VERSION;
+    }
+    h.version=file_version;
+
+    emodStore->beginBatch();
+    // Every resident column with a modified chunk. The flags are cleared only after the commit is
+    // durable, so a failed save keeps them and the next trigger retries ("flags survive").
+    std::vector<std::pair<int,int> > saved;
+    std::vector<uint8_t> col((size_t)CHUNKS_PER_COLUMN*emod::BAND);
+    for(int x=0;x<CHUNKS_PER_SIDE;x++){
+        for(int z=0;z<CHUNKS_PER_SIDE;z++){
+            TerrainChunk* chunk=ter->chunkTable[threeToOne(x,0,z)];
+            if(chunk->pbounds[1]!=0){
+                printg("trying to save column with unexpected chunk bound[1]: %d\n",chunk->pbounds[1]);
+                continue;
+            }
+            int cx=chunk->pbounds[0]/CHUNK_SIZE,cz=chunk->pbounds[2]/CHUNK_SIZE;
+            BOOL dirty=FALSE;
+            for(int cy=0;cy<CHUNKS_PER_COLUMN;cy++){
+                if(ter->chunkTable[threeToOne(cx,cy,cz)]->modified){dirty=TRUE;break;}
+            }
+            if(!dirty||twoToOneTest(cx,cz)==0)continue;
+            for(int cy=0;cy<CHUNKS_PER_COLUMN;cy++){
+                TerrainChunk* c=ter->chunkTable[threeToOne(cx,cy,cz)];
+                memcpy(&col[(size_t)cy*emod::BAND],c->pblocks,CHUNK_SIZE3*sizeof(block8));
+                memcpy(&col[(size_t)cy*emod::BAND+CHUNK_SIZE3*sizeof(block8)],c->pcolors,CHUNK_SIZE3*sizeof(color8));
+            }
+            if(!emodStore->putColumn(cx,cz,&col[0])){
+                printg("saveWorld: could not stage column (%d,%d): %s\n",cx,cz,emodStore->error().c_str());
+                emodStore->abortBatch();
+                return;
+            }
+            saved.push_back(std::make_pair(cx,cz));
+        }
+    }
+    SaveModels();
+    emodStore->putRecord(emod::T_CREATURES,creatureData,sizeof(EntityData)*(size_t)MAX_CREATURES_SAVED);
+    emodStore->putRecord(emod::T_WORLD_HEADER,&h,sizeof(h));
+    // Stage D / D.3a: an edited trailer is a new SIGN_TRAILER record in this batch (an empty one
+    // removes it). Untouched, nothing is written: the last committed record stays live.
+    BOOL trailerSaving=worldTrailer.dirty();
+    if(trailerSaving){
+        std::vector<uint8_t> t=worldTrailer.encode();
+        if(!emodStore->putRecord(emod::T_SIGN_TRAILER,t.empty()?NULL:&t[0],t.size())){
+            printg("saveWorld: could not stage the sign trailer: %s\n",emodStore->error().c_str());
+            emodStore->abortBatch();
+            return;
+        }
+    }
+    if(!emodStore->commitBatch()){
+        NSLog(@"saveWorld: .emod commit failed (%s) -- save skipped, last commit intact",emodStore->error().c_str());
+        return;
+    }
+    if(trailerSaving)trailerSaved();
+    for(size_t i=0;i<saved.size();i++){
+        for(int cy=0;cy<CHUNKS_PER_COLUMN;cy++)
+            ter->chunkTable[threeToOne(saved[i].first,cy,saved[i].second)]->modified=FALSE;
+    }
+    if(!emodHeader)emodHeader=(WorldFileHeader*)malloc(sizeof(WorldFileHeader));
+    memcpy(emodHeader,&h,sizeof(h));
+    sfh=emodHeader;
+}
+
+// ---- converting a `.eden` (S.5) -----------------------------------------------------------------
+// The player drops a `.eden`, a `.eden.gz`, a `.gz`, a `.zip` or a `.eden.zip` into the saves
+// directory; all five are "source worlds". Each is listed, flagged, and converted when played;
+// an archive converts WHILE IT INFLATES (emod::WorldSource -> EdenEmodConverter), so no inflated
+// `.eden` is ever written. Only with g_world_format == 1 (S.4: flag off is today's behaviour, byte
+// for byte), and only where the Storage/import/export UI knows `.emod` -- i.e. not on web yet (S.5's
+// remaining rows): there a `.eden` keeps playing in place exactly as before. EDEN_NO_CONVERT=1
+// switches it off for a harness that wants the `.eden` path with the flag on.
+BOOL FileManager::conversionEnabled(){
+#ifdef __EMSCRIPTEN__
+    return FALSE;
+#else
+    if(g_world_format!=1)return FALSE;
+    const char* e=getenv("EDEN_NO_CONVERT");
+    return !(e&&e[0]&&e[0]!='0');
+#endif
+}
+static BOOL isSourceName(NSString* name){
+    return [name hasSuffix:@".eden"]||emod::WorldSource::isArchiveName(cpstring(name));
+}
+static unsigned long long fileSizeOf(const std::string& p){
+    struct stat sb;
+    if(stat(p.c_str(),&sb)!=0)return 0;
+    return (unsigned long long)sb.st_size;
+}
+static long long fileMtimeOf(const std::string& p){
+    struct stat sb;
+    if(stat(p.c_str(),&sb)!=0)return 0;
+    return (long long)sb.st_mtime;
+}
+static std::string stemOf(NSString* name){return emod::WorldSource::stemOf(cpstring(name));}
+static unsigned long long le64(const uint8_t* p){
+    unsigned long long v=0;
+    for(int i=7;i>=0;i--)v=(v<<8)|p[i];
+    return v;
+}
+// Does this `.emod` come from that source? PROVENANCE (docs/emod-file-format.md) records the
+// source's size and mtime and its file name. A plain `.eden` pairs by size (the inflated size of an
+// archive is unknowable without inflating it); an archive pairs by name + mtime. (Plan §4 also
+// allows the header+directory SHA-256, which stays recorded in the file for a stricter check.)
+static BOOL emodPairsWith(const std::string& emodPath,NSString* srcName,const std::string& srcPath){
+    emod::EdenWorldStore st;
+    if(!st.open(emodPath.c_str(),false))return FALSE;
+    std::vector<uint8_t> p;
+    if(st.readRecord(emod::T_PROVENANCE,p)>emod::EdenWorldStore::READ_FALLBACK||p.size()<80)return FALSE;
+    if(![srcName hasSuffix:@".eden"]){
+        uint32_t nl=p[76]|(p[77]<<8)|(p[78]<<16)|((uint32_t)p[79]<<24);
+        if(p.size()<80+(size_t)nl)return FALSE;
+        std::string nm((const char*)&p[80],nl);
+        return nm==cpstring(srcName)&&(long long)le64(&p[16])==fileMtimeOf(srcPath);
+    }
+    return le64(&p[8])==fileSizeOf(srcPath);
+}
+static std::string pairedEmodPath(const std::string& dir,NSString* srcName){
+    std::string src=dir+"/"+cpstring(srcName);
+    if(fileSizeOf(src)==0)return std::string();
+    std::string stem=stemOf(srcName);
+    for(int k=1;k<=9;k++){
+        std::string cand=dir+"/"+stem+(k==1?std::string():"-"+std::to_string(k))+".emod";
+        if(fileSizeOf(cand)==0)continue;
+        if(emodPairsWith(cand,srcName,src))return cand;
+    }
+    return std::string();
+}
+
+BOOL FileManager::edenHasPairedEmod(NSString* edenName){
+    if(isEmodName(edenName)||!isSourceName(edenName))return FALSE;
+    return !pairedEmodPath(docs,edenName).empty();
+}
+
+NSString* FileManager::pairedEmodFor(NSString* srcName){
+    if(isEmodName(srcName)||!isSourceName(srcName))return nil;
+    std::string p=pairedEmodPath(docs,srcName);
+    return p.empty()?nil:nsstring(p.substr(docs.size()+1));
+}
+
+NSString* FileManager::originalOf(NSString* emodName){
+    if(!isEmodName(emodName))return nil;
+    NSArray* names=[[NSFileManager defaultManager] contentsOfDirectoryAtPath:documents error:NULL];
+    for(int i=0;i<(int)[names count];i++){
+        NSString* f=[names objectAtIndex:i];
+        if(isEmodName(f)||!isSourceName(f))continue;
+        NSString* e=pairedEmodFor(f);
+        if(e&&[e isEqualToString:emodName])return f;
+    }
+    return nil;
+}
+
+BOOL FileManager::removeOriginal(NSString* emodName){
+    NSString* o=originalOf(emodName);
+    if(!o)return FALSE;
+    NSString* p=[NSString stringWithFormat:@"%@/%@",documents,o];
+    BOOL ok=[[NSFileManager defaultManager] removeItemAtPath:p error:NULL];
+    printg("emod: %s the original %s\n",ok?"deleted":"could not delete",[p UTF8String]);
+    return ok;
+}
+
+BOOL FileManager::worldNeedsConversion(NSString* name){
+    if(!conversionEnabled()||isEmodName(name)||!isSourceName(name))return FALSE;
+    if(fileSizeOf(docs+"/"+cpstring(name))<sizeof(WorldFileHeader))return FALSE;
+    return pairedEmodPath(docs,name).empty();
+}
+
+// One conversion at a time, a time slice per convertStep() call. The work is emod::ImportJob
+// (Classes/EdenWorldSource.h), the same job Get Worlds and the web import run: the pre-flight, the
+// running free-space floor and the 500 MB temp cap live there, once.
+struct EmodConvJob{
+    emod::ImportJob job;
+    std::string outPath,srcPath;
+    NSString* outName;
+    EmodConvJob():outName(nil){}
+    ~EmodConvJob(){[outName release];}
+};
+static EmodConvJob* convJob=NULL;
+static std::string convError;
+
+BOOL FileManager::conversionActive(){return convJob!=NULL;}
+
+// ---- S.5e: the height a conversion writes ---------------------------------------------------------
+// Every `.emod` is 256z by default (the user, 2026-10-10; plan §10 Q9): the Settings toggle decides,
+// and the prompt below lets the player keep one world 64z. One prompt at a time, for one source.
+extern "C" int eden_get_upgrade_256z(void);   // web/src/seam/Settings_web.mm
+static NSString* heightAskName=nil;   // the source the prompt is (or was) about
+static int heightChoice=-3;           // -3 not asked, -2 waiting, -1 cancelled, 0 keep, 1 upgrade
+static void clearHeightChoice(){[heightAskName release];heightAskName=nil;heightChoice=-3;}
+
+BOOL FileManager::upgradeOnConvert(){return eden_get_upgrade_256z()!=0;}
+
+// 4 or 16 from a plain `.eden`'s header + directory (the probeWorldHeight rule); 0 when it cannot
+// tell without inflating (an archive) or reading (a short file).
+static int sourceBands(const std::string& path){
+    if(emod::WorldSource::isArchiveName(path))return 0;
+    FILE* f=emod::io::fopen_utf8(path.c_str(),"rb");
+    if(!f)return 0;
+    uint8_t h[emod::EDEN_HEADER];
+    int bands=0;
+    unsigned long long size=emod::io::file_size(f);   // leaves the stream at EOF
+    if(emod::io::seek_to(f,0)&&fread(h,1,sizeof h,f)==sizeof h){
+        unsigned long long dirOff=le64(h+32);
+        if(dirOff>=sizeof h&&dirOff<=size&&size-dirOff<=(256ull<<20)){
+            std::vector<uint8_t> dir((size_t)(size-dirOff));
+            if(emod::io::seek_to(f,dirOff)&&(dir.empty()||fread(&dir[0],1,dir.size(),f)==dir.size()))
+                bands=emod::eden_detect_bands_raw(h,dir.empty()?NULL:&dir[0],dir.size());
+        }
+    }
+    fclose(f);
+    return bands;
+}
+
+int FileManager::convertHeightGate(NSString* name){
+    if(convJob)return 1;
+    if(heightAskName&&![heightAskName isEqualToString:name])clearHeightChoice();
+    if(heightChoice>=0)return 1;
+    if(heightChoice==-1){clearHeightChoice();return -1;}
+    if(heightChoice==-2)return 0;
+    if(!upgradeOnConvert())return 1;                     // the toggle is off: every world keeps its height
+    const int bands=sourceBands(docs+"/"+cpstring(name));
+    if(bands==16)return 1;                               // nothing to choose
+    const char* e=getenv("EDEN_CONVERT_PROMPT");
+    if(e&&e[0]=='0')return 1;                            // a harness: the toggle decides
+    heightAskName=[name retain];
+    heightChoice=-2;
+    showAlertConvertHeight(name,bands==4);
+    return 0;
+}
+
+void FileManager::answerConvertHeight(int choice){
+    if(heightChoice==-2)heightChoice=choice<0?-1:(choice?1:0);
+}
+NSString* FileManager::conversionError(){return convError.empty()?nil:nsstring(convError);}
+
+void FileManager::cleanConversionTemps(){
+    if(convJob)return;
+    NSFileManager* nfm=[NSFileManager defaultManager];
+    NSArray* names=[nfm contentsOfDirectoryAtPath:documents error:NULL];
+    for(int i=0;i<(int)[names count];i++){
+        NSString* f=[names objectAtIndex:i];
+        // S.5: also a killed import's archive layer and a killed export/upload's partial output.
+        if([f hasSuffix:@".emod.converting"]||[f hasSuffix:@".emod.spill"]||[f hasSuffix:@".emod.creating"]||[f hasSuffix:@".emod.compact"]
+           ||[f rangeOfString:@".emod.layer"].location!=NSNotFound||[f hasSuffix:@".exporting"]||[f hasSuffix:@".upload-body"]){
+            [nfm removeItemAtPath:[NSString stringWithFormat:@"%@/%@",documents,f] error:NULL];
+        }
+    }
+}
+
+int FileManager::convertStep(NSString* name,int* percent,NSString** outName){
+    if(percent)*percent=0;
+
+    if(!convJob){
+        convError.clear();
+        if(!worldNeedsConversion(name)){convError="nothing to convert";return -1;}
+        EmodConvJob* j=new EmodConvJob();
+        j->srcPath=docs+"/"+cpstring(name);
+        // A fresh stem unless this one is taken by a `.emod` of some OTHER source (a different
+        // `.eden` re-imported under the same name lists separately and converts beside the first).
+        std::string stem=stemOf(name);
+        for(int k=1;k<=99;k++){
+            j->outPath=docs+"/"+stem+(k==1?std::string():"-"+std::to_string(k))+".emod";
+            if(fileSizeOf(j->outPath)==0)break;
+        }
+        j->outName=[[NSString stringWithUTF8String:j->outPath.substr(docs.size()+1).c_str()] retain];
+        // S.5e: the prompt's answer for this world, else the Settings toggle. Consumed here.
+        BOOL up=(heightAskName&&[heightAskName isEqualToString:name]&&heightChoice>=0)?(heightChoice==1):upgradeOnConvert();
+        clearHeightChoice();
+        if(!j->job.begin(j->srcPath,j->outPath,cpstring(name),(int64_t)fileMtimeOf(j->srcPath),up)){
+            convError=j->job.error();
+            printg("emod: cannot convert %s: %s\n",j->srcPath.c_str(),convError.c_str());
+            delete j;
+            return -1;
+        }
+        convJob=j;
+        printg("emod: converting %s -> %s\n",j->srcPath.c_str(),j->outPath.c_str());
+    }
+    EmodConvJob* j=convJob;
+    // ~12 ms of work, then back to the loading screen so it keeps drawing.
+    const int r=j->job.step(12);
+    if(r==emod::ImportJob::FAILED){
+        convError=j->job.error();
+        printg("emod: conversion of %s failed: %s\n",j->srcPath.c_str(),convError.c_str());
+        delete j;convJob=NULL;
+        return -1;
+    }
+    if(r==emod::ImportJob::RUNNING){
+        if(percent)*percent=j->job.percent();
+        return 0;
+    }
+    // Committed and renamed by the converter; the source was only ever read.
+    NSFileManager* nfm=[NSFileManager defaultManager];
+    NSString* oldPng=[NSString stringWithFormat:@"%@/%@.png",documents,name];
+    if([nfm fileExistsAtPath:oldPng]){
+        [nfm moveItemAtPath:oldPng toPath:[NSString stringWithFormat:@"%@/%@.png",documents,j->outName] error:NULL];
+    }
+    if(outName)*outName=[[j->outName retain] autorelease];
+    if(percent)*percent=100;
+    [pendingOriginalName release];
+    pendingOriginalName=[name retain];
+    printg("emod: converted %s (%llu B, %d bands) -> %s (%llu B, %d bands)\n",j->srcPath.c_str(),fileSizeOf(j->srcPath),
+           j->job.stats().bandsIn,j->outPath.c_str(),fileSizeOf(j->outPath),j->job.stats().bandsOut);
+    delete j;convJob=NULL;
+    return 1;
+}
+
+NSString* FileManager::pendingOriginal(){return pendingOriginalName;}
+
+void FileManager::resolveOriginal(BOOL deleteIt){
+    if(!pendingOriginalName)return;
+    if(deleteIt){
+        NSString* p=[NSString stringWithFormat:@"%@/%@",documents,pendingOriginalName];
+        if([[NSFileManager defaultManager] removeItemAtPath:p error:NULL]){
+            printg("emod: deleted the original %s\n",[p UTF8String]);
+        }else{
+            printg("emod: could not delete the original %s\n",[p UTF8String]);
+        }
+    }
+    [pendingOriginalName release];
+    pendingOriginalName=nil;
+}

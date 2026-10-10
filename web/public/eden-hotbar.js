@@ -32,12 +32,12 @@ for (let i = 0; i < 9; i++) {
 }
 document.body.appendChild(hotbarEl);
 
-// Classes/Constants.h's BLOCK_TYPES enum: TYPE_NONE=0 (not placeable) through TYPE_BTSTEEL=111
-// (the last real type as of this build). A value outside that range reaching hud->blocktype would
+// Classes/Constants.h's BLOCK_TYPES enum: TYPE_NONE=0 (not placeable) through TYPE_ALGAE=127
+// (the last id a signed block8 can hold; 112-127 since Stage D.2a). A value outside that range reaching hud->blocktype would
 // ask the atlas/HUD-icon renderer for a block that does not exist — defended against here so a
 // corrupted/out-of-range localStorage value from a future build (or a manual localStorage edit)
 // can never do that, rather than trusting the stored JSON blindly.
-const MIN_BLOCK_TYPE = 1, MAX_BLOCK_TYPE = 111;
+const MIN_BLOCK_TYPE = 1, MAX_BLOCK_TYPE = 127;
 function restoreHotbar() {
   let saved;
   try { saved = JSON.parse(localStorage.getItem(HOTBAR_STORAGE_KEY) || 'null'); } catch (e) { saved = null; }

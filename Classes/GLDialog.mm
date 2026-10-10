@@ -80,13 +80,15 @@ bool GLDialog::buttonRect(int j, CGRect* r) {
 bool GLDialog::textEntryAvailable() { return eden_text_input_available() != 0; }
 
 void GLDialog::prompt(const char* title, const char* body, const char* initialText, int maxBytes,
-                      const char* const* buttons, int n, void (*cb)(int, const char*)) {
+                      const char* const* buttons, int n, void (*cb)(int, const char*), int lines) {
     show(title, body, buttons, n, NULL);
     GLDialog* d = getDialog();
     d->m_hasField = true;
     d->m_promptCb = cb;
     d->m_field.setMaxBytes(maxBytes > 0 ? maxBytes : 49);
-    d->m_field.setPointSize(GLW::du(20));   // display face, like .eden-field
+    d->m_field.setLines(lines);
+    // Display face, like .eden-field; a multi-line field a size down so a line holds more.
+    d->m_field.setPointSize(GLW::du(lines > 1 ? 18 : 20));
     d->m_field.setText(initialText);
     d->layout();                   // again, now with the field's row
     d->m_field.focus();
@@ -125,7 +127,7 @@ void GLDialog::layout() {
     m_body.set(m_bodyText.c_str(),  bodyPt,  UITextAlignmentLeft, innerW, FACE_BODY);
 
     const int rows = (m_nButtons + 1) / 2;
-    const float fieldH = rowH;
+    const float fieldH = m_hasField ? std::max(rowH, m_field.heightForLines(m_field.lines())) : rowH;
     float ph = pad + m_title.height() + (m_body.empty() ? 0.0f : du(4) + m_body.height())
              + (m_hasField ? du(12) + fieldH : 0.0f)
              + du(14) + rows * (rowH + gap) - gap + pad;

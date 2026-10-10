@@ -72,7 +72,7 @@ void bevel(CGRect r, BevelStyle style);
 // --- text ----------------------------------------------------------------------------------
 // The design system's two faces (design-system.md, "Type"): DISPLAY is Jersey 10, the pixel face
 // for everything the player reads as chrome — titles, button labels, row titles, values; BODY is
-// the platform sans, for actual descriptive sentences only (a dialog's body, a hint line). Jersey
+// Rubik, for actual descriptive sentences only (a dialog's body, a hint line). Jersey
 // is small for its em (caps are 0.50 of the pixel height against Arial's 0.64), so a display size
 // reads like a body size about 1.28x smaller — the CSS's 22u buttons beside 15u body text.
 enum Face { FACE_BODY = 0, FACE_DISPLAY = 1 };
@@ -86,12 +86,18 @@ public:
     ~Label();
 
     // maxWidth == 0 disables wrapping. align is UITextAlignmentLeft/Center/Right.
+    // keepLastLines > 0 is a multi-line TextField's mode (D.4b): a word longer than a line is
+    // broken by characters instead of left long, and only the LAST n lines are kept -- the ones
+    // with the caret -- so a long text scrolls up instead of overflowing the field.
     void set(const char* text, float pt, UITextAlignment align, float maxWidth = 0.0f,
-             Face face = FACE_DISPLAY);
+             Face face = FACE_DISPLAY, int keepLastLines = 0);
     void clear();
 
     bool  empty()  const { return m_lines.empty(); }
     float height() const;                     // total laid-out height, points
+    // N.5.11: the widest line's real advance, points — measured by the raster seam
+    // (eden_text_raster_measure), or the kAvgGlyph estimate where it has no font (headless web).
+    float width()  const { return m_width; }
     float lineHeight() const;
 
     // Anchors, all point space: `x,yTop` is the top-left of the text block (lines run downward);
@@ -113,6 +119,39 @@ private:
     UITextAlignment m_align;
     float m_boxW;                             // width the alignment was resolved against
     Face  m_face;
+    float m_width;
+};
+
+// --- Toast (N.5.11) ------------------------------------------------------------------------
+// `.eden-toast`, the in-game one-line message: a dark 85% pill with the 2u grey keyline and white
+// display-face text, shrink-wrapped to the text and centred near the bottom of the screen, fading
+// in and out over 0.2 s. It sits over the world, so it takes the in-game chrome's inverted palette
+// (design-system.md, "In-game chrome"). Hud's statusbar draws through one, so every
+// `hud->sb->setStatus()` in the engine ("World Saved", "Loading World 47%") is a toast; that is
+// also the call a new in-game message should make.
+//
+// show() with the text already showing only resets the lifetime (no re-raster, no fade restart);
+// new text while visible re-rasters without fading back in. seconds >= 1000 never expires (the
+// stock statusbar's convention), clear() hides at once. Rasterises in show(), never in render().
+class Toast {
+public:
+    Toast();
+
+    void show(const char* utf8, float seconds);
+    void clear();
+    void update(float etime);
+    void render() const;
+    bool visible() const     { return !m_text.empty() && m_life > 0.0f; }
+    const std::string& text() const { return m_text; }
+    CGRect rect() const;                      // the pill as it will draw, point space
+
+private:
+    Toast(const Toast&);
+    Toast& operator=(const Toast&);
+
+    Label       m_label;
+    std::string m_text;
+    float       m_life, m_age, m_builtU;
 };
 
 // --- Button --------------------------------------------------------------------------------
@@ -411,6 +450,12 @@ public:
     // (the default) means just the field.
     void setKeepVisible(CGRect r);
     void setPointSize(float pt);
+    // D.4b: n > 1 makes the field multi-line -- the text wraps to the field's width, top-aligned,
+    // and scrolls to keep the caret's line visible. Return still commits (a command-block script
+    // separates statements with ';', not newlines). heightForLines() is the rect height n needs.
+    void setLines(int n);
+    int lines() const        { return m_lines; }
+    float heightForLines(int n) const;
     void setText(const char* utf8);
     const std::string& text() const { return m_text; }
     void setPlaceholder(const char* utf8);
@@ -440,6 +485,7 @@ private:
     CGRect      m_rect, m_keep;
     float       m_pt;
     int         m_maxBytes;
+    int         m_lines;
     std::string m_text, m_placeholder;
     Label       m_label;
     bool        m_showingPlaceholder;
@@ -458,6 +504,9 @@ extern "C" {
 // sets it around its own rasters and puts it back to 0. Native: TextRaster_native.cpp (bundled
 // Jersey10-Regular.ttf via stb_truetype, falling back to the body face); web: Texture2D_web.mm.
 void eden_text_raster_set_face(int face);
+// N.5.11: the advance width of `utf8` in pixels at `fontPx`, in the face set above; 0 = can't
+// measure (no font / no canvas). Native: TextRaster_native.cpp; web: Texture2D_web.mm.
+float eden_text_raster_measure(const char* utf8, float fontPx);
 int  eden_text_input_available(void);
 void eden_text_input_start(float x, float y, float w, float h);
 void eden_text_input_stop(void);

@@ -44,8 +44,11 @@ public:
     // gets the chosen index and the field's UTF-8 text (valid only during the call). Check
     // textEntryAvailable() first: on a host without GL text input (web) the field cannot be typed
     // into, and the caller should not offer the action at all.
+    // `lines` > 1 (D.4b) makes the field multi-line: it wraps, shows that many lines, and scrolls
+    // with the caret -- for texts longer than a line (a sign's 95 bytes, a script's 511).
     static void prompt(const char* title, const char* body, const char* initialText, int maxBytes,
-                       const char* const* buttons, int n, void (*cb)(int chosen, const char* text));
+                       const char* const* buttons, int n, void (*cb)(int chosen, const char* text),
+                       int lines = 1);
     static bool textEntryAvailable();
     // Closes whatever is up WITHOUT calling its callback — the harness's way out of a modal
     // (--shot), and the answer to "the screen under the dialog went away". Not a "Cancel":

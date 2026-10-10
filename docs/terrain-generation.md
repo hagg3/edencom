@@ -11,7 +11,7 @@ seems to do so little at runtime.
 |---|---|---|---|
 | Offline default-world generator | `TerrainGen2.mm` (2918 lines) | Only in `JUST_TERRAIN_GEN` builds, on the developer's machine | The 2880×2880-block `Eden.eden` bundled with the app |
 | Runtime flat/empty generator | `TerrainGenerator.mm` | Seed 0 worlds; any column missing from both the save file and the bundle | Layered flat columns / air columns |
-| Bundle streaming | `FileManagerHelper.mm` | Seed 333333 (`DEFAULT_LEVEL_SEED`) worlds — i.e. every normal world | RLE-decoded columns copied out of the bundled `Eden.eden` |
+| Bundle streaming | `FileManagerHelper.mm` | Seed 333333 (`DEFAULT_LEVEL_SEED`) worlds — i.e. every normal world | columns copied out of the bundled map — `Eden.emod` since S.6 (the zstd bake of `Eden.eden`; the RLE original is the fallback) |
 
 So at runtime, a normal world's "terrain generation" is *file decompression*: every
 default world starts as a byte-identical copy-on-write view of the same pre-generated
@@ -56,10 +56,12 @@ Painting the sky (paint tool aimed at the sky) calls `paintSky` which edits
 - `generateColumn(cx, cz, bgthread)` — despite the dead noise-based branches
   (`FALSE&&LEVEL_SEED!=0`), the live code path is the flat recipe: bedrock at y=0,
   stone to y=15, dirt to y=31, grass cap at y=32
-  (`TerrainGenerator.mm:210-239`). Those heights are `T_HEIGHT/4` and `T_HEIGHT/2`, so **in a 256z
-  world the slab is 128 tall**: stone to y=63, dirt to y=127, grass at y=128. That is 8 occupied
-  bands rather than 4, for every unsaved column of a non-default-seed 256z world. A default-seed
-  256z world instead gets the bundled map's 4 bands with air above them. The function also `memset`s
+  (`TerrainGenerator.mm:210-242`). Those heights are fixed at `T_HEIGHT_DEFAULT/4` and
+  `T_HEIGHT_DEFAULT/2` whatever the world height (2026-10-10). Until then they were `T_HEIGHT/4` and
+  `T_HEIGHT/2`, so a 256z world got a 128-tall slab (grass at y=128) and its unsaved preview columns
+  sat 96 blocks above the shared 256z worlds' saved ground at y=32 (seen in play on a shared half-adder
+  world). Emod-made 256z flat worlds saved before the fix keep their y=128 columns, so they now meet
+  newly generated columns at a 96-block cliff. The function also `memset`s
   `CHUNKS_PER_COLUMN`×32³ bytes of scratch twice per column, ~1 MB at 256z. (Noted 2026-10-03, `.emod`
   F.2; read from the code, not observed in play.) Reuses the chunk objects in the table
   (`resetForReuse` + `setBounds`), copies types into `blockarray`, `addChunk` marks
