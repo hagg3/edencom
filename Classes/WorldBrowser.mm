@@ -321,185 +321,6 @@ long long file_size(const std::string& path) {
     return n;
 }
 
-class Unpacker {
-public:
-    Unpacker() : m_in(NULL), m_out(NULL), m_zon(false), m_stored(false), m_gzip(false), m_left(0), m_total(0) {
-        std::memset(&m_zs, 0, sizeof(m_zs));
-    }
-    ~Unpacker() { end(); }
-
-    // Opens one layer: src (gzip or zip) -> dst. False with err() set when src is unreadable.
-    bool begin(const std::string& src, const std::string& dst, Kind kind) {
-        end();
-        m_err.clear();
-        m_in = std::fopen(src.c_str(), "rb");
-        if (!m_in) return fail("could not read the download");
-        long long dataStart = 0, compSize = file_size(src);
-        m_gzip = (kind == K_GZIP);
-        m_stored = false;
-        if (kind == K_ZIP && !zipEntry(&dataStart, &compSize)) return false;
-        std::fseek(m_in, (long)dataStart, SEEK_SET);
-        m_left = m_total = compSize;
-        m_out = std::fopen(dst.c_str(), "wb");
-        if (!m_out) return fail("could not write the world (is the disk full?)");
-        if (!m_stored) {
-            std::memset(&m_zs, 0, sizeof(m_zs));
-            // 15+32: zlib detects the gzip header itself. -15: a zip entry is a raw deflate stream.
-            if (inflateInit2(&m_zs, m_gzip ? 15 + 32 : -15) != Z_OK) return fail("could not start unpacking");
-            m_zon = true;
-        }
-        return true;
-    }
-
-    // 1 = layer finished, 0 = more to do, -1 = failed (err()). `budget` counts bytes read AND
-    // written: voxel data inflates ~100:1, so an input-only budget could still write hundreds of
-    // MB in one frame.
-    int step(long long budget) {
-        unsigned char outBuf[1 << 17];
-        while (budget > 0) {
-            if (m_stored) {
-                if (m_left <= 0) return finishCheck();
-                const size_t want = (size_t)std::min<long long>(sizeof(m_inHold), m_left);
-                const size_t got = std::fread(m_inHold, 1, want, m_in);
-                if (got == 0) return fail2("the download is truncated");
-                if (std::fwrite(m_inHold, 1, got, m_out) != got) return fail2("could not write the world (is the disk full?)");
-                m_left -= (long long)got;
-                budget -= 2 * (long long)got;
-                continue;
-            }
-            if (m_zs.avail_in == 0 && m_left > 0) {
-                const size_t want = (size_t)std::min<long long>(sizeof(m_inHold), m_left);
-                const size_t got = std::fread(m_inHold, 1, want, m_in);
-                if (got == 0) return fail2("the download is truncated");
-                m_left -= (long long)got;
-                budget -= (long long)got;
-                m_zs.next_in = m_inHold;
-                m_zs.avail_in = (uInt)got;
-            }
-            m_zs.next_out = outBuf;
-            m_zs.avail_out = sizeof(outBuf);
-            const int rc = inflate(&m_zs, Z_NO_FLUSH);
-            const size_t have = sizeof(outBuf) - m_zs.avail_out;
-            if (have && std::fwrite(outBuf, 1, have, m_out) != have)
-                return fail2("could not write the world (is the disk full?)");
-            budget -= (long long)have + 1;
-            if (rc == Z_STREAM_END) {
-                // A gzip file may be several members back to back (`cat a.gz b.gz`); anything
-                // after a zip entry's stream is the next record, not data.
-                if (m_gzip && (m_zs.avail_in > 0 || m_left > 0) && nextIsGzip()) { inflateReset(&m_zs); continue; }
-                m_left = 0;
-                return finishCheck();
-            }
-            if (rc == Z_BUF_ERROR) {
-                // No progress possible: out of input. With none left to read, the stream was cut short.
-                if (m_zs.avail_in == 0 && m_left <= 0) return fail2("the download is truncated");
-                continue;
-            }
-            if (rc != Z_OK) return fail2("the download is damaged");
-        }
-        return 0;
-    }
-
-    float progress() const { return m_total > 0 ? 1.0f - (float)m_left / (float)m_total : 0.0f; }
-    const std::string& err() const { return m_err; }
-
-    void end() {
-        if (m_zon) { inflateEnd(&m_zs); m_zon = false; }
-        if (m_in) { std::fclose(m_in); m_in = NULL; }
-        if (m_out) { std::fclose(m_out); m_out = NULL; }
-    }
-
-private:
-    bool fail(const char* m) { m_err = m; end(); return false; }
-    int fail2(const char* m) { m_err = m; end(); return -1; }
-    int finishCheck() {
-        const bool closed = std::fclose(m_out) == 0;
-        m_out = NULL;
-        end();
-        if (!closed) { m_err = "could not write the world (is the disk full?)"; return -1; }
-        return 1;
-    }
-
-    bool nextIsGzip() {
-        if (m_zs.avail_in < 2) {
-            // Top the buffer up so the magic can be read; a member boundary rarely lands here.
-            unsigned char tmp[2];
-            size_t have = m_zs.avail_in;
-            if (have) std::memcpy(tmp, m_zs.next_in, have);
-            const size_t got = std::fread(tmp + have, 1, 2 - have, m_in);
-            m_left -= (long long)got;
-            have += got;
-            std::memcpy(m_inHold, tmp, have);
-            m_zs.next_in = m_inHold;
-            m_zs.avail_in = (uInt)have;
-            if (have < 2) return false;
-        }
-        return m_zs.next_in[0] == 0x1f && m_zs.next_in[1] == 0x8b;
-    }
-
-    // The entry to extract: the first `.eden` in the central directory, else the first file. The
-    // central directory's sizes are authoritative — the local header's are legitimately zero when
-    // the archiver streamed (general-purpose bit 3), which is why the web's reader starts there too.
-    bool zipEntry(long long* dataStart, long long* compSize) {
-        std::fseek(m_in, 0, SEEK_END);
-        const long long size = (long long)std::ftell(m_in);
-        const long long tailLen = std::min<long long>(size, 65557);
-        std::vector<unsigned char> tail((size_t)tailLen);
-        std::fseek(m_in, (long)(size - tailLen), SEEK_SET);
-        if (std::fread(tail.data(), 1, tail.size(), m_in) != tail.size()) return fail("could not read the download");
-        long long eocd = -1;
-        for (long long i = tailLen - 22; i >= 0; i--)
-            if (u32le(&tail[(size_t)i]) == 0x06054b50) { eocd = i; break; }
-        if (eocd < 0) return fail("the download is not a zip archive");
-        const unsigned entries = u16le(&tail[(size_t)eocd + 10]);
-        const unsigned cdSize = u32le(&tail[(size_t)eocd + 12]);
-        const unsigned cdOff = u32le(&tail[(size_t)eocd + 16]);
-        if (cdOff == 0xFFFFFFFFu || (long long)cdOff + cdSize > size) return fail("this zip format is not supported (zip64)");
-        std::vector<unsigned char> cd(cdSize);
-        std::fseek(m_in, (long)cdOff, SEEK_SET);
-        if (std::fread(cd.data(), 1, cd.size(), m_in) != cd.size()) return fail("could not read the download");
-        long long pickOff = -1, pickSize = 0;
-        unsigned pickMethod = 0;
-        size_t at = 0;
-        for (unsigned k = 0; k < entries && at + 46 <= cd.size(); k++) {
-            if (u32le(&cd[at]) != 0x02014b50) break;
-            const unsigned method = u16le(&cd[at + 10]);
-            const unsigned csize = u32le(&cd[at + 20]);
-            const unsigned nlen = u16le(&cd[at + 28]), xlen = u16le(&cd[at + 30]), clen = u16le(&cd[at + 32]);
-            const unsigned loff = u32le(&cd[at + 42]);
-            const std::string name(cd.begin() + (long)(at + 46), cd.begin() + (long)std::min(cd.size(), at + 46 + nlen));
-            const bool isDir = !name.empty() && name[name.size() - 1] == '/';
-            const bool junk = name.compare(0, 9, "__MACOSX/") == 0;
-            if (!isDir && !junk && (pickOff < 0 || ends_with(lower(name), ".eden"))) {
-                const bool better = pickOff < 0 || ends_with(lower(name), ".eden");
-                if (better) { pickOff = loff; pickSize = csize; pickMethod = method; }
-                if (ends_with(lower(name), ".eden")) break;
-            }
-            at += 46 + nlen + xlen + clen;
-        }
-        if (pickOff < 0) return fail("the zip archive is empty");
-        if (pickSize == 0xFFFFFFFFLL || pickOff == 0xFFFFFFFFLL) return fail("this zip format is not supported (zip64)");
-        if (pickMethod != 0 && pickMethod != 8) return fail("this zip compression is not supported");
-        unsigned char lh[30];
-        std::fseek(m_in, (long)pickOff, SEEK_SET);
-        if (std::fread(lh, 1, 30, m_in) != 30 || u32le(lh) != 0x04034b50) return fail("the zip archive is damaged");
-        *dataStart = pickOff + 30 + u16le(lh + 26) + u16le(lh + 28);
-        *compSize = pickSize;
-        if (*dataStart + *compSize > size) return fail("the download is truncated");
-        m_stored = (pickMethod == 0);
-        m_gzip = false;
-        return true;
-    }
-
-    FILE* m_in;
-    FILE* m_out;
-    z_stream m_zs;
-    bool m_zon, m_stored, m_gzip;
-    long long m_left, m_total;
-    std::string m_err;
-    unsigned char m_inHold[1 << 16];
-};
-
 // ---------------------------------------------------------------------------------------------
 // 3. Import
 // ---------------------------------------------------------------------------------------------
@@ -542,7 +363,7 @@ struct SourceState {
     SourceState() : mode(WorldBrowser::MODE_FEATURED), listMode(WorldBrowser::MODE_FEATURED), loaded(false),
                     more(false), listJob(0), listAppend(false), first(0), selected(-1) {}
 };
-enum DlState { DL_IDLE, DL_FETCH, DL_UNPACK, DL_CONVERT };
+enum DlState { DL_IDLE, DL_FETCH, DL_CONVERT };
 }
 
 struct BrowserImpl {
@@ -576,17 +397,15 @@ struct BrowserImpl {
     int   dlJob, dlSrc;
     DlState dl;
     Entry dlEntry;
-    Unpacker unpack;
-    emod::ImportJob convert;             // S.5: with g_world_format on, the download converts while it inflates
+    emod::ImportJob convert;             // S.5: the download converts while it inflates
     std::string dlFile, layerIn, layerOut, dlStatus, convOut;
-    int   dlDepth;
     float dlFrac;
     float clock;
 
     BrowserImpl() : open(false), src(WorldBrowser::SRC_ARCHIVE), pitch(30), btnH(30), titleY(0), fieldPt(0), built(false),
                     showTitle(true), shownBusy(false), listTouch(-1), barTouch(-1), downRow(-1), tabTouch(-1), modeTouch(-1),
                     previewJob(0), previewTex(NULL), previewAspect(0), previewDelay(0), previewMissing(false),
-                    dlJob(0), dlSrc(0), dl(DL_IDLE), dlDepth(0), dlFrac(0), clock(0) {
+                    dlJob(0), dlSrc(0), dl(DL_IDLE), dlFrac(0), clock(0) {
         panel = list = detail = previewBox = CGRectMake(0, 0, 0, 0);
         for (int r = 0; r < WB_MAX_ROWS; r++) rowBuilt[r] = false;
     }
@@ -722,16 +541,21 @@ struct BrowserImpl {
             previewDelay -= etime;
             if (previewDelay > 0.0f) return;
             previewJob = eden_net_fetch(previewUrl(src, e->id).c_str(), NULL);
-            if (!previewJob) { previewKey = want; previewMissing = true; }
+            if (!previewJob) { previewKey = want; previewMissing = true; std::fprintf(stderr, "[eden-browser] preview fetch could not start: %s\n", previewUrl(src, e->id).c_str()); }
             return;
         }
         const int st = eden_net_poll(previewJob, NULL, NULL);
         if (st == 0) return;
         previewKey = want;
         previewMissing = true;
+        if (st <= 0) std::fprintf(stderr, "[eden-browser] preview fetch failed (status %d)\n", st);
         if (st > 0) {
             int len = 0;
             const unsigned char* b = eden_net_body(previewJob, &len);
+            // X.4: the Windows CI --browser-selftest timed out waiting for this preview with no hint
+            // why (job ok, wrong bytes, or texture failure all looked the same); say which.
+            if (!(b && len > 24 && b[0] == 0x89 && b[1] == 'P' && b[2] == 'N' && b[3] == 'G'))
+                std::fprintf(stderr, "[eden-browser] preview job done (status %d) but body is not a PNG (len %d)\n", st, len);
             // PNG only (that is all either host serves), sized from its IHDR for the aspect fit.
             if (b && len > 24 && b[0] == 0x89 && b[1] == 'P' && b[2] == 'N' && b[3] == 'G') {
                 const unsigned w = (b[16] << 24) | (b[17] << 16) | (b[18] << 8) | b[19];
@@ -745,7 +569,7 @@ struct BrowserImpl {
                     if (wrote) {
                         Texture2D* t = new Texture2D(nsstring(path), FALSE);
                         if (t->name) { previewTex = t; previewAspect = (float)w / (float)h; previewMissing = false; }
-                        else delete t;
+                        else { std::fprintf(stderr, "[eden-browser] preview PNG %ux%u written to %s but the texture did not load\n", w, h, path.c_str()); delete t; }
                     }
                 }
                 if (f) std::fclose(f);
@@ -787,7 +611,6 @@ struct BrowserImpl {
     void cancelDownload(const char* why) {
         eden_net_release(dlJob);
         dlJob = 0;
-        unpack.end();
         convert.abort();                 // deletes its spill / .converting / layer
         dl = DL_IDLE;
         cleanTemps();
@@ -818,36 +641,24 @@ struct BrowserImpl {
             if (st < 0) { failDownload(eden_net_error(dlJob)); return; }
             eden_net_release(dlJob);
             dlJob = 0;
-            dlDepth = 0;
-            if (FileManager::conversionEnabled()) {
-                // Plan §4 *Downloads and imports*: no inflated `.eden` is ever written. The job
-                // unpacks nested layers (still compressed) and converts the innermost stream.
-                // An uncompressed payload gets the same "is it a world" check as the old path.
-                if (sniff(dlFile) == K_RAW && !looks_like_world(dlFile)) {
-                    failDownload("that is not an Eden world file");
-                    return;
-                }
-                const std::string d = documents_dir();
-                for (int k = 1; k < 1000; k++) {
-                    convOut = d + "/" + dlEntry.id + (k == 1 ? std::string() : "-" + std::to_string(k)) + ".emod";
-                    if (file_size(convOut) < 0) break;
-                }
-                // S.5e: Settings' "Upgrade 64z worlds to 256z when converting" (no per-world prompt here).
-                if (!convert.begin(dlFile, convOut, dlEntry.id + ".eden", (int64_t)time(NULL), eden_get_upgrade_256z() != 0)) {
-                    failDownload(convert.error());
-                    return;
-                }
-                dl = DL_CONVERT;
+            // Plan §4 *Downloads and imports*: no inflated `.eden` is ever written. The job
+            // unpacks nested layers (still compressed) and converts the innermost stream.
+            // An uncompressed payload gets the same "is it a world" check as the old path.
+            if (sniff(dlFile) == K_RAW && !looks_like_world(dlFile)) {
+                failDownload("that is not an Eden world file");
                 return;
             }
-            layerIn = dlFile;                    // layers alternate between the two unpack temp names
-            layerOut = documents_dir() + "/.emod-unpack-a";
-            const std::string first = dlFile;
-            const Kind k = sniff(first);
-            if (k == K_RAW) { finishImport(first); return; }
-            dlDepth = 1;
-            if (!unpack.begin(first, layerOut, k)) { failDownload(unpack.err()); return; }
-            dl = DL_UNPACK;
+            const std::string d = documents_dir();
+            for (int k = 1; k < 1000; k++) {
+                convOut = d + "/" + dlEntry.id + (k == 1 ? std::string() : "-" + std::to_string(k)) + ".emod";
+                if (file_size(convOut) < 0) break;
+            }
+            // S.5e: Settings' "Upgrade 64z worlds to 256z when converting" (no per-world prompt here).
+            if (!convert.begin(dlFile, convOut, dlEntry.id + ".eden", (int64_t)time(NULL), eden_get_upgrade_256z() != 0)) {
+                failDownload(convert.error());
+                return;
+            }
+            dl = DL_CONVERT;
             return;
         }
         if (dl == DL_CONVERT) {
@@ -863,43 +674,9 @@ struct BrowserImpl {
             addImported(convOut.substr(documents_dir().size() + 1));
             return;
         }
-        if (dl == DL_UNPACK) {
-            const int r = unpack.step(6LL << 20);   // ~6 MB read + written a frame
-            dlFrac = unpack.progress();
-            dlStatus = "Unpacking";
-            if (r < 0) { failDownload(unpack.err()); return; }
-            if (r == 0) return;
-            const std::string done = layerOut;
-            std::remove(layerIn.c_str());
-            // The next layer reads `done` and writes the other temp name.
-            const std::string other = documents_dir() + (done == documents_dir() + "/.emod-unpack-a"
-                                                         ? "/.emod-unpack-b" : "/.emod-unpack-a");
-            const Kind k = sniff(done);
-            if (k == K_RAW) { finishImport(done); return; }
-            if (++dlDepth > 4) { failDownload("the archive is nested too deeply"); return; }
-            if (!unpack.begin(done, other, k)) { failDownload(unpack.err()); return; }
-            layerIn = done;
-            layerOut = other;
-        }
     }
 
-    void finishImport(const std::string& path) {
-        dl = DL_IDLE;
-        if (!looks_like_world(path)) { failDownload("that is not an Eden world file"); return; }
-        // `<id>.eden`, or `<id>-2.eden` ... when the player already has one: a re-download must
-        // never replace a world they have since played and changed.
-        const std::string d = documents_dir();
-        std::string file;
-        for (int k = 1; k < 1000; k++) {
-            file = dlEntry.id + (k == 1 ? std::string() : "-" + std::to_string(k)) + ".eden";
-            if (file_size(d + "/" + file) < 0) break;
-        }
-        if (std::rename(path.c_str(), (d + "/" + file).c_str()) != 0) { failDownload("could not save the world"); return; }
-        cleanTemps();
-        addImported(file);
-    }
-
-    // The downloaded world is on disk as `file` (a `.eden`, or since S.5 an `.emod`): list it, select it.
+    // The downloaded world is on disk as `file` (an `.emod`): list it, select it.
     void addImported(const std::string& file) {
         cleanTemps();
 

@@ -1394,11 +1394,15 @@ bool EdenEmodConverter::spillSlot() {
     Slot s;
     s.crc = crc32_of(slot_.data(), len);
     s.len = len;
+    const auto x0 = std::chrono::steady_clock::now();
     s.mask = split_bands(slot_.data(), SPILL_BANDS, payload_);
     if (!codecs_.encode(opt_.codec, payload_.data(), payload_.size(), true, &s.codec, enc_)) return fail(E_IO, "encode failed");
     s.stored = (uint32_t)enc_.size();
     s.spillOff = st_.spillBytes;
+    const auto x1 = std::chrono::steady_clock::now();
+    st_.msSpillEncode += std::chrono::duration<double, std::milli>(x1 - x0).count();
     if (s.stored && std::fwrite(enc_.data(), 1, s.stored, spill_) != s.stored) return fail(E_IO, "spill write failed (disk full?)");
+    st_.msSpillWrite += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - x1).count();
     st_.spillBytes += s.stored;
     if (opt_.maxTempBytes && st_.spillBytes > opt_.maxTempBytes) return fail(E_CAP, "temp-bytes cap exceeded while spilling");
     slots_.push_back(s);
@@ -1460,6 +1464,7 @@ bool EdenEmodConverter::finish() {
     if (pos_ < dirOff_) return fail(E_DIR_OFFSET, fmt("directory offset %llu outside the file (%llu B)", (unsigned long long)dirOff_, (unsigned long long)pos_));
     if (!slot_.empty() && !spillSlot()) return false;
     if (std::fflush(spill_) != 0) return fail(E_IO, "spill flush failed");
+    const auto f0 = std::chrono::steady_clock::now();    // X.5: msBuild runs from here to the fsync
     Layout L;
     if (!parse_layout(hdr_, pos_, dir_, L)) return fail(E_LAYOUT, "creature block would start inside the header");
     bands_ = L.bands;                                   // the detected height, from here on
@@ -1558,7 +1563,10 @@ bool EdenEmodConverter::finish() {
         commit_payload(cp, 1, (uint32_t)crcs.size(), cc, 0);
         append_record(rec, T_COMMIT, C_NONE, 0, 0, 0, COMMIT_LEN, 1, cp, COMMIT_LEN);
         flush(true);
+        const auto f1 = std::chrono::steady_clock::now();
+        st_.msBuild += std::chrono::duration<double, std::milli>(f1 - f0).count();
         ok = ok && sync_file(o);
+        st_.msSync += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - f1).count();
     }
     std::fclose(o);
     if (!ok) return fail(err_ == E_CAP ? E_CAP : E_IO, err_ == E_CAP ? "temp-bytes cap exceeded" : "output write failed (disk full?)");
@@ -1570,6 +1578,7 @@ bool EdenEmodConverter::finish() {
     st_.bandsIn = L.bands;
     st_.bandsOut = outBands;
     // convert-on-open step 3: re-read every record and compare with the source before the rename
+    const auto v0 = std::chrono::steady_clock::now();
     {
         EdenWorldStore s;
         if (!s.open(convPath_.c_str(), false)) return fail(E_VERIFY, "written file does not open: " + s.error());
@@ -1586,9 +1595,12 @@ bool EdenEmodConverter::finish() {
         if (s.readRecord(T_WORLD_HEADER, h) != EdenWorldStore::READ_OK || h.size() != EDEN_HEADER || std::memcmp(h.data(), hdrOut, EDEN_HEADER))
             return fail(E_VERIFY, "WORLD_HEADER does not read back");
     }
+    const auto v1 = std::chrono::steady_clock::now();
+    st_.msVerify += std::chrono::duration<double, std::milli>(v1 - v0).count();
     std::fclose(spill_);
     spill_ = nullptr;
     if (!replace_file(convPath_, out_)) return fail(E_IO, "cannot rename the converted file into place");
+    st_.msRename += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - v1).count();
     remove_file(spillPath_);
     done_ = true;
     begun_ = false;

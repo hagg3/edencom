@@ -109,7 +109,12 @@ static const Setting kSettings[] = {
   { "gamepad_look_sensitivity", "Gamepad look speed", "Controls", KIND_RANGE, -1,     .25f,  3, .05f,  1,  "Right-stick look speed. Composes with mouse sensitivity.",        NULL },
   { "gamepad_deadzone",  "Gamepad deadzone",  "Controls",  KIND_RANGE,  -1,          .05f, .5f, .05f, .15f, "Ignore stick movement smaller than this. Raise it if the camera drifts on its own.", NULL },
 
+  // B.8: a shortcut over view_distance + render_scale (see kPresets[]). Stored like any row, but
+  // moving either knob by hand drops it to Custom. Default reproduces the pre-B.8 look exactly.
+  { "graphics_preset",   "Graphics preset",   "Video",     KIND_ENUM,   -1,             0,   3,   1,   2,  "Low trades distance and sharpness for speed. Default is the original look. High matches Default for now. Changing a setting below makes it Custom.", "Custom,Low,Default,High" },
   { "fov",               "Field of view",     "Video",     KIND_RANGE,  -1,            60, 110,   1,  80,  "Vertical FOV in degrees. 80 is the original.",                    NULL },
+  // B.5a: draw-culling only (Graphics::setZFAR); a "less" knob for weak CPUs/GPUs. Auto = the per-device value.
+  { "view_distance",     "View distance",     "Video",     KIND_ENUM,   -1,             0,   6,   1,   0,  "How far you can see, in chunks. Lower is faster. Auto picks by device; the cap is about 120 blocks.", "Auto,4,5,6,7,8,9" },
   { "display_mode",      "Display",           "Video",     KIND_ENUM,   -1,             0,   2,   1,   0,  "Fixed size, fit the window, or a fullscreen button.",             "Fixed,Fit window,Fullscreen" },
   // Audit rows D1 + D4 — the two knobs on the (now derived) engine POINT space. Both default to
   // Auto, which defers to the active device profile (src/seam/DisplayProfile_web.mm's kProfiles[]):
@@ -156,7 +161,6 @@ static const Setting kSettings[] = {
   { "fly",               "Fly mode",          "Experiments", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Free flight. Space/Ctrl to rise and fall. (F)",                   NULL },
   { "fps_normalize",     "Frame-rate normalize", "Experiments", KIND_TOGGLE, -1,        0,   1,   1,   1,  "Keep walk speed the same at any refresh rate (PC audit F1).",     NULL },
   { "advanced_movement", "Advanced movement (bhop)", "Experiments", KIND_TOGGLE, -1,     0,   1,   1,   0,  "Opt-in: zero-delay bunny-hop and wheel-jump. Off by default.",    NULL },
-  { "emod_format",       "New .emod world format", "Experiments", KIND_TOGGLE, -1,      0,   1,   1,   1,  "New worlds are saved as .emod, and .eden worlds are converted to .emod when you open them. Legacy .eden support will be removed once this is proven.", NULL },
   { "crouch",            "Crouch mode",       "Experiments", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Adds a crouch key/button (halves hitbox height for 1-block gaps). Off by default.", NULL },
 
   { "save_backup",       "Keep a save backup", "Saves",      KIND_TOGGLE, -1,           0,   1,   1,   1,  "Keep a '.bak' copy of a world's previous save so a corrupted or interrupted save can be recovered. Roughly doubles the disk write per save below the in-place threshold. On by default -- this is what a corrupted-load recovery prompt offers to restore.", NULL },
@@ -167,7 +171,6 @@ static const Setting kSettings[] = {
 };
 static const int kSettingCount = (int)(sizeof(kSettings) / sizeof(kSettings[0]));
 
-extern int g_world_format, g_world_format_pinned;   // Classes/FileManager.mm
 static float g_value[kSettingCount];
 static bool  g_loaded = false;
 // Row #14: did NSUserDefaults actually have a value for this (port-owned) row at load time? Used
@@ -186,6 +189,7 @@ static int eden_setting_index(const char* key) {
 // gluPerspective wrap below.
 float eden_look_sensitivity = 1.0f;   // read by eden_apply_look_delta
 float eden_fov_degrees      = 80.0f;  // read by __wrap_gluPerspective
+float eden_view_distance    = 0.0f;   // enum index (0=Auto, 1..6 = 4..9 chunks), read by Graphics::viewDistanceZFAR
 // PC controls audit F1/F2 (Movement_web.mm's --wrap of Player::setSpeed). Default ON; a toggle
 // exists so stock (frame-time-dependent) feel can be A/B'd without a rebuild.
 float eden_fps_normalize    = 1.0f;
@@ -355,6 +359,15 @@ static SettingsMenu* eden_engine_settings(void) {
 // ---------------------------------------------------------------------------------------------
 static void eden_apply_port_settings(void);
 
+// B.8 presets: enum indexes of view_distance (0 = Auto, 1 = 4 chunks) and render_scale (1 = 75%,
+// 2 = 100%). Index 0 (Custom) has no row. iOS hides render_scale and reads it as 100% whatever is
+// stored, so there the preset is judged on view distance alone.
+struct GfxPreset { int view_distance, render_scale; };
+static const GfxPreset kPresets[] = { {0, 0}, {1, 1}, {0, 2}, {0, 2} };   // Custom, Low, Default, High
+static void eden_preset_sync(int changedKnob);
+extern "C" void eden_settings_set(int i, float v);
+static bool g_presetApplying = false;
+
 static void eden_apply_setting(int i, bool commitEngine) {
     if (i < 0 || i >= kSettingCount) return;
     const Setting& s = kSettings[i];
@@ -387,6 +400,22 @@ static void eden_apply_setting(int i, bool commitEngine) {
         eden_look_sensitivity = v;
     } else if (std::strcmp(s.key, "fov") == 0) {
         eden_fov_degrees = v;
+    } else if (std::strcmp(s.key, "view_distance") == 0) {
+        eden_view_distance = v;
+        if (World::getWorld) Graphics::setZFAR(0);   // re-derive ZFAR now (it is otherwise only set on world load)
+        eden_preset_sync(i);
+    } else if (std::strcmp(s.key, "graphics_preset") == 0) {
+        // Only a deliberate change applies the knobs; the init/re-apply pass must not overwrite
+        // stored knobs (or the low-memory seeds) with the preset's.
+        int p = (int)lroundf(v);
+        if (commitEngine && p >= 1 && p < (int)(sizeof(kPresets) / sizeof(kPresets[0]))) {
+            g_presetApplying = true;
+            eden_settings_set(eden_setting_index("view_distance"), (float)kPresets[p].view_distance);
+#if !defined(EDEN_PLATFORM_IOS)
+            eden_settings_set(eden_setting_index("render_scale"), (float)kPresets[p].render_scale);
+#endif
+            g_presetApplying = false;
+        }
     } else if (std::strcmp(s.key, "fps_normalize") == 0) {
         eden_fps_normalize = v;
     } else if (std::strcmp(s.key, "hold_to_act") == 0) {
@@ -401,6 +430,7 @@ static void eden_apply_setting(int i, bool commitEngine) {
         eden_display_mode = v;
     } else if (std::strcmp(s.key, "render_scale") == 0) {
         eden_render_scale = v;
+        eden_preset_sync(i);
     } else if (std::strcmp(s.key, "dpr_cap") == 0) {
         eden_dpr_cap = v;
     } else if (std::strcmp(s.key, "fps_cap") == 0) {
@@ -421,8 +451,6 @@ static void eden_apply_setting(int i, bool commitEngine) {
         eden_gamepad_deadzone = v;
     } else if (std::strcmp(s.key, "save_backup") == 0) {
         eden_save_backup = v;
-    } else if (std::strcmp(s.key, "emod_format") == 0) {
-        if (!g_world_format_pinned) g_world_format = (v != 0.0f) ? 1 : 0;
     } else if (std::strcmp(s.key, "upgrade_256z") == 0) {
         eden_upgrade_256z = v;
     } else if (std::strcmp(s.key, "input_mode") == 0) {
@@ -463,6 +491,23 @@ static void eden_persist_setting(int i) {
     [prefs synchronize];
 }
 
+// A knob moved by hand (or by a profile seed): if it no longer matches the chosen preset, the
+// preset becomes Custom. Not called while a preset is applying its own knobs.
+static void eden_preset_sync(int changedKnob) {
+    (void)changedKnob;
+    if (g_presetApplying) return;
+    int pi = eden_setting_index("graphics_preset"), vi = eden_setting_index("view_distance"),
+        ri = eden_setting_index("render_scale");
+    if (pi < 0 || vi < 0 || ri < 0) return;
+    int p = (int)lroundf(g_value[pi]);
+    if (p < 1 || p >= (int)(sizeof(kPresets) / sizeof(kPresets[0]))) return;
+    bool match = (int)lroundf(g_value[vi]) == kPresets[p].view_distance;
+#if !defined(EDEN_PLATFORM_IOS)
+    match = match && (int)lroundf(g_value[ri]) == kPresets[p].render_scale;
+#endif
+    if (!match) { g_value[pi] = 0.0f; g_hadStored[pi] = true; eden_persist_setting(pi); }
+}
+
 extern "C" {
 
 // Called once the world exists. Seeds every row: engine rows FROM the engine (SettingsMenu's ctor
@@ -497,6 +542,18 @@ void eden_settings_init(void) {
             [prefs objectForKey:[NSString stringWithUTF8String:"input_mode"]] == nil) {
             id oldTouch = [prefs objectForKey:[NSString stringWithUTF8String:"touch_joystick"]];
             if (oldTouch && [(NSNumber*)oldTouch intValue] > 0) g_value[input_mode_i] = 1.0f;
+        }
+    }
+    {   // B.8: a preset nobody chose is whatever the knobs add up to (Default, unless a seed moved them)
+        int pi = eden_setting_index("graphics_preset");
+        if (pi >= 0 && !g_hadStored[pi]) {
+            int vi = eden_setting_index("view_distance"), ri = eden_setting_index("render_scale");
+            bool isDefault = (int)lroundf(g_value[vi]) == kPresets[2].view_distance
+#if !defined(EDEN_PLATFORM_IOS)
+                          && (int)lroundf(g_value[ri]) == kPresets[2].render_scale
+#endif
+                ;
+            g_value[pi] = isDefault ? 2.0f : 0.0f;
         }
     }
     eden_apply_port_settings();

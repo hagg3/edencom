@@ -323,6 +323,13 @@ public:
         uint64_t peakHeldBytes;    // slot buffer + directory + slot index + decode cache (no zstd ctx)
         uint32_t creatureSlots, trailerBytes, flags;
         int bandsIn, bandsOut;     // the source's height and the `.emod`'s (S.5e: 4 -> 16 when upgraded)
+        // X.5: where the conversion's own time went, in ms (steady_clock; feed() side then finish()).
+        double msSpillEncode;      // feed: band split + codec (zstd) of each 2 MB source slot
+        double msSpillWrite;       // feed: fwrite of the encoded slot to the spill file
+        double msBuild;            // finish: slot read-back + decode + re-encode + .converting writes (all of it up to the fsync)
+        double msSync;             // finish: fsync of .converting
+        double msVerify;           // finish: the re-open + read-back-every-column check
+        double msRename;           // finish: replace_file onto the final name
     };
 
     EdenEmodConverter();

@@ -165,7 +165,8 @@ Buffer cap: `pbuffer_size 10000` particles.
 Per-world 4×4 grid of sky palette indices (`regionSkyColors`, persisted in the header
 as `skycolors[16]`). `updateSkyColor1/2` map the player's position in the default
 world onto the grid and set `terrain->final_skycolor`; `Terrain::update` interpolates
-`skycolor` toward it and updates the fog color; `Terrain::render` crossfades the
+`skycolor` toward it (X.6: the region index clamps to [0,3]; it used to clamp to 4, one past the
+array, reachable on flat worlds and on unbounded worlds past the bundled square) and updates the fog color; `Terrain::render` crossfades the
 colored/B&W skybox textures. Painting the sky (`paintSky`) recolors the region the
 player is in — a signature Eden feature. Night = palette entry 54 (dims skylight and
 GL lights for doors/creatures).

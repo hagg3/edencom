@@ -34,7 +34,7 @@ passes, special objects, sky, and the per-vertex data formats.
   32-tile atlases; both grew to 64 (`Constants.h` `ATLAS_TILES`) to carry blocks 112–127 — atlas2's
   extra 32 tiles are transparent padding so one constant serves both passes. Every consumer reads
   it: the two passes, `BlockBreak`, `Resources::getBlockTex`/`getBlockTexShort` (normalized
-  `type/ATLAS_TILES` for the HUD icons, picker and `Graphics::drawCube`). The image loader's cap is
+  `type/ATLAS_TILES` for the HUD icons, picker and `Graphics::drawCube`). The door, portal-frame and portal-swirl immediate batches (`Terrain::render`) used to hardcode `*32` to cancel the 1/32 matrix for their own non-atlas textures; they now multiply by `ATLAS_TILES` (X.7 — at `*32` only the top half of the door texture was sampled, stretched over both blocks). The image loader's cap is
   2048 (`kMaxImageTextureSize_Eden`); at the old 1024 the 2048-row atlas was silently halved.
 - `vertexObject` — float version used for per-frame immediate batches (doors, cubes,
   portals, flowers, creatures env-map).
@@ -48,8 +48,18 @@ call with `--wrap` and feeds the same value, so both targets agree.),
 `beginTerrain/endTerrain` (fog on, color arrays, atlas bind, ×0.25 scale),
 `beginHud/endHud` and `prepareMenu/endMenu` (ortho 2D), `setZFAR` (also re-derives the
 linear fog band: start `ZFAR-ZFAR/1.6`, end `ZFAR-30`). Fog color tracks sky color
-(`Terrain::update`). ZFAR: 120 on ES2-class devices, 40–55 on 1st-gen hardware
-(`FileManager.mm:1606-1617`).
+(`Terrain::update`). `setZFAR` ignores its argument: it picks a per-tier value (`LOW_MEM_DEVICE` 90,
+`LOW_GRAPHICS` 115, else 145) and passes it through `Graphics::viewDistanceZFAR`, which applies the user's
+**View distance** setting (B.5a; `view_distance` enum, `eden_view_distance` global in `Settings_web.mm`:
+0 = Auto = the tier value, 1..6 = 4..9 chunks). The far plane is `ZFAR-25`, so ZFAR = blocks + 25, and blocks
+are capped at `VIEW_DISTANCE_MAX_BLOCKS` (120, the meshed radius — not the 144-block resident window; B.5b-2
+makes this radius-dependent). **Draw-culling only**: meshing and streaming are unchanged. Changing the setting
+re-calls `setZFAR` immediately.
+**Graphics preset** (B.8; `graphics_preset` row, `kPresets[]` in `Settings_web.mm`): Custom / Low / Default / High is a
+shortcut that writes `view_distance` (and `render_scale`, except on iOS where that row is hidden) — Low = 4 chunks + 75%,
+Default = Auto + 100% (the pre-B.8 look; shots match within animation noise), High = Default until B.5b-2. Moving either
+knob by hand sets the preset to Custom. It does not touch `LOW_MEM_DEVICE`/`LOW_GRAPHICS`: those pick resources at
+load time and are not switchable mid-session.
 
 ## Chunk meshing — `TerrainChunk::rebuild2()` (`TerrainChunk.mm:184`, "here be dragons")
 

@@ -11,6 +11,7 @@
 #import "Model.h"
 #import "EAGLView.h"
 #import "Globals.h"
+#include "F3Timing.h"
 #import "TerrainGen2.h"
 
 #import "Alert.h"
@@ -558,7 +559,84 @@ World::~World(){
 	//[[UIDevice currentDevice] endGeneratingDeviceOrientationNotifications];
 	
 }
+#if EDEN_F3_HOOKS
+// F3 (opt-in, -DEDEN_F3_HOOKS=ON): env-gated Mac-baseline driver, F3_DRIVE="<world display name>". Opens the world,
+// then 3x { Warp Home (E1), emulated straight walk of 160 blocks -x at 15 blocks/s (E2) } and exits.
+// R.0: also runs on iOS via <Documents>/f3-drive.txt (see f3_drive_name).
+extern "C" {
+int   eden_menu_world_count(void);
+const char* eden_menu_world_name(int index);
+void  eden_menu_select(int index);
+int   eden_menu_play(void);
+}
+// R.0: the driver is enabled by F3_DRIVE in the environment (Mac) OR by a marker file
+// <Documents>/f3-drive.txt whose first line is the world display name (iOS: no env, no touch input).
+// With neither it is inert: one getenv + one fopen at the first frame, then a static NULL.
+// The marker is deleted when the run finishes so a relaunch is an ordinary launch.
+extern "C" const char* eden_platform_documents_root(void);
+static std::string g_f3_marker;
+static const char* f3_drive_name(){
+    static bool probed=false; static char buf[256]; static const char* nm=NULL;
+    if(probed)return nm;
+    probed=true;
+    if(const char* e=getenv("F3_DRIVE")){nm=e;return nm;}
+    const char* root=eden_platform_documents_root();
+    if(!root)return NULL;
+    g_f3_marker=std::string(root)+"/f3-drive.txt";
+    if(FILE* f=fopen(g_f3_marker.c_str(),"r")){
+        if(fgets(buf,sizeof buf,f)){
+            size_t n=strlen(buf); while(n&&(buf[n-1]=='\n'||buf[n-1]=='\r'||buf[n-1]==' '))buf[--n]=0;
+            if(n)nm=buf;
+        }
+        fclose(f);
+    }
+    if(!nm)g_f3_marker.clear();
+    return nm;
+}
+static void f3_drive(World* w){
+    const char* nm=f3_drive_name();
+    if(!nm)return;
+    static int phase=0,wait=0,rep=0; static float y0=0,x0=0,z0=0,walked=0;
+    if(wait>0){wait--;return;}
+    if(g_f3.active&&phase!=4)return;
+    switch(phase){
+    case 0:{ // open world from the menu
+        int idx=-1;
+        for(int i=0;i<eden_menu_world_count();i++)if(!strcmp(eden_menu_world_name(i),nm)){idx=i;break;}
+        if(idx<0){fprintf(stderr,"[F3] drive: world '%s' not found\n",nm);fflush(stderr);if(!g_f3_marker.empty())remove(g_f3_marker.c_str());exit(2);}
+        eden_menu_select(idx);
+        if(eden_menu_play()!=1){fprintf(stderr,"[F3] drive: play refused\n");fflush(stderr);if(!g_f3_marker.empty())remove(g_f3_marker.c_str());exit(2);}
+        phase=1; wait=600; break; }
+    case 1: // settle after load (first load is not an event)
+        if(w->game_mode!=GAME_MODE_PLAY||!w->terrain->loaded){wait=30;break;}
+        fprintf(stderr,"[F3] drive: in world '%s', starting rep %d\n",nm,rep+1);
+        phase=2; break;
+    case 2: // E1
+        w->terrain->warpToHome(); phase=3; wait=300; break;
+    case 3:{ // E2: walk. R.4: reps 1-2 walk -x exactly as F.3 did (rep 1 comparable, rep 2 warm);
+             // reps 3-5 walk +z, +x, -z from Home, i.e. into territory this process has not read.
+        static const char* const kName[5]={"-x","-x","+z","+x","-z"};
+        x0=w->player->pos.x; y0=62.0f; z0=w->player->pos.z; walked=0; phase=4;
+        fprintf(stderr,"[F3] drive: rep %d walks %s\n",rep+1,kName[rep]); break;}
+    case 4:{
+        static const float kDir[5][2]={{-1,0},{-1,0},{0,1},{1,0},{0,-1}};
+        walked+=0.25f;
+        w->player->pos=MakeVector(x0+kDir[rep][0]*walked,y0,z0+kDir[rep][1]*walked); w->player->vel=MakeVector(0,0,0);
+        if(walked>=160.0f){phase=5; wait=600;}
+        break;}
+    case 5:
+        if(++rep>=5){fprintf(stderr,"[F3] drive: done\n");fflush(stderr);
+            if(!g_f3_marker.empty())remove(g_f3_marker.c_str());exit(0);}
+        phase=2; break;
+    }
+}
+#else
+static inline void f3_drive(World*){}
+#endif
+
 BOOL World::update(float etime){
+    f3_frame_begin();
+    f3_drive(this);
     if(JUST_TERRAIN_GEN){
         return FALSE;
     }

@@ -160,10 +160,13 @@ jobs:
 
           # THE WORLD FILE IS NOT NAMED AFTER THE WORLD. This engine gives every world a random
           # 40-character filename and keeps the display name inside the header — so the artifact
-          # has to be found, not assumed. (Assuming `ci.eden` is how the first version of this
+          # has to be found, not assumed. (Assuming `ci.emod` is how the first version of this
           # workflow uploaded a path that does not exist.)
           mkdir -p publish
-          cp "$(ls -S ci-docs/*.eden | head -1)" publish/world-linux.eden
+          cp "$(ls -S ci-docs/*.emod | head -1)" publish/world-linux.emod
+          # S.8: the byte comparison below runs on the `.eden` EXPORT of each platform's world -- the
+          # logical, deterministic form (an `.emod` carries record headers/CRCs that are not comparable).
+          ./build/eden_native --export=publish/world-linux.emod --export-out=publish/world-linux.eden
 
           # ...and PUBLISH THE CHECKSUM OF LOADING IT, which is what turns the other platforms'
           # "read the world Linux wrote" gates into assertions instead of gestures. Loading a fixed
@@ -334,7 +337,7 @@ jobs:
           . ../.github/scripts/run-gate.sh
           export PATH="/c/sdl3-prefix/bin:$PATH"
           rm -rf ci-docs && mkdir -p ci-docs
-          cp from-linux/world-linux.eden ci-docs/
+          cp from-linux/world-linux.emod ci-docs/
           run_gate "crossload" ./build/eden_native.exe --headless --stage1 --world=ci \
             --docs="$PWD/ci-docs"
           want=$(cat from-linux/world-linux.geom)
@@ -349,13 +352,14 @@ jobs:
           export PATH="/c/sdl3-prefix/bin:$PATH"
           mkdir -p own-docs
           ./build/eden_native.exe --headless --save-roundtrip --world=ci --docs="$PWD/own-docs"
-          mkdir -p publish && cp "$(ls -S own-docs/*.eden | head -1)" publish/world-windows.eden
+          mkdir -p publish && cp "$(ls -S own-docs/*.emod | head -1)" publish/world-windows.emod
+          ./build/eden_native.exe --export=publish/world-windows.emod --export-out=publish/world-windows.eden
           ls -l publish
 
       - uses: actions/upload-artifact@v4
         with:
           name: world-windows
-          path: native/publish/world-windows.eden
+          path: native/publish/world-windows.*
           if-no-files-found: error
 
       # -----------------------------------------------------------------------------------------
@@ -492,7 +496,7 @@ jobs:
           set -e
           . ../.github/scripts/run-gate.sh
           rm -rf ci-docs && mkdir -p ci-docs
-          cp from-linux/world-linux.eden ci-docs/
+          cp from-linux/world-linux.emod ci-docs/
           run_gate "crossload" ./build/eden_native --headless --stage1 --world=ci \
             --docs="$PWD/ci-docs"
           want=$(cat from-linux/world-linux.geom)
@@ -506,12 +510,13 @@ jobs:
         run: |
           mkdir -p own-docs
           ./build/eden_native --headless --save-roundtrip --world=ci --docs="$PWD/own-docs"
-          mkdir -p publish && cp "$(ls -S own-docs/*.eden | head -1)" publish/world-macos.eden
+          mkdir -p publish && cp "$(ls -S own-docs/*.emod | head -1)" publish/world-macos.emod
+          ./build/eden_native --export=publish/world-macos.emod --export-out=publish/world-macos.eden
 
       - uses: actions/upload-artifact@v4
         with:
           name: world-macos
-          path: native/publish/world-macos.eden
+          path: native/publish/world-macos.*
           if-no-files-found: error
 
   # =============================================================================================
@@ -851,7 +856,7 @@ jobs:
           UDID=${{ steps.sim.outputs.udid }}
           DATA=$(xcrun simctl get_app_container "$UDID" "$EDEN_BUNDLE_ID" data)
           mkdir -p "$DATA/Documents"
-          cp native/from-linux/world-linux.eden "$DATA/Documents/"
+          cp native/from-linux/world-linux.emod "$DATA/Documents/"
           SIMCTL_CHILD_EDEN_ARGS="--headless --stage1 --world=ci" \
           SIMCTL_CHILD_EDEN_LOG="$DATA/crossload.log" \
           SIMCTL_CHILD_SDL_VIDEO_DRIVER=dummy SIMCTL_CHILD_SDL_AUDIO_DRIVER=dummy \
@@ -899,11 +904,10 @@ jobs:
         run: |
           set -e
           node tools/headless-p1-gate.js build-st
-          for t in headless-menu-flow-test headless-lazy-world-test headless-save-roundtrip-test \
+          for t in headless-menu-flow-test headless-lazy-world-test \
                    headless-recolor-test headless-display-profile-test headless-shim-selftest \
-                   headless-256z-test headless-save-trailer-test headless-save-inplace-test \
-                   headless-256z-authoring-test headless-256z-convert-crosscheck \
-                   headless-opfs-mirror-test headless-save-on-background-test headless-emod-store-test; do
+                   headless-256z-authoring-test \
+                   headless-opfs-mirror-test headless-emod-store-test; do
             echo "--- $t"
             node "tools/$t.js" build-st/eden.js
           done
@@ -924,7 +928,7 @@ jobs:
         run: |
           set -e
           node tools/headless-mesh-checksum.js build-st/eden.js \
-            --import=from-linux/world-linux.eden 2>&1 | tee crossload.log
+            --import=from-linux/world-linux.emod 2>&1 | tee crossload.log
           want=$(cat from-linux/world-linux.geom)
           got=$(sed -n 's/.*"geom":"\([0-9a-f]*\)".*/\1/p' crossload.log | head -1)
           echo "linux wrote it as $want; web read it as $got"

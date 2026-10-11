@@ -98,9 +98,8 @@
 //   --upgrade-256z=0|1   Stage S / S.5e: whether a conversion promotes a 64z source to 256z
 //                        (EDEN_UPGRADE_256Z). Scripted modes and --live-cmds default to 0 -- the
 //                        source's height -- whatever the Settings toggle says; a player run follows it.
-//   --world-format=eden|emod  Stage S / S.4 (g_world_format, Classes/FileManager.h): emod = new
-//                        worlds are `.emod`, and a `.eden`/archive converts when played (S.5d).
-//                        Default eden; also EDEN_WORLD_FORMAT=emod. An existing `.emod` always loads.
+//   --world-format=...    Stage S / S.8: accepted and ignored (old scripts pass it). Every world is an
+//                        `.emod`; a `.eden`/archive converts when played (S.5d).
 //   --empty-shortcut=0   Stage R / R.2's A/B lever: 0 restores the pre-R.2 mesh scheduling (all-air
 //                        chunks scanned and counted against the bulk-reload budget). Default 1.
 //   --read-budget-bands=0  Stage R / R.2b's A/B lever: 0 restores the stock column-read budget
@@ -328,6 +327,10 @@ extern float eden_gamepad_deadzone;
 // Classes/Alert.h — the native seam (seam_link_stubs_native.mm) implements this as a GLDialog.
 void showAlertWarpHome();
 
+#if defined(EDEN_DIAGNOSTICS)
+extern "C" const char* eden_bench_save(void);   // DevConsole_web.mm (X.1: --save-bench)
+#endif
+
 extern "C++" int eden_codec_bench(const char* path, int height, int want);   // CodecBench_native.cpp
 extern "C++" int eden_world_tool_main(int argc, char** argv);                 // WorldTools_native.cpp
 int fmh_selftestCompare(const char* edenPath, const char* emodPath, int* compared);   // Classes/FileManagerHelper.mm (S.6)
@@ -348,7 +351,6 @@ void eden_setenv(const char* k, const char* v) {
 
 struct Options {
     bool headless = false;
-    bool saveInplace = false;            // --save-inplace: N.8, --save-roundtrip forces the journaled in-place save
     const char* mode = nullptr;          // "p1-gate" | "stage1" | "save-roundtrip" | nullptr
     int  height = 64;
     std::string world;
@@ -978,6 +980,52 @@ int run_scale_probe() {
         eden_gl_context_get_drawable_size(&dw, &dh);
         std::printf("[eden-scale] %3d%%  scene %4dx%-4d  p50 %6.2f ms  p90 %6.2f ms  (%5.1f fps)  mem %s\n",
                     pct, dw * pct / 100, dh * pct / 100, p50, p90, 1000.0 / p50, eden_debug_heap());
+    }
+    SDL_GL_SetSwapInterval(1);
+    return 0;
+}
+
+// --preset-probe (B.8-measure): the same timing as --scale-probe, but over the graphics presets and
+// the view-distance steps B.5a offers. Each step is p50/p90 of CPU+GPU frame time at the spot you
+// give with --at; the last step restores Default. Put --shot=PREFIX before it for the captures.
+int set_setting_by_key(const char* key, float v) {
+    for (int i = 0; i < eden_settings_count(); ++i)
+        if (std::strcmp(eden_settings_key(i), key) == 0) { eden_settings_set(i, v); return 1; }
+    return 0;
+}
+int run_preset_probe() {
+    const char* name = g_opt.world.empty() ? "preset-probe" : g_opt.world.c_str();
+    if (!open_world(name, g_opt.height)) return 1;
+    if (g_opt.haveAt) eden_console_teleport(g_opt.at[0], g_opt.at[1], g_opt.at[2]);
+    tick(g_opt.frames);
+    SDL_GL_SetSwapInterval(0);
+    struct Step { const char* label; const char* key; float v; };
+    const Step steps[] = {
+        {"preset Default", "graphics_preset", 2}, {"preset Low", "graphics_preset", 1},
+        {"preset High", "graphics_preset", 3},    {"view Auto", "view_distance", 0},
+        {"view 4", "view_distance", 1}, {"view 5", "view_distance", 2}, {"view 6", "view_distance", 3},
+        {"view 7", "view_distance", 4}, {"preset Default", "graphics_preset", 2},
+    };
+    const int kTimed = 240;
+    for (const Step& st : steps) {
+        if (!set_setting_by_key(st.key, st.v)) { std::fprintf(stderr, "[eden-preset] no setting %s\n", st.key); return 1; }
+        tick(30);
+        std::vector<double> ms;
+        ms.reserve(kTimed);
+        unsigned char px[4];
+        for (int i = 0; i < kTimed; ++i) {
+            const Uint64 t0 = SDL_GetTicksNS();
+            tick(1);
+            eden_gl_glReadPixels(0, 0, 1, 1, 0x1908, 0x1401, px);
+            ms.push_back((double)(SDL_GetTicksNS() - t0) / 1e6);
+        }
+        std::sort(ms.begin(), ms.end());
+        char label[48];
+        std::snprintf(label, sizeof(label), "preset-%s-%s", st.key, st.label);
+        for (char* c = label; *c; ++c) if (*c == ' ') *c = '-';
+        capture(label);
+        std::printf("[eden-preset] %-16s p50 %6.2f ms  p90 %6.2f ms  (%5.1f fps)  mem %s\n",
+                    st.label, ms[ms.size() / 2], ms[ms.size() * 9 / 10], 1000.0 / ms[ms.size() / 2], eden_debug_heap());
     }
     SDL_GL_SetSwapInterval(1);
     return 0;
@@ -1786,14 +1834,20 @@ int run_signs_selftest() {
         if (GLDialog::active()) GLDialog::dismiss();
 
         // The button: green while running (D.4c's hook), red otherwise.
+        // X.3: cmdRunning counts EVERY in-range running command block, so a world that already has
+        // some running (the adder has 3) made the old absolute `1 -> 0` check fail on a correct
+        // engine. Compare against this block's own idle baseline instead.
+        CmdTool::setRunning(P, false);
+        tick(2);
+        const int runBase = SignRenderer::stats().cmdRunning;
         CmdTool::setRunning(P, true);
         tick(2);
         const int runOn = SignRenderer::stats().cmdRunning;
         CmdTool::setRunning(P, false);
         tick(2);
         const int runOff = SignRenderer::stats().cmdRunning;
-        std::snprintf(d, sizeof(d), "running %d -> %d", runOn, runOff);
-        check(runOn == 1 && runOff == 0, "a running command block draws the green button, idle the red", d);
+        std::snprintf(d, sizeof(d), "running %d -> %d -> %d (idle baseline first)", runBase, runOn, runOff);
+        check(runOn == runBase + 1 && runOff == runBase, "a running command block draws the green button, idle the red", d);
 
         // A sign on its face sits over the panel (the D.3b board).
         const int onCmd0 = SignRenderer::stats().onCmd;
@@ -2539,6 +2593,42 @@ int run_cmds_selftest() {
     return g_selftestFailures ? 1 : 0;
 }
 
+
+#if defined(EDEN_DIAGNOSTICS)
+// ---- S.0(a) --save-bench=1,10,50,144 (dirty-column save cost; X.1: diagnostics-only) --------------
+static std::string g_saveBenchList = "1,10,50,144";
+int run_save_bench() {
+    g_selftestTag = "eden-savebench";
+    const char* name = g_opt.world.empty() ? "S0 W64" : g_opt.world.c_str();
+    if (!open_world(name, g_opt.height)) return 1;
+    eden_console_teleport(g_opt.at[0], g_opt.at[1], g_opt.at[2]);
+    tick(g_opt.frames / 2);
+    if (const char* th = std::getenv("SAVEBENCH_THRESHOLD")) { eden_set_save_inplace_threshold(strtoull(th, 0, 10)); }
+    const PlayerState ps = player_state();
+    const int px = ((int)ps.x / 16) * 16 + 8, pz = ((int)ps.z / 16) * 16 + 8;
+    std::printf("[eden-savebench] world=%s player=(%d,%d)\n", name, (int)ps.x, (int)ps.z);
+    { const char* r = eden_bench_save(); std::printf("[eden-savebench] warmup(no dirt) %s\n", r); }
+    int flip = 0;
+    std::string list = g_saveBenchList;
+    for (size_t pos = 0; pos < list.size();) {
+        size_t c = list.find(',', pos); if (c == std::string::npos) c = list.size();
+        int n = atoi(list.substr(pos, c - pos).c_str()); pos = c + 1;
+        for (int rep = 0; rep < 3; ++rep) {
+            ++flip;
+            int side = 1; while (side * side < n) ++side;
+            int placed = 0;
+            for (int i = 0; i < side && placed < n; ++i)
+                for (int j = 0; j < side && placed < n; ++j, ++placed)
+                    eden_console_setblock(px + (i - side / 2) * 16, pz + (j - side / 2) * 16, 30, 10 + (flip % 20));
+            tick(3);
+            const char* r = eden_bench_save();
+            std::printf("[eden-savebench] cols=%d rep=%d %s\n", n, rep, r);
+        }
+    }
+    return 0;
+}
+#endif
+
 // ---------------------------------------------------------------------------------------------
 // --light-selftest  (Stage R / R.3, the light store)
 // ---------------------------------------------------------------------------------------------
@@ -3273,6 +3363,7 @@ int run_leak_probe() {
 // position that every platform lands on identically, which is all criterion 2 asks of it, and
 // re-recording c26fa4fd2a5b2660 / 49b71a4e16afb125 / b19d3e33a8717c60 across four platforms buys
 // nothing. What was wrong was the belief about where it was, not the number.
+// X.6: the clamp is skipped on "unbounded" worlds (FileManager::worldUnbounded); fresh worlds still clamp.
 constexpr float kMapCentre = (float)(4096 * CHUNK_SIZE);
 constexpr float kMapHalf   = (float)(GSIZE / 2);
 
@@ -4015,6 +4106,24 @@ int run_ui_selftest() {
     const float mode0 = iMode >= 0 ? eden_settings_get(iMode) : 0.0f;
     CGRect r;
 
+    {   // B.8: presets drive view_distance (+ render_scale off iOS); a hand edit drops to Custom
+        const int iP = settings_index("graphics_preset"), iV = settings_index("view_distance");
+        const float p0 = iP >= 0 ? eden_settings_get(iP) : 0.0f, v0 = iV >= 0 ? eden_settings_get(iV) : 0.0f;
+        bool ok = iP >= 0 && iV >= 0;
+        if (ok) {
+            eden_settings_set(iP, 1.0f);                       // Low
+            ok = eden_settings_get(iV) == 1.0f && eden_settings_get(iP) == 1.0f;
+            eden_settings_set(iP, 3.0f);                       // High == Default for now
+            ok = ok && eden_settings_get(iV) == 0.0f && eden_settings_get(iP) == 3.0f;
+            eden_settings_set(iV, 3.0f);                       // by hand
+            ok = ok && eden_settings_get(iP) == 0.0f;          // -> Custom
+            eden_settings_set(iP, 2.0f);                       // Default restores Auto
+            ok = ok && eden_settings_get(iV) == 0.0f;
+            eden_settings_set(iV, v0); eden_settings_set(iP, p0);
+        }
+        check(ok, "graphics presets set their knobs; a hand edit becomes Custom", "");
+    }
+
     if (sm->showRow("health", &r)) {
         tick(2);
         ui_tap(r.origin.x + r.size.width * 0.5f, r.origin.y + r.size.height * 0.5f);
@@ -4135,16 +4244,15 @@ int run_ui_selftest() {
     check(listed == want && onDisk == want, "the rename reaches the list and the file header", detail);
 
     read_file(file, &after);
-    size_t diffOutside = 0, diffInside = 0;
-    const size_t n0 = offsetof(WorldFileHeader, name), n1 = n0 + sizeof(((WorldFileHeader*)0)->name);
-    for (size_t i = 0; i < before.size() && i < after.size(); ++i) {
-        if (before[i] == after[i]) continue;
-        if (i >= n0 && i < n1) diffInside++; else diffOutside++;
-    }
-    std::snprintf(detail, sizeof(detail), "size %zu -> %zu, %zu name bytes changed, %zu other bytes changed",
-                  before.size(), after.size(), diffInside, diffOutside);
-    check(before.size() == after.size() && diffInside > 0 && diffOutside == 0,
-          "only the header's name bytes changed on disk", detail);
+    // S.8: the world is an `.emod` -- append-only, so a rename appends a new WORLD_HEADER record and no
+    // byte already written moves (the `.eden` form rewrote the 50 name bytes in place).
+    size_t diffPrefix = 0;
+    for (size_t i = 0; i < before.size() && i < after.size(); ++i)
+        if (before[i] != after[i]) diffPrefix++;
+    std::snprintf(detail, sizeof(detail), "size %zu -> %zu, %zu earlier bytes changed",
+                  before.size(), after.size(), diffPrefix);
+    check(after.size() > before.size() && diffPrefix == 0,
+          "the rename only appended to the file", detail);
 
     const bool reopened = open_world(want, g_opt.height);
     check(reopened, "the renamed world loads under its new name", "");
@@ -4266,7 +4374,7 @@ int menu_index_of_file(const char* file) {
 
 // Stage S / S.5: with --world-format=emod a download lands as `<id>.emod` (converted while it
 // inflated) — so "the same world" means its `.eden` export equals what was served.
-const char* world_ext() { return FileManager::conversionEnabled() ? ".emod" : ".eden"; }
+const char* world_ext() { return ".emod"; }
 bool world_bytes(const std::string& path, std::vector<unsigned char>* out) {
     if (path.size() < 5 || path.compare(path.size() - 5, 5, ".emod") != 0) return read_file(path, out);
     emod::EdenExporter ex;
@@ -4509,7 +4617,7 @@ int run_browser_selftest_body(bool live) {
         check(done && at >= 0 && eden_menu_selected_index() == at && same && !m->showbrowser, w.what, detail);
         if (at >= 0) made.push_back(w.file);
     }
-    if (FileManager::conversionEnabled()) {
+    {
         // S.5 plan §4: the download is converted while it inflates and is gone after the commit.
         bool stray = false;
         for (const char* f : { "1600000001.eden", "1600000002.eden", "1600000001-2.eden", "1600000001.eden.zip", "1600000002.eden.zip" })
@@ -5104,7 +5212,6 @@ int run_save_roundtrip() {
     // proving that WRITTEN data comes back rather than that an untouched file is unchanged.
     // Terrain's own argument order is (x, z, y) with y vertical — CLAUDE.md convention #1.
     const int bx = (int)g_opt.at[0] + 2, bz = (int)g_opt.at[2] + 2, by = (int)g_opt.at[1];
-    if (g_opt.saveInplace) eden_set_save_inplace_threshold(0);   // N.8: force the journaled path
     eden_console_setblock(bx, bz, by, 1);
     tick(60);
 
@@ -5128,11 +5235,6 @@ int run_save_roundtrip() {
     eden_console_teleport(g_opt.at[0], g_opt.at[1], g_opt.at[2]);
     tick(g_opt.frames);
     std::printf("[eden-stage1] postload.checksum %s\n", eden_debug_mesh_checksum());
-    if (g_opt.saveInplace) {   // N.8: the edit must have been WRITTEN by the journaled in-place path
-        const int got = eden_console_getblock(bx, bz, by);
-        std::printf("[eden-stage1] inplace.edit block=%d (want 1) %s\n", got, got == 1 ? "PASS" : "FAIL");
-        if (got != 1) return 1;
-    }
     std::printf("[eden-stage1] postload.geometry %s\n", eden_debug_terrain_geometry());
     std::fflush(stdout);
     return 0;
@@ -5465,13 +5567,17 @@ static int parse_one_arg(const char* a);
 static int eden_main_after_args(int argc, char** argv);
 static int parse_arg_string(const char* text);
 
+// X.2: a bad option must END the process. On iOS, returning from main() does not necessarily
+// terminate the app (UIKit's run loop can outlive SDL_main), so a typo in eden-args.txt used to
+// leave the harness sitting at the menu until its timeout instead of failing fast with rc 2.
+static int arg_error_exit(int rc) {
+    std::fflush(stdout); std::fflush(stderr);
+    std::exit(rc);
+}
+
 int main(int argc, char** argv) {
-    // Stage S / S.4: EDEN_WORLD_FORMAT=emod is --world-format=emod for a whole session of runs (a
-    // harness script, or a phone, which has no command line). Read first so an argument wins.
-    if (const char* wf = std::getenv("EDEN_WORLD_FORMAT"))
-        { g_world_format = (!std::strcmp(wf, "emod") || !std::strcmp(wf, "1")) ? 1 : 0; g_world_format_pinned = 1; }
     for (int i = 1; i < argc; ++i) {
-        if (int rc = parse_one_arg(argv[i])) return rc;
+        if (int rc = parse_one_arg(argv[i])) return arg_error_exit(rc);
     }
     // ...and EDEN_LOG, for the same reason one step further on: a phone has no terminal either.
     // An iOS app's stdout goes to a pty only if something is holding one open on the other end
@@ -5511,7 +5617,7 @@ int main(int argc, char** argv) {
     }
     if (const char* extra = getenv("EDEN_ARGS")) {
         std::fprintf(stderr, "[eden] EDEN_ARGS=%s\n", extra);
-        if (int rc = parse_arg_string(extra)) return rc;
+        if (int rc = parse_arg_string(extra)) return arg_error_exit(rc);
     }
 #if defined(EDEN_PLATFORM_IOS)
     // THE ONE-SHOT ARGS FILE (2026-10-04) — EDEN_ARGS for a device driven over SSH. A SpringBoard
@@ -5531,7 +5637,7 @@ int main(int argc, char** argv) {
                 std::fclose(fp);
             }
             std::fprintf(stderr, "[eden] eden-args.txt=%s\n", text.c_str());
-            if (int rc = parse_arg_string(text.c_str())) return rc;
+            if (int rc = parse_arg_string(text.c_str())) return arg_error_exit(rc);
             // --shot's captures land beside the log, where scp can reach them; the app's cwd
             // is not writable.
             if (g_opt.mode && !std::strcmp(g_opt.mode, "shot") && g_opt.shot.empty())
@@ -5542,16 +5648,27 @@ int main(int argc, char** argv) {
     return eden_main_after_args(argc, argv);
 }
 
-// Whitespace-separated options, each parsed exactly as one argv entry.
+// Whitespace-separated options, each parsed exactly as one argv entry. X.2: quote-aware like a
+// shell word split -- `--world="3 bit adder"` or `--world='3 bit adder'` is ONE option whose value
+// is `3 bit adder` (the quotes themselves are dropped; no escapes). An unterminated quote is an
+// error (rc 2), not a silently swallowed rest-of-file.
 // The pieces are remembered (g_string_args) because the world-file tools re-read their own options
 // from an argv: without them an EDEN_ARGS / eden-args.txt launch (the only way to drive the iPad)
 // reached `eden_world_tool_main` with no arguments and "nothing to do".
 static std::vector<std::string> g_string_args;
 static int parse_arg_string(const char* text) {
     std::string acc;
+    bool have = false;    // an empty quoted value ("") is still an argument
+    char quote = 0;
     for (const char* p = text; ; ++p) {
-        if (*p && !std::isspace((unsigned char)*p)) { acc += *p; continue; }
-        if (!acc.empty()) { g_string_args.push_back(acc); if (int rc = parse_one_arg(acc.c_str())) return rc; acc.clear(); }
+        if (quote) {
+            if (!*p) { std::fprintf(stderr, "eden: unterminated %c quote in arguments: %s\n", quote, text); return 2; }
+            if (*p == quote) quote = 0; else acc += *p;
+            continue;
+        }
+        if (*p == '"' || *p == '\'') { quote = *p; have = true; continue; }
+        if (*p && !std::isspace((unsigned char)*p)) { acc += *p; have = true; continue; }
+        if (have) { g_string_args.push_back(acc); if (int rc = parse_one_arg(acc.c_str())) return rc; acc.clear(); have = false; }
         if (!*p) break;
     }
     return 0;
@@ -5565,6 +5682,9 @@ static int parse_one_arg(const char* a) {
         else if (!std::strcmp(a, "--p1-gate"))        { g_opt.mode = "p1-gate";  g_opt.headless = true; }
         else if (!std::strcmp(a, "--stage1"))         g_opt.mode = "stage1";
         else if (!std::strcmp(a, "--smoke"))          g_opt.mode = "smoke";
+#if defined(EDEN_DIAGNOSTICS)
+        else if (starts_with(a, "--save-bench="))     { g_opt.mode = "save-bench"; g_opt.headless = true; g_saveBenchList = a + 13; }
+#endif
         else if (!std::strcmp(a, "--input-selftest")) { g_opt.mode = "input-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--audio-selftest")) { g_opt.mode = "audio-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--gamepad-selftest")) { g_opt.mode = "gamepad-selftest"; g_opt.headless = true; }
@@ -5608,12 +5728,12 @@ static int parse_one_arg(const char* a) {
         else if (starts_with(a, "--net-fixtures="))  eden_net_set_fixture_root(a + 15);
         else if (!std::strcmp(a, "--objc-selftest")) { g_opt.mode = "objc-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--save-roundtrip")) g_opt.mode = "save-roundtrip";
-        else if (!std::strcmp(a, "--save-inplace")) g_opt.saveInplace = true;
+        else if (!std::strcmp(a, "--save-inplace")) { /* S.8: ignored -- there is no in-place .eden save any more */ }
         else if (!std::strcmp(a, "--background-selftest")) { g_opt.mode = "background-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--shot"))           g_opt.mode = "shot";
         else if (starts_with(a, "--shot="))           { g_opt.mode = "shot"; g_opt.shot = a + 7; }
         else if (starts_with(a, "--height="))         g_opt.height = atoi(a + 9);
-        else if (starts_with(a, "--world-format="))   { g_world_format = !std::strcmp(a + 15, "emod") ? 1 : 0; g_world_format_pinned = 1; }
+        else if (starts_with(a, "--world-format="))   { /* S.8: ignored -- every world is an .emod */ }
         else if (starts_with(a, "--upgrade-256z="))   eden_setenv("EDEN_UPGRADE_256Z", atoi(a + 15) ? "1" : "0");
         else if (starts_with(a, "--empty-shortcut=")) { extern bool g_empty_shortcut; g_empty_shortcut = atoi(a + 17) != 0; }
         else if (std::strcmp(a, "--empty-selfcheck") == 0) eden_debug_set_empty_selfcheck(1);
@@ -5643,6 +5763,7 @@ static int parse_one_arg(const char* a) {
         else if (starts_with(a, "--live-cmds="))      g_opt.liveCmds = a + 12;
         else if (starts_with(a, "--render-scale="))   g_opt.renderScalePct = atoi(a + 15);
         else if (!std::strcmp(a, "--scale-probe"))    g_opt.mode = "scale-probe";
+        else if (!std::strcmp(a, "--preset-probe"))   g_opt.mode = "preset-probe";
         else if (!std::strcmp(a, "--mem-trace"))      g_eden_mem_trace = 1;
         else if (starts_with(a, "--mem-trace="))      g_eden_mem_trace = atoi(a + 12);
         else if (starts_with(a, "--tex-exp=")) {
@@ -5681,8 +5802,6 @@ static int eden_main_after_args(int argc, char** argv) {
     // (or EDEN_UPGRADE_256Z) says otherwise -- never the Settings toggle, which a --docs directory
     // starts at its default (on) and which would silently change what every convert gate measures.
     if ((g_opt.mode || !g_opt.liveCmds.empty()) && !getenv("EDEN_UPGRADE_256Z")) eden_setenv("EDEN_UPGRADE_256Z", "0");
-    // Harness modes keep the pre-default-on world format (.eden) unless --world-format says otherwise.
-    if ((g_opt.mode || !g_opt.liveCmds.empty()) && !g_world_format_pinned) { g_world_format = 0; g_world_format_pinned = 1; }
     // Stage S / S.5: the world-file tools need no engine, no window and no save directory.
     if (g_opt.mode && !std::strcmp(g_opt.mode, "world-tool")) {
         std::vector<char*> av(argv, argv + argc);
@@ -5863,6 +5982,9 @@ static int eden_main_after_args(int argc, char** argv) {
         if (!std::strcmp(g_opt.mode, "p1-gate"))            rc = run_p1_gate();
         else if (!std::strcmp(g_opt.mode, "stage1"))        rc = run_stage1();
         else if (!std::strcmp(g_opt.mode, "smoke"))         rc = run_smoke();
+#if defined(EDEN_DIAGNOSTICS)
+        else if (!std::strcmp(g_opt.mode, "save-bench"))    rc = run_save_bench();
+#endif
         else if (!std::strcmp(g_opt.mode, "input-selftest")) rc = run_input_selftest();
         else if (!std::strcmp(g_opt.mode, "keybind-selftest")) rc = run_keybind_selftest();
         else if (!std::strcmp(g_opt.mode, "ui-selftest")) rc = run_ui_selftest();
@@ -5905,6 +6027,7 @@ static int eden_main_after_args(int argc, char** argv) {
         else if (!std::strcmp(g_opt.mode, "background-selftest")) rc = run_background_selftest();
         else if (!std::strcmp(g_opt.mode, "shot"))          rc = run_shot();
         else if (!std::strcmp(g_opt.mode, "scale-probe"))   rc = run_scale_probe();
+        else if (!std::strcmp(g_opt.mode, "preset-probe"))  rc = run_preset_probe();
         else if (!std::strcmp(g_opt.mode, "leak-probe"))    rc = run_leak_probe();
     } else {
         // Interactive. The frame-rate cap is the same setting the web build's frame gate reads

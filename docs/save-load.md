@@ -1,5 +1,20 @@
 # Save / Load Pipeline
 
+> ## Stage S / S.8 (2026-10-11): `.eden` is no longer created, played or saved
+> **Every world is an `.emod`.** A `.eden` (or `.eden.gz` / `.gz` / `.zip`) is only ever a *source*: it is listed,
+> flagged, and converted to `<stem>.emod` when played (S.5d, now on **every** target including web); the
+> `.eden` is never opened for update. `.emod` → `.eden` / `.eden.gz` **export** stays (Storage tab, `--export`,
+> and the upload path). Deleted with S.8: `g_world_format` and its Settings toggle, `--world-format=` (still
+> *accepted*, ignored), `EDEN_NO_CONVERT`, the `.eden` branch of `saveWorld`/`loadWorld`, `saveColumn`,
+> `saveCreatures`/`LoadCreatures`, the pre-v1 `convertFile`, the B5 rollback journal + whole-file scratch copy
+> + `recoverInterruptedSave`, and `--save-inplace`. **Sections below that describe the `.eden` load flow, the
+> two save strategies, the journal and `convertFile` are historical** -- they document stock/early-fork
+> behaviour that no longer exists in `Classes/` (`git show 35ecf78:Classes/FileManager.mm` has it). What stays
+> in `FileManager.mm` for `.eden` is read-only: `getName`/header peeks for the world list, `probeWorldHeight`,
+> the converter's source side, and the directory/`readColumn` machinery that `writeGenToDisk` (offline worldgen)
+> and the bundled-map reader still use. `convertWorldTo64` (Storage tab "Convert to 64z") is `.eden`-only and
+> therefore refuses every world until an `.emod`-native version exists (ROADMAP).
+
 ## Purpose
 How world files are opened, streamed, saved and migrated at runtime. The on-disk
 format itself is specified in [eden-file-format.md](eden-file-format.md).
@@ -243,14 +258,8 @@ The port's second world container: an append-only log of per-column zstd records
 ([emod-file-format.md](emod-file-format.md), `Classes/EdenWorldStore.{h,cpp}`). **A world is an
 `.emod` iff its file name ends in `.emod`**, and every FileManager entry point routes on that one test
 (`isEmodName`), so a `.eden` world takes exactly the code it always did.
-- **The switch, `g_world_format`** (`FileManager.h`): 0 (the default) = new worlds are `.eden`, as
-  before; 1 = new worlds are `<hash>.emod` (`FileManager::newWorldFileName`, used by the GL menu and
-  web's `eden_menu_create_world`), and — S.5d, native/iOS only — a `.eden` or a dropped-in
-  `.gz`/`.zip` converts to `.emod` when played. Native: `--world-format=emod` or
-  `EDEN_WORLD_FORMAT=emod`; web: `eden_set_world_format(1)` (harnesses only; nothing in the page sets it
-  yet — with it on, the Storage tab's import converts too, S.5). An existing
-  `.emod` always loads and saves as one, whatever the flag says. With the flag off the world list,
-  the load path and the save path are byte-for-byte what they were (S.4's gate).
+- **No switch (S.8).** New worlds are always `<hash>.emod` (`FileManager::newWorldFileName`); a `.eden` or
+  archive converts when played. (Through S.7 this was `g_world_format`, default 1 from 2026-10-10.)
 - **Load** (`loadEmodWorld`): opens the store (scan + recovery; compaction at open only, refused
   while damaged), takes `WORLD_HEADER` as the header (version kept verbatim, plus the `.eden` path's
   v3 → v4 fixup), `CREATURES` as the creature block, `bands` as the height (`probeWorldHeight` asks
@@ -473,10 +482,7 @@ point migrates those in once (`migrate_legacy_saves`, `native/src/entry/eden_mai
   append arithmetic, or the `modified`-flag protocol; touching the static file-handle
   state; calling save/load from any thread but the ones that already do.
 
-## `g_world_format` default (2026-10-10)
-
-`g_world_format` now defaults to **1** (new worlds `.emod`; `.eden` files convert when played). Settings >
-Experiments > "New .emod world format" (`emod_format`, default on) drives it. `--world-format=`,
-`EDEN_WORLD_FORMAT` and every native harness mode (`g_opt.mode`, `--live-cmds`) set `g_world_format_pinned`,
-so a Settings value never changes a gate; harness modes stay `.eden` unless `--world-format=emod` is given.
-Plan: once proven, remove legacy `.eden` support (files in Documents stay listed and convert on launch).
+## Unbounded-world scan (X.6, 2026-10-11)
+`loadWorld`/`loadEmodWorld` set `FileManager::worldUnbounded` (derived, never persisted): TRUE if the header
+`pos`/`home` or any saved column (`.eden` directory hashmap / `.emod` `columnKeys()`) lies outside the bundled
+2880 square. Post-2.1 clients have no edge wall, so `Player::update` skips its clamp for such worlds.

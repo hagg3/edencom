@@ -47,6 +47,9 @@ public:
     // is unknown up front (gzip's ISIZE wraps at 4 GiB).
     uint64_t inConsumed() const { return inTotal_ - inLeft_; }
     uint64_t inTotal() const { return inTotal_; }
+    // X.5: time inside fread (disk) and inflate() (zlib), ms, since open(). A stored/raw source has no inflate.
+    double msRead() const { return msRead_; }
+    double msInflate() const { return msInflate_; }
 
 private:
     bool fail(const char* m) { if (error_.empty()) error_ = m; return false; }
@@ -58,6 +61,7 @@ private:
     bool stored_, zon_, eof_;
     z_stream zs_;
     uint64_t inLeft_, inTotal_;
+    double msRead_, msInflate_;
     std::string error_;
     unsigned char hold_[1 << 16];
 };
@@ -96,10 +100,17 @@ public:
     uint64_t need() const { return need_; }
     uint64_t peakTempBytes() const { return peakTemp_; }
     const EdenEmodConverter::Stats& stats() const { return conv_.stats(); }
+    // X.5: the phases of one import, in ms: fread of the source, zlib inflate, conv_.feed() as a
+    // whole (its spill encode/write are in stats()), and the converter's finish() (stats().msBuild+...).
+    double msRead() const { return in_.msRead(); }
+    double msInflate() const { return in_.msInflate(); }
+    double msFeed() const { return msFeed_; }
     void abort();
 
 private:
     bool fail(const std::string& e, bool space = false);
+    bool timedFeed(const void* data, size_t n);
+    double msFeed_;
     std::string src_, out_, name_, layer_, prevLayer_, dir_;
     int64_t created_;
     bool upgrade_;

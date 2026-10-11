@@ -319,12 +319,12 @@ EDEN_EXPORT int eden_storage_import_step(void) {
 }
 EDEN_EXPORT int eden_storage_import_percent(void) { return s_import ? s_import->percent() : 0; }
 
-// Stage S / S.4: the `.emod` switch (FileManager.h's g_world_format). 1 = new worlds are `.emod`;
-// web never converts a `.eden` (FileManager::conversionEnabled), so that is all it changes here.
-// For the headless suites' flag-on legs; since S.5 the Storage tab's import and Get Worlds convert to `.emod` too.
+// Stage S / S.8 (2026-10-11): there is no `.eden` world format switch any more -- every new world is an
+// `.emod` and a `.eden` converts when played. These two exports stay only so the page/headless callers that
+// still name them keep linking: set is a no-op, get is always 1.
 EDEN_EXPORT
-void eden_set_world_format(int format) { g_world_format = (format == 1) ? 1 : 0; }
+void eden_set_world_format(int format) { (void)format; }
 EDEN_EXPORT
-int eden_get_world_format(void) { return g_world_format; }
+int eden_get_world_format(void) { return 1; }
 
 }  // extern "C"

@@ -2781,8 +2781,8 @@ void updateSkyColor2(Player* player,BOOL force,float etime){
         int ppz=player->pos.z-4096*CHUNK_SIZE+GSIZE/2;
         ppx=ppx/(GSIZE/4);
         ppz=ppz/(GSIZE/4);
-        if(ppx>4)ppx=4;
-        if(ppz>4)ppz=4;
+        if(ppx>3)ppx=3;
+        if(ppz>3)ppz=3;
         if(ppx<0)ppx=0;
         if(ppz<0)ppz=0;
                    
@@ -2850,8 +2850,8 @@ void paintSky(int color){
     int ppz=World::getWorld->player->pos.z-4096*CHUNK_SIZE+GSIZE/2;
     ppx=ppx/(GSIZE/4);
     ppz=ppz/(GSIZE/4);
-    if(ppx>4)ppx=4;
-    if(ppz>4)ppz=4;
+    if(ppx>3)ppx=3;
+    if(ppz>3)ppz=3;
     if(ppx<0)ppx=0;
     if(ppz<0)ppz=0;
    

@@ -243,6 +243,14 @@ Doors and portals are *stored* as voxels but *rendered and animated* as extracte
    A **warp** takes a different path: `warpToPoint`/`warpToHome` → `saveWorld(Vector)` +
    `loadTerrain`, which reads all 324 columns synchronously. (Corrected 2026-10-03 by the `.emod`
    F.2 code read. This line used to say "player crossed roughly a chunk boundary".)
+   **What the player sees (confirmed on screen 2026-10-11, `WORKING/b5-walk-lag/`):** after k crossings
+   only 9−k resident columns lie ahead, so from the 3rd crossing the window edge sits inside the fog
+   distance, and at k=7 the terrain ends 1–2 chunks ahead with bare sky beyond. This is stock 2.1.1.
+   Two more facts belong with it. (a) The window is not centred on the player: `floor(pos/16)−T_RADIUS`
+   puts the +edge 129–144 blocks away and the −edge 144–159. (b) This reload is also the walk's
+   autosave, and `saveWorld` starts with `endDynamics(TRUE)`, so every ~128 blocks walked puts out every
+   fire and stops every liquid. The ring-streaming replacement is planned in
+   `WORKING/render-distance-runtime-plan-2026-10-11.md` (ROADMAP B.5b-1).
    - `fm->saveWorld()` (flush modified columns **before** they get overwritten!),
    - update `fm->chunkOffsetX/Z` (the render-origin rebase),
    - `updateLightingBegin()` (zero the light; the *recompute* is deferred, below. Since R.3 this
@@ -380,6 +388,8 @@ useless, now just iterates through chunk list" (`Terrain.mm:2430`).
 - **Safe:** block property tables in `Globals.mm`/`Constants.h` (append, don't renumber
   — saved worlds store raw type bytes), explosion radii, burn times, new gameplay ops
   built from `updateChunks`/`setColor`.
-- **Caution:** anything touching `GBLOCKIDX`/`threeToOne` indexing, `T_SIZE`/`T_HEIGHT`
-  (changes save format column size! `SIZEOF_COLUMN` depends on them), the streaming
+- **Caution:** anything touching `GBLOCKIDX`/`threeToOne` indexing, `T_HEIGHT`
+  (changes save format column size! `SIZEOF_COLUMN` depends on it), `T_SIZE` (reaches no save file —
+  settled 2026-10-11 — but `GSIZE = T_SIZE*10` is the bundled map's side; see
+  `WORKING/render-distance-runtime-plan-2026-10-11.md` §1.2 and §2), the streaming
   threshold logic, chunk reuse (`resetForReuse` assumes the slot is being overwritten).

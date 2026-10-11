@@ -391,13 +391,12 @@
     return bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
   }
 
-  // Stage S / S.5: with the `.emod` switch on (eden_set_world_format(1)) an import never becomes a
+  // Stage S / S.5 (always, since S.8): an import never becomes a
   // `.eden` — the engine's ImportJob converts it, inflating `.gz`/`.zip` on the way, straight to
   // `<stem>.emod` (plan §4 "Downloads and imports"). The picked bytes go to a MEMFS temp outside
   // /documents (so nothing of it is mirrored) and the job runs a ~12 ms slice per macrotask.
   function emodImportWanted() {
-    return ready() && M()._eden_get_world_format && M()._eden_get_world_format() === 1 &&
-      M()._eden_storage_import_begin;
+    return ready() && M()._eden_storage_import_begin;
   }
 
   function putName(name) {

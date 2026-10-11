@@ -94,15 +94,6 @@ extern void (*eden_save_backup_hook)(const char* worldFilePath);
 // chose ~/Library/Application Support/Eden. The returned string must outlive the process.
 extern const char* (*eden_documents_root_hook)(void);
 
-// Stage S / S.4: the `.emod` switch. 0 = `.eden` (the default, so every existing suite is
-// byte-for-byte what it was), 1 = `.emod`: new worlds are created as `.emod`, and (S.5d) a `.eden` or
-// a dropped-in archive is converted to one when played -- on every target except web, whose Storage
-// tab/import/export do not know `.emod` yet (S.5). Whatever the flag says, an existing world keeps
-// the container its file name says: a `.emod` always loads and saves as one. Set by the native
-// `--world-format=emod` / EDEN_WORLD_FORMAT=emod, and web's eden_set_world_format().
-extern int g_world_format;
-extern int g_world_format_pinned;   // 1 = --world-format / EDEN_WORLD_FORMAT / a harness mode set it; Settings leaves it alone
-
 class FileManager {
 public:
     int chunkOffsetX;
@@ -111,9 +102,9 @@ public:
     NSString* documents;
     BOOL convertingWorld;
     BOOL genflat;
+    BOOL worldUnbounded;   // X.6: world holds data outside the bundled 2880 square -> Player::update skips the edge clamp
     FileManager();
     BOOL worldExists(std::string name,BOOL appendArchive);
-    void saveColumn(int cx,int cz);
     void saveGenColumn(int cx,int cz,int origin);
     void readColumn(int cx,int cz,NSFileHandle* nsfh);
     // B3 Stage 3. What Terrain's bulk reload calls instead of readColumn(). Identical, except that
@@ -131,7 +122,6 @@ public:
     void readDirectory();
     void clearDirectory();
     void compressLastPlayed();
-    void convertFile(NSString* file_name);
     NSString* getName(NSString* file_name);
     // N.4.5: the world list's rename. Rewrites WorldFileHeader::name in place and nothing else;
     // a world with no file yet (created, never played) needs no write — its first save takes the
@@ -157,11 +147,8 @@ public:
     static BOOL isEmodName(NSString* name);
     // A dropped-in `.gz` / `.zip` (a compressed `.eden`): only ever a source for convertStep().
     static BOOL isArchiveName(NSString* name);
-    // The file name for a brand-new world: genhash() + ".emod" or ".eden", per g_world_format.
+    // The file name for a brand-new world: genhash() + ".emod".
     static NSString* newWorldFileName();
-    // Whether a `.eden` / archive converts when played: g_world_format == 1, not web, and not
-    // EDEN_NO_CONVERT. Off means the world list and the load path are exactly what they were.
-    static BOOL conversionEnabled();
     // The world list's two questions about a `.eden`: is it already converted (a `<stem>.emod`
     // whose PROVENANCE names a source of the same size -> the list hides the `.eden`), and does it
     // still need converting.
@@ -217,8 +204,6 @@ private:
     void saveEmodWorld(Vector warp);
     int oldOffsetX;
     int oldOffsetZ;
-    void LoadCreatures();
-    void saveCreatures();
     // Per-column record span, in bytes, for the columns whose span is SHORTER than a full record.
     // The New Dawn specimen has exactly one such column (107,072 B where 131,072 was expected), and
     // reading it at full stride would pull in 24,000 bytes of its neighbour. Keyed by twoToOne(x,z),
@@ -226,11 +211,6 @@ private:
     void* shortSpans;   // map_t (hashmap.h); declared void* so this header stays include-order-free
     void deriveColumnSpans();
     void clearColumnSpans();
-    // B5: if the last save of this world was interrupted mid-write, put the file back the way the
-    // last COMPLETE save left it, using the small journal saveWorld() writes before it starts
-    // rewriting a large file in place. A no-op (one stat) when there is no journal, which is every
-    // world below g_save_inplace_threshold and every world whose last save finished normally.
-    void recoverInterruptedSave(NSString* file_name);
 };
 std::string fullPathForFilename(const char* fn);
 #endif

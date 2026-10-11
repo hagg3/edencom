@@ -217,6 +217,18 @@ void Graphics::setCameraFog(float zfar){
      changedFog=TRUE;
      P_ZFAR=zfar;
 }
+// B.5a: user view distance. eden_view_distance is the Settings enum index (0 = Auto = the per-tier value
+// below, 1..6 = 4..9 chunks of radius). The far plane is ZFAR-25, so ZFAR = blocks + 25. Draw-culling only:
+// meshing and streaming are untouched. The cap is the meshed radius (~120 blocks), not the resident window.
+extern float eden_view_distance;
+#define VIEW_DISTANCE_MAX_BLOCKS 120
+float Graphics::viewDistanceZFAR(float tierZfar){
+    int idx=(int)(eden_view_distance+.5f);
+    if(idx<=0)return tierZfar;
+    int blocks=(idx+3)*CHUNK_SIZE;
+    if(blocks>VIEW_DISTANCE_MAX_BLOCKS)blocks=VIEW_DISTANCE_MAX_BLOCKS;
+    return blocks+25;
+}
 void Graphics::setZFAR(float zfar){
 
     
@@ -227,6 +239,7 @@ void Graphics::setZFAR(float zfar){
     }else{
         zfar=145;
     }
+    zfar=viewDistanceZFAR(zfar);
     changedFog=TRUE;
     if(zfar!=P_ZFAR){
         

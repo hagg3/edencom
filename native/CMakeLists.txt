@@ -128,6 +128,11 @@ else()
 endif()
 option(EDEN_DIAGNOSTICS "Compile the scripted-drive debug probes (eden_debug_*, DevConsole, the [eden-p1] prints)." ${EDEN_DIAGNOSTICS_DEFAULT})
 
+# X.1: the Stage F.3 timing hooks ([F3] lines, the F3_DRIVE / f3-drive.txt driver). Off by default so
+# a shipped build pays nothing; native/README.md "Timing hooks" says how to use them. The hooks are
+# Classes/F3Timing.h; with the option off they compile to no-ops.
+option(EDEN_F3_HOOKS "Compile the F.3 timing hooks and the scripted warp/walk driver." OFF)
+
 # ---------------------------------------------------------------------------------------------
 # SDL3
 # ---------------------------------------------------------------------------------------------
@@ -726,6 +731,7 @@ target_compile_definitions(eden_native PRIVATE
   BUILD_OGLES
   EGL_NOT_PRESENT
   $<$<BOOL:${EDEN_DIAGNOSTICS}>:EDEN_DIAGNOSTICS=1>
+  $<$<BOOL:${EDEN_F3_HOOKS}>:EDEN_F3_HOOKS=1>
 )
 
 if(IOS)

@@ -21,6 +21,7 @@
 class Graphics{
 public:
     static void setZFAR(float zfar);
+    static float viewDistanceZFAR(float tierZfar);
     static void setCameraFog(float zfar);
     static void initGraphics();
     //static void drawText(NSString* text,float x,float y);

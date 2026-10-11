@@ -97,6 +97,10 @@ int run_import(const std::string& src, const std::string& out, unsigned long lon
                 (unsigned long long)job.need(), (unsigned long long)job.peakTempBytes(), (unsigned long long)s.outBytes,
                 (unsigned long long)s.spillBytes, (unsigned long long)s.bytesIn, (unsigned long long)s.columns, s.bandsIn,
                 s.bandsOut, ms);
+    // X.5: the phase profile. read+inflate are the source side; feed = spill encode + spill write
+    // (+ glue); build..rename are finish(). Their sum is within a few ms of the wall time above.
+    std::printf("import-profile read=%.0f inflate=%.0f feed=%.0f (spill-encode=%.0f spill-write=%.0f) build=%.0f sync=%.0f verify=%.0f rename=%.0f ms\n",
+                job.msRead(), job.msInflate(), job.msFeed(), s.msSpillEncode, s.msSpillWrite, s.msBuild, s.msSync, s.msVerify, s.msRename);
     return 0;
 }
 

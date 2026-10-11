@@ -1121,7 +1121,8 @@ BOOL Player::update(float etime){
 	lpos.z=pos.z;
     this->move(etime);
 	
-    if(World::getWorld->terrain->tgen->LEVEL_SEED==DEFAULT_LEVEL_SEED){
+    // X.6: worlds with data outside the bundled square (post-2.1 clients) have no edge wall.
+    if(World::getWorld->terrain->tgen->LEVEL_SEED==DEFAULT_LEVEL_SEED&&!World::getWorld->fm->worldUnbounded){
         if(pos.x<4096*CHUNK_SIZE-GSIZE/2){
            pos.x=4096*CHUNK_SIZE-GSIZE/2;
         }else if(pos.x>=4096*CHUNK_SIZE+GSIZE/2){

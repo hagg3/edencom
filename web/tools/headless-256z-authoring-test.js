@@ -147,30 +147,20 @@ global.Module.postRun.push(async () => {
     check('the 256z world resolves to a storage-list index', tallIndex >= 0);
     const report = JSON.parse(utf8(M._eden_storage_convert_to_64z_at(tallIndex)));
     console.log('convert report:', JSON.stringify(report));
-    check('convertWorldTo64 reported ok', report.ok === true);
-    // Not >= 1: this harness quits back to the menu almost immediately after creation, so a fresh
-    // flat world may not have streamed any column to disk yet -- that is a timing artifact of the
-    // test, not something convertWorldTo64 should be judged on. headless-256z-test.js already
-    // covers real column conversion end to end (via eden-convert.js, not this C++ path -- see this
-    // file's header for that known gap).
-    check('...report.columns is a sane non-negative count', typeof report.columns === 'number' && report.columns >= 0);
-
+    // S.8: every world is an `.emod` now and convertWorldTo64 is `.eden`-only, so it must refuse cleanly
+    // and leave the world exactly as it was. (An .emod-native "Convert to 64z" is a ROADMAP backlog row.)
+    check('Convert to 64z refuses an .emod rather than touching it', report.ok === false);
     tallRow = findWorld(tallName);
-    check('the converted world is now listed as 64z', tallRow && tallRow.height === 64);
+    check('the 256z world is still listed as 256z', tallRow && tallRow.height === 256);
 
-    // Converting an already-64z world must refuse cleanly, not corrupt it.
-    const alreadyIndex = storageList().findIndex((w) => w.name === tallName);
-    const secondReport = JSON.parse(utf8(M._eden_storage_convert_to_64z_at(alreadyIndex)));
-    check('converting an already-64z world refuses rather than corrupting it', secondReport.ok === false);
-
-    // ---- 4. the converted world still loads and plays ----
+    // ---- 4. the world still loads and plays ----
     const worldsNow = storageList();
     const reloadIndex = worldsNow.findIndex((w) => w.name === tallName);
     M._eden_menu_select(reloadIndex);
     const playOk = M._eden_menu_play();
-    check('play() on the converted world accepted', playOk === 1);
-    const sawPlay = await waitUntil(() => menuState().game_mode === 1, 20000, 'converted world reaches PLAY');
-    check('the converted world still loads and reaches GAME_MODE_PLAY', sawPlay);
+    check('play() on the 256z world accepted', playOk === 1);
+    const sawPlay = await waitUntil(() => menuState().game_mode === 1, 20000, '256z world reaches PLAY');
+    check('the 256z world still loads and reaches GAME_MODE_PLAY', sawPlay);
     await quitToMenu();
 
     // ---- cleanup ----

@@ -68,7 +68,8 @@ Painting the sky (paint tool aimed at the sky) calls `paintSky` which edits
   meshes dirty.
 - `generateEmptyColumn` — same bookkeeping, all air; used beyond the default world's
   edge (this is the "edge of the world" players can reach ~1440 blocks from spawn in
-  any direction... after which the world is void).
+  any direction... after which the world is void). That wall is `Player::update`'s position clamp, not
+  terrain; X.6: it is skipped for "unbounded" worlds (see player-input-camera.md).
 - `placeTree`, `generateCloud`, `noise2/3` — legacy 1.x-era generation, now mostly
   referenced by the offline generator.
 

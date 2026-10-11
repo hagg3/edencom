@@ -7,6 +7,7 @@
 //
 
 #import "Lighting.h"
+#include "F3Timing.h"
 #import "Terrain.h"
 // Stage R / R.3: no longer the light store (see Lighting.h). NULL unless g_light_selfcheck, when it
 // is the stock dense array again, written by the stock code beside the bricks as a reference.
@@ -133,6 +134,7 @@ extern TerrainChunk** chunkTablec;
 // One lightbox hit: splat its light and mark the chunks it touches for re-meshing. The one place
 // the two sweep forms below (and any future one) turn a found TYPE_LIGHTBOX into work.
 static void sweepLightingHit(int x,int z,int y){
+    g_f3.lightboxes++;
     addlight(x,z,y,1.0f,colorTable[getColorc(x,z,y)]);
     World::getWorld->terrain->refreshChunksInRadius(x,z,y,LIGHT_RADIUS);
 }

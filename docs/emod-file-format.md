@@ -6,7 +6,7 @@ a bug. Status: specified and tool-verified (S.1, 2026-10-09); **implemented in t
 `Classes/EdenWorldStore.{h,cpp}`** (S.3, 2026-10-09: the store and the forward-only converter,
 byte-identical to `emod.py` on every target tested), and **played by the engine since S.4**
 (2026-10-09: FileManager loads, streams, saves, renames and deletes `.emod` worlds; new worlds are
-`.emod` only behind `g_world_format` — [save-load.md](save-load.md) § *`.emod` worlds*). Design
+`.emod`; since S.8 (2026-10-11) it is the only created/played format — [save-load.md](save-load.md) § *`.emod` worlds*). Design
 rationale, rejected alternatives and the roadmap live in
 `WORKING/emod-format-implementation-plan-2026-10-03.md`; this file states only what a file must
 look like and how to read it.
@@ -417,7 +417,7 @@ specified.
 
 ## Verified (S.3, 2026-10-09)
 
-Results: `WORKING/s3-results-2026-10-09.md`. `eden_native --emod-selftest` and
+Results: `WORKING/archive/s3-results-2026-10-09.md`. `eden_native --emod-selftest` and
 `web/tools/headless-emod-store-test.js` (wasm) run the same gates over the checked-in pack
 `web/tools/fixtures/emod/`, which `emod.py fixtures-pack` writes:
 - every S.1 fixture is stream-converted to emod.py's exact bytes (SHA-256), and emod.py's
@@ -429,7 +429,7 @@ Results: `WORKING/s3-results-2026-10-09.md`. `eden_native --emod-selftest` and
 
 ## Verified (S.1, 2026-10-09)
 
-Results: `WORKING/s1-results-2026-10-09.md`.
+Results: `WORKING/archive/s1-results-2026-10-09.md`.
 - **Round trip:** `.eden → .emod → .eden` is byte-identical on W64, the 14 MB W64 cut, W256 (Diane),
   SN City and the two sibling-editor v5 specimens. Quarry is logically identical; its one short
   span is reported.

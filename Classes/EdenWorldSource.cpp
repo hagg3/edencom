@@ -25,7 +25,7 @@ static bool endsWith(const std::string& s, const char* suffix) {
     return s.size() >= n && s.compare(s.size() - n, n, suffix) == 0;
 }
 
-WorldSource::WorldSource() : in_(NULL), kind_(K_RAW), stored_(false), zon_(false), eof_(false), inLeft_(0), inTotal_(0) {
+WorldSource::WorldSource() : in_(NULL), kind_(K_RAW), stored_(false), zon_(false), eof_(false), inLeft_(0), inTotal_(0), msRead_(0), msInflate_(0) {
     std::memset(&zs_, 0, sizeof(zs_));
 }
 WorldSource::~WorldSource() { close(); }
@@ -94,7 +94,9 @@ size_t WorldSource::read(void* dstv, size_t n) {
         if (stored_) {
             if (inLeft_ == 0) { eof_ = true; break; }
             const size_t want = (size_t)std::min<uint64_t>(n - made, inLeft_);
+            const auto r0 = std::chrono::steady_clock::now();
             const size_t got = std::fread(dst + made, 1, want, in_);
+            msRead_ += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - r0).count();
             if (got == 0) { fail("the file is truncated"); break; }
             made += got;
             inLeft_ -= got;
@@ -102,7 +104,9 @@ size_t WorldSource::read(void* dstv, size_t n) {
         }
         if (zs_.avail_in == 0 && inLeft_ > 0) {
             const size_t want = (size_t)std::min<uint64_t>(sizeof(hold_), inLeft_);
+            const auto r0 = std::chrono::steady_clock::now();
             const size_t got = std::fread(hold_, 1, want, in_);
+            msRead_ += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - r0).count();
             if (got == 0) { fail("the file is truncated"); break; }
             inLeft_ -= got;
             zs_.next_in = hold_;
@@ -111,7 +115,9 @@ size_t WorldSource::read(void* dstv, size_t n) {
         zs_.next_out = dst + made;
         zs_.avail_out = (uInt)std::min<size_t>(n - made, (size_t)1 << 30);
         const size_t before = zs_.avail_out;
+        const auto i0 = std::chrono::steady_clock::now();
         const int rc = inflate(&zs_, Z_NO_FLUSH);
+        msInflate_ += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - i0).count();
         made += before - zs_.avail_out;
         if (rc == Z_STREAM_END) {
             // A gzip file may be several members back to back; anything after a zip entry's stream
@@ -213,7 +219,7 @@ uint64_t ImportJob::needFor(uint64_t srcBytes, bool archive) {
     return std::min<uint64_t>(need, tempCap() + (64ull << 20));
 }
 
-ImportJob::ImportJob() : created_(0), upgrade_(false), layerF_(NULL), decide_(true), layering_(false), started_(false), lowSpace_(false),
+ImportJob::ImportJob() : msFeed_(0), created_(0), upgrade_(false), layerF_(NULL), decide_(true), layering_(false), started_(false), lowSpace_(false),
                          depth_(0), need_(0), fed_(0), nextCheck_(0), layerBytes_(0), peakTemp_(0) {}
 ImportJob::~ImportJob() { abort(); }
 
@@ -259,6 +265,14 @@ int ImportJob::percent() const {
     return in_.inTotal() ? (int)(99.0 * (double)in_.inConsumed() / (double)in_.inTotal()) : 0;
 }
 
+// X.5: conv_.feed() wall time (the spill encode+write are inside it; conv_.stats() splits them).
+bool ImportJob::timedFeed(const void* data, size_t n) {
+    const auto f0 = std::chrono::steady_clock::now();
+    const bool ok = conv_.feed(data, n);
+    msFeed_ += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - f0).count();
+    return ok;
+}
+
 int ImportJob::step(int budgetMs) {
     if (!error_.empty()) return FAILED;
     auto t0 = std::chrono::steady_clock::now();
@@ -293,7 +307,7 @@ int ImportJob::step(int budgetMs) {
                 if (std::fwrite(buf_.data(), 1, got, layerF_) != got) { fail("write failed (disk full?)", true); return FAILED; }
                 layerBytes_ += got;
                 if (layerBytes_ > cap) { fail("the world is too big to convert (over the temp limit)", true); return FAILED; }
-            } else if (!conv_.feed(buf_.data(), got)) {
+            } else if (!timedFeed(buf_.data(), got)) {
                 fail(conv_.error(), conv_.err() == EdenEmodConverter::E_CAP || conv_.err() == EdenEmodConverter::E_IO);
                 return FAILED;
             }

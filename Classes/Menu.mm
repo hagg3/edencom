@@ -513,10 +513,9 @@ void Menu::loadWorlds(){
         if([wut isEqualToString:@"PNG"]){
             continue;
         }
-        // Archives are listed only where playing one converts it (S.5d; FileManager::conversionEnabled:
-        // g_world_format on, not web) -- with the flag off this list is exactly what it was.
+        // Archives are listed because playing one converts it (S.5d).
         BOOL is_archive=([wut isEqualToString:@"GZ"]||[wut isEqualToString:@"ZIP"])
-            &&FileManager::conversionEnabled()&&FileManager::isArchiveName(file_name);
+            &&FileManager::isArchiveName(file_name);
         if(![wut isEqualToString:@"EDEN"]&&![wut isEqualToString:@"EMOD"]&&!is_archive)
             continue;
         // Stage S / S.5: a `.eden` that already has a paired `.emod` is the same world -- the
@@ -823,7 +822,7 @@ void Menu::update(float etime){
 				new_world=(WorldNode*)malloc(sizeof(WorldNode));
 				memset(new_world,0,sizeof(WorldNode));
 				new_world->display_name=settings->getNewWorldName();
-				new_world->file_name=FileManager::newWorldFileName();   // .eden, or .emod (S.4 g_world_format)
+				new_world->file_name=FileManager::newWorldFileName();   // always .emod (S.8)
 				[new_world->file_name retain];
 				[new_world->display_name retain];
 				addWorld(new_world);

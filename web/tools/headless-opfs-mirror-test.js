@@ -44,7 +44,7 @@ const phase2 = args.includes('--phase2');
 const dirArg = (args.find((a) => a.startsWith('--dir=')) || '').slice(6);
 const MIRROR_DIR = dirArg || fs.mkdtempSync(path.join(os.tmpdir(), 'eden-opfs-'));
 const EXPECT_ARG = (args.find((a) => a.startsWith('--expect=')) || '').slice(9);
-const EMOD = args.includes('--world-format=emod');
+const EMOD = true;   // S.8: every world is an .emod; --world-format=emod is still accepted and means nothing
 
 let failures = 0;
 function check(name, cond, extra) {
@@ -239,10 +239,10 @@ global.Module.postRun.push(async () => {
     }
 
     // ---- 1. create + first (below-threshold) save -------------------------------------------
-    if (EMOD) {
-        global.Module._eden_set_world_format(1);
-        check('world format switched to .emod', global.Module._eden_get_world_format() === 1);
-    }
+    // X.4: the web default is .emod since Stage S, so the .eden leg must pin its format too.
+    global.Module._eden_set_world_format(EMOD ? 1 : 0);
+    check(EMOD ? 'world format switched to .emod' : 'world format pinned to .eden',
+        global.Module._eden_get_world_format() === (EMOD ? 1 : 0));
     const idx = global.Module._eden_menu_create_world();
     const displayName = utf8(global.Module._eden_menu_world_name(idx));
     global.Module._eden_menu_clear_pending_world_type();
@@ -303,79 +303,7 @@ global.Module.postRun.push(async () => {
                 `grew ${grew}, mirrored ${mirrored}`);
             if (y === null) check('a no-edit .emod save mirrors under 2 KB', mirrored < 2048, mirrored + ' B');
         }
-    } else {
-
-    // ---- 2. the in-place (B5) save path — the one C2 is about --------------------------------
-    // Below the threshold the ENGINE itself rewrites the whole file into a .savetmp scratch copy,
-    // so no persistence layer can make that save a delta; C1 established that cost is fine at 64z.
-    // Above it the engine writes only dirty columns + creature block + directory, and this is
-    // where IDBFS's whole-file re-put was throwing the delta away.
-    global.Module._eden_debug_set_save_inplace_threshold(0);
-    check('threshold forced to 0 (in-place path)',
-        global.Module._eden_debug_get_save_inplace_threshold() === 0);
-    check('setblock #2 accepted',
-        global.Module._eden_console_setblock(editX, editZ, Math.max(0, editY - 1), 1) === 1);
-
-    before = bytesWritten();
-    await ensureMenuOpen();
-    await tapHud(3);
-    await flush();
-    const inplaceBytes = bytesWritten() - before;
-    compareMirror('in-place save');
-    console.log(`  in-place save mirrored ${inplaceBytes.toLocaleString()} B ` +
-        `(${(100 * inplaceBytes / worldSize).toFixed(1)}% of the ${worldSize.toLocaleString()} B world)`);
-    check('an in-place save mirrors a small fraction of the world file, not all of it',
-        inplaceBytes > 0 && inplaceBytes < worldSize / 10,
-        inplaceBytes + ' B of ' + worldSize + ' B');
-    check('the in-place save mirrored less than the below-threshold one',
-        inplaceBytes < scratchSaveBytes, inplaceBytes + ' vs ' + scratchSaveBytes);
-
-    // ---- 3. a third save with nothing edited: the steady-state autosave cost ------------------
-    before = bytesWritten();
-    await ensureMenuOpen();
-    await tapHud(3);
-    await flush();
-    const idleBytes = bytesWritten() - before;
-    compareMirror('no-edit in-place save');
-    console.log(`  no-edit in-place save mirrored ${idleBytes.toLocaleString()} B`);
-    check('a no-edit in-place save mirrors far less than the world file', idleBytes < worldSize / 10,
-        idleBytes + ' B');
-
-    // ---- 3b. what C3's dirty-column journalling costs per save --------------------------------
-    // ROADMAP C3 restored full atomicity to the in-place path by journalling the pre-image of
-    // every column the save overwrites. Under IDBFS that cost was unmeasurable (the whole file was
-    // re-put regardless); with this backend underneath it is exactly the number below, and it is
-    // the number the row was blocked on. Both saves dirty ONE column, so the difference is one
-    // column record (32,768 B at 64z, 131,072 B at 256z) plus a 24-byte record header.
-    global.Module._eden_debug_set_save_journal_columns(0);
-    check('setblock #3 accepted',
-        global.Module._eden_console_setblock(editX, editZ, Math.max(0, editY - 2), 1) === 1);
-    before = bytesWritten();
-    await ensureMenuOpen();
-    await tapHud(3);
-    await flush();
-    const noJournalBytes = bytesWritten() - before;
-    compareMirror('in-place save, dirty-column journalling OFF');
-
-    global.Module._eden_debug_set_save_journal_columns(1);
-    check('setblock #4 accepted',
-        global.Module._eden_console_setblock(editX, editZ, Math.max(0, editY - 3), 1) === 1);
-    before = bytesWritten();
-    await ensureMenuOpen();
-    await tapHud(3);
-    await flush();
-    const journalBytes = bytesWritten() - before;
-    compareMirror('in-place save, dirty-column journalling ON');
-    console.log(`  one-dirty-column save: ${noJournalBytes.toLocaleString()} B without column ` +
-        `journalling, ${journalBytes.toLocaleString()} B with it ` +
-        `(+${(journalBytes - noJournalBytes).toLocaleString()} B, ` +
-        `${(100 * journalBytes / noJournalBytes - 100).toFixed(0)}%)`);
-    check('full atomicity costs at most one extra copy of the columns the save was writing anyway',
-        journalBytes > noJournalBytes && journalBytes < 2.5 * noJournalBytes,
-        `${journalBytes} vs ${noJournalBytes}`);
-    check('...and the in-place save is still a small fraction of the world file',
-        journalBytes < worldSize / 10, `${journalBytes} B of ${worldSize} B`);
-    }   // !EMOD
+    }
 
     // ---- 4. quit, reload from MEMFS, save again ----------------------------------------------
     await ensureMenuOpen();

@@ -212,9 +212,12 @@ void showAlertWorldType() {
 // Safe as a no-op: not confirming a delete is the non-destructive default (see the warning above
 // about NOT auto-answering destructive prompts).
 void showAlertDeleteConfirm(NSString *name) { (void)name; }
-// Stage S / S.5: web never converts a `.eden` yet (FileManager's conversionEnabled()), so nothing
-// calls this; it exists so World.mm links. The original is kept either way.
-void showAlertDeleteOriginal(NSString *edenName) { (void)edenName; }
+// Stage S / S.8: web converts a `.eden` when it is played, like every target. There is no Alert dialog on web
+// yet, so the original is kept (and hidden as paired) -- the non-destructive answer.
+void showAlertDeleteOriginal(NSString *edenName) {
+    (void)edenName;
+    if (World::getWorld && World::getWorld->fm) World::getWorld->fm->resolveOriginal(FALSE);
+}
 // S.5e: same -- unreachable on web. Answers at once with the Settings toggle, so a future caller
 // cannot leave World::loadWorld waiting on a prompt nobody drew.
 void showAlertConvertHeight(NSString *edenName, BOOL known64) {
