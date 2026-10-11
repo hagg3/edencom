@@ -5543,11 +5543,15 @@ int main(int argc, char** argv) {
 }
 
 // Whitespace-separated options, each parsed exactly as one argv entry.
+// The pieces are remembered (g_string_args) because the world-file tools re-read their own options
+// from an argv: without them an EDEN_ARGS / eden-args.txt launch (the only way to drive the iPad)
+// reached `eden_world_tool_main` with no arguments and "nothing to do".
+static std::vector<std::string> g_string_args;
 static int parse_arg_string(const char* text) {
     std::string acc;
     for (const char* p = text; ; ++p) {
         if (*p && !std::isspace((unsigned char)*p)) { acc += *p; continue; }
-        if (!acc.empty()) { if (int rc = parse_one_arg(acc.c_str())) return rc; acc.clear(); }
+        if (!acc.empty()) { g_string_args.push_back(acc); if (int rc = parse_one_arg(acc.c_str())) return rc; acc.clear(); }
         if (!*p) break;
     }
     return 0;
@@ -5680,7 +5684,16 @@ static int eden_main_after_args(int argc, char** argv) {
     // Harness modes keep the pre-default-on world format (.eden) unless --world-format says otherwise.
     if ((g_opt.mode || !g_opt.liveCmds.empty()) && !g_world_format_pinned) { g_world_format = 0; g_world_format_pinned = 1; }
     // Stage S / S.5: the world-file tools need no engine, no window and no save directory.
-    if (g_opt.mode && !std::strcmp(g_opt.mode, "world-tool")) return eden_world_tool_main(argc, argv);
+    if (g_opt.mode && !std::strcmp(g_opt.mode, "world-tool")) {
+        std::vector<char*> av(argv, argv + argc);
+        for (std::string& a : g_string_args) av.push_back(&a[0]);
+        const int rc = eden_world_tool_main((int)av.size(), av.data());
+#if defined(EDEN_PLATFORM_IOS)
+        std::fflush(stdout); std::fflush(stderr);
+        std::_Exit(rc);   // an iOS app's main returning does not end the process; the harness waits on it
+#endif
+        return rc;
+    }
     (void)argc;
     // `--touch-selftest --window=WxH` runs WINDOWED, and that is the whole point of the
     // combination: headless has no window, so the letterbox is degenerate and the mapping under
