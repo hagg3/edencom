@@ -164,6 +164,10 @@ static const Setting kSettings[] = {
   { "crouch",            "Crouch mode",       "Experiments", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Adds a crouch key/button (halves hitbox height for 1-block gaps). Off by default.", NULL },
 
   { "save_backup",       "Keep a save backup", "Saves",      KIND_TOGGLE, -1,           0,   1,   1,   1,  "Keep a '.bak' copy of a world's previous save so a corrupted or interrupted save can be recovered. Roughly doubles the disk write per save below the in-place threshold. On by default -- this is what a corrupted-load recovery prompt offers to restore.", NULL },
+  // B.5b-1b (2026-10-12): the periodic save that replaced the walk reload's. Off leaves saving to
+  // the ring's evict-saves (a modified column leaving the window -- never optional, or the edit is
+  // lost), warp, exit, the Save button and app background. Read as g_autosave_seconds (FileManager.h).
+  { "autosave",          "Autosave",          "Saves",       KIND_ENUM,   -1,           0,   3,   1,   1,  "Save edits on a timer while you play, without stopping fire or water. Only runs when something changed, and only the changed chunks are written. Off still saves on exit, warp, the Save button and when a changed area scrolls out of view.", "Off,1 min,2 min,5 min" },
   // Stage S / S.5e (the user, 2026-10-10): every `.emod` is 256z by default. Read through
   // eden_get_upgrade_256z() by FileManager's convert-on-play, native Get Worlds and the web Storage
   // tab's import; the convert prompt's "Keep 64z" overrides it for one world.
@@ -416,6 +420,10 @@ static void eden_apply_setting(int i, bool commitEngine) {
 #endif
             g_presetApplying = false;
         }
+    } else if (std::strcmp(s.key, "autosave") == 0) {
+        static const float kPeriod[] = {0, 60, 120, 300};
+        int a = (int)lroundf(v);
+        g_autosave_seconds = (a >= 0 && a < 4) ? kPeriod[a] : 60;
     } else if (std::strcmp(s.key, "fps_normalize") == 0) {
         eden_fps_normalize = v;
     } else if (std::strcmp(s.key, "hold_to_act") == 0) {

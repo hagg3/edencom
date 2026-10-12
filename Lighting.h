@@ -51,6 +51,18 @@ static inline const Vector8* light_get(int tx,int tz,int y){
     return b?&b[light_brickIndex(tx,tz,y)]:NULL;
 }
 
+// B.5b-1c (ring streaming): per-column light. Called once a frame before meshing, while no full
+// sweep is pending: every column slot whose occupant changed since its light was last computed (a
+// ring landing, a decode published by a worker) gets its 3x3 neighbourhood of slots re-lit from
+// the 5x5 around it, so walking keeps the window's light exactly what a fresh load's sweep gives
+// (Lighting.mm, at light_rebuildNeighbourhood). Returns the neighbourhoods rebuilt.
+int light_syncLandedColumns();
+extern int g_light_rebuilds;        // diagnostics: neighbourhoods rebuilt since launch,
+extern double g_light_rebuild_ms,g_light_rebuild_max_ms;   // their total and worst wall time
+// --ring-light-gate's bug-put-back switch (native --light-mutate=): 1 = never rebuild, 2 = rebuild
+// but do not re-mesh what changed, 3 = let light wrap past the window edge (stock). 0 = off.
+extern int g_light_test_mutation;
+
 void light_storeAllocate();   // Terrain::allocateMemory
 void light_storeFree();       // Terrain::deallocateMemory, after mp_drain
 void light_storeClear();      // what memset(lightarray,0,...) used to be

@@ -40,16 +40,55 @@ exactly that until R.3 and now imports `"../Lighting.h"`.
     (−16.7) and 148.8 → 84.5 MB on `F3 W256` (−64.2); `phys_footprint` 59.6 → 37.9 and 164.4 → 95.7 MB.
     The lit store on those worlds is 8 bricks (6 lightboxes): 119 KB at 64z, 181 KB at 256z including
     the tables. The per-warp memset (16 / 64 MB; 1.2 / 4.2 ms on the A8X, F.3) is now 8 × 12 KB.
-- `addlight(x,z,y, brightness, color)` (`Lighting.mm:17`) — adds (or with
+- `addlight(x,z,y, brightness, color)` (`Lighting.mm`, body `light_splat`) — adds (or with
   brightness=−1, subtracts) a spherical falloff light of radius `LIGHT_RADIUS 5`:
   `contribution = 64·(1−dist/5)·brightness·color`, clamped 0..255 per channel.
   Called when lightboxes are placed/destroyed/repainted.
+  **No toroidal wrap (modified from stock, B.5b-1c, 2026-10-12).** Stock wrote every voxel of the
+  sphere through `(x+g_offcx)%T_SIZE`, so a lightbox within 5 blocks of the window edge also lit the
+  *opposite* edge's column. A voxel whose column is not resident (`isColumnResident`, one `pbounds`
+  compare per (x,z) of the sphere) now gets nothing. Every writer — edits, both sweeps, the per-column
+  rebuild below — goes through `light_splat`, so a load and a walk agree on what the edge gets.
 - `calculateLighting()` (`Lighting.mm`) — full rebuild: finds every `TYPE_LIGHTBOX` in the resident
   window and re-adds its light, refreshing affected chunk meshes.
   Triggered via `updateLightingBegin()` (zero the array + set a flag) after world
-  load and after every streaming event — lights are **not** persisted, they're
-  re-derived from lightbox blocks. The per-column body is `sweepLightingColumn(cx,cz)`, shared with
-  the sliced form below; a hit goes through `sweepLightingHit` (`addlight` + `refreshChunksInRadius`).
+  load, warps and bulk reloads — lights are **not** persisted, they're re-derived from lightbox
+  blocks. The per-column body is `sweepLightingColumn(cx,cz,hit)`, shared with the sliced form below
+  and with the per-column rebuild; a sweep hit goes through `sweepLightingHit` (`addlight` +
+  `refreshChunksInRadius`).
+- **Light per landed column under ring streaming (B.5b-1c, 2026-10-12).** A walk makes no bulk
+  reloads, so no sweep: instead `light_syncLandedColumns()` runs once a frame in
+  `prepareAndLoadGeometry`, after the ring lands its columns and before the meshing pass, whenever
+  no full sweep is pending (`!update_lighting && !bulk_reload_active`). It keeps, per column slot,
+  the world column the slot's light was computed for (`lit_col`; recorded for the whole window when a
+  sweep *starts*), and for every slot whose occupant changed — a ring landing, or a decode a worker
+  published — calls `light_rebuildNeighbourhood`:
+  - **Why the 3×3 of slots is enough.** A landing changes the light of the departing column's
+    spatial neighbours (its lightboxes stop counting) and the newcomer's (its start). A resident
+    column at world offset d from either sits in slot S+d mod 18, so both sets are inside the 3×3 of
+    *slots* around S (on the trailing and the leading edge respectively). Everything else is untouched.
+  - **How.** The 3×3 is rebuilt into a private scratch brick table from the lightboxes of the 5×5 of
+    slots around S (`sweepLightingColumn` with a hit that splats into scratch, clipped by a slot
+    mask), then published brick by brick: unchanged bricks are not touched, changed ones are copied
+    in place (or taken from / returned to the pool) and their chunk marked for re-meshing
+    (`addToUpdateList2`). A mesh worker reading the live table therefore never sees a cleared brick
+    that did not change, and one that did is re-meshed anyway. Scratch is at most 9 columns of bricks.
+  - **Byte-identical to the sweep.** The 5×5 is visited in ascending slot order, the order the sweep's
+    cursor walks the window, so every voxel gets the same contributions in the same order. (Each
+    contribution is truncated to an integer and `cur+d` is a float add, so order is *nearly* but not
+    provably free; the same order makes it moot.)
+  - **A sweep in flight.** Columns that land while a sliced sweep is running differ from the `lit_col`
+    recorded at its start, so their 3×3s are rebuilt the frame after it finishes; that also removes
+    whatever the sweep wrote for their departed occupants.
+  - **Cost** (Mac, Release, 784 lightboxes over the walk area, ~0.5 per column): 0.10 ms per landed
+    column on average, 0.15 ms worst at 64z; 0.16 / 0.35 ms at 256z. `eden_debug_light_state()` reports
+    `rebuilds`, `rebuild_ms`, `rebuild_max_ms` (the times only with `EDEN_F3_HOOKS`).
+  - **Gates.** `WORKING/b5b1/ring-light-gate.sh H OUT` (fresh load at the end of 7 walks on a lightbox
+    lattice world at night = walked geometry, chunk state and light) and native `--ring-light-selftest`
+    (the in-process CI form: walked light + meshes = a full re-sweep + re-mesh). `--light-mutate=nosync`
+    and `=nomark` fail both; `=wrap` fails `--light-selftest`'s window-edge step. **Test at night**:
+    by day `TerrainChunk` never calls `calcLight` (`skylight==1.0`), so a mesh baked from stale light is
+    invisible to every checksum; the lattice prep paints all 16 sky regions night (palette 54) and saves.
 - **The scan is a `memchr` (Stage R / R.1, 2026-10-03).** `blockarray` is y-fastest, so each (x,z) of a
   column is one contiguous `T_HEIGHT`-byte strip; `sweepLightingColumn` runs `memchr` for
   `TYPE_LIGHTBOX` over each strip instead of a `getLandc` per voxel (~5.3M calls at 64z, ~21M at 256z,
@@ -122,6 +161,11 @@ Water and lava are voxels with the fill level encoded in the type
   the main reason big waterfalls tank the frame rate.
 - `clearLiquids()` — called by `endDynamics` (save, overload valve): stops all flow
   but leaves the liquid blocks as-is.
+- **B.5b-1b (2026-10-12):** `dropColumn(cx,cz)` drops the nodes of one chunk column as ring
+  streaming evicts it (it unlinks properly; stock `removePoint` sets `plist=NULL` on a head removal,
+  orphaning the rest, and is left alone), and the spread skips a neighbour whose column is not
+  resident (`isColumnResident`) instead of writing through the toroidal alias.
+  `countOutsideWindow()` is the probe `--evict-selftest` asserts is 0.
 - Player/creature interaction: `inLiquid`, `getFlowDirection` (push), lava damage.
 - Surface rendering (slopes, animated texture) is in the mesher — see
   [rendering.md](rendering.md).
@@ -180,8 +224,9 @@ GL lights for doors/creatures).
   block pointers across it.
 - Portal registry rebuilds via meshing means a portal in a *not-yet-meshed* chunk is
   briefly unknown to `enterPortal`.
-- `endDynamics` (any save!) silently kills active fire fronts and liquid queues —
-  by design, but surprising when testing fire features.
+- `endDynamics` (warp, exit, Save button, app background, bulk reload) silently kills active fire
+  fronts and liquid queues — by design, but surprising when testing fire features. Since B.5b-1b the
+  walk's evict-saves and the autosave no longer do; only the evicted column's own nodes go.
 
 ## Safe vs. risky to modify
 - **Safe:** light radius/intensity, liquid spread rates, particle counts/lifetimes,

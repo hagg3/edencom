@@ -157,6 +157,14 @@ jobs:
 
           rm -rf ci-docs && mkdir -p ci-docs
           run_gate "save round-trip" $B --headless --save-roundtrip --world=ci --docs="$PWD/ci-docs"
+          # B.5b-1b: ring streaming's evict-save, node dropping and autosave (plan §3.4 gates 2, 3).
+          rm -rf evict-docs && mkdir -p evict-docs
+          run_gate "evict selftest" $B --evict-selftest --docs="$PWD/evict-docs"
+          # B.5b-1c: light per landed column (walked light + meshes = a full re-sweep + re-mesh, at
+          # night), and the light store's edit paths incl. a lightbox at the window edge (no wrap).
+          rm -rf ringlight-docs light-docs && mkdir -p ringlight-docs light-docs
+          run_gate "ring light selftest" $B --ring-light-selftest --docs="$PWD/ringlight-docs"
+          run_gate "light selftest" $B --light-selftest --light-selfcheck --docs="$PWD/light-docs"
 
           # THE WORLD FILE IS NOT NAMED AFTER THE WORLD. This engine gives every world a random
           # 40-character filename and keeps the display name inside the header — so the artifact
@@ -302,6 +310,13 @@ jobs:
           # pack emod.py wrote; every target must reproduce its SHA-256s byte for byte, which is
           # the cross-target .emod gate (macOS, Linux, Windows here; wasm in the `web` job).
           run_gate "emod selftest" $B --emod-selftest --emod-fixtures=../web/tools/fixtures/emod --emod-work="$PWD/emod-work"
+          rm -rf evict-docs && mkdir -p evict-docs
+          run_gate "evict selftest" $B --evict-selftest --docs="$PWD/evict-docs"
+          # B.5b-1c: light per landed column (walked light + meshes = a full re-sweep + re-mesh, at
+          # night), and the light store's edit paths incl. a lightbox at the window edge (no wrap).
+          rm -rf ringlight-docs light-docs && mkdir -p ringlight-docs light-docs
+          run_gate "ring light selftest" $B --ring-light-selftest --docs="$PWD/ringlight-docs"
+          run_gate "light selftest" $B --light-selftest --light-selfcheck --docs="$PWD/light-docs"
 
           # See the Linux job for why the leak probe is a stage obligation. Windows has the one
           # honest gap in the statistic — the mingw CRT publishes no live-bytes figure, so
@@ -470,6 +485,11 @@ jobs:
           ./build/eden_native --background-selftest --world=bg --docs="$PWD/bg-docs"
           ./build/eden_native --browser-selftest --docs="$PWD/browser-docs"
           ./build/eden_native --emod-selftest --emod-fixtures=../web/tools/fixtures/emod --emod-work="$PWD/emod-work"
+          rm -rf evict-docs && mkdir -p evict-docs
+          ./build/eden_native --evict-selftest --docs="$PWD/evict-docs"
+          rm -rf ringlight-docs light-docs && mkdir -p ringlight-docs light-docs
+          ./build/eden_native --ring-light-selftest --docs="$PWD/ringlight-docs"
+          ./build/eden_native --light-selftest --light-selfcheck --docs="$PWD/light-docs"
           rm -rf leak-docs && mkdir -p leak-docs
           ./build/eden_native --leak-probe --docs="$PWD/leak-docs"
 
@@ -598,7 +618,9 @@ jobs:
           # entirely and reports "could not find a package configuration file provided by SDL3"
           # while the file sits exactly where the prefix says. Naming the config directory is the
           # one form that is not subject to that mode.
-          cmake -B build-ios-device $EDEN_CMAKE_FLAGS \
+          # -DEDEN_F3_HOOKS=ON: the device ipa is the test ipa (T.A8, T.B15's rebuild_max_ms);
+          # the hooks are inert unless a harness flag drives them.
+          cmake -B build-ios-device $EDEN_CMAKE_FLAGS -DEDEN_F3_HOOKS=ON \
             -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphoneos \
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET="$EDEN_IOS_MIN" \

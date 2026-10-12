@@ -219,6 +219,12 @@ public:
     int render();
     void render2();
     void unbuild();
+    // B.5b-1a: forget the drawn mesh (CPU side and counts), keeping the GL buffer names for reuse
+    // the way M3(a)'s prepareVBO does. For a chunk whose geometry belongs nowhere any more: a slot a
+    // new column has just landed in, or one on the window's unmeshed outer ring. holdsGeometry()
+    // is the "anything left to drop?" test, so a per-frame sweep can skip a dropped chunk cheaply.
+    void dropGeometry();
+    bool holdsGeometry() const;
     void prepareVBO();
 };
 

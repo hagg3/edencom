@@ -12,8 +12,8 @@
 > behaviour that no longer exists in `Classes/` (`git show 35ecf78:Classes/FileManager.mm` has it). What stays
 > in `FileManager.mm` for `.eden` is read-only: `getName`/header peeks for the world list, `probeWorldHeight`,
 > the converter's source side, and the directory/`readColumn` machinery that `writeGenToDisk` (offline worldgen)
-> and the bundled-map reader still use. `convertWorldTo64` (Storage tab "Convert to 64z") is `.eden`-only and
-> therefore refuses every world until an `.emod`-native version exists (ROADMAP).
+> and the bundled-map reader still use. `convertWorldTo64` (Storage tab "Convert to 64z") routes an `.emod` to
+> `convertEmodTo64` (X.9, 2026-10-12): Legacy64z export to a scratch `.eden`, `ImportJob` with upgrade off, one atomic replace.
 
 ## Purpose
 How world files are opened, streamed, saved and migrated at runtime. The on-disk
@@ -59,7 +59,7 @@ flowchart TD
     E2 -- no --> E4[v3→v4 in-place header upgrade]
     E3 --> E4
     E4 --> E5[readDirectory into hashmap]
-    E5 --> E6[chunkOffset = player chunk − 9]
+    E5 --> E6[chunkOffset = windowOriginChunk: nearest chunk corner − 9]
     E6 --> E7[readColumn ×18×18 window]
     E7 --> E8[LoadCreatures]
     N4 --> Z[set ZFAR, clear input/effects,<br/>updateSkyColor, loaded=TRUE]
@@ -75,7 +75,9 @@ Notes:
   hand-picked scenic locations; consecutive new worlds avoid repeating the last one.
 - `player->pos`/`yaw`, `home`, seed, golden cubes, region sky colors all come from the
   header. `chunkOffsetX/Z` (the render-origin/streaming anchor owned by FileManager)
-  is derived from the player position.
+  is derived from the player position, through `windowOriginChunk` (B.5b-1a: corner-centred, and the
+  same helper the streamer uses). Since B.5b-1a the streamer moves it on every window shift, not
+  only on a bulk reload (docs/world-and-terrain.md "Streaming").
 
 ## Column streaming — `readColumn(cx, cz, fileHandle)` (`FileManager.mm:802`)
 
@@ -97,7 +99,12 @@ NSFileHandle each streaming event).
 ## Save flow — `FileManager::saveWorld(warpPos)` (`FileManager.mm:366`)
 
 1. `terrain->endDynamics(TRUE)` — extinguish fires, clear liquids/effects (dynamics
-   are **not** persisted; a burning world saves as not-burning).
+   are **not** persisted; a burning world saves as not-burning). **Modified from stock by B.5b-1b
+   (2026-10-12):** `saveWorldKeepDynamics()` is the same save without this step. Ring streaming's
+   evict-save (a modified column is about to leave the window) and the 60 s autosave use it, so
+   walking no longer puts out fires; the departing column's own nodes are dropped instead
+   (docs/world-and-terrain.md, Streaming 2a). Warp, exit, the Save button, app background and the
+   bulk reload keep this step.
 2. Rebuild header from live state (seed, home, pos←warp, yaw, golden cubes, sky
    colors, display name from the menu's selected world, image hash).
 3. If the file doesn't exist: create it with a fresh header (v2 bootstrap).
@@ -274,7 +281,8 @@ The port's second world container: an append-only log of per-column zstd records
   print an `emod:` line on stderr (`printg`/`NSLog` compile out of Release). A record lost to a
   **frame CRC** failure has no trustworthy key, so that column reads as never saved (the spec's
   rule); its bytes stay in the file because damage blocks compaction.
-- **Save** (`saveEmodWorld`, from `saveWorld` after `endDynamics`): every resident column with a
+- **Save** (`saveEmodWorld`, from `saveWorld` after `endDynamics`, or from `saveWorldKeepDynamics`
+  without it — B.5b-1b's evict-save and autosave; a commit zeroes `g_seconds_since_save`): every resident column with a
   `modified` chunk, plus `CREATURES` and `WORLD_HEADER`, in **one** committed batch (the store adds
   `SUMMARY` + `COMMIT`, one write, `fsync`). Flags are cleared only after the commit is durable; a
   failed commit truncates back and keeps every flag (the `.eden` "save skipped, flags survive"
@@ -302,8 +310,10 @@ every sign later cannot resurrect them. Refused edits (over 1 MiB, an opaque tra
 `fm->reportTrailerRefusal()`. Gate: `eden_native --trailer-selftest` (native/README.md).
 - **Rename / image hash / share-name** (`renameWorld`, `setImageHash`, `setName`): a new
   `WORLD_HEADER` record in its own batch. **Delete** closes the store first (Windows) and removes the
-  converter's temp names. **`convertWorldTo64`** refuses an `.emod`; the Share > Export path's
-  Legacy64z target (below) is how an `.emod` becomes a 64z `.eden`.
+  converter's temp names. **`convertWorldTo64`** on an `.emod` (X.9) exports Legacy64z to `<world>.64zsrc`,
+  re-converts it with the 256z upgrade off to `<world>.64zconv`, then `replace_file`s it over the world (temps removed
+  on failure; refuses the open world and an already-64z one). The Share > Export Legacy64z target (below) is the
+  same cut written out as a `.eden`.
 - **Converting, importing, pairing (S.5 / S.5d, 2026-10-10).** One job does every `.eden`/archive →
   `.emod` conversion: `emod::ImportJob` (`Classes/EdenWorldSource.{h,cpp}`) — convert-on-play
   (`FileManager::convertStep`), Get Worlds (`WorldBrowser`'s `DL_CONVERT`) and web's Storage-tab

@@ -51,6 +51,11 @@ public:
     void clearLiquids();
     void addSource(int x,int z,int y);
     void removeSource(int x,int z,int y,int type);
+    // B.5b-1b: drop every node in chunk column (cx,cz), which is about to leave the window (its slot
+    // is overwritten by a column 288 blocks away). Returns how many. countOutsideWindow() is the
+    // probe: nodes whose column is not resident, which must stay 0.
+    int dropColumn(int cx,int cz);
+    int countOutsideWindow();
     
 };
 

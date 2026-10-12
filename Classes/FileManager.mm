@@ -20,6 +20,7 @@
 #include <cstddef>   // offsetof, renameWorld
 #include "EdenWorldStore.h"   // emod::eden_detect_bands -- a .eden's height (S.3b)
 #include "EdenWorldSource.h"  // the raw .eden bytes out of a .eden / .gz / .zip (S.5)
+#include "EdenWorldExport.h"  // X.9: Legacy64z export for the .emod "Convert to 64z"
 #import "Alert.h"            // showAlertConvertHeight (S.5e)
 
 // See FileManager.h. Both NULL on web — its Foundation shim already answers both questions the
@@ -511,6 +512,25 @@ void FileManager::saveWorld(Vector warp){
 	}
 	// S.8: nothing but an `.emod` is saved. A world that is not one never gets here (loadWorld refuses it).
 	printg("saveWorld: %s is not an .emod -- not saved\n",[file_name UTF8String]);
+}
+float g_seconds_since_save=0;
+float g_autosave_seconds=60;
+// B.5b-1b. Stock had no save that left dynamics running: every save -- including the one in front
+// of each walk reload, i.e. every ~128 blocks walked -- put out every fire and stopped every flow.
+// Under ring streaming a column leaves the window every few seconds of walking, so the evict-save
+// would do that all the time. Nothing in the save needs dynamics stopped: a burning block is saved
+// as the block it still is, a flowing one as the liquid it already is. What made stopping them
+// load-bearing in stock was the toroidal aliasing after a reload, and the ring handles that per
+// column instead (Terrain::dropDynamicsInColumn, before the column is overwritten).
+void FileManager::saveWorldKeepDynamics(){
+    F3Scope _f3save(&g_f3.save_ms); g_f3.save_calls++;
+	writeDirectory=FALSE;
+	NSString* name=World::getWorld->terrain->world_name;
+	if(isEmodName(name)){
+		this->saveEmodWorld(World::getWorld->player->pos);
+		return;
+	}
+	printg("saveWorld: %s is not an .emod -- not saved\n",[name UTF8String]);
 }
 // Rows actually WRITTEN by the pass below -- `count` is incremented for every row considered,
 // including the ones the offset check rejects, so it cannot be used to find the directory's end.
@@ -1484,12 +1504,10 @@ int FileManager::probeWorldHeight(NSString* name,BOOL fromArchive){
 // The NewFormat256z post-directory trailer (signs, command blocks) is dropped, as eden-convert.js
 // drops it: the output is Legacy64z, a format that has none (plan §4 *Format eras*; S.5b's
 // exporter applies the same rule and reports it before writing).
+static ConvertTo64Report convertEmodTo64(NSString* name);   // X.9, defined with the converter below
 ConvertTo64Report FileManager::convertWorldTo64(NSString* name){
     ConvertTo64Report report; memset(&report,0,sizeof(report));
-    if(isEmodName(name)){
-        snprintf(report.error,sizeof(report.error),"not supported for .emod worlds yet");
-        return report;
-    }
+    if(isEmodName(name))return convertEmodTo64(name);
 
     if(!worldExists(cpstring(name),FALSE)){
         snprintf(report.error,sizeof(report.error),"world does not exist");
@@ -1829,8 +1847,8 @@ void FileManager::loadWorld(NSString* name,BOOL fromArchive){
             
             chunkOffsetX=centerChunk-r;
             chunkOffsetZ=centerChunk-r;
-            chunkOffsetX=temp.x/CHUNK_SIZE-T_RADIUS;
-            chunkOffsetZ=temp.z/CHUNK_SIZE-T_RADIUS;
+            chunkOffsetX=windowOriginChunk(temp.x);   // B.5b-1a: corner-centred
+            chunkOffsetZ=windowOriginChunk(temp.z);
             
         }else{
             chunkOffsetX=centerChunk-r;
@@ -2054,8 +2072,10 @@ BOOL FileManager::loadEmodWorld(NSString* name){
     }
     oldOffsetX=chunkOffsetX;
     oldOffsetZ=chunkOffsetZ;
-    chunkOffsetX=player->pos.x/CHUNK_SIZE-T_RADIUS;
-    chunkOffsetZ=player->pos.z/CHUNK_SIZE-T_RADIUS;
+    // B.5b-1a: corner-centred, through the one helper the streamer uses, so the window this load
+    // reads is exactly the one prepareAndLoadGeometry wants on its first frame (no row streams back).
+    chunkOffsetX=windowOriginChunk(player->pos.x);
+    chunkOffsetZ=windowOriginChunk(player->pos.z);
     player->pos=sfh->pos;
     int r=T_RADIUS;
     for(int x=chunkOffsetX;x<chunkOffsetX+2*r;x++){
@@ -2214,6 +2234,7 @@ void FileManager::saveEmodWorld(Vector warp){
         return;
     }
     if(trailerSaving)trailerSaved();
+    g_seconds_since_save=0;
     for(size_t i=0;i<saved.size();i++){
         for(int cy=0;cy<CHUNKS_PER_COLUMN;cy++)
             ter->chunkTable[threeToOne(saved[i].first,cy,saved[i].second)]->modified=FALSE;
@@ -2242,6 +2263,65 @@ static long long fileMtimeOf(const std::string& p){
     return (long long)sb.st_mtime;
 }
 static std::string stemOf(NSString* name){return emod::WorldSource::stemOf(cpstring(name));}
+
+// X.9: "Convert to 64z" for an `.emod`. Export it as Legacy64z (the exporter restates the cut rules and
+// reports every loss) to a scratch `.eden`, convert that back with the 256z upgrade OFF, then replace the
+// world with one rename. The original is untouched until the new file is complete and verified.
+static ConvertTo64Report convertEmodTo64(NSString* name){
+    ConvertTo64Report report; memset(&report,0,sizeof(report));
+    auto fail=[&](const char* m){snprintf(report.error,sizeof(report.error),"%s",m);return report;};
+    FileManager* fm=World::getWorld?World::getWorld->fm:NULL;
+    if(!fm||!fm->worldExists(cpstring(name),FALSE))return fail("world does not exist");
+    if(World::getWorld->doneLoading!=0&&World::getWorld->terrain&&World::getWorld->terrain->world_name
+       &&[World::getWorld->terrain->world_name isEqualToString:name])
+        return fail("cannot convert the world that is currently open -- return to the main menu first");
+    const std::string src=docs+"/"+cpstring(name);
+    const std::string tmpEden=src+".64zsrc",tmpEmod=src+".64zconv";
+    auto cleanup=[&](){
+        remove(tmpEden.c_str());remove(tmpEmod.c_str());
+        remove((tmpEmod+".spill").c_str());remove((tmpEmod+".converting").c_str());
+    };
+    cleanup();
+
+    emod::ExportOptions opt; opt.target=emod::X_LEGACY64Z;
+    emod::ExportReport xr; std::string err;
+    {
+        emod::EdenWorldStore st;
+        if(!st.open(src.c_str(),false))return fail("could not open the world");
+        if(st.bands()!=16)return fail("world is already 64z");
+    }
+    if(!emod::export_world_file(src,tmpEden,opt,false,&xr,&err)){
+        cleanup();
+        snprintf(report.error,sizeof(report.error),"%s",err.empty()?"export failed":err.c_str());
+        return report;
+    }
+    emod::ImportJob job;
+    if(!job.begin(tmpEden,tmpEmod,cpstring(name),(int64_t)fileMtimeOf(src),false)){
+        std::string e=job.error();cleanup();
+        snprintf(report.error,sizeof(report.error),"%s",e.c_str());
+        return report;
+    }
+    int r;
+    while((r=job.step(50))==emod::ImportJob::RUNNING){}
+    if(r!=emod::ImportJob::DONE){
+        std::string e=job.error();cleanup();
+        snprintf(report.error,sizeof(report.error),"%s",e.empty()?"conversion failed":e.c_str());
+        return report;
+    }
+    remove(tmpEden.c_str());
+    if(!emod::io::replace_file(tmpEmod,src)){cleanup();return fail("could not replace the world with the converted file");}
+    report.ok=TRUE;
+    report.columns=(int)xr.columns;
+    report.blocksDiscarded=(int)xr.blocksAbove63;
+    report.columnsAffected=(int)xr.columnsAffected;
+    report.doorsOrphaned=(int)xr.doorsOrphaned;
+    report.creaturesDropped=(int)xr.creaturesDropped;
+    report.creaturesRelocated=(int)xr.creaturesRelocated;
+    report.creaturesOverflow=(int)xr.creaturesOverflow;
+    report.posClamped=xr.posClamped;
+    report.homeClamped=xr.homeClamped;
+    return report;
+}
 static unsigned long long le64(const uint8_t* p){
     unsigned long long v=0;
     for(int i=7;i>=0;i--)v=(v<<8)|p[i];

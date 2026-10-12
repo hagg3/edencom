@@ -20,6 +20,19 @@ static int lightbrick_npool=0;
 static int lightbrick_slots=0;
 static int lightbrick_total=0;          // bricks malloc'd: in the table plus in the pool
 bool g_light_selfcheck=false;
+// B.5b-1c: the neighbourhood rebuild's private brick table (same slots as lightbricks, non-NULL only
+// during light_rebuildNeighbourhood), its own pool of zeroed bricks (at most 9 columns' worth), and
+// per column slot the world chunk column the slot's light was last computed for (LIT_NONE: none).
+static Vector8** lightscratch=NULL;
+static Vector8** lightscratch_pool=NULL;
+static int lightscratch_npool=0;
+static int lightscratch_total=0;
+static int* lit_col=NULL;               // 2 ints per column slot: wcx, wcz
+static unsigned char* rebuild_mask=NULL;   // per column slot: inside the 3x3 being rebuilt
+#define LIT_NONE INT_MIN
+int g_light_rebuilds=0;
+double g_light_rebuild_ms=0,g_light_rebuild_max_ms=0;   // F3 clock (0 without EDEN_F3_HOOKS)
+int g_light_test_mutation=0;
 
 void light_storeAllocate(){
     lightbrick_slots=CHUNKS_PER_SIDE*CHUNKS_PER_SIDE*CHUNKS_PER_COLUMN;
@@ -27,6 +40,12 @@ void light_storeAllocate(){
     lightbrick_pool=(Vector8**)malloc(sizeof(Vector8*)*lightbrick_slots);
     lightbrick_npool=0;
     lightbrick_total=0;
+    lightscratch=(Vector8**)calloc(lightbrick_slots,sizeof(Vector8*));
+    lightscratch_pool=(Vector8**)malloc(sizeof(Vector8*)*9*CHUNKS_PER_COLUMN);
+    lightscratch_npool=lightscratch_total=0;
+    lit_col=(int*)malloc(sizeof(int)*2*CHUNKS_PER_SIDE*CHUNKS_PER_SIDE);
+    for(int i=0;i<2*CHUNKS_PER_SIDE*CHUNKS_PER_SIDE;i++)lit_col[i]=LIT_NONE;
+    rebuild_mask=(unsigned char*)calloc(CHUNKS_PER_SIDE*CHUNKS_PER_SIDE,1);
     lightarray=g_light_selfcheck?(Vector8*)calloc((size_t)T_SIZE*T_SIZE*T_HEIGHT,sizeof(Vector8)):NULL;
 }
 void light_storeFree(){
@@ -36,6 +55,15 @@ void light_storeFree(){
     free(lightbrick_pool);
     lightbricks=lightbrick_pool=NULL;
     lightbrick_slots=lightbrick_npool=lightbrick_total=0;
+    for(int i=0;i<lightscratch_npool;i++)free(lightscratch_pool[i]);   // never left in lightscratch
+    free(lightscratch);
+    free(lightscratch_pool);
+    lightscratch=lightscratch_pool=NULL;
+    lightscratch_npool=lightscratch_total=0;
+    free(lit_col);
+    lit_col=NULL;
+    free(rebuild_mask);
+    rebuild_mask=NULL;
     free(lightarray);
     lightarray=NULL;
 }
@@ -51,7 +79,8 @@ void light_storeClear(){
     }
     if(lightarray)memset(lightarray,0,sizeof(Vector8)*T_SIZE*T_SIZE*T_HEIGHT);
 }
-static Vector8* light_newBrick(int slot){
+// A zeroed brick for the table, not yet published.
+static Vector8* light_takeBrick(){
     Vector8* b;
     if(lightbrick_npool)b=lightbrick_pool[--lightbrick_npool];
     else{
@@ -59,12 +88,29 @@ static Vector8* light_newBrick(int slot){
         if(!b)return NULL;   // that light is lost; the dense array could not fail here, but it
         lightbrick_total++;  // was one 16-64 MB malloc up front instead
     }
-    __atomic_store_n(&lightbricks[slot],b,__ATOMIC_RELEASE);
+    return b;
+}
+static Vector8* light_newBrick(int slot){
+    Vector8* b=light_takeBrick();
+    if(b)__atomic_store_n(&lightbricks[slot],b,__ATOMIC_RELEASE);
+    return b;
+}
+// The rebuild's scratch table is main-thread-only (no worker ever sees it), so no atomics.
+static Vector8* light_newScratchBrick(int slot){
+    Vector8* b;
+    if(lightscratch_npool)b=lightscratch_pool[--lightscratch_npool];
+    else{
+        if(lightscratch_total>=9*CHUNKS_PER_COLUMN)return NULL;   // cannot happen: a 3x3 of columns
+        b=(Vector8*)calloc(CHUNK_SIZE3,sizeof(Vector8));
+        if(!b)return NULL;
+        lightscratch_total++;
+    }
+    lightscratch[slot]=b;
     return b;
 }
 unsigned long long light_storeBytes(){
-    return (unsigned long long)lightbrick_total*CHUNK_SIZE3*sizeof(Vector8)+
-           (unsigned long long)lightbrick_slots*2*sizeof(Vector8*);
+    return (unsigned long long)(lightbrick_total+lightscratch_total)*CHUNK_SIZE3*sizeof(Vector8)+
+           (unsigned long long)lightbrick_slots*3*sizeof(Vector8*);
 }
 int light_storeBricks(){
     int n=0;
@@ -87,19 +133,30 @@ long long light_selfcheckMismatches(){
 
 extern int g_offcx;
 extern int g_offcz;
-void addlight(int xx,int zz,int yy,float brightness,Vector color){
-    if(LOW_MEM_DEVICE)return;
-
+// addlight's body, and the neighbourhood rebuild's. `scratch` writes the rebuild's private table
+// instead of the live one; `colMask` (per column slot, NULL = all) clips the writes to the slots
+// being rebuilt.
+//
+// B.5b-1c: no toroidal wrap. A voxel whose column is not resident -- past the window edge, where the
+// toroidal index lands in the OPPOSITE edge's column -- gets nothing (isColumnResident, one pbounds
+// compare per (x,z) of the sphere, hoisted out of the y loop). Stock lit that opposite column, and
+// under ring streaming nothing would ever take that light away again. Every writer (edits, both
+// sweeps, the rebuild) goes through here, so a fresh load and a walk agree on what the edge gets.
+static void light_splat(int xx,int zz,int yy,float brightness,Vector color,bool scratch,const unsigned char* colMask){
  //   printf("light intensities: ");
+    Vector8** table=scratch?lightscratch:lightbricks;
     for(int x=-LIGHT_RADIUS;x<=LIGHT_RADIUS;x++){
         for(int z=-LIGHT_RADIUS;z<=LIGHT_RADIUS;z++){
+            if(x*x+z*z>LIGHT_RADIUS*LIGHT_RADIUS)continue;
+            //if(xx+x<0||xx+x>=T_SIZE||zz+<0||z>=T_SIZE)return;
+            if(g_light_test_mutation!=3&&!isColumnResident(xx+x,zz+z))continue;
+            const int tx=(xx+x+g_offcx)%T_SIZE,tz=(zz+z+g_offcz)%T_SIZE;
+            if(colMask&&!colMask[(tx/CHUNK_SIZE)*CHUNKS_PER_SIDE+tz/CHUNK_SIZE])continue;
             for(int y=-LIGHT_RADIUS;y<=LIGHT_RADIUS;y++){
                 if(x*x+z*z+y*y>LIGHT_RADIUS*LIGHT_RADIUS)continue;
                 if(y+yy<0||y+yy>=T_HEIGHT)continue;
                 float inten=1.0f-sqrtf(x*x+z*z+y*y)/LIGHT_RADIUS;
 
-                //if(xx+x<0||xx+x>=T_SIZE||zz+<0||z>=T_SIZE)return;
-                const int tx=(xx+x+g_offcx)%T_SIZE,tz=(zz+z+g_offcz)%T_SIZE;
                 if(lightarray){   // R.3 self-check: the stock dense write, untouched
                 int lidx=tx*T_SIZE*T_HEIGHT+tz*T_HEIGHT+yy+y;
                 lightarray[lidx].x=MAX(0,MIN(255,lightarray[lidx].x+64.0f*inten*brightness*color.x));
@@ -110,7 +167,7 @@ void addlight(int xx,int zz,int yy,float brightness,Vector color){
                 // stays brickless unless this write leaves something non-zero -- so a lightbox
                 // being broken (brightness -1, clamped at 0) never allocates.
                 const int slot=light_brickSlot(tx,tz,yy+y);
-                Vector8* b=lightbricks[slot];
+                Vector8* b=table[slot];
                 Vector8 cur;
                 if(b)cur=b[light_brickIndex(tx,tz,yy+y)];
                 else cur.x=cur.y=cur.z=0;
@@ -120,13 +177,17 @@ void addlight(int xx,int zz,int yy,float brightness,Vector color){
                 nv.z=MAX(0,MIN(255,cur.z+64.0f*inten*brightness*color.z));
                 if(!b){
                     if(!nv.x&&!nv.y&&!nv.z)continue;
-                    if(!(b=light_newBrick(slot)))continue;
+                    if(!(b=scratch?light_newScratchBrick(slot):light_newBrick(slot)))continue;
                 }
                 b[light_brickIndex(tx,tz,yy+y)]=nv;
             }
         }
     }
    // printf("\n");
+}
+void addlight(int xx,int zz,int yy,float brightness,Vector color){
+    if(LOW_MEM_DEVICE)return;
+    light_splat(xx,zz,yy,brightness,color,false,NULL);
 }
 extern Vector colorTable[256];
 extern TerrainChunk** chunkTablec;
@@ -139,10 +200,11 @@ static void sweepLightingHit(int x,int z,int y){
     World::getWorld->terrain->refreshChunksInRadius(x,z,y,LIGHT_RADIUS);
 }
 
-// One (cx,cz) column of the resident window: find its TYPE_LIGHTBOX blocks and splat each one's
-// light. Shared by calculateLighting (whole window in one call, on world load) and
-// calculateLightingSlice (a budgeted strip per frame, after a bulk window reload) so the two can
-// never drift. Returns the number of lightboxes found.
+// One (cx,cz) column of the resident window: find its TYPE_LIGHTBOX blocks and hand each one to
+// `hit`. Shared by calculateLighting (whole window in one call, on world load),
+// calculateLightingSlice (a budgeted strip per frame, after a bulk window reload) -- both with
+// sweepLightingHit -- and light_rebuildNeighbourhood (B.5b-1c), so the three can never drift.
+// Returns the number of lightboxes found.
 //
 // blockarray is y-fastest, so each (x,z) of the column is one contiguous T_HEIGHT-byte strip, and a
 // memchr per strip replaces what used to be a getLandc per voxel (a toroidal-index multiply and
@@ -155,7 +217,7 @@ static void sweepLightingHit(int x,int z,int y){
 // cy*CHUNK_SIZE, all sharing the column's x/z bounds. If any chunk breaks that (a deferred or
 // not-yet-published slot) the column takes the old per-chunk, per-voxel scan, which honours each
 // chunk's own pbounds exactly as before.
-static int sweepLightingColumn(int cx,int cz){
+static int sweepLightingColumn(int cx,int cz,void (*hit)(int x,int z,int y)){
     int hits=0;
     TerrainChunk* first=chunkTablec[threeToOne(cx,0,cz)];
     bool regular=(first!=NULL);
@@ -172,11 +234,11 @@ static int sweepLightingColumn(int cx,int cz){
                 const block8* end=strip+T_HEIGHT;
                 const block8* p=strip;
                 while(p<end){
-                    const block8* hit=(const block8*)memchr(p,TYPE_LIGHTBOX,end-p);
-                    if(!hit)break;
-                    sweepLightingHit(x,z,(int)(hit-strip));
+                    const block8* found=(const block8*)memchr(p,TYPE_LIGHTBOX,end-p);
+                    if(!found)break;
+                    hit(x,z,(int)(found-strip));
                     hits++;
-                    p=hit+1;
+                    p=found+1;
                 }
             }
         }
@@ -189,7 +251,7 @@ static int sweepLightingColumn(int cx,int cz){
             for(int x=chunk->pbounds[0];x<CHUNK_SIZE+chunk->pbounds[0];x++){
                 for(int z=chunk->pbounds[2];z<CHUNK_SIZE+chunk->pbounds[2];z++){
                     if(getLandc(x,z,y)==TYPE_LIGHTBOX){
-                        sweepLightingHit(x,z,y);
+                        hit(x,z,y);
                         hits++;
                     }
                 }
@@ -197,6 +259,133 @@ static int sweepLightingColumn(int cx,int cz){
         }
     }
     return hits;
+}
+
+// B.5b-1c: per-column light under ring streaming (plan §3.3 step 4).
+//
+// The invariant: every resident column's light is exactly what a full sweep of the current window
+// would give it -- the clamped sum of the lightboxes in RESIDENT columns within LIGHT_RADIUS, never
+// wrapped (light_splat). A column landing in slot S changes that for two sets of columns: the
+// departing occupant's spatial neighbours (its lightboxes no longer count) and the newcomer's (its
+// do). Both sets sit in the 3x3 of SLOTS around S, because a resident column at world offset d from
+// S's occupant, old or new, is in slot S+d mod CHUNKS_PER_SIDE. So the 3x3 is cleared and re-lit
+// from the lightboxes of the 5x5 of slots around it, writes clipped to the 3x3, and nothing else
+// in the window moves.
+//
+// Byte-identical to the full sweep, not just equal in spirit: a voxel's light is built from the
+// same hits in the same order. The 5x5 is visited in ascending slot order, as the sweep's cursor
+// visits the window, and within a column the hits come from the same sweepLightingColumn. (addlight
+// truncates each float contribution, and cur+d rounded in float can carry, so order is not quite
+// free; the same order makes the question moot.)
+//
+// Built into the scratch table and then published brick by brick, only where a brick's bytes
+// changed. A mesh worker can be reading the live table (calcLight, no lock), so the live bricks are
+// never cleared and refilled in place: a brick that did not change is never touched, and one that
+// did is marked for re-meshing, which redoes any mesh a worker baked from it mid-copy.
+static void rebuildHit(int x,int z,int y){
+    light_splat(x,z,y,1.0f,colorTable[getColorc(x,z,y)],true,rebuild_mask);
+}
+static void light_rebuildNeighbourhood(int scx,int scz){
+    const double t0=f3_now();
+    const int n=CHUNKS_PER_SIDE;
+    int cols[9][2];
+    for(int i=0;i<3;i++)
+        for(int j=0;j<3;j++){
+            cols[i*3+j][0]=(scx+i-1+n)%n;
+            cols[i*3+j][1]=(scz+j-1+n)%n;
+            rebuild_mask[cols[i*3+j][0]*n+cols[i*3+j][1]]=1;
+        }
+    if(lightarray){   // the R.3 self-check's dense mirror: clear the same 9 columns, re-lit below
+        for(int k=0;k<9;k++)
+            for(int lx=0;lx<CHUNK_SIZE;lx++)
+                for(int lz=0;lz<CHUNK_SIZE;lz++){
+                    const int tx=cols[k][0]*CHUNK_SIZE+lx,tz=cols[k][1]*CHUNK_SIZE+lz;
+                    memset(&lightarray[tx*T_SIZE*T_HEIGHT+tz*T_HEIGHT],0,sizeof(Vector8)*T_HEIGHT);
+                }
+    }
+    for(int cx=0;cx<n;cx++){
+        const int dx=((cx-scx)%n+n)%n;
+        if(dx>2&&dx<n-2)continue;
+        for(int cz=0;cz<n;cz++){
+            const int dz=((cz-scz)%n+n)%n;
+            if(dz>2&&dz<n-2)continue;
+            sweepLightingColumn(cx,cz,rebuildHit);
+        }
+    }
+    Terrain* ter=World::getWorld->terrain;
+    const size_t brick=sizeof(Vector8)*CHUNK_SIZE3;
+    for(int k=0;k<9;k++){
+        const int cx=cols[k][0],cz=cols[k][1];
+        rebuild_mask[cx*n+cz]=0;
+        for(int cy=0;cy<CHUNKS_PER_COLUMN;cy++){
+            const int i=threeToOne(cx,cy,cz);
+            Vector8* o=lightbricks[i];
+            Vector8* sc=lightscratch[i];
+            if(!o&&!sc)continue;
+            bool changed=true;
+            if(o&&sc){
+                changed=memcmp(o,sc,brick)!=0;
+                if(changed)memcpy(o,sc,brick);
+            }else if(sc){
+                Vector8* b=light_takeBrick();
+                if(b){
+                    memcpy(b,sc,brick);
+                    __atomic_store_n(&lightbricks[i],b,__ATOMIC_RELEASE);
+                }
+            }else{   // went dark: back to the pool, as light_storeClear does
+                __atomic_store_n(&lightbricks[i],(Vector8*)NULL,__ATOMIC_RELEASE);
+                memset(o,0,brick);
+                lightbrick_pool[lightbrick_npool++]=o;
+            }
+            if(sc){
+                lightscratch[i]=NULL;
+                memset(sc,0,brick);
+                lightscratch_pool[lightscratch_npool++]=sc;
+            }
+            if(changed&&g_light_test_mutation!=2)ter->addToUpdateList2(cx,cy,cz);
+        }
+    }
+    g_light_rebuilds++;
+    const double ms=f3_now()-t0;
+    g_light_rebuild_ms+=ms;
+    if(ms>g_light_rebuild_max_ms)g_light_rebuild_max_ms=ms;
+}
+
+// Which world chunk column toroidal column slot (cx,cz) holds (LIT_NONE: none). Chunk 0 is the
+// column's representative, as isColumnResident has it: a column lands whole (readColumn on the main
+// thread, or a decode published whole by mp_publishFinished).
+static void light_slotOccupant(int cx,int cz,int* wcx,int* wcz){
+    TerrainChunk* c=chunkTablec[threeToOne(cx,0,cz)];
+    if(c){ *wcx=c->pbounds[0]/CHUNK_SIZE; *wcz=c->pbounds[2]/CHUNK_SIZE; }
+    else *wcx=*wcz=LIT_NONE;
+}
+// A full sweep is starting against the window as it stands: record every slot's occupant as lit.
+// A column that lands while the sweep is still in flight then differs from the record, and
+// light_syncLandedColumns re-lights its 3x3 once the sweep is done -- which also undoes whatever
+// the sweep wrote for that slot's departed occupant.
+static void light_markWindowLit(){
+    if(!lit_col)return;
+    for(int cx=0;cx<CHUNKS_PER_SIDE;cx++)
+        for(int cz=0;cz<CHUNKS_PER_SIDE;cz++){
+            const int k=(cx*CHUNKS_PER_SIDE+cz)*2;
+            light_slotOccupant(cx,cz,&lit_col[k],&lit_col[k+1]);
+        }
+}
+int light_syncLandedColumns(){
+    if(LOW_MEM_DEVICE||!lightbricks||g_light_test_mutation==1)return 0;
+    int rebuilt=0;
+    for(int cx=0;cx<CHUNKS_PER_SIDE;cx++)
+        for(int cz=0;cz<CHUNKS_PER_SIDE;cz++){
+            const int k=(cx*CHUNKS_PER_SIDE+cz)*2;
+            int wcx,wcz;
+            light_slotOccupant(cx,cz,&wcx,&wcz);
+            if(wcx==lit_col[k]&&wcz==lit_col[k+1])continue;
+            lit_col[k]=wcx;
+            lit_col[k+1]=wcz;
+            light_rebuildNeighbourhood(cx,cz);
+            rebuilt++;
+        }
+    return rebuilt;
 }
 
 void calculateLighting(){
@@ -235,9 +424,10 @@ void calculateLighting(){
     }*/
     
     
+    light_markWindowLit();   // B.5b-1c
     for(int cx=0;cx<CHUNKS_PER_SIDE;cx++){
         for(int cz=0;cz<CHUNKS_PER_SIDE;cz++){
-            sweepLightingColumn(cx,cz);
+            sweepLightingColumn(cx,cz,sweepLightingHit);
         }
     }
     
@@ -277,8 +467,9 @@ BOOL calculateLightingSlice(){
     int& cursor=g_lighting_sweep_cursor;
     const int ncols=CHUNKS_PER_SIDE*CHUNKS_PER_SIDE;
     int hits=0;
+    if(cursor==0)light_markWindowLit();   // B.5b-1c: the sweep starts against this window
     for(int done=0;done<LIGHTING_SWEEP_COLUMN_BUDGET&&hits<LIGHTING_SWEEP_HIT_BUDGET&&cursor<ncols;done++,cursor++)
-        hits+=sweepLightingColumn(cursor/CHUNKS_PER_SIDE,cursor%CHUNKS_PER_SIDE);
+        hits+=sweepLightingColumn(cursor/CHUNKS_PER_SIDE,cursor%CHUNKS_PER_SIDE,sweepLightingHit);
     if(cursor>=ncols){cursor=0;return TRUE;}
     return FALSE;
 }

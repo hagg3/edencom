@@ -147,20 +147,19 @@ global.Module.postRun.push(async () => {
     check('the 256z world resolves to a storage-list index', tallIndex >= 0);
     const report = JSON.parse(utf8(M._eden_storage_convert_to_64z_at(tallIndex)));
     console.log('convert report:', JSON.stringify(report));
-    // S.8: every world is an `.emod` now and convertWorldTo64 is `.eden`-only, so it must refuse cleanly
-    // and leave the world exactly as it was. (An .emod-native "Convert to 64z" is a ROADMAP backlog row.)
-    check('Convert to 64z refuses an .emod rather than touching it', report.ok === false);
+    // X.9: Convert to 64z is .emod-native (export Legacy64z -> re-convert with upgrade off -> replace).
+    check('Convert to 64z succeeds on an .emod', report.ok === true);
     tallRow = findWorld(tallName);
-    check('the 256z world is still listed as 256z', tallRow && tallRow.height === 256);
+    check('the world is now listed as 64z', tallRow && tallRow.height === 64);
 
     // ---- 4. the world still loads and plays ----
     const worldsNow = storageList();
     const reloadIndex = worldsNow.findIndex((w) => w.name === tallName);
     M._eden_menu_select(reloadIndex);
     const playOk = M._eden_menu_play();
-    check('play() on the 256z world accepted', playOk === 1);
+    check('play() on the converted world accepted', playOk === 1);
     const sawPlay = await waitUntil(() => menuState().game_mode === 1, 20000, '256z world reaches PLAY');
-    check('the 256z world still loads and reaches GAME_MODE_PLAY', sawPlay);
+    check('the converted world still loads and reaches GAME_MODE_PLAY', sawPlay);
     await quitToMenu();
 
     // ---- cleanup ----

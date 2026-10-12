@@ -1975,6 +1975,41 @@ void TerrainChunk::unbuild(){
     vbCapacity=vb2Capacity=0;
 }
 
+// B.5b-1a (ring streaming). unbuild() minus the glDeleteBuffers: render() and render2() already
+// skip a chunk with zero counts, so a buffer name left holding stale contents is never drawn (the
+// M3(a) rule prepareVBO relies on), and the next upload reuses it instead of re-creating it. Also
+// resets the flags rebuild2() leaves behind (needsVBO, clearOldVerticesOnly, has_light), so a dropped
+// chunk is in the same state however it got here -- which is what lets a walked window and a fresh
+// load at the same spot hash equal (eden_debug_chunk_state). Main thread, and never on a chunk a
+// worker owns (the callers check mp_chunkBusy / the column read's own busy rule).
+void TerrainChunk::dropGeometry(){
+    clearMeshes();
+    rtnum_objects=0;//disable objects for now
+	rtn_vertices=n_vertices=0;
+    rtn_vertices2=n_vertices2=0;
+    rtvis_vertices=vis_vertices=0;
+    for(int i=0;i<7;i++){
+        rtnum_vertices[i]=num_vertices[i]=0;
+        rtface_idx[i]=face_idx[i]=0;
+        rtnum_vertices2[i]=num_vertices2[i]=0;
+        rtface_idx2[i]=face_idx2[i]=0;
+        rtvisibleFaces[i]=visibleFaces[i]=0;
+    }
+    void* oldmem=rtindices;
+    rtindices=indices=0;
+    if(oldmem)
+        free(oldmem);
+    rtGeomHash=0;
+    rtFullHash=0;
+    needsVBO=FALSE;
+    clearOldVerticesOnly=FALSE;
+    has_light=FALSE;
+}
+bool TerrainChunk::holdsGeometry() const{
+    return rtn_vertices||rtn_vertices2||n_vertices||n_vertices2||needsVBO||rtindices||
+           verticesbg||verticesbg2||clearOldVerticesOnly||has_light;
+}
+
 TerrainChunk::~TerrainChunk(){
 	
 	

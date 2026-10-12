@@ -136,6 +136,18 @@
 //                        the sign pass's probe line.
 //   --light-selftest     R.3: lightbox place/repaint/break (incl. saturation, the y clip and the
 //                        toroidal seam) through the engine's own edit paths, light hash per step.
+//   --evict-selftest     B.5b-1b: ring streaming's evict-save, node dropping and autosave. Edits in three
+//                        columns survive a 320-block walk out and back and a quit/reload (gate 2);
+//                        a fire tower + water in the -x outer-ring column, evicted by one chunk of
+//                        walking, leave no node outside the window and no committed column but their
+//                        own (gate 3); the autosave timer saves an edit and the fire keeps burning.
+//                        --evict-mutate=nosave|nodrop puts the bug back (gate 6: each must FAIL).
+//   --ring-light-selftest B.5b-1c: per-column light under ring streaming, in one process (the CI form
+//                        of WORKING/b5b1/ring-light-gate.sh). Lightbox lattice + night sky (as
+//                        --light-lattice), then a +x and a +z 160-block walk; the walked window's light
+//                        hash and mesh checksum must equal what a full re-sweep + re-mesh of the same
+//                        window gives, the walk must stream (no bulk reload) and rebuild per column.
+//                        --light-mutate=nosync|nomark must FAIL it.
 //   --light-selfcheck    R.3: also keep the stock dense light array, written by the stock code,
 //                        and report voxels where it and the brick store disagree (`.light`'s
 //                        `mismatch`, must be 0). --light-selftest asserts it when present.
@@ -165,6 +177,19 @@
 //                        the player tens of columns away each run, and chunk contents differ by
 //                        position, so a floating origin would make every checksum incomparable.
 //   --frames=N           settle frames per phase (default 600 — ~10 s of engine time).
+//   --walk=DX,DZ[,DX,DZ...]  B.5b-1a: --stage1 also walks the player from --at after the first
+//                        report, leg by leg (up to 4; 0.25 block/frame, y pinned — the F3 driver's
+//                        walk), settles and reports a `walked` phase plus the end position. Ring
+//                        streaming's gate: its geometry/chunkstate must equal a plain --stage1 at
+//                        that end position, and `walked.geometry`'s bulk_reloads must not grow.
+//   --light-lattice=STEP B.5b-1c: --stage1 instead PREPARES a lightbox world for the ring-light gate
+//                        (WORKING/b5b1/ring-light-gate.sh): lightboxes every STEP blocks over --at
+//                        +-320 (alternately high in the air and on the surface, varied paint),
+//                        placed from 9 teleport stops through buildBlock, then saves and quits.
+//   --light-mutate=nosync|nomark|wrap  B.5b-1c's bug-put-back legs (Lighting.h
+//                        g_light_test_mutation): never rebuild a landed column's light / rebuild it
+//                        but re-mesh nothing / let light wrap past the window edge. Each must FAIL
+//                        the ring-light gate (wrap: --light-selftest's window-edge step).
 //   --docs=DIR           the save directory. WORKS AS OF STAGE 2 — through Stage 1 it was inert,
 //                        because Classes/FileManager.mm asked real Foundation for
 //                        NSSearchPathForDirectoriesInDomains(NSDocumentDirectory) and the
@@ -202,6 +227,14 @@
 #include "../../../Classes/CmdScript.h"      // --cmds-selftest (D.4c)
 #include "../../../Classes/Model.h"          // --cmds-selftest: CountActiveCreatures
 extern Vector colorTable[256];               // --cmds-selftest: the night sky (palette 54)
+extern int g_ring_columns_landed, g_bulk_reloads, g_ring_evict_saves, g_ring_dynamics_dropped, g_autosaves; // Terrain.mm, --evict-selftest
+extern int g_light_test_mutation;            // Lighting.mm (B.5b-1c), --light-mutate
+extern int g_offcx, g_offcz;                 // Terrain.mm: the toroidal offset (--light-selftest's edge step)
+Vector8 lightAtToroidal(int tx, int tz, int y);   // Terrain.mm
+extern int regionSkyColors[4][4];            // FileManager.mm: the saved per-region sky (--light-lattice)
+void paintSky(int color);                    // TerrainGen2.mm
+extern BOOL* chunksToUpdate;                 // Terrain.mm: the mesher's dirty flags (--ring-light-selftest)
+extern BOOL* columnsToUpdate;
 #include "../../../Classes/Terrain.h"
 #include "../../../Classes/Player.h"
 #include "../../../Classes/Camera.h"
@@ -234,6 +267,8 @@ extern Vector colorTable[256];               // --cmds-selftest: the night sky (
 #include <cstring>
 #include <string>
 #include <algorithm>
+#include <map>
+#include <set>
 #include <vector>
 #include <cmath>
 #include <sys/stat.h>
@@ -371,11 +406,15 @@ struct Options {
     bool trailerNoDirty = false;         // --trailer-no-dirty-mark: the mutation (live leg only)
     bool trailerKeep = false;            // --trailer-keep: stop after the reload (leave the edited world for emod.py --diff)
     std::vector<std::string> trailerFiles;   // --trailer-file=W.eden|W.emod (repeatable): --trailer-selftest's byte gate
+    std::string evictMutate;             // --evict-mutate=nosave|nodrop: --evict-selftest's mutation legs
     std::string signsMutate;             // --signs-mutate=bottom|nohook: --signs-selftest's mutation legs
     std::string cmdsMutate;              // --cmds-mutate=nodepth: --cmds-selftest's mutation leg
     bool cmdsTrace = false;              // --cmds-trace: print every command-block statement
     float look[2] = {0.0f, 0.0f};        // --look=YAW,PITCH (degrees): --sign-shot's view
     bool haveLook = false;
+    float walk[8] = {0};                 // --walk=DX,DZ[,...]: --stage1's scripted walk legs (B.5b-1a)
+    int  walkLegs = 0;
+    int  lightLattice = 0;               // --light-lattice=STEP: --stage1 prepares the ring-light gate's world (B.5b-1c)
     int  renderScalePct = 0;             // --render-scale=50|75|100|125: 0 leaves the setting alone
     std::string convertAnswer;           // --convert-answer=upgrade|keep|cancel: --convert-prompt-selftest
 };
@@ -560,6 +599,55 @@ int run_p1_gate() {
     return 0;
 }
 
+// --light-lattice=STEP (B.5b-1c): the ring-light gate's world. The bundled map has no lightboxes,
+// so --stage1's `.light` hash is all zeros whatever the ring does; this puts lightboxes everywhere a
+// 160-block walk's window can reach (--at +-320), at every in-chunk offset (STEP coprime to 16, so
+// some sit within LIGHT_RADIUS of every chunk border and so of every window edge the walks cross),
+// half high in the air and half on the ground, in varied paint. Placed through buildBlock (the
+// player's own path) from 9 teleport stops 200 blocks apart, then saved, so a walk run and a fresh
+// run each load the same file. The whole map's sky is made night (palette 54) and saved that way:
+// by day the mesher never reads the light at all (TerrainChunk's skylight==1.0 path), so only at
+// night does a mesh baked from stale light show up in the geometry checksum.
+int place_light_lattice(int S, const char* tag) {
+    const int R = 320, H = g_world_height;
+    const int x0 = (int)g_opt.at[0] - R, z0 = (int)g_opt.at[2] - R, n = 2 * R / S + 1;
+    std::set<std::pair<int, int> > done;
+    int placed = 0;
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 4; ++j) regionSkyColors[i][j] = 54;
+    paintSky(54);
+    for (int sx = -200; sx <= 200; sx += 200)
+        for (int sz = -200; sz <= 200; sz += 200) {
+            eden_console_teleport(g_opt.at[0] + sx, g_opt.at[1], g_opt.at[2] + sz);
+            tick(g_opt.frames / 4);
+            for (int i = 0; i < n; ++i)
+                for (int j = 0; j < n; ++j) {
+                    const int x = x0 + i * S, z = z0 + j * S;
+                    if (done.count(std::make_pair(i, j)) || !isColumnResident(x, z)) continue;
+                    int y = H - 6 + (i * 3 + j) % 4;
+                    if ((i + j) & 1) {   // on the ground: the first air above the topmost block
+                        int top = H - 1;
+                        while (top >= 0 && getLandc(x, z, top) == TYPE_NONE) --top;
+                        if (top + 1 >= H) continue;
+                        y = top + 1;
+                    }
+                    eden_debug_light_edit(0, x, z, y, (i * 5 + j * 11) % 54);
+                    done.insert(std::make_pair(i, j));
+                    if (getLandc(x, z, y) == TYPE_LIGHTBOX) ++placed;
+                }
+            tick(10);
+        }
+    std::printf("[%s] light-lattice placed %d of %d lightboxes (step %d)\n", tag, placed, n * n, S);
+    std::fflush(stdout);
+    return placed;
+}
+int light_lattice_prep() {
+    const int placed = place_light_lattice(g_opt.lightLattice, "eden-stage1");
+    save_world();
+    if (!quit_to_menu()) return 1;
+    return placed > 0 ? 0 : 1;
+}
+
 int run_stage1() {
     const char* name = g_opt.world.empty() ? "stage1" : g_opt.world.c_str();
 
@@ -573,11 +661,33 @@ int run_stage1() {
 
     // Phase 2 — a world.
     if (!open_world(name, g_opt.height)) return 1;
+    if (g_opt.lightLattice > 0) return light_lattice_prep();
     // Teleport to the FIXED origin before settling (see --at in the header comment for why a
     // fixed one is required for the checksum to mean anything).
     eden_console_teleport(g_opt.at[0], g_opt.at[1], g_opt.at[2]);
     tick(g_opt.frames);
     report(g_opt.height == 256 ? "world256" : "world64");
+
+    // B.5b-1a: a straight walk, the way the F3 driver walks (position set each frame, y pinned, no
+    // velocity), so the window streams column by column instead of reloading. The checksums after
+    // it must equal a fresh --stage1 at the printed end position.
+    if (g_opt.walkLegs > 0) {
+        float x = g_opt.at[0], z = g_opt.at[2];
+        for (int leg = 0; leg < g_opt.walkLegs; ++leg) {
+            const float dx = g_opt.walk[leg * 2], dz = g_opt.walk[leg * 2 + 1];
+            const int steps = (int)std::ceil(std::sqrt(dx * dx + dz * dz) / 0.25f);
+            for (int k = 1; k <= steps; ++k) {
+                const float f = (float)k / (float)steps;
+                eden_console_teleport(x + dx * f, g_opt.at[1], z + dz * f);
+                tick(1);
+            }
+            x += dx; z += dz;
+        }
+        tick(g_opt.frames);
+        const Vector p = World::getWorld->player->pos;
+        std::printf("[eden-stage1] walked.end %.2f,%.2f,%.2f\n", p.x, p.y, p.z);
+        report("walked");
+    }
 
     // Phase 3 — back to the menu, so the "peak" figures cover a full load/unload cycle the way
     // headless-heap-ceiling-probe.js's do.
@@ -2699,6 +2809,36 @@ int run_light_selftest() {
     show("break B, C");
     for (const P& p : {A, D, E, F}) eden_debug_light_edit(1, p.x, p.z, p.y, 0);
     show("break A, D, E, F");
+    // B.5b-1c: the window EDGE (not the toroidal seam above, which is mid-window). G on the window's
+    // last resident block in +x: its light past the edge would wrap, through the toroidal index, into
+    // the -x edge column. It must light its own side and leave the wrapped box exactly as it was.
+    {
+        const int ox = windowOriginChunk(World::getWorld->player->pos.x);
+        const int xe = (ox + CHUNKS_PER_SIDE) * CHUNK_SIZE - 1;
+        const P G{xe, pz, yt - 2};
+        auto box = [&](int x1, int x2) {   // light summed over x in [x1,x2], z/y within 5 of G
+            long long sum = 0;
+            for (int x = x1; x <= x2; ++x)
+                for (int z = G.z - 5; z <= G.z + 5; ++z)
+                    for (int y = G.y - 5; y <= G.y + 5; ++y) {
+                        if (y < 0 || y >= H) continue;
+                        const Vector8 v = lightAtToroidal((x + g_offcx) % T_SIZE, (z + g_offcz) % T_SIZE, y);
+                        sum += v.x + v.y + v.z;
+                    }
+            return sum;
+        };
+        const long long in0 = box(xe - 5, xe), out0 = box(xe + 1, xe + 5);
+        eden_debug_light_edit(0, G.x, G.z, G.y, 7);
+        const long long in1 = box(xe - 5, xe), out1 = box(xe + 1, xe + 5);
+        show("place G (window edge)");
+        char d[160];
+        std::snprintf(d, sizeof(d), "edge column resident %d, next %d; inside %lld -> %lld, wrapped %lld -> %lld",
+                      (int)isColumnResident(xe, G.z), (int)isColumnResident(xe + 1, G.z), in0, in1, out0, out1);
+        check(isColumnResident(xe, G.z) && !isColumnResident(xe + 1, G.z) && in1 > in0 && out1 == out0,
+              "a lightbox at the window edge lights its side and nothing past it (no wrap)", d);
+        eden_debug_light_edit(1, G.x, G.z, G.y, 0);
+        show("break G");
+    }
     tick(30);
     eden_debug_light_edit(3, 0, 0, 0, 0);
     settle();
@@ -2716,6 +2856,260 @@ int run_light_selftest() {
 
     std::printf("[eden-light] %s (%d failure(s))\n",
                 g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
+    return g_selftestFailures ? 1 : 0;
+}
+
+// ---------------------------------------------------------------------------------------------
+// --ring-light-selftest  (B.5b-1c: light per landed column)
+// ---------------------------------------------------------------------------------------------
+// Plan §3.4 gate 1's light leg, in one process. A walk lands columns one a frame and re-lights the
+// 3x3 of slots around each (light_syncLandedColumns); the reference is the full sweep a load or warp
+// runs, plus a re-mesh of every chunk, against the SAME window -- so any difference is the per-column
+// path, nothing else. At night (the lattice prep paints it), because by day the mesher never reads
+// the light and a stale mesh would hide. The cross-process form (fresh load at the end point, also
+// chunk state) is WORKING/b5b1/ring-light-gate.sh.
+int run_ring_light_selftest() {
+    g_selftestTag = "eden-ring-light";
+    const char* name = g_opt.world.empty() ? "ring-light-selftest" : g_opt.world.c_str();
+    if (!open_world(name, g_opt.height)) return 1;
+    if (!g_opt.haveAt) { g_opt.at[0] = 65536.5f; g_opt.at[1] = 60.0f; g_opt.at[2] = 65536.5f; }
+    const int placed = place_light_lattice(23, "eden-ring-light");
+    const float X0 = g_opt.at[0], Y0 = g_opt.at[1], Z0 = g_opt.at[2];
+    eden_console_teleport(X0, Y0, Z0);
+    tick(g_opt.frames);
+    auto field = [](const char* js, const char* key) -> long long {
+        const char* k = std::strstr(js, key);
+        return k ? atoll(k + std::strlen(key)) : -1;
+    };
+    auto str = [](const char* js, const char* key) {
+        const char* k = std::strstr(js, key);
+        if (!k) return std::string();
+        k += std::strlen(key);
+        const char* e = std::strchr(k, '"');
+        return e ? std::string(k, e - k) : std::string();
+    };
+    auto settle = [&] {
+        for (int i = 0; i < 1200 && field(eden_debug_light_state(), "\"pending\":") != 0; i++) tick(1);
+        tick(120);
+    };
+    settle();
+    const int bulk0 = g_bulk_reloads, ring0 = g_ring_columns_landed;
+    const long long reb0 = field(eden_debug_light_state(), "\"rebuilds\":");
+    float wx = X0, wz = Z0;
+    auto walk = [&](float dx, float dz) {   // 0.25 block a frame, the F3 driver's walk
+        const int steps = (int)std::ceil(std::sqrt(dx * dx + dz * dz) / 0.25f);
+        for (int k = 1; k <= steps; ++k) {
+            const float f = (float)k / (float)steps;
+            eden_console_teleport(wx + dx * f, Y0, wz + dz * f);
+            tick(1);
+        }
+        wx += dx; wz += dz;
+    };
+    walk(160, 0);
+    walk(0, 160);
+    settle();
+    const std::string lw = eden_debug_light_state(), cw = eden_debug_mesh_checksum();
+    const long long reb1 = field(lw.c_str(), "\"rebuilds\":");
+    std::printf("[eden-ring-light] walked  light %s\n[eden-ring-light] walked  mesh  %s\n", lw.c_str(), cw.c_str());
+    char d[256];
+    std::snprintf(d, sizeof(d), "placed %d, ring columns +%d, bulk reloads %d -> %d, rebuilds +%lld",
+                  placed, g_ring_columns_landed - ring0, bulk0, g_bulk_reloads, reb1 - reb0);
+    check(placed > 0 && g_bulk_reloads == bulk0 && g_ring_columns_landed > ring0 && reb1 > reb0,
+          "the walk streams and re-lights per landed column", d);
+
+    // The reference: what a load does to this window -- clear and sweep the light, re-mesh it all.
+    eden_debug_light_edit(3, 0, 0, 0, 0);
+    {
+        memset(chunksToUpdate, TRUE, sizeof(BOOL) * CHUNKS_PER_SIDE * CHUNKS_PER_SIDE * CHUNKS_PER_COLUMN);
+        memset(columnsToUpdate, TRUE, sizeof(BOOL) * CHUNKS_PER_SIDE * CHUNKS_PER_SIDE);
+    }
+    settle();
+    const std::string ls = eden_debug_light_state(), cs = eden_debug_mesh_checksum();
+    std::printf("[eden-ring-light] swept   light %s\n[eden-ring-light] swept   mesh  %s\n", ls.c_str(), cs.c_str());
+    std::snprintf(d, sizeof(d), "walked %s lit %lld, swept %s lit %lld", str(lw.c_str(), "\"hash\":\"").c_str(),
+                  field(lw.c_str(), "\"lit\":"), str(ls.c_str(), "\"hash\":\"").c_str(), field(ls.c_str(), "\"lit\":"));
+    check(field(lw.c_str(), "\"lit\":") > 0 && str(lw.c_str(), "\"hash\":\"") == str(ls.c_str(), "\"hash\":\""),
+          "the walked light equals a full sweep of the same window", d);
+    std::snprintf(d, sizeof(d), "walked full %s, swept full %s", str(cw.c_str(), "\"full\":\"").c_str(),
+                  str(cs.c_str(), "\"full\":\"").c_str());
+    check(!str(cw.c_str(), "\"full\":\"").empty() && str(cw.c_str(), "\"geom\":\"") == str(cs.c_str(), "\"geom\":\"") &&
+          str(cw.c_str(), "\"full\":\"") == str(cs.c_str(), "\"full\":\""),
+          "the walked meshes equal a re-mesh of the same window (night: light is baked in)", d);
+
+    std::printf("[eden-ring-light] %s (%d failure(s))\n",
+                g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
+    return g_selftestFailures ? 1 : 0;
+}
+
+// ---------------------------------------------------------------------------------------------
+// --evict-selftest  (B.5b-1b: evict-save, node dropping, autosave)
+// ---------------------------------------------------------------------------------------------
+// Plan §3.4 gates 2, 3 and 6 (WORKING/render-distance-runtime-plan-2026-10-11.md). The ring stream
+// overwrites a departing column's slot one column a frame; before it does, the occupant's edits
+// must reach disk (evict-save, which no longer stops fire and water) and its burn/liquid nodes must
+// go, or they simulate against the column that lands in the slot. Autosave is OFF for gates 2/3,
+// so the evict-save is the only thing that can save the edits mid-walk.
+int run_evict_selftest() {
+    g_selftestTag = "eden-evict";
+    Terrain::testNoEvictSave = g_opt.evictMutate == "nosave";
+    Terrain::testNoDropDynamics = g_opt.evictMutate == "nodrop";
+    const char* name = g_opt.world.empty() ? "evict-selftest" : g_opt.world.c_str();
+    if (!open_world(name, g_opt.height)) return 1;
+    g_autosave_seconds = 0;
+    // Engine time per tick fixed at 1/60 s, so frame counts below are engine seconds: a burn node
+    // lives 6 s, spreads after 1 s; the autosave period is in engine seconds too.
+    g_app->viewController.setFixedEtime(1.0f / 60.0f);
+    // The bundled map's centre unless --at says otherwise (the default --at is the world origin,
+    // outside the map, where a -x walk would reach negative chunk coordinates).
+    const float X0 = g_opt.haveAt ? g_opt.at[0] : 65536.5f, Y0 = g_opt.haveAt ? g_opt.at[1] : 60.0f,
+                Z0 = g_opt.haveAt ? g_opt.at[2] : 65536.5f;
+    eden_console_teleport(X0, Y0, Z0);
+    tick(g_opt.frames);
+    Terrain* t = World::getWorld->terrain;
+    const int H = g_world_height;
+    char d[256];
+
+    // FNV-1a over a resident column's blocks + colours; 0 if the column is not resident.
+    auto colHash = [&](int cx, int cz) -> unsigned long long {
+        if (!isColumnResident(cx * CHUNK_SIZE, cz * CHUNK_SIZE)) return 0;
+        unsigned long long h = 1469598103934665603ULL;
+        for (int cy = 0; cy < CHUNKS_PER_COLUMN; ++cy) {
+            const TerrainChunk* c = t->chunkTable[threeToOne(cx, cy, cz)];
+            const unsigned char* b[2] = {(const unsigned char*)c->pblocks, (const unsigned char*)c->pcolors};
+            for (int k = 0; k < 2; ++k)
+                for (int i = 0; i < CHUNK_SIZE3; ++i) { h ^= b[k][i]; h *= 1099511628211ULL; }
+        }
+        return h;
+    };
+    float wx = X0, wz = Z0;
+    auto walk = [&](float dx, float dz) {   // 0.5 block a frame: a chunk crossing every 32 frames >= 18 columns
+        const int steps = (int)std::ceil(std::sqrt(dx * dx + dz * dz) / 0.5f);
+        for (int k = 1; k <= steps; ++k) {
+            const float f = (float)k / (float)steps;
+            eden_console_teleport(wx + dx * f, Y0, wz + dz * f);
+            tick(1);
+        }
+        wx += dx; wz += dz;
+    };
+    auto storeKeys = [&]() {
+        std::set<std::pair<int, int> > keys;
+        emod::EdenWorldStore st;
+        if (st.open(eden_debug_world_file(), false))
+            for (const auto& k : st.columnKeys()) keys.insert(std::make_pair((int)k.first, (int)k.second));
+        return keys;
+    };
+    const int pcx = (int)X0 / CHUNK_SIZE, pcz = (int)Z0 / CHUNK_SIZE;
+
+    // ---- gate 2: edits survive eviction -------------------------------------------------------
+    struct Col { int cx, cz; };
+    const Col E[3] = {{pcx, pcz}, {pcx - 6, pcz}, {pcx + 4, pcz + 5}};
+    unsigned long long eh[3];
+    for (int i = 0; i < 3; ++i) {
+        const int bx = E[i].cx * CHUNK_SIZE, bz = E[i].cz * CHUNK_SIZE;
+        for (int k = 0; k < 6; ++k) t->updateChunks(bx + 2 + k, bz + 3 + 2 * k, H - 4 - 3 * k, TYPE_STONE);
+        t->updateChunks(bx + 9, bz + 9, 2, TYPE_NONE);
+        t->setColor(bx + 2, bz + 3, H - 4, 12);
+        eh[i] = colHash(E[i].cx, E[i].cz);
+    }
+    tick(10);
+    const int saves0 = g_ring_evict_saves, bulk0 = g_bulk_reloads, ring0 = g_ring_columns_landed;
+    walk(320, 0);
+    tick(200);
+    bool gone = true;
+    for (const Col& c : E) gone = gone && !isColumnResident(c.cx * CHUNK_SIZE, c.cz * CHUNK_SIZE);
+    std::snprintf(d, sizeof(d), "evict-saves %d, ring columns +%d, bulk reloads %d->%d", g_ring_evict_saves - saves0,
+                  g_ring_columns_landed - ring0, bulk0, g_bulk_reloads);
+    check(gone && g_bulk_reloads == bulk0 && g_ring_columns_landed > ring0, "a 320-block walk streams the edited columns out", d);
+    walk(-320, 0);
+    tick(g_opt.frames);
+    int same = 0;
+    for (int i = 0; i < 3; ++i) same += colHash(E[i].cx, E[i].cz) == eh[i];
+    std::snprintf(d, sizeof(d), "%d/3 columns equal their pre-walk bytes; evict-saves %d", same, g_ring_evict_saves - saves0);
+    check(same == 3, "gate 2: edits survive eviction and stream back", d);
+
+    // ---- gate 3: dynamics never cross into a neighbour column ---------------------------------
+    // D is the window's -x outer-ring column on the player's z chunk: one chunk of +x walking
+    // evicts it, and its slot's new occupant (D + 18 chunks, the player's z) is the nearest stale
+    // column, so the ring lands it in the first frame after the crossing -- well inside the 1 s a
+    // burn node takes to spread. A wood tower through the whole column height, lit at three
+    // heights, and a water source on a stone slab, all at least 4 blocks inside D.
+    const std::set<std::pair<int, int> > keys0 = storeKeys();
+    const int dcx = windowOriginChunk(wx), dcz = (int)wz / CHUNK_SIZE;
+    const int tx = dcx * CHUNK_SIZE + 8, tz = dcz * CHUNK_SIZE + 10;
+    std::map<std::pair<int, int>, unsigned long long> w0;
+    for (int cx = dcx; cx < dcx + CHUNKS_PER_SIDE; ++cx)
+        for (int cz = windowOriginChunk(wz); cz < windowOriginChunk(wz) + CHUNKS_PER_SIDE; ++cz)
+            if (cx != dcx || cz != dcz) w0[std::make_pair(cx, cz)] = colHash(cx, cz);
+    for (int y = 1; y < H - 1; ++y) t->updateChunks(tx, tz, y, TYPE_WOOD);
+    for (int x = tx - 3; x <= tx + 3; ++x)
+        for (int z = tz - 9; z <= tz - 5; ++z) t->updateChunks(x, z, H - 10, TYPE_STONE);
+    t->updateChunks(tx, tz - 7, H - 9, TYPE_WATER);
+    t->liquids->addSource(tx, tz - 7, H - 9);
+    for (int y : {1, H / 4, H / 2}) t->burnBlock(tx, tz, y, FALSE);
+    tick(2);
+    const int burning = t->nburn, dropped0 = g_ring_dynamics_dropped;
+    walk(16, 0);
+    int outside = 0;
+    for (int i = 0; i < 600; ++i) { tick(1); outside = std::max(outside, t->dynamicsOutsideWindow()); }
+    const bool dGone = !isColumnResident(dcx * CHUNK_SIZE, dcz * CHUNK_SIZE);
+    std::snprintf(d, sizeof(d), "burning %d before, column evicted %d, nodes dropped %d, max outside the window %d",
+                  burning, dGone, g_ring_dynamics_dropped - dropped0, outside);
+    check(burning >= 3 && dGone && outside == 0, "gate 3: no burn/liquid node outlives its column", d);
+    walk(-16, 0);
+    tick(g_opt.frames);
+    World::getWorld->fm->saveWorld();
+    const std::set<std::pair<int, int> > keys1 = storeKeys();
+    std::string extra;
+    bool dSaved = false;
+    for (const auto& k : keys1) {
+        if (keys0.count(k)) continue;
+        if (k.first == dcx && k.second == dcz) { dSaved = true; continue; }
+        extra += " (" + std::to_string(k.first) + "," + std::to_string(k.second) + ")";
+    }
+    int changed = 0;
+    for (const auto& e : w0) changed += colHash(e.first.first, e.first.second) != e.second;
+    std::snprintf(d, sizeof(d), "own column committed %d; other new columns:%s; window columns changed %d of %d",
+                  dSaved, extra.empty() ? " none" : extra.c_str(), changed, (int)w0.size());
+    check(dSaved && extra.empty() && changed == 0, "gate 3: nothing outside the dynamics' own column changed", d);
+
+    // ---- the autosave timer: saves pending edits and leaves the fire burning ------------------
+    {
+        // The edit in E[0]; the fire in a column of its own, so E[0]'s bytes stay put afterwards.
+        const int ax = pcx * CHUNK_SIZE + 5, az = pcz * CHUNK_SIZE + 5;
+        const int fx = (pcx + 2) * CHUNK_SIZE + 8, fz = (pcz - 3) * CHUNK_SIZE + 8;
+        for (int y = 1; y < H - 1; ++y) t->updateChunks(fx, fz, y, TYPE_WOOD);
+        t->burnBlock(fx, fz, H / 2, FALSE);
+        t->updateChunks(ax, az, H - 3, TYPE_STONE);
+        const int a0 = g_autosaves;
+        auto fileBytes = [] { SDL_PathInfo pi; return SDL_GetPathInfo(eden_debug_world_file(), &pi) ? (long long)pi.size : -1LL; };
+        const long long f0 = fileBytes();
+        g_autosave_seconds = 2;
+        tick(150);
+        // What one autosave writes: an append of the dirty columns (here 2: the edit and the
+        // fire's), the creature record and the header -- never the whole file.
+        std::printf("[eden-evict] autosave appended %lld bytes to a %lld-byte world\n", fileBytes() - f0, f0);
+        bool clean = true;
+        for (int cy = 0; cy < CHUNKS_PER_COLUMN; ++cy) clean = clean && !t->chunkTable[threeToOne(pcx, cy, pcz)]->modified;
+        std::snprintf(d, sizeof(d), "autosaves %d, column clean %d, still burning %d", g_autosaves - a0, clean, t->nburn);
+        check(g_autosaves - a0 == 1 && clean && t->nburn > 0, "autosave saves the edit, fire keeps burning", d);
+        g_autosave_seconds = 0;
+        for (int i = 0; i < 3; ++i) eh[i] = colHash(E[i].cx, E[i].cz);   // the edit above is E[0]'s now
+    }
+
+    // ---- gate 2, the round trip: quit, reload, the same bytes ---------------------------------
+    if (!quit_to_menu() || !open_world(name, g_opt.height)) return 1;
+    g_autosave_seconds = 0;
+    eden_console_teleport(X0, Y0, Z0);
+    tick(g_opt.frames);
+    same = 0;
+    for (int i = 0; i < 3; ++i) same += colHash(E[i].cx, E[i].cz) == eh[i];
+    std::snprintf(d, sizeof(d), "%d/3 columns equal after quit + reload", same);
+    check(same == 3, "gate 2: edits survive a save and reload", d);
+    g_autosave_seconds = 60;
+    g_app->viewController.setFixedEtime(0.0f);
+
+    std::printf("[eden-evict] %s (%d failure(s))%s\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures,
+                g_opt.evictMutate.empty() ? "" : (" [mutation " + g_opt.evictMutate + "]").c_str());
     return g_selftestFailures ? 1 : 0;
 }
 
@@ -3362,7 +3756,9 @@ int run_leak_probe() {
 // The CHECKSUM modes deliberately keep the corner origin. It is a fixed, in-bounds-after-clamping
 // position that every platform lands on identically, which is all criterion 2 asks of it, and
 // re-recording c26fa4fd2a5b2660 / 49b71a4e16afb125 / b19d3e33a8717c60 across four platforms buys
-// nothing. What was wrong was the belief about where it was, not the number.
+// nothing. What was wrong was the belief about where it was, not the number. (B.5b-1a did
+// re-record them, for a different reason: it changed which columns are meshed. The current values
+// live in .github/scripts/check-stage1.py.)
 // X.6: the clamp is skipped on "unbounded" worlds (FileManager::worldUnbounded); fresh worlds still clamp.
 constexpr float kMapCentre = (float)(4096 * CHUNK_SIZE);
 constexpr float kMapHalf   = (float)(GSIZE / 2);
@@ -5706,6 +6102,11 @@ static int parse_one_arg(const char* a) {
         else if (starts_with(a, "--look=")) {
             g_opt.haveLook = std::sscanf(a + 7, "%f,%f", &g_opt.look[0], &g_opt.look[1]) == 2;
         }
+        else if (starts_with(a, "--walk=")) {
+            float* w = g_opt.walk;
+            const int n = std::sscanf(a + 7, "%f,%f,%f,%f,%f,%f,%f,%f", w, w + 1, w + 2, w + 3, w + 4, w + 5, w + 6, w + 7);
+            g_opt.walkLegs = n / 2;
+        }
         else if (!std::strcmp(a, "--codec-bench"))   { g_opt.mode = "codec-bench"; g_opt.headless = true; }
         else if (starts_with(a, "--codec-file="))    g_opt.codecFile = a + 13;
         else if (!std::strcmp(a, "--bundled-map-selftest")) { g_opt.mode = "bundled-map-selftest"; g_opt.headless = true; }
@@ -5718,6 +6119,15 @@ static int parse_one_arg(const char* a) {
         else if (starts_with(a, "--emod-ref="))      g_opt.emodRef = a + 11;
         else if (!std::strcmp(a, "--emod-quick"))    g_opt.emodQuick = true;
         else if (!std::strcmp(a, "--light-selftest")) { g_opt.mode = "light-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--evict-selftest")) { g_opt.mode = "evict-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--ring-light-selftest")) { g_opt.mode = "ring-light-selftest"; g_opt.headless = true; }
+        else if (starts_with(a, "--evict-mutate="))  g_opt.evictMutate = a + 15;
+        else if (starts_with(a, "--light-lattice=")) g_opt.lightLattice = atoi(a + 16);
+        else if (starts_with(a, "--light-mutate=")) {
+            const char* m = a + 15;
+            g_light_test_mutation = !std::strcmp(m, "nosync") ? 1 : !std::strcmp(m, "nomark") ? 2
+                                  : !std::strcmp(m, "wrap") ? 3 : 0;
+        }
         else if (!std::strcmp(a, "--keybind-selftest")) { g_opt.mode = "keybind-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--ui-selftest"))   { g_opt.mode = "ui-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--convert-prompt-selftest")) { g_opt.mode = "convert-prompt-selftest"; g_opt.headless = true;
@@ -6016,6 +6426,8 @@ static int eden_main_after_args(int argc, char** argv) {
         else if (!std::strcmp(g_opt.mode, "sign-shot"))     rc = run_sign_shot();
         else if (!std::strcmp(g_opt.mode, "cmds-selftest")) rc = run_cmds_selftest();
         else if (!std::strcmp(g_opt.mode, "light-selftest")) rc = run_light_selftest();
+        else if (!std::strcmp(g_opt.mode, "evict-selftest")) rc = run_evict_selftest();
+        else if (!std::strcmp(g_opt.mode, "ring-light-selftest")) rc = run_ring_light_selftest();
         else if (!std::strcmp(g_opt.mode, "codec-bench"))   rc = eden_codec_bench(g_opt.codecFile.c_str(), g_opt.height, 500);
 #if defined(EDEN_DIAGNOSTICS)
         else if (!std::strcmp(g_opt.mode, "emod-selftest"))

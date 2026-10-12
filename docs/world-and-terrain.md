@@ -218,6 +218,10 @@ All in `Terrain.mm`:
   blocks launch, `TYPE_BT*` → `blocktntexplode` (builds a diamond of the base
   material, or ramps for the side variants). More than 300 simultaneous burns trips
   `endDynamics` which clears all fire/liquids/effects — the anti-meltdown valve.
+- **Spread stops at the window edge** (modified from stock by B.5b-1b, 2026-10-12): `burnBlock`, the
+  liquid spread in `Liquids.mm` and `explode`'s block loop first ask `isColumnResident(x,z)`
+  (`Terrain.h`: does the slot for that column hold it?). The toroidal arrays alias columns 288 blocks
+  apart, so stock fire or water reaching past the edge wrote into the opposite edge.
 - **`warpToPoint` / `warpToHome`** — save the world with a warp position, then
   unload+reload terrain around the target. Warping is implemented as a save/load
   cycle, not a teleport.
@@ -226,17 +230,82 @@ Doors and portals are *stored* as voxels but *rendered and animated* as extracte
 `StaticObject`s (see [rendering.md](rendering.md)); portal linking/teleportation is in
 `Portal.mm` ([lighting-liquids-effects.md](lighting-liquids-effects.md)).
 
-## Streaming (the "Loading…" hiccup)
+## Streaming (ring streaming + the bulk reload)
 
-`Terrain::prepareAndLoadGeometry` (`Terrain.mm:2117`), every frame while `loaded`:
+**Modified from stock by B.5b-1a (2026-10-11): walking now streams column by column ("ring
+streaming"); the `count > 140` bulk reload is left for jumps.** The stock description stays under
+item 3, because the bulk path still runs it for teleports. Plan and gates:
+`WORKING/render-distance-runtime-plan-2026-10-11.md` §3.
 
-1. Compute desired window origin `m_chunkOffset* = player.pos/16 - T_RADIUS`.
+`Terrain::prepareAndLoadGeometry` (grep it; `Terrain.mm`), every frame while `loaded`:
+
+1. Compute desired window origin `m_chunkOffset* = windowOriginChunk(player.pos)` (`Terrain.h`):
+   `floor((pos+8)/16) − T_RADIUS`, centred on the nearest chunk **corner**, so every edge is
+   136–152 blocks away. Stock was `pos/16 − T_RADIUS` (+edge 128–144, −edge 144–160).
+   `FileManager::loadWorld` uses the same helper, so a load reads exactly the window the streamer
+   wants. **Per window shift** (B.5b-1a): `fm->chunkOffsetX/Z` (the render origin, and "the
+   window" for creature activation) follows `m_chunkOffset*` the frame it changes, and
+   `loaded_new_terrain` (sky regions) is set; the creature top-up waits until the ring has caught
+   up (2a). Stock moved the render origin only on a bulk reload.
 2. For each of the 18×18 ground-level chunk slots, compare `pbounds` with the desired
    absolute coordinates → count stale slots.
+
+   **2a. Ring streaming (`0 < count ≤ 140`, B.5b-1a).** Each frame lands the nearest stale
+   columns, `RING_COLUMN_BUDGET` (1) of them. Per column:
+   - skip it if it or a lateral neighbour has a mesh job in flight (`columnOrLateralBusy`, which the
+     bulk path now uses too: a worker meshing a neighbour reads one block into this slot);
+   - **drop the departing occupant's dynamics** (B.5b-1b, `Terrain::dropDynamicsInColumn`): its
+     burn nodes end the way `endDynamics` ends them (the block becomes air) and its liquid nodes are
+     dropped (`Liquids::dropColumn`). They are keyed by absolute coordinates and read through the
+     toroidal arrays, so left alone they would simulate against the column landing in the slot and
+     get it saved with water or air in it;
+   - if the occupant has a `modified` chunk, **evict-save** first (save-before-stream):
+     `FileManager::saveWorldKeepDynamics()`, i.e. `saveWorld()` without `endDynamics`, so fire and
+     water elsewhere in the window carry on. One save covers every modified resident column;
+   - `readColumnDeferred`.
+
+   **Autosave** (B.5b-1b): `Terrain::update` saves with `saveWorldKeepDynamics()` once
+   `g_autosave_seconds` (60) of engine time have passed since the last commit of any kind
+   (`g_seconds_since_save`, zeroed by `saveEmodWorld`) and a resident chunk is `modified`; not
+   mid-load or mid-bulk-reload. It replaces the periodic save the walk reload used to be. The
+   **Autosave** setting (`Settings_web.mm`, Saves: Off / 1 / 2 / 5 min, default 1 min) sets the
+   period; Off leaves the evict-saves, which are not optional. One autosave is an `.emod` append of
+   the dirty columns + creature record + header (measured: 1.7 KB for two edited columns), never a
+   rewrite of the file. Warp,
+   exit, the Save button, app background and the bulk reload keep the full `saveWorld()`.
+   `--evict-selftest` (native) is the gate: edits survive a walk out and back and a reload, a fire
+   tower + water in the evicted column leave no node outside the window and no other column changed,
+   and its `--evict-mutate=nosave|nodrop` legs fail.
+
+   When `count` is back to 0 the ring settles what it owes: `addMoreCreaturesIfNeeded()` after a
+   shift. Light is per column (B.5b-1c, 2026-10-12): after the ring's landings and before meshing,
+   `light_syncLandedColumns()` re-lights the 3×3 of slots around every slot whose occupant changed,
+   from the lightboxes of the 5×5 around it, byte-identical to a full sweep
+   (docs/lighting-liquids-effects.md). It replaced 1a's stopgap of a full window sweep after any
+   lit slot was overwritten. A straight walk needs < 0.4 columns a frame (18 per
+   crossing), a diagonal ~0.8; T.B15 tunes the budget on the device. Measured on the Mac
+   (`--stage1 --walk`, `WORKING/b5b1/ring-walk-gate.sh`): a 160-block walk lands 180 columns with 0 bulk
+   reloads and ends identical (geometry + chunk-state hashes) to a fresh load at the end point, at
+   64z and 256z, for ±x, ±z, diagonal, there-and-back and a square. Known costs: pacing across a
+   chunk **centre** line shifts the window back and forth and re-reads 18 columns per shift (no
+   hysteresis yet). Light (B.5b-1c) costs ~0.1–0.35 ms per landed column on the Mac.
+
+   **The outer ring is data-only.** `columnMeshable` (was `columnMeshableDuringReload`, asked only
+   mid-reload) is asked every frame, and a lateral outside the window counts as not resident, so
+   the window's outer ring of 68 columns is never meshed; it is there so its inner neighbours can
+   mesh. (Stock folded the laterals round the window and meshed an edge column against the opposite
+   edge's data.) Two things keep the ring undrawn. `Terrain::addChunk` calls
+   `TerrainChunk::dropGeometry()` on every landing, because the slot's old mesh belongs to the column
+   that left. A per-frame sweep drops whatever a ring chunk still holds (a trailing column that was
+   inner before the shift, or a worker publish) and re-dirties it. `dropGeometry` keeps the GL
+   buffer names (M3(a)) and resets the flags `rebuild2()` leaves, so a dropped chunk hashes the same
+   however it got there. The ring stays dirty while it is the ring, and `f3_frameEnd` ignores it.
+   Meshed radius: 120–136 blocks, past every fog end. `eden_debug_terrain_geometry()` reports
+   `ring_cols` and `bulk_reloads` since launch.
 3. If `count > 140`: a two-frame hysteresis
-   (`hit_load_counter`) shows the "Loading" status bar, then the steps below run. **Walking does not
-   stream column by column.** Crossing one chunk boundary makes only 18 slots stale, and the
-   `count ≤ 140` branch does nothing. Stale far-edge slots stay drawn at their old positions, outside
+   (`hit_load_counter`) shows the "Loading" status bar, then the steps below run. **Stock (before B.5b-1a): walking did
+   not stream column by column.** Crossing one chunk boundary makes only 18 slots stale, and the
+   `count ≤ 140` branch did nothing. Stale far-edge slots stay drawn at their old positions, outside
    the view distance, until more than 140 have built up. A straight walk therefore reloads every
    **8 chunk rows (128 blocks)**, about 144 columns in one go. A diagonal walk reloads after about
    5 chunks, about 155 columns. At 256z that is ~18 MB of column reads per reload (~4.5 MB at 64z).
@@ -249,8 +318,10 @@ Doors and portals are *stored* as voxels but *rendered and animated* as extracte
    Two more facts belong with it. (a) The window is not centred on the player: `floor(pos/16)−T_RADIUS`
    puts the +edge 129–144 blocks away and the −edge 144–159. (b) This reload is also the walk's
    autosave, and `saveWorld` starts with `endDynamics(TRUE)`, so every ~128 blocks walked puts out every
-   fire and stops every liquid. The ring-streaming replacement is planned in
-   `WORKING/render-distance-runtime-plan-2026-10-11.md` (ROADMAP B.5b-1).
+   fire and stops every liquid. **Ring streaming (2a, B.5b-1a) removes the visible edge and the walk
+   reload, and corner-centres the window.** The bulk reload now runs for jumps only, and it still
+   saves with `endDynamics` (a jump re-homes nearly every slot, so every node would alias); walking
+   no longer stops fire or water (B.5b-1b).
    - `fm->saveWorld()` (flush modified columns **before** they get overwritten!),
    - update `fm->chunkOffsetX/Z` (the render-origin rebase),
    - `updateLightingBegin()` (zero the light; the *recompute* is deferred, below. Since R.3 this
@@ -305,12 +376,14 @@ Doors and portals are *stored* as voxels but *rendered and animated* as extracte
    above**, because `readColumn()` re-homes the slot a worker is reading. Since the same date the
    column **read** is split too: a column served from the bundled default map has its RLE decode
    done on a worker (`FileManager::readColumnDeferred` → `fmh_decodeColumnBands`), and does not
-   count as resident until that decode publishes. See docs/rendering.md "Off-thread meshing". Two things modify this pass
-   **while a bulk reload is in flight** (and only then — an edit, an explosion and the initial
-   world load still drain in one frame): a column is skipped, flags intact, unless it **and its
-   four lateral neighbours** have all streamed in, because `rebuild2()` reads one block across
-   each side face and meshing early just builds geometry for data about to be replaced; and the
-   same 96-chunk budget caps the pass, reusing the deferral the `list_max` guard already had.
+   count as resident until that decode publishes. See docs/rendering.md "Off-thread meshing". Two things modify this pass.
+   A column is skipped, flags intact, unless it **and its four lateral neighbours** have all
+   streamed in, because `rebuild2()` reads one block across each side face and meshing early just
+   builds geometry for data about to be replaced. **Since B.5b-1a this test runs every frame**, with
+   no fold at the window edge, which is what leaves the outer ring unmeshed (2a); before, it ran only
+   mid-bulk-reload. And **while a bulk reload is in flight** (an edit, an explosion and the initial
+   world load still drain in one frame) the same 96-chunk budget caps the pass, reusing the deferral
+   the `list_max` guard already had.
    **Since Stage R / R.2 (2026-10-03) an all-air chunk (`typesEmpty`) does not count against that
    budget, and stays inline instead of going to a mesh worker.** `rebuild2()` returns for it before
    the scan, so it costs next to nothing. A chunk over budget is left dirty and the walk continues

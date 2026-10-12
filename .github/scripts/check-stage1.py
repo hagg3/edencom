@@ -6,11 +6,17 @@ Windows must report the SAME geometry checksums the macOS leg and the web build 
 Not "similar", not "plausible" — the same 64-bit hashes, because the mesher is deterministic and
 every input to it is byte-defined by the save format.
 
-    64z   geom c26fa4fd2a5b2660   full 49b71a4e16afb125
-    256z  geom b19d3e33a8717c60
+    64z   geom 53d457fe6e6884e2   full 3b8e767dd12219ae
+    256z  geom d53a88740f714762
 
 (WORKING/phase-n-stage1-results-2026-09-05.md §1. Anything else is a stop, per the plan's kill
 criteria — not a number to update here.)
+
+Re-recorded ONCE, deliberately, by B.5b-1a (2026-10-11), which changed WHAT is meshed, not how: the
+window is centred on the nearest chunk corner and its outer ring of columns is never meshed
+(render-distance-runtime-plan-2026-10-11.md §3). The new values were taken on macOS native and
+matched by web build-st (`tools/headless-mesh-checksum.js`) before being written here. The values
+before it were 64z c26fa4fd2a5b2660 / 49b71a4e16afb125, 256z b19d3e33a8717c60.
 
 Why a script rather than a `grep -q`: a grep for the expected hash passes silently when the line is
 ABSENT for some other reason (the binary crashed before meshing, diagnostics were compiled out, the
@@ -26,8 +32,8 @@ import json
 import re
 import sys
 
-EXPECTED_64 = {"geom": "c26fa4fd2a5b2660", "full": "49b71a4e16afb125"}
-EXPECTED_256_GEOM = "b19d3e33a8717c60"
+EXPECTED_64 = {"geom": "53d457fe6e6884e2", "full": "3b8e767dd12219ae"}
+EXPECTED_256_GEOM = "d53a88740f714762"
 
 # `[eden-stage1] world64.checksum {"chunks":1296,...,"geom":"...","full":"..."}`
 LINE = re.compile(r"\[eden-stage1\]\s+(\S+)\.checksum\s+(\{.*\})\s*$")

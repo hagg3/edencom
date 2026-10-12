@@ -370,10 +370,14 @@ extern "C" const char *eden_debug_terrain_geometry(void) {
             if (c->meshJobState != MESH_JOB_IDLE) busy++;
         }
     }
+    // B.5b-1a: streaming counters since launch (Terrain.mm) -- columns the ring landed, bulk reloads.
+    extern int g_ring_columns_landed, g_bulk_reloads;
     snprintf(buf, sizeof(buf),
              "{\"chunks\":%d,\"meshed\":%d,\"rt_vertices\":%lld,\"rt_vertices2\":%lld,"
-             "\"rt_objects\":%lld,\"unpublished\":%d,\"jobs_in_flight\":%d}",
-             total, meshed, verts, verts2, objects, unpublished, busy);
+             "\"rt_objects\":%lld,\"unpublished\":%d,\"jobs_in_flight\":%d,"
+             "\"ring_cols\":%d,\"bulk_reloads\":%d}",
+             total, meshed, verts, verts2, objects, unpublished, busy,
+             g_ring_columns_landed, g_bulk_reloads);
     return buf;
 }
 
@@ -527,7 +531,7 @@ extern "C" long long eden_debug_chunk_empty(int x, int z, int y) {
 // stock dense array, written by the stock code alongside them, disagree: must be 0.
 EDEN_EXPORT
 extern "C" const char *eden_debug_light_state(void) {
-    static char buf[320];
+    static char buf[384];
     const unsigned long long kFnvOffset = 1469598103934665603ULL;
     const unsigned long long kFnvPrime  = 1099511628211ULL;
     unsigned long long h = kFnvOffset;
@@ -549,8 +553,9 @@ extern "C" const char *eden_debug_light_state(void) {
             }
     int n = snprintf(buf, sizeof(buf),
              "{\"hash\":\"%016llx\",\"lit\":%lld,\"sum\":%lld,\"bytes\":%llu,\"bricks\":%d,"
-             "\"pending\":%d",
-             h, lit, sum, lightStoreBytes(), light_storeBricks(), lightingSweepPending() ? 1 : 0);
+             "\"pending\":%d,\"rebuilds\":%d,\"rebuild_ms\":%.2f,\"rebuild_max_ms\":%.3f",
+             h, lit, sum, lightStoreBytes(), light_storeBricks(), lightingSweepPending() ? 1 : 0,
+             g_light_rebuilds, g_light_rebuild_ms, g_light_rebuild_max_ms);
     const long long bad = light_selfcheckMismatches();
     if (bad >= 0) n += snprintf(buf + n, sizeof(buf) - n, ",\"mismatch\":%lld", bad);
     snprintf(buf + n, sizeof(buf) - n, "}");

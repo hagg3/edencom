@@ -26,6 +26,9 @@ passes, special objects, sky, and the per-vertex data formats.
 - `vertexStructSmall` — terrain: `GLshort position[3]` + pad, `GLubyte colors[4]`,
   `GLshort texs[2]`. Positions are **premultiplied by 4** (quarter-block units) and
   chunk-local; the chunk's `render()` translates by `(pbounds - chunkOffset*16)*4`
+  (`chunkOffset` follows every window shift since B.5b-1a; any value works because meshes are
+  chunk-local, as long as it changes between frames, never mid-frame. The window's outer ring of
+  columns is never meshed and draws nothing: docs/world-and-terrain.md "Streaming" 2a)
   and `Terrain::render2` wraps everything in `glScalef(.25,.25,.25)`; pass 1 relies on
   the modelview already being scaled the same way via `Graphics::beginTerrain`.
   UV shorts are normalized by a **texture matrix** trick: `glMatrixMode(GL_TEXTURE);

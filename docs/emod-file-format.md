@@ -406,7 +406,7 @@ specified.
 - Full record: `WORKING/s5-results-2026-10-10.md`.
 
 ## Verified (S.4, 2026-10-09) — the engine
-- `--headless --stage1` new world as `.emod`: `geom c26fa4fd2a5b2660 / full 49b71a4e16afb125` (64z) and
+- `--headless --stage1` new world as `.emod` (values before B.5b-1a re-recorded them): `geom c26fa4fd2a5b2660 / full 49b71a4e16afb125` (64z) and
   `b19d3e33a8717c60` (256z), identical to `.eden`.
 - Real worlds, the same checksum loaded from the `.eden`, from the engine's own conversion, and from
   the `.emod` reloaded: Diane (256z v5), alpinecraft (v2 256z + signs), CanvasXEN0, BlockmapWIP.

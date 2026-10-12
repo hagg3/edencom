@@ -78,6 +78,11 @@ Read this before writing any code. These are the implicit rules the codebase fol
   When fixing a bug in one, grep for its twin.
 - **Magic numbers**: streaming threshold `count>140`, progress `/324`, burn cap 300,
   spawn tables, hard-coded layout rects, memory thresholds — all inline.
+- **The window origin has one formula** (B.5b-1a, 2026-10-11): `windowOriginChunk(pos)` in
+  `Terrain.h`, corner-centred. A site that computes `pos/16 - T_RADIUS` itself disagrees with the
+  streamer by one row half the time, and the streamer then re-reads that row. The outer ring of the
+  window is never meshed (data for its neighbours), so an "is it drawn" or "is it settled" check over
+  `chunksToUpdate` must skip it (`slotOnOuterRing`, as `f3_frameEnd` does).
 - **Error handling** is `printg`/`printf` logging plus soldier-on; file I/O failures
   during save can silently corrupt worlds (no atomic writes).
 - **Typos are API**: `chunksToUpdateImmediatley`, `criticle errror`, `Frustrum` —

@@ -114,6 +114,43 @@ void Liquids::clearLiquids(){
     }
    
 }
+// B.5b-1b. Both lists are doubly linked with plist/plist2 as the head; removePoint's `plist=NULL`
+// on a head removal is stock (it orphans the rest mid-update) and is left alone -- this unlinks
+// properly instead, because it runs between updates and must not lose the nodes it keeps.
+int Liquids::dropColumn(int cx,int cz){
+    int n=0;
+    PNode* node=plist;
+    while(node){
+        PNode* next=node->next;
+        if(node->x/CHUNK_SIZE==cx&&node->z/CHUNK_SIZE==cz){
+            if(node==plist)plist=next; else if(node->prev)node->prev->next=next;
+            if(next)next->prev=node->prev;
+            free(node);
+            n++;
+        }
+        node=next;
+    }
+    PNode2* node2=plist2;
+    while(node2){
+        PNode2* next=node2->next;
+        if(node2->x/CHUNK_SIZE==cx&&node2->z/CHUNK_SIZE==cz){
+            if(node2==plist2)plist2=next; else if(node2->prev)node2->prev->next=next;
+            if(next)next->prev=node2->prev;
+            free(node2);
+            n++;
+        }
+        node2=next;
+    }
+    return n;
+}
+int Liquids::countOutsideWindow(){
+    int n=0;
+    for(PNode* node=plist;node;node=node->next)
+        if(!isColumnResident(node->x,node->z))n++;
+    for(PNode2* node2=plist2;node2;node2=node2->next)
+        if(!isColumnResident(node2->x,node2->z))n++;
+    return n;
+}
 BOOL updateHeights(WetNode* node){
     return FALSE;
     /*
@@ -323,6 +360,7 @@ static BOOL updateNode2(PNode2* pnode){
         nx=pnode->x+dx[i];
         nz=pnode->z+dz[i];
         ny=pnode->y+dy[i];
+        if(!isColumnResident(nx,nz))continue;   // B.5b-1b: never past the window edge (it aliases)
         ntype=getLandc(nx, nz, ny);
         nbasetype=getBaseType(ntype);
         if(blockinfo[ntype]&IS_LIQUID&&nbasetype==type){
@@ -456,6 +494,7 @@ static BOOL updateNode(PNode* pnode){
          nx=pnode->x+dx[i];
          nz=pnode->z+dz[i];
          ny=pnode->y;
+         if(!isColumnResident(nx,nz))continue;   // B.5b-1b: never past the window edge (it aliases)
          ntype=getLandc(nx, nz, ny);
          if(ntype==TYPE_NONE||(blockinfo[ntype]&IS_LIQUID&&getLevel(ntype)<level-1)){
              if(btype!=TYPE_LAVA||!World::getWorld->player->test(nx,ny,nz,1)){

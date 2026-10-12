@@ -94,6 +94,12 @@ extern void (*eden_save_backup_hook)(const char* worldFilePath);
 // chose ~/Library/Application Support/Eden. The returned string must outlive the process.
 extern const char* (*eden_documents_root_hook)(void);
 
+// B.5b-1b: engine seconds since the open world's last committed save (any kind). Terrain::update
+// advances it and runs the autosave when it passes g_autosave_seconds with edits pending;
+// saveEmodWorld zeroes it on a commit. g_autosave_seconds <= 0 turns the autosave off (tests).
+extern float g_seconds_since_save;
+extern float g_autosave_seconds;
+
 class FileManager {
 public:
     int chunkOffsetX;
@@ -116,6 +122,11 @@ public:
     BOOL readColumnDeferred(int cx,int cz,NSFileHandle* nsfh);
     void saveWorld();
     void saveWorld(Vector warp);
+    // B.5b-1b: saveWorld() WITHOUT its opening endDynamics -- fire keeps burning and water keeps
+    // flowing across it. The ring stream's evict-save (a modified column is about to be overwritten)
+    // and the autosave timer use it; warp, exit, the Save button, app background and the bulk reload
+    // keep the full saveWorld() (render-distance plan, decision 1).
+    void saveWorldKeepDynamics();
     void loadGenFromDisk();
     void writeGenToDisk();
     void fwriteDirectory();

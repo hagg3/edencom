@@ -378,6 +378,22 @@ static BOOL bulk_reload_active=FALSE;
 // Set by the meshing pass when the per-frame budget stopped it short, i.e. that reload still owes
 // the window geometry even if every column has been read.
 static BOOL bulk_reload_meshing=FALSE;
+// B.5b-1a ring streaming (prepareAndLoadGeometry), its two follow-ups.
+// A window shift has happened and its creature top-up is owed once the ring has caught up (stale
+// count back to 0): the top-up's randomised ground search would otherwise put creatures on columns
+// that have not streamed in yet.
+static BOOL ring_creatures_owed=FALSE;
+// Diagnostics (eden_debug_terrain_geometry): columns the ring has landed, and bulk reloads started,
+// since launch. A walk that streams leaves the second unchanged; that is gate 1's "it really rang".
+int g_ring_columns_landed=0;
+int g_bulk_reloads=0;
+// B.5b-1b diagnostics (--evict-selftest): evict-saves the ring ran, dynamics nodes it dropped,
+// autosaves the timer ran.
+int g_ring_evict_saves=0;
+int g_ring_dynamics_dropped=0;
+int g_autosaves=0;
+bool Terrain::testNoEvictSave=false;
+bool Terrain::testNoDropDynamics=false;
 // Stage R / R.2b: count the reload's column reads in occupied chunks (see the read loop in
 // prepareAndLoadGeometry). false is the stock count of BULK_RELOAD_CHUNK_BUDGET/CHUNKS_PER_COLUMN
 // columns a frame. OFF by default since R.4 (2026-10-04): on an iPad Air 2 it took the 256z walk
@@ -449,6 +465,8 @@ void Terrain::loadTerrain(NSString* name,BOOL fromArchive){
     // TRUE from the previous world would run a slice against a window this world never staged.
     bulk_reload_active=FALSE;
     bulk_reload_meshing=FALSE;
+    // Likewise the ring's follow-up (B.5b-1a): a load places creatures itself.
+    ring_creatures_owed=FALSE;
     World::getWorld->hud->justLoaded=1;
     
 	//NSLog(@"dict entries: %d",hashmap_length(chunkMap));
@@ -672,7 +690,12 @@ void Terrain::addChunk(TerrainChunk* chunk, int cx,int cy,int cz,BOOL rebuild){
     // short), fmh_publishColumnFromDefault (also via MeshPool's decode publish), and every
     // TerrainGenerator column. So this is the one place the empty bit is computed from scratch.
     tc_refreshTypesEmpty(chunk);
-	
+    // B.5b-1a: the slot's old mesh belongs to the column that just left it. Stock re-meshed every
+    // landed column within a frame or so, so drawing that mesh at the new pbounds was a brief
+    // glitch; now a column landing on the window's outer ring is never meshed (it is data for its
+    // inner neighbour), so the old mesh would stay drawn there as a copy of terrain 288 blocks away.
+    chunk->dropGeometry();
+
 	//NSNumber* chunkIdx=[NSNumber numberWithInt:threeToOne(cx,cy,cz)];
 	
      //issue #3 continued
@@ -947,6 +970,7 @@ bool isOnFire(int x ,int z, int y){
     return FALSE;
 }
 void Terrain::burnBlock(int x,int z,int y,BOOL causedByExplosion){
+    if(!isColumnResident(x,z))return;   // B.5b-1b: not past the window edge (it aliases)
 	int type=getLandc(x, z, y);
 	if(type<0)return;
 	if(blockinfo[type]&IS_FLAMMABLE){
@@ -1647,6 +1671,17 @@ int getLandc2(int x,int z,int y){
     
     return [chunk getCustom:x-cx*CHUNK_SIZE*2:z-cz*CHUNK_SIZE*2:y-cy*CHUNK_SIZE*2];
 }*/
+// B.5b-1b. The toroidal arrays alias every column T_SIZE blocks apart onto one slot, so a write
+// through GBLOCK/updateChunks to a column that is not resident lands in whichever column IS. Stock's
+// dynamics did that at the window edge -- a fire or a flow reaching past it wrote into the opposite
+// edge -- and under ring streaming it would write into the column that just landed in a departed
+// one's slot. Fire, liquid and explosion spread ask this first. (A node's OWN column is
+// dropDynamicsInColumn's job: it is resident by construction until the ring evicts it.)
+bool isColumnResident(int x,int z){
+    const int cx=x/CHUNK_SIZE,cz=z/CHUNK_SIZE;
+    TerrainChunk* c=chunkTablec?chunkTablec[threeToOne(cx,0,cz)]:NULL;
+    return c&&c->pbounds[0]==cx*CHUNK_SIZE&&c->pbounds[2]==cz*CHUNK_SIZE;
+}
  int getLandc(int x,int z,int y){	
 	//if(x<0||z<0||y<0||x>=T_SIZE||z>=T_SIZE||y>=T_HEIGHT)return -1;	
    
@@ -1965,6 +2000,7 @@ void Terrain::explode(int x,int z,int y){
 				int oy=yy;
 				if(ox*ox+oz*oz+oy*oy>EXPLOSION_RADIUS*EXPLOSION_RADIUS)
 					continue;
+                if(!isColumnResident(j,k))continue;   // B.5b-1b: not past the window edge (it aliases)
                 
                 if(painting){
                     int type=getLandc(j, k, y-yy);
@@ -2132,6 +2168,22 @@ BOOL Terrain::update(float etime){
    
     liquids->update(etime);
     fireworks->update(etime);
+    // B.5b-1b autosave (decision 1): with edits pending and g_autosave_seconds since the last commit
+    // of any kind, save -- without endDynamics. Stock's only periodic save was the walk reload's,
+    // which the ring retired; this puts a bound back on how much a crash can lose. Not mid-bulk-
+    // reload (that path saved at its start) and not mid-load. The clock restarts either way, so a
+    // world with nothing to save pays one scan of the window a period.
+    g_seconds_since_save+=etime;
+    if(g_autosave_seconds>0&&g_seconds_since_save>=g_autosave_seconds&&loaded&&!bulk_reload_active&&do_reload==0){
+        g_seconds_since_save=0;
+        BOOL dirty=FALSE;
+        for(int i=0;i<CHUNKS_PER_SIDE*CHUNKS_PER_SIDE*CHUNKS_PER_COLUMN&&!dirty;i++)
+            if(chunkTable[i]&&chunkTable[i]->modified)dirty=TRUE;
+        if(dirty){
+            World::getWorld->fm->saveWorldKeepDynamics();
+            g_autosaves++;
+        }
+    }
     extern Vector colorTable[256];
     if(interpolatev(&skycolor,final_skycolor,.25f,etime)){
          
@@ -2202,6 +2254,31 @@ void Terrain::endDynamics(BOOL endLiquids){
 	Resources::getResources->endBurn();
 	
 }
+int Terrain::dropDynamicsInColumn(int cx,int cz){
+    int n=0;
+    BurnNode* prev=NULL;
+    BurnNode* node=burnList;
+    while(node!=NULL){
+        BurnNode* next=node->next;
+        if(node->x/CHUNK_SIZE==cx&&node->z/CHUNK_SIZE==cz){
+            if(prev==NULL)burnList=next; else prev->next=next;
+            nburn--;
+            Resources::getResources->endBurnId(node->sid);
+            World::getWorld->effects->removeFire(node->pid);
+            updateChunks(node->x ,node->z ,node->y ,TYPE_NONE);   // as endDynamics: the block burns out
+            free(node);
+            n++;
+        }else prev=node;
+        node=next;
+    }
+    return n+liquids->dropColumn(cx,cz);
+}
+int Terrain::dynamicsOutsideWindow(){
+    int n=0;
+    for(BurnNode* node=burnList;node!=NULL;node=node->next)
+        if(!isColumnResident(node->x,node->z))n++;
+    return n+liquids->countOutsideWindow();
+}
 void Terrain::startDynamics(){/*
     for(int i=0;i<T_SIZE*T_SIZE*T_HEIGHT;i++){
         if(blockarray[i]==TYPE_WATER||blockarray[i]==TYPE_LAVA){
@@ -2256,8 +2333,12 @@ static int compare_stale_column(const void* a,const void* b){
     return 0;
 }
 
-// Is toroidal chunk-table column (x,z) holding the column the window wants this frame? Only asked
-// while a bulk reload is part-way through, where the answer can be no.
+// Is toroidal chunk-table column (x,z) holding the column the window wants this frame, and are its
+// four laterals? B.5b-1a made this permanent (it used to be asked only mid-bulk-reload) and stopped
+// the laterals folding round the window: an outer-ring column's outward neighbour is outside the
+// window, so the ring is never meshed -- it is data for its inner neighbour. Folding used to mesh an
+// edge column against the OPPOSITE edge's data. Under ring streaming the outer ring is where columns
+// land, so each column is meshed once, when it becomes inner, not on landing and again a row later.
 // (CHUNKS_PER_SIDE == T_RADIUS*2, so a toroidal slot maps 1:1 onto a window slot. Unlike
 // threeToOne's fixed +50*CHUNKS_PER_SIDE bias, this one really does have to fold the modulus
 // twice: x is a small toroidal index and ox is an absolute chunk coordinate in the thousands.)
@@ -2280,22 +2361,52 @@ static int compare_stale_column(const void* a,const void* b){
 // a deferred chunk's geometry still belongs to its own pbounds, and the chunk is now empty rather
 // than garbage until it is meshed. A worker-thread mesher produces the same "resident but not yet
 // meshed" state by construction and depends on the same initialisation.
-static bool columnMeshableDuringReload(int x,int z,int ox,int oz,
-                                       const bool isloaded[T_RADIUS*2][T_RADIUS*2]){
+static bool columnMeshable(int x,int z,int ox,int oz,
+                           const bool isloaded[T_RADIUS*2][T_RADIUS*2]){
     int wx=((x-ox)%CHUNKS_PER_SIDE+CHUNKS_PER_SIDE)%CHUNKS_PER_SIDE;
     int wz=((z-oz)%CHUNKS_PER_SIDE+CHUNKS_PER_SIDE)%CHUNKS_PER_SIDE;
     if(!isloaded[wx][wz])return false;
-    // The four laterals, folded the same way -- rebuild2() reads one block across each side face,
-    // so a column whose neighbour is still stale would have to be meshed again when it lands.
+    // The four laterals -- rebuild2() reads one block across each side face, so a column whose
+    // neighbour is still stale would have to be meshed again when it lands. A lateral outside the
+    // window is never resident (no fold, see above).
     for(int d=0;d<4;d++){
         static const int dx[4]={-1,1,0,0};
         static const int dz[4]={0,0,-1,1};
-        int nx=((wx+dx[d])%CHUNKS_PER_SIDE+CHUNKS_PER_SIDE)%CHUNKS_PER_SIDE;
-        int nz=((wz+dz[d])%CHUNKS_PER_SIDE+CHUNKS_PER_SIDE)%CHUNKS_PER_SIDE;
+        int nx=wx+dx[d];
+        int nz=wz+dz[d];
+        if(nx<0||nx>=CHUNKS_PER_SIDE||nz<0||nz>=CHUNKS_PER_SIDE)return false;
         if(!isloaded[nx][nz])return false;
     }
     return true;
 }
+
+// B.5b-1a: the window origin prepareAndLoadGeometry chose this frame, for slotOnOuterRing (asked by
+// f3_frameEnd, which only sees chunk slots).
+static int g_win_ox=0,g_win_oz=0;
+// Is toroidal column slot (x,z) on the window's outer ring -- the data-only band columnMeshable
+// never meshes, and whose dirty flags therefore stay set for as long as it is on the ring?
+static bool slotOnOuterRing(int x,int z){
+    int wx=((x-g_win_ox)%CHUNKS_PER_SIDE+CHUNKS_PER_SIDE)%CHUNKS_PER_SIDE;
+    int wz=((z-g_win_oz)%CHUNKS_PER_SIDE+CHUNKS_PER_SIDE)%CHUNKS_PER_SIDE;
+    return wx==0||wx==CHUNKS_PER_SIDE-1||wz==0||wz==CHUNKS_PER_SIDE-1;
+}
+
+// B3's invalidation rule 1 (mp_columnBusy: a column with a mesh job in flight must not be re-homed),
+// widened to the four laterals by B.5b-1a. A worker meshing a NEIGHBOUR reads one block across the
+// shared face, i.e. into this column's slot, so overwriting the slot under it tears that read. The
+// torn mesh was redone only because addChunk happens to dirty the laterals; now it cannot happen.
+// Asked by both the ring's and the bulk reload's column loops.
+static BOOL columnOrLateralBusy(int cx,int cz){
+    return mp_columnBusy(cx,cz)||mp_columnBusy(cx-1,cz)||mp_columnBusy(cx+1,cz)||
+           mp_columnBusy(cx,cz-1)||mp_columnBusy(cx,cz+1);
+}
+
+// B.5b-1a ring streaming: columns landed per frame while the window is short of 1..140 columns,
+// which is all the time while walking. A straight walk needs < 0.4 a frame (18 columns per chunk
+// crossing, one crossing per ~2.7 s), a diagonal ~0.8. One is the plan's starting point
+// (WORKING/render-distance-runtime-plan-2026-10-11.md §3.2); the device round (T.B15) tunes it from
+// the worst frame. Counted when a read STARTS, like the bulk budget.
+#define RING_COLUMN_BUDGET 1
 
 void Terrain::prepareAndLoadGeometry(){
     time1=time2=-[start timeIntervalSinceNow];
@@ -2322,8 +2433,10 @@ void Terrain::prepareAndLoadGeometry(){
 
     ///////////load geom from file or gen
     if(loaded){
-        m_chunkOffsetX=player->pos.x/CHUNK_SIZE-T_RADIUS;
-       m_chunkOffsetZ=player->pos.z/CHUNK_SIZE-T_RADIUS;
+        m_chunkOffsetX=windowOriginChunk(player->pos.x);
+        m_chunkOffsetZ=windowOriginChunk(player->pos.z);
+        g_win_ox=m_chunkOffsetX;
+        g_win_oz=m_chunkOffsetZ;
 
                 int r=T_RADIUS;
         int count=0;
@@ -2358,10 +2471,26 @@ void Terrain::prepareAndLoadGeometry(){
                     count++;
                     isloaded[x][z]=FALSE;
                 }
-                
+
             }
         }
-        
+
+        // B.5b-1a: once per window shift (a chunk crossing), not once per bulk reload as stock did.
+        // fm->chunkOffset is the RENDER origin (camera, chunk translates, creature rebase) and
+        // "the window" for creature activation; any value works for drawing because meshes are
+        // chunk-local, but it has to change between frames, and this is before render. The sky
+        // region check rides on it too; the creature top-up waits for the ring to catch up.
+        {
+            FileManager* fm=world->fm;
+            if(fm->chunkOffsetX!=m_chunkOffsetX||fm->chunkOffsetZ!=m_chunkOffsetZ){
+                fm->chunkOffsetX=m_chunkOffsetX;
+                fm->chunkOffsetZ=m_chunkOffsetZ;
+                extern BOOL loaded_new_terrain;
+                loaded_new_terrain=TRUE;
+                ring_creatures_owed=TRUE;
+            }
+        }
+
         // The bulk window reload. This used to save, read EVERY stale column and then mesh all of
         // them inside this one call -- one engine frame -- which tools/headless-mesh-burst-probe.js
         // measured at a 104-124 ms main-thread block on a teleport (324 columns / 1296 chunks:
@@ -2403,6 +2532,10 @@ void Terrain::prepareAndLoadGeometry(){
                     void updateLightingBegin();
                     updateLightingBegin();
                     update_lighting=FALSE;
+                    // The bulk path tops up creatures at its end, which covers anything the ring
+                    // still owed.
+                    ring_creatures_owed=FALSE;
+                    g_bulk_reloads++;
 
                     bulk_reload_active=TRUE;
                 }
@@ -2481,11 +2614,11 @@ void Terrain::prepareAndLoadGeometry(){
                     // does, and it cannot livelock: workers always finish.
                     for(int i=0,taken=0;i<nstale&&taken<budget&&
                                         (!byBands||spent<BULK_RELOAD_CHUNK_BUDGET);i++){
-                        if(mp_columnBusy(stale[i].cx,stale[i].cz))continue;
+                        if(columnOrLateralBusy(stale[i].cx,stale[i].cz))continue;   // B.5b-1a: + laterals
                         //removeLights
                         // B3 Stage 3: readColumnDeferred may hand the column's RLE decode to a
                         // worker and answer FALSE, meaning "not landed yet". Then it must NOT be
-                        // marked loaded -- isloaded is what gates meshing (columnMeshableDuringReload)
+                        // marked loaded -- isloaded is what gates meshing (columnMeshable)
                         // and what decides the reload is finished, and both answers have to stay
                         // "no" until the decode publishes. The column is still in stale[] next
                         // frame; mp_columnBusy above is what stops it being read a second time.
@@ -2518,8 +2651,101 @@ void Terrain::prepareAndLoadGeometry(){
             }
             time2=-[start timeIntervalSinceNow];
             
+        }else if(count>0){
+            // B.5b-1a ring streaming. Stock left up to 140 slots stale -- a walk showed bare sky
+            // 1-2 chunks ahead from the 3rd crossing on (plan §1.1) -- and then reloaded ~144 of them
+            // in one burst. Now every frame lands the nearest stale columns under RING_COLUMN_BUDGET,
+            // so the window keeps up with a walk; the bulk path above is left for jumps (teleport,
+            // console tp, ice faster than the budget), and warps stay synchronous.
+            static StaleColumn ring[T_RADIUS*2*T_RADIUS*2];
+            int nring=0;
+            int pcx=player->pos.x/CHUNK_SIZE;
+            int pcz=player->pos.z/CHUNK_SIZE;
+            for(int x=0;x<2*r;x++){
+                for(int z=0;z<2*r;z++){
+                    if(!isloaded[x][z]){
+                        int cx=x+m_chunkOffsetX;
+                        int cz=z+m_chunkOffsetZ;
+                        ring[nring].cx=cx;
+                        ring[nring].cz=cz;
+                        ring[nring].d2=(cx-pcx)*(cx-pcx)+(cz-pcz)*(cz-pcz);
+                        nring++;
+                    }
+                }
+            }
+            qsort(ring,nring,sizeof(StaleColumn),compare_stale_column);
+            NSString* file_name=[NSString stringWithFormat:@"%@/%@",world->fm->documents,world_name];
+            // Reopened per frame, for the reason the bulk slice gives.
+            NSFileHandle* saveFile=[NSFileHandle fileHandleForReadingAtPath:file_name];
+            for(int i=0,taken=0;i<nring&&taken<RING_COLUMN_BUDGET;i++){
+                const int cx=ring[i].cx,cz=ring[i].cz;
+                // Skip it if it or a lateral has a mesh job in flight; the job finishes in a frame
+                // or two and the column is still stale then.
+                if(columnOrLateralBusy(cx,cz))continue;
+                // B.5b-1b, per column, in this order (plan §3.3 step 2):
+                // 1. Drop the departing occupant's dynamics. Its burn and liquid nodes are keyed by
+                //    absolute coordinates and read through the toroidal arrays, so left alone they
+                //    would simulate against the column landing in this slot -- write water or air
+                //    into it, dirty it, and get it saved. Before the save, because a burn node ends
+                //    as air (endDynamics' rule), and that air belongs in the evict-save.
+                // 2. Save-before-stream: if the occupant holds edits, save them before readColumn
+                //    overwrites them -- without endDynamics, so fire and water elsewhere in the
+                //    window carry on (stock stopped all of them every ~128 blocks walked). One save
+                //    covers every modified column in the window, so it runs at most once per edit.
+                TerrainChunk* occ=chunkTable[threeToOne(cx,0,cz)];
+                if(occ&&!testNoDropDynamics)
+                    g_ring_dynamics_dropped+=dropDynamicsInColumn(occ->pbounds[0]/CHUNK_SIZE,occ->pbounds[2]/CHUNK_SIZE);
+                for(int cy=0;cy<CHUNKS_PER_COLUMN&&!testNoEvictSave;cy++){
+                    TerrainChunk* c=chunkTable[threeToOne(cx,cy,cz)];
+                    if(c&&c->modified){
+                        world->fm->saveWorldKeepDynamics();
+                        g_ring_evict_saves++;
+                        break;
+                    }
+                }
+                // Same contract as the bulk slice: FALSE = dispatched to a decode worker (threaded web
+                // only), not landed -- leave it unloaded, mp_columnBusy keeps it from a second read.
+                if(world->fm->readColumnDeferred(cx,cz,saveFile)){
+                    isloaded[cx-m_chunkOffsetX][cz-m_chunkOffsetZ]=TRUE;
+                    g_ring_columns_landed++;
+                }
+                taken++;
+            }
+            [saveFile closeFile];
         }else{
-            
+            // The window is whole. Settle what the ring owes now that every column is resident.
+            if(ring_creatures_owed){
+                ring_creatures_owed=FALSE;
+                addMoreCreaturesIfNeeded();
+            }
+        }
+
+        // B.5b-1c: light per landed column (plan §3.3 step 4). Every slot that changed occupant
+        // since its light was computed -- a ring landing above, or a decode a worker published at
+        // the top of this frame -- has its 3x3 of slots re-lit, and the chunks whose light changed
+        // are dirtied, so this has to run before the meshing pass below. Not while a full sweep is
+        // owed or running (a bulk reload, a load, a warp): that sweep lights the whole window, and
+        // whatever lands during it is caught here the frame after it finishes (Lighting.mm).
+        if(!LOW_MEM_DEVICE&&!update_lighting&&!bulk_reload_active)
+            light_syncLandedColumns();
+
+        // B.5b-1a: the outer ring is data-only (columnMeshable), so nothing on it may be drawn: a
+        // trailing column that was inner last crossing still holds its mesh, and a worker can
+        // publish into a ring chunk. Drop what is there and leave the chunk dirty, so that when a
+        // shift back makes it inner again it is meshed rather than left as a hole. (Belt and braces:
+        // a column only turns inner again when the column beyond it re-lands, and that addChunk
+        // dirties it too -- the walk gate passes with this redirty removed.) Idempotent and cheap
+        // (68 columns of pointer tests) once the ring is clean.
+        for(int x=0;x<2*r;x++){
+            for(int z=0;z<2*r;z+=(x==0||x==2*r-1)?1:2*r-1){
+                for(int cy=0;cy<CHUNKS_PER_COLUMN;cy++){
+                    const int n=threeToOne(x+m_chunkOffsetX,cy,z+m_chunkOffsetZ);
+                    TerrainChunk* c=chunkTable[n];
+                    if(!c||!c->holdsGeometry()||mp_chunkBusy(c))continue;
+                    c->dropGeometry();
+                    mp_redirtyChunk(n);
+                }
+            }
         }
         //[sf_lock unlock];
         
@@ -2598,8 +2824,10 @@ void Terrain::prepareAndLoadGeometry(){
                         // the sliced reload meshed 4188 chunks instead of 2016 without this.
                         // Deferring is free -- the dirty flags stay set, and readColumn re-sets
                         // them when the column really lands.
-                        if(bulk_reload_active&&
-                           !columnMeshableDuringReload(x,z,m_chunkOffsetX,m_chunkOffsetZ,isloaded))
+                        // B.5b-1a: asked every frame now, not only mid-bulk-reload -- the ring
+                        // keeps the window part-resident all the time, and the outer ring is
+                        // never meshable (columnMeshable).
+                        if(!columnMeshable(x,z,m_chunkOffsetX,m_chunkOffsetZ,isloaded))
                             continue;
                         // B3 Stage 2: set if any chunk of this column had to be left dirty because
                         // a worker still owns it, so the column flag survives to the next frame.
@@ -2761,7 +2989,10 @@ static void f3_frameEnd(bool loaded){
     }
     const int n=CHUNKS_PER_SIDE*CHUNKS_PER_SIDE*CHUNKS_PER_COLUMN;
     for(int i=0;i<n;i++)
-        if(chunksToUpdate[i]||chunksToUpdateImmediatley[i]){
+        // B.5b-1a: the outer ring is never meshed, so its dirty bits never clear; it is not owed work.
+        if((chunksToUpdate[i]&&!slotOnOuterRing(i/(CHUNKS_PER_SIDE*CHUNKS_PER_COLUMN),
+                                                (i/CHUNKS_PER_COLUMN)%CHUNKS_PER_SIDE))||
+           chunksToUpdateImmediatley[i]){
             if(g_f3.frames>=1800)f3_end(true);
             return;
         }
