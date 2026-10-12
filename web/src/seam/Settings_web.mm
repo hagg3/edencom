@@ -84,60 +84,60 @@ struct Setting {
 
 static const Setting kSettings[] = {
   // key                 label                group        kind         engine        min  max  step  def   hint                                                                options
-  { "health",            "Health",            "Gameplay",  KIND_TOGGLE, ENG_HEALTH,     0,   1,   1,   1,  "Take damage from falls, fire and creatures.",                     NULL },
-  { "autojump",          "Auto-jump",         "Gameplay",  KIND_TOGGLE, ENG_AUTOJUMP,   0,   1,   1,   1,  "Step up single blocks automatically.",                            NULL },
-  { "creatures",         "Creatures",         "Gameplay",  KIND_TOGGLE, ENG_CREATURES,  0,   1,   1,   1,  "Spawn and render wildlife. Off is faster.",                       NULL },
+  { "health",            "Health",            "Gameplay",  KIND_TOGGLE, ENG_HEALTH,     0,   1,   1,   1,  "Falls, fire and creatures hurt.",                     NULL },
+  { "autojump",          "Auto-jump",         "Gameplay",  KIND_TOGGLE, ENG_AUTOJUMP,   0,   1,   1,   1,  NULL,                            NULL },
+  { "creatures",         "Creatures",         "Gameplay",  KIND_TOGGLE, ENG_CREATURES,  0,   1,   1,   1,  "Off is faster.",                       NULL },
 
-  { "music",             "Music",             "Audio",     KIND_TOGGLE, ENG_MUSIC,      0,   1,   1,   1,  "Background music while you play.",                                                               NULL },
-  { "sound",             "Sound effects",     "Audio",     KIND_TOGGLE, ENG_SOUND,      0,   1,   1,   1,  "Block, footstep and creature sounds.",                                                               NULL },
-  { "music_volume",      "Music volume",      "Audio",     KIND_RANGE,  -1,             0,   1, .05f,  1,  "Loudness of the music.",                                                               NULL, "music" },
-  { "ambience_volume",   "Ambience volume",   "Audio",     KIND_RANGE,  -1,             0,   1, .05f,  1,  "Loudness of wind, water and other background sounds.",                                                               NULL },
-  { "effects_volume",    "Effects volume",    "Audio",     KIND_RANGE,  -1,             0,   1, .05f,  1,  "Loudness of block, footstep and creature sounds.",                                                               NULL, "sound" },
-  { "touch_controls_sound", "Touch controls sound", "Audio", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Joystick and jump-button taps make a sound. Touchscreen only -- never fires for keyboard/mouse. Off by default.", NULL, "sound" },
+  { "music",             "Music",             "Audio",     KIND_TOGGLE, ENG_MUSIC,      0,   1,   1,   1,  NULL,                                                               NULL },
+  { "sound",             "Sound effects",     "Audio",     KIND_TOGGLE, ENG_SOUND,      0,   1,   1,   1,  NULL,                                                               NULL },
+  { "music_volume",      "Music volume",      "Audio",     KIND_RANGE,  -1,             0,   1, .05f,  1,  NULL,                                                               NULL, "music" },
+  { "ambience_volume",   "Ambience volume",   "Audio",     KIND_RANGE,  -1,             0,   1, .05f,  1,  "Wind and water.",                                                               NULL },
+  { "effects_volume",    "Effects volume",    "Audio",     KIND_RANGE,  -1,             0,   1, .05f,  1,  NULL,                                                               NULL, "sound" },
+  { "touch_controls_sound", "Touch controls sound", "Audio", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Clicks on joystick and button taps.", NULL, "sound" },
 
   // input_mode: 0=Auto (matchMedia + first-input detection, see eden-st.html), 1=Touch,
   // 2=Keyboard+Mouse. Auto is the default so nothing changes for players who never open Settings.
-  { "input_mode",        "Input mode",        "Controls",  KIND_ENUM,   -1,             0,   2,   1,   0,  "Auto-detects touch vs. keyboard/mouse; force one if it guesses wrong.", "Auto,Touch,Keyboard+Mouse" },
-  { "hold_to_act",       "Hold to mine/build", "Controls",  KIND_TOGGLE, -1,            0,   1,   1,   1,  "Hold the mouse button to repeat, instead of one block per click.", NULL },
-  { "mouse_sensitivity", "Mouse sensitivity", "Controls",  KIND_RANGE,  -1,          .25f,  3, .05f,  1,  "Look speed while the pointer is locked.",                         NULL },
-  { "mouse_sensitivity_y", "Mouse sensitivity (Y)", "Controls", KIND_RANGE, -1,      .25f,  3, .05f,  1,  "Vertical look speed, if you want it different from horizontal.",  NULL },
-  { "invert_look",       "Invert look",       "Controls",  KIND_TOGGLE, -1,             0,   1,   1,   0,  "Flip vertical look: pushing up looks down.",                                                               NULL },
+  { "input_mode",        "Input mode",        "Controls",  KIND_ENUM,   -1,             0,   2,   1,   0,  "Force one if Auto guesses wrong.", "Auto,Touch,Keyboard+Mouse" },
+  { "hold_to_act",       "Hold to mine/build", "Controls",  KIND_TOGGLE, -1,            0,   1,   1,   1,  "Repeat while the button is held.", NULL },
+  { "mouse_sensitivity", "Mouse sensitivity", "Controls",  KIND_RANGE,  -1,          .25f,  3, .05f,  1,  NULL,                         NULL },
+  { "mouse_sensitivity_y", "Mouse sensitivity (Y)", "Controls", KIND_RANGE, -1,      .25f,  3, .05f,  1,  NULL,  NULL },
+  { "invert_look",       "Invert look",       "Controls",  KIND_TOGGLE, -1,             0,   1,   1,   0,  NULL,                                                               NULL },
   // Row #24 (gamepad). Two translators read these now — public/eden-gamepad.js on web and
   // native/src/seam/Input_native.cpp (Phase N Stage 2) on native — both of them pure translators
   // over the existing input entry points. The rows deliberately do
   // not touch the engine (engine >= 0). ON by default because the module is inert until a pad is
   // actually connected AND has been interacted with, so it costs a disconnected player nothing.
-  { "gamepad",           "Gamepad",           "Controls",  KIND_TOGGLE, -1,             0,   1,   1,   1,  "Use a connected controller (standard mapping). Sticks move and look; triggers mine and build.", NULL },
-  { "gamepad_look_sensitivity", "Gamepad look speed", "Controls", KIND_RANGE, -1,     .25f,  3, .05f,  1,  "Right-stick look speed. Composes with mouse sensitivity.",        NULL, "gamepad" },
-  { "gamepad_deadzone",  "Gamepad deadzone",  "Controls",  KIND_RANGE,  -1,          .05f, .5f, .05f, .15f, "Ignore stick movement smaller than this. Raise it if the camera drifts on its own.", NULL, "gamepad" },
+  { "gamepad",           "Gamepad",           "Controls",  KIND_TOGGLE, -1,             0,   1,   1,   1,  "Use a connected controller.", NULL },
+  { "gamepad_look_sensitivity", "Gamepad look speed", "Controls", KIND_RANGE, -1,     .25f,  3, .05f,  1,  NULL,        NULL, "gamepad" },
+  { "gamepad_deadzone",  "Gamepad deadzone",  "Controls",  KIND_RANGE,  -1,          .05f, .5f, .05f, .15f, "Raise it if the camera drifts.", NULL, "gamepad" },
 
   // B.8: a shortcut over view_distance + render_scale (see kPresets[]). Stored like any row, but
   // moving either knob by hand drops it to Custom. Default reproduces the pre-B.8 look exactly.
 #if defined(EDEN_PLATFORM_IOS)
-  { "graphics_preset",   "Graphics preset",   "Video",     KIND_ENUM,   -1,             0,   3,   1,   2,  "Low trades distance and sharpness for speed. Default is the original look. High matches Default on this device for now. Changing a setting below makes it Custom.", "Custom,Low,Default,High" },
+  { "graphics_preset",   "Graphics preset",   "Video",     KIND_ENUM,   -1,             0,   3,   1,   2,  "Low is faster.", "Custom,Low,Default,High" },
 #else
-  { "graphics_preset",   "Graphics preset",   "Video",     KIND_ENUM,   -1,             0,   3,   1,   2,  "Low trades distance and sharpness for speed. Default is the original look. High keeps more of the world loaded so you see further. Changing a setting below makes it Custom.", "Custom,Low,Default,High" },
+  { "graphics_preset",   "Graphics preset",   "Video",     KIND_ENUM,   -1,             0,   3,   1,   2,  "Low is faster; High sees further.", "Custom,Low,Default,High" },
 #endif
-  { "fov",               "Field of view",     "Video",     KIND_RANGE,  -1,            60, 110,   1,  80,  "Vertical FOV in degrees. 80 is the original.",                    NULL },
+  { "fov",               "Field of view",     "Video",     KIND_RANGE,  -1,            60, 110,   1,  80,  "80 is the original.",                    NULL },
   // B.5a: draw-culling only (Graphics::setZFAR); a "less" knob for weak CPUs/GPUs. Auto = the per-device value.
-  { "view_distance",     "View distance",     "Video",     KIND_ENUM,   -1,             0,   6,   1,   0,  "How far you can see, in chunks. Lower is faster. Auto picks by device, and reaches as far as Render distance allows.", "Auto,4,5,6,7,8,9" },
+  { "view_distance",     "View distance",     "Video",     KIND_ENUM,   -1,             0,   6,   1,   0,  "In chunks. Lower is faster.", "Auto,4,5,6,7,8,9" },
   // B.5b-2: the resident window's radius in chunks (kRenderRadius[] below), read once per world
   // entry by eden_window_radius_for_world() -- the arrays are sized from it, so it cannot change
   // under an open world. 9 is stock. iOS offers 10 at most until a device round measures more
   // (render-distance plan §1.4: iPad Air 2 projected ~216 / ~273 MB at R10, 64z / 256z).
 #if defined(EDEN_PLATFORM_IOS)
-  { "render_distance",   "Render distance",   "Video",     KIND_ENUM,   -1,             0,   1,   1,   0,  "Chunks kept loaded around you. More shows more world but uses more memory. Takes effect the next time you open a world.", "9,10" },
+  { "render_distance",   "Render distance",   "Video",     KIND_ENUM,   -1,             0,   1,   1,   0,  "More uses more memory. Applies when a world opens.", "9,10" },
 #else
-  { "render_distance",   "Render distance",   "Video",     KIND_ENUM,   -1,             0,   3,   1,   0,  "Chunks kept loaded around you. More shows more world but uses more memory. Takes effect the next time you open a world.", "9,10,12,16" },
+  { "render_distance",   "Render distance",   "Video",     KIND_ENUM,   -1,             0,   3,   1,   0,  "More uses more memory. Applies when a world opens.", "9,10,12,16" },
 #endif
-  { "display_mode",      "Display",           "Video",     KIND_ENUM,   -1,             0,   2,   1,   0,  "Fixed size, fit the window, or a fullscreen button.",             "Fixed,Fit window,Fullscreen" },
+  { "display_mode",      "Display",           "Video",     KIND_ENUM,   -1,             0,   2,   1,   0,  NULL,             "Fixed,Fit window,Fullscreen" },
   // Audit rows D1 + D4 — the two knobs on the (now derived) engine POINT space. Both default to
   // Auto, which defers to the active device profile (src/seam/DisplayProfile_web.mm's kProfiles[]):
   // desktop gets 125% + Adaptive, touch gets 200% + Classic, i.e. exactly the 568x320 layout this
   // port shipped with. Leaving them on Auto is not the same as picking the profile's value by hand
   // — Auto re-resolves if the input mode changes, an explicit choice does not.
-  { "ui_scale",          "UI scale",          "Video",     KIND_ENUM,   -1,             0,   4,   1,   0,  "Size of the HUD, buttons and menus. Larger percentages mean bigger UI and less of the world on screen.", "Auto,100%,125%,150%,200%" },
-  { "display_layout",    "Layout aspect",     "Video",     KIND_ENUM,   -1,             0,   2,   1,   0,  "Adaptive fits the game's layout to the window shape (wider windows show more world). Classic keeps the original 16:9 phone layout and letterboxes.", "Auto,Classic 16:9,Adaptive" },
+  { "ui_scale",          "UI scale",          "Video",     KIND_ENUM,   -1,             0,   4,   1,   0,  NULL, "Auto,100%,125%,150%,200%" },
+  { "display_layout",    "Layout aspect",     "Video",     KIND_ENUM,   -1,             0,   2,   1,   0,  "Adaptive fits the window; Classic letterboxes.", "Auto,Classic 16:9,Adaptive" },
   // Audit item #6 (§4a/§4c.1-2): the drawable used to be pinned to 1136x640 with devicePixelRatio
   // never read at all, so on any modern display the game was a small buffer upscaled — permanently
   // blurry. These two rows are the knobs on the now-dynamic drawable that public/eden-st.html
@@ -148,19 +148,19 @@ static const Setting kSettings[] = {
   // iOS offers no 125% (N.4.11b): on an iPad Air 2 it took the footprint 372 -> 601 MB, kept 564 MB
   // after going back to 100%, and bought nothing (the device is not fill-bound). max 2 makes
   // eden_settings_set() clamp to 100%; eden_get_render_scale_pct() reads a stored 3 as 100%.
-  { "render_scale",      "Render scale",      "Video",     KIND_ENUM,   -1,             0,   2,   1,   2,  "Internal resolution. Lower is faster and softer; 100% matches the screen.", "50%,75%,100%" },
+  { "render_scale",      "Render scale",      "Video",     KIND_ENUM,   -1,             0,   2,   1,   2,  "Lower is faster and softer.", "50%,75%,100%" },
 #else
-  { "render_scale",      "Render scale",      "Video",     KIND_ENUM,   -1,             0,   3,   1,   2,  "Internal resolution. Lower is faster and softer; 100% matches the window.", "50%,75%,100%,125%" },
+  { "render_scale",      "Render scale",      "Video",     KIND_ENUM,   -1,             0,   3,   1,   2,  "Lower is faster and softer.", "50%,75%,100%,125%" },
 #endif
-  { "dpr_cap",           "Max pixel ratio",   "Video",     KIND_ENUM,   -1,             0,   2,   1,   2,  "Upper limit on the display's pixel density. Lower it if the frame rate suffers.", "1x,1.5x,2x" },
+  { "dpr_cap",           "Max pixel ratio",   "Video",     KIND_ENUM,   -1,             0,   2,   1,   2,  "Lower it if the frame rate suffers.", "1x,1.5x,2x" },
   // Row #14: an opt-in frame-rate ceiling, mainly for thermal/battery on touch devices (a voxel
   // game at an uncapped rAF is a thermal-throttle machine there — perf-audit §4b). Uncapped is the
   // default for everyone; eden_apply_input_profile() below sets it to 60 the first time a touch
   // profile is detected AND the player has never explicitly touched this row.
-  { "fps_cap",           "Frame rate cap",    "Video",     KIND_ENUM,   -1,             0,   3,   1,   0,  "Limit how fast the game renders. Lower saves battery/heat on touch devices.", "Uncapped,30,45,60" },
+  { "fps_cap",           "Frame rate cap",    "Video",     KIND_ENUM,   -1,             0,   3,   1,   0,  "Lower saves battery and heat.", "Uncapped,30,45,60" },
 
-  { "crosshair",         "Crosshair",         "Interface", KIND_TOGGLE, -1,             0,   1,   1,   1,  "Reticle at screen centre while the mouse is locked.",             NULL },
-  { "block_preview",     "Block preview",     "Interface", KIND_TOGGLE, -1,             0,   1,   1,   0,  "Translucent ghost of the block you are about to place. (B)",      NULL },
+  { "crosshair",         "Crosshair",         "Interface", KIND_TOGGLE, -1,             0,   1,   1,   1,  NULL,             NULL },
+  { "block_preview",     "Block preview",     "Interface", KIND_TOGGLE, -1,             0,   1,   1,   0,  "Shows where the next block goes.",      NULL },
   // The escape hatch for the rebuilt DOM UI (public/eden-menu.js + public/eden-pausemenu.js). ON =
   // the original 2010 GL menus, which are still compiled and still running underneath — for the
   // MAIN menu "legacy" is literally "stop drawing the overlay" and there is no second code path to
@@ -169,24 +169,24 @@ static const Setting kSettings[] = {
   // DOM panel no longer covers the whole canvas, so this flag both re-enables that panel and keeps
   // the DOM one closed. Read by eden_menu_active()/eden_legacy_ui_active() (Menu_web.mm), by
   // public/eden-menu.js's own poll, and by public/eden-pausemenu.js's tick().
-  { "legacy_menu",       "Legacy UI",         "Interface", KIND_TOGGLE, -1,             0,   1,   1,   0,  "Use the original 2010 OpenGL menus — both the main menu and the in-game menu — instead of the rebuilt ones.", NULL },
+  { "legacy_menu",       "Legacy UI",         "Interface", KIND_TOGGLE, -1,             0,   1,   1,   0,  "The original 2010 menus.", NULL },
 
   // Experiments: opt-in, off by default (except fly/fps_normalize, which keep their pre-existing
   // defaults now that they've moved tabs — only their group changed, not their behavior).
-  { "fly",               "Fly mode",          "Experiments", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Free flight. Space/Ctrl to rise and fall. (F)",                   NULL },
-  { "fps_normalize",     "Frame-rate normalize", "Experiments", KIND_TOGGLE, -1,        0,   1,   1,   1,  "Keep walk speed the same at any refresh rate (PC audit F1).",     NULL },
-  { "advanced_movement", "Advanced movement (bhop)", "Experiments", KIND_TOGGLE, -1,     0,   1,   1,   0,  "Opt-in: zero-delay bunny-hop and wheel-jump. Off by default.",    NULL },
-  { "crouch",            "Crouch mode",       "Experiments", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Adds a crouch key/button (halves hitbox height for 1-block gaps). Off by default.", NULL },
+  { "fly",               "Fly mode",          "Experiments", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Space and Ctrl to rise and fall.",                   NULL },
+  { "fps_normalize",     "Frame-rate normalize", "Experiments", KIND_TOGGLE, -1,        0,   1,   1,   1,  "Same walk speed at any refresh rate.",     NULL },
+  { "advanced_movement", "Advanced movement (bhop)", "Experiments", KIND_TOGGLE, -1,     0,   1,   1,   0,  "Zero-delay bunny-hop and wheel-jump.",    NULL },
+  { "crouch",            "Crouch mode",       "Experiments", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Adds a crouch key for 1-block gaps.", NULL },
 
-  { "save_backup",       "Keep a save backup", "Saves",      KIND_TOGGLE, -1,           0,   1,   1,   1,  "Keep a '.bak' copy of a world's previous save so a corrupted or interrupted save can be recovered. Roughly doubles the disk write per save below the in-place threshold. On by default -- this is what a corrupted-load recovery prompt offers to restore.", NULL },
+  { "save_backup",       "Keep a save backup", "Saves",      KIND_TOGGLE, -1,           0,   1,   1,   1,  "Keep the previous save as a .bak.", NULL },
   // B.5b-1b (2026-10-12): the periodic save that replaced the walk reload's. Off leaves saving to
   // the ring's evict-saves (a modified column leaving the window -- never optional, or the edit is
   // lost), warp, exit, the Save button and app background. Read as g_autosave_seconds (FileManager.h).
-  { "autosave",          "Autosave",          "Saves",       KIND_ENUM,   -1,           0,   3,   1,   1,  "Save edits on a timer while you play, without stopping fire or water. Only runs when something changed, and only the changed chunks are written. Off still saves on exit, warp, the Save button and when a changed area scrolls out of view.", "Off,1 min,2 min,5 min" },
+  { "autosave",          "Autosave",          "Saves",       KIND_ENUM,   -1,           0,   3,   1,   1,  "Off still saves on exit and warp.", "Off,1 min,2 min,5 min" },
   // Stage S / S.5e (the user, 2026-10-10): every `.emod` is 256z by default. Read through
   // eden_get_upgrade_256z() by FileManager's convert-on-play, native Get Worlds and the web Storage
   // tab's import; the convert prompt's "Keep 64z" overrides it for one world.
-  { "upgrade_256z",      "Upgrade 64z worlds to 256z when converting", "Saves", KIND_TOGGLE, -1, 0, 1, 1, 1, "A Classic 64-tall world becomes a New Dawn 256-tall one when it is converted to .emod: the same blocks, with room to build up to y 255. Costs about 46 MB more memory while it is open on an iPad; disk is about the same. Off keeps every world its own height.", NULL },
+  { "upgrade_256z",      "Upgrade 64z worlds to 256z when converting", "Saves", KIND_TOGGLE, -1, 0, 1, 1, 1, "Room to build up to y 255. Uses more memory.", NULL },
 };
 static const int kSettingCount = (int)(sizeof(kSettings) / sizeof(kSettings[0]));
 

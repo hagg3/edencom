@@ -147,6 +147,17 @@ void KeybindsMenu::clearPressed() {
     m_pressed = -1;
 }
 
+bool KeybindsMenu::keyRect(int mi, CGRect* r) {
+    for (int k = 0; k < (int)m_items.size(); ++k) {
+        if (m_items[k].mi != mi) continue;
+        m_scroll.ensureVisible(k);
+        layout(m_content, m_scroll.barRect());
+        if (r) *r = m_key[k].rect();
+        return true;
+    }
+    return false;
+}
+
 bool KeybindsMenu::capturing() const { return eden_keybind_capture_active() >= 0; }
 
 void KeybindsMenu::cancelCapture() { eden_keybind_capture_cancel(); }
@@ -184,7 +195,7 @@ void KeybindsMenu::renderCapture(CGRect panel) {
     using namespace GLW;
     if (!capturing()) return;
     fill(CGRectMake(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT), kScrim);
-    const float bh = du(56), bw = std::min(panel.size.width - du(40), du(480));
+    const float bh = du(56), bw = std::min<float>(panel.size.width - du(40), du(480));
     const CGRect box = CGRectMake(panel.origin.x + (panel.size.width - bw) * 0.5f, (SCREEN_HEIGHT - bh) * 0.5f, bw, bh);
     bevel(box, BEVEL_WINDOW);
     m_capture.drawCentered(box.origin.x + box.size.width * 0.5f,

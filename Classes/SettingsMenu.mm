@@ -636,6 +636,11 @@ void SettingsMenu::showTab(int t){
     layout();
 }
 
+bool SettingsMenu::keyRect(int keybind,CGRect* r){
+    showKeybinds();
+    return m_keys&&m_keys->keyRect(keybind,r);
+}
+
 bool SettingsMenu::showRow(const char* key,CGRect* control){
     build();
     if(!key) return false;

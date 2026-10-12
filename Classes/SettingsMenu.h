@@ -57,6 +57,8 @@ public:
     // U.3: Escape. Cancels an armed key capture, else closes the whole screen (as Back does).
     void back();
     CGRect backRect() const { return m_back.rect(); }   // --ui-selftest: the titlebar's Back
+    CGRect defaultsRect() const { return m_defaults.rect(); }   // the Keys tab's Defaults
+    bool keyRect(int keybind, CGRect* r);              // Keys tab: that action's key button
     // Harness entry points: --shot captures every tab, and --ui-selftest asks where a row's control
     // is (showRow switches to that row's tab, scrolls it into view and returns the toggle / slider /
     // stepper rect in point space) instead of hard-coding a layout. The Keys tab has no settings

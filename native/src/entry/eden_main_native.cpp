@@ -426,6 +426,7 @@ struct Options {
     int  walkLegs = 0;
     int  lightLattice = 0;               // --light-lattice=STEP: --stage1 prepares the ring-light gate's world (B.5b-1c)
     int  renderScalePct = 0;             // --render-scale=50|75|100|125: 0 leaves the setting alone
+    std::vector<std::pair<std::string,float>> sets;   // --set=KEY=VALUE (repeatable): a settings write once loaded (P.2a)
     int  passFrames = 600;               // --pass-probe=N: timed frames per pose (P.1b)
     bool passTimers = false;             // --pass-timers: --stage1 --walk also prints `walk.passes`
     bool passFinish = false;             // --pass-finish: glFinish at every pass boundary (upper bound per pass)
@@ -479,6 +480,7 @@ bool g_tickInput = false;
 // the World is built by the app delegate but the menu's SettingsMenu is not reachable on the
 // first frame, and a single early call is a silent no-op that leaves every port-owned setting at
 // its file-scope initialiser instead of its declared default.
+int  set_setting_by_key(const char* key, float v);   // --set, defined beside run_preset_probe()
 bool set_render_scale_pct(int pct);   // --render-scale, defined beside run_scale_probe()
 extern "C" int g_eden_mem_trace;           // HeapProbe_native.cpp, --mem-trace (N.4.9)
 extern "C" void eden_mem_trace_install(void);   // HeapProbe_native.cpp, --mem-trace=2
@@ -494,6 +496,13 @@ void settings_pump() {
     if (!scaleApplied && g_opt.renderScalePct > 0 && eden_settings_loaded()) {
         scaleApplied = true;
         set_render_scale_pct(g_opt.renderScalePct);
+    }
+    static bool setsApplied = false;
+    if (!setsApplied && !g_opt.sets.empty() && eden_settings_loaded()) {
+        setsApplied = true;
+        for (auto& kv : g_opt.sets)
+            if (!set_setting_by_key(kv.first.c_str(), kv.second))
+                std::fprintf(stderr, "[eden] --set: no setting %s\n", kv.first.c_str());
     }
 }
 
@@ -1175,7 +1184,7 @@ int run_shot() {
     capture("settings");
     // U.3: every tab, so a row whose control does not fit is visible without a human clicking
     // through the rail. -settings.bmp stays the first tab (Gameplay; its name predates tabs), then
-    // -settings-<tab> for the rest, Keys included (the rail with that tile selected).
+    // -settings-<tab> for the rest, Keys included (since U.4 that is the keybinds list).
     if (World::getWorld && World::getWorld->menu && World::getWorld->menu->settings) {
         SettingsMenu* sm = World::getWorld->menu->settings;
         for (int t = 1; t < sm->tabCount(); ++t) {
@@ -1188,15 +1197,7 @@ int run_shot() {
         sm->resetView();
     }
 
-    // Stage 5.3's keybinds screen, reached the way the Keys button reaches it. Shown through
-    // SettingsMenu::showKeybinds() rather than by hit-testing that button: where the button sits
-    // is not what this artefact is for, and a layout change to the settings screen should not be
-    // able to silently stop capturing the keybinds one.
-    if (World::getWorld && World::getWorld->menu && World::getWorld->menu->settings) {
-        World::getWorld->menu->settings->showKeybinds();
-        tick(30);
-        capture("keybinds");
-    }
+    // Stage 5.3's -keybinds shot is gone with U.4: the list is the Keys tab, -settings-keys above.
 
     eden_settings_menu_close();
     tick(15);
@@ -4899,6 +4900,34 @@ int run_ui_selftest() {
         check(sm->tabCount() == 7 && rows == shown && sm->tabRowCount(3) == 0,
               "settings has 7 tabs and every native row is on one", detail);
     }
+    {   // U.4: the Keys tab. A key button arms a capture, any tap cancels it, Defaults resets.
+        // Every binding is saved first and put back after: Defaults resets them ALL.
+        std::vector<int> saved;
+        for (int i = 0; i < eden_keybind_count(); ++i) saved.push_back(eden_keybind_get(i));
+        const int mi = eden_keybind_index("blockPicker");
+        CGRect kr;
+        int armed = -1, cancelled = -1, rebound = 0, restored = 0;
+        const bool found = mi >= 0 && sm->keyRect(mi, &kr);
+        if (found) {
+            tick(2);
+            ui_tap_rect(kr);
+            armed = eden_keybind_capture_active();
+            ui_tap_rect(kr);
+            cancelled = eden_keybind_capture_active();
+            eden_keybind_set(mi, (int)SDL_SCANCODE_T);
+            rebound = eden_keybind_get(mi);
+            ui_tap_rect(sm->defaultsRect());
+            restored = eden_keybind_get(mi);
+        }
+        std::snprintf(detail, sizeof(detail), "found=%d armed=%d cancelled=%d rebound=%d restored=%d (default %d)",
+                      (int)found, armed, cancelled, rebound, restored, found ? eden_keybind_default(mi) : -1);
+        check(found && armed == mi && cancelled < 0 && rebound == (int)SDL_SCANCODE_T &&
+              restored == eden_keybind_default(mi),
+              "Keys tab: a key button arms a capture, a tap cancels, Defaults resets", detail);
+        for (int i = 0; i < (int)saved.size(); ++i) eden_keybind_set(i, saved[i]);
+        sm->resetView();
+        tick(2);
+    }
 
     const int iHealth = settings_index("health");
     const int iVol    = settings_index("music_volume");
@@ -5094,21 +5123,27 @@ int run_ui_selftest() {
         std::snprintf(detail, sizeof(detail), "showsettings=%d in_menu=%d", (int)menu->showsettings,
                       eden_hud_in_menu());
         check(!menu->showsettings && eden_hud_in_menu() == 1, "Settings' Back returns to the pause menu", detail);
-        // U.3: Escape over in-game Settings is its Back (it used to be swallowed), and over the
-        // keybinds child it returns to Settings first.
+        // U.3: Escape over in-game Settings is its Back (it used to be swallowed). U.4: on the Keys
+        // tab with a capture armed, the first Escape only cancels the capture.
         ui_tap(rs.origin.x + rs.size.width * 0.5f, rs.origin.y + rs.size.height * 0.5f);
         tick(5);
-        menu->settings->showKeybinds();
+        const int miPick = eden_keybind_index("blockPicker");
+        const int pick0 = eden_keybind_get(miPick);
+        CGRect kr;
+        if (menu->settings->keyRect(miPick, &kr)) ui_tap_rect(kr);
         tick(2);
+        const int armed = eden_keybind_capture_active();
         push_tap_key(SDL_SCANCODE_ESCAPE);
         tick(5);
-        const bool stillSettings = menu->showsettings;
+        const bool stillSettings = menu->showsettings && eden_keybind_capture_active() < 0 &&
+                                   eden_keybind_get(miPick) == pick0;
         push_tap_key(SDL_SCANCODE_ESCAPE);
         tick(5);
-        std::snprintf(detail, sizeof(detail), "after 1st Esc showsettings=%d; after 2nd showsettings=%d in_menu=%d",
-                      (int)stillSettings, (int)menu->showsettings, eden_hud_in_menu());
-        check(stillSettings && !menu->showsettings && eden_hud_in_menu() == 1,
-              "Escape steps back Keys -> Settings -> the pause menu", detail);
+        std::snprintf(detail, sizeof(detail), "armed=%d; after 1st Esc settings+uncaptured=%d; after 2nd "
+                      "showsettings=%d in_menu=%d", armed, (int)stillSettings, (int)menu->showsettings,
+                      eden_hud_in_menu());
+        check(armed == miPick && stillSettings && !menu->showsettings && eden_hud_in_menu() == 1,
+              "Escape steps back capture -> Settings -> the pause menu", detail);
         const Button rr = hud->rresume;
         ui_tap(rr.origin.x + rr.size.width * 0.5f, rr.origin.y + rr.size.height * 0.5f);
         tick(5);
@@ -6577,6 +6612,8 @@ static int parse_one_arg(const char* a) {
         else if (!std::strcmp(a, "--pass-probe"))     g_opt.mode = "pass-probe";
         else if (starts_with(a, "--pass-probe="))     { g_opt.mode = "pass-probe"; g_opt.passFrames = std::max(10, atoi(a + 13)); }
         else if (!std::strcmp(a, "--pass-timers"))    g_opt.passTimers = true;
+        else if (starts_with(a, "--set=") && std::strchr(a + 6, '='))
+            { std::string kv = a + 6; size_t e = kv.find('='); g_opt.sets.push_back({kv.substr(0, e), (float)atof(kv.c_str() + e + 1)}); }
         else if (!std::strcmp(a, "--pass-finish"))    g_opt.passFinish = true;
         else if (!std::strcmp(a, "--pass-vsync"))     g_opt.passVsync = true;
         else if (!std::strcmp(a, "--shot"))           g_opt.mode = "shot";

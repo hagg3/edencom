@@ -50,6 +50,8 @@ public:
     void poll();                       // a capture that resolved since last frame -> refresh()
 
     bool capturing() const;
+    // --ui-selftest: scroll model row `mi` into view and return its key button's rect.
+    bool keyRect(int mi, CGRect* r);
     void cancelCapture();
 
     void render();                     // rows + scrollbar; the caller has set up the GL state
