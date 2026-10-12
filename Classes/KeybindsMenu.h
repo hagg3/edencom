@@ -2,84 +2,81 @@
 //  KeybindsMenu.h
 //  Eden
 //
-//  The GL keybinds screen (Phase N Stage 5.3,
-//  WORKING/phase-n-stage3plus-plan-2026-09-05.md). A paginated list of every rebindable action
-//  with its current key, drawn with the Stage 5.1 widget kit (Classes/GLWidgets.h) and reading
-//  the Stage 5.2 keybind model (the KEYBINDS section of web/src/seam/Settings_web.mm, a SHARED
-//  seam file — so this screen and the web build's Keys tab are two front-ends over one table).
+//  The GL keybinds list (Phase N Stage 5.3, WORKING/phase-n-stage3plus-plan-2026-09-05.md): every
+//  rebindable action with its current key, drawn with the widget kit (Classes/GLWidgets.h) and
+//  reading the Stage 5.2 keybind model (the KEYBINDS section of web/src/seam/Settings_web.mm, a
+//  SHARED seam file — so this list and the web build's Keys tab are two front-ends over one table).
 //
-//  WHERE IT LIVES IN THE SCREEN GRAPH, and why it is not a sibling of SettingsMenu. It is owned
-//  and driven by SettingsMenu: its "Keys" button shows this, and SettingsMenu::update/render
-//  delegate to it wholesale while it is up. That is one entry point instead of a new Menu state,
-//  and it buys the thing Stage 5's plan flags as the stage's main risk for free — web `--wrap`s
-//  SettingsMenu::update/render to no-ops (EDEN_LD_WRAP, Settings_web.mm), so a screen reachable
-//  only from inside them cannot draw or eat input on web no matter what it does.
+//  U.4 (WORKING/ui-rework-plan-2026-10-11.md): it is no longer a screen. It is the CONTENT of
+//  SettingsMenu's Keys tab — SettingsMenu owns the panel, the titlebar (Back, title, Defaults), the
+//  rail, the touch claim and the scroll gestures, and hands this the content rect, the scrollbar
+//  rect and the touches that land on a row. What lives here is only what is keybind-shaped: the
+//  rows (group headings + TwoLineRows of action · "also X" · key button), the capture modal, and
+//  refreshing button text when a capture resolves. Web --wrap's SettingsMenu::update/render to
+//  no-ops (EDEN_LD_WRAP, Settings_web.mm), so this cannot draw or eat input on web.
 //
 //  CAPTURE. Tapping a row's key button arms the model's one capture slot
 //  (eden_keybind_capture_begin); the next key the platform input layer sees is fed to
-//  eden_keybind_capture_feed instead of being played. Escape cancels. See that function for why
-//  arming lives in the model rather than here.
+//  eden_keybind_capture_feed instead of being played. Escape cancels (the model consumes it, so it
+//  never reaches the menu key). See that function for why arming lives in the model.
 //
 #ifndef Eden_KeybindsMenu_h
 #define Eden_KeybindsMenu_h
 
 #import "GLWidgets.h"
-#import "Input.h"
+#include <string>
 #include <vector>
 
-// Slots per page are fitted to the screen (fit(), 2026-10-05 — the same density rule as
-// SettingsMenu); this is only the array capacity. A slot is a row or a group heading.
-#define KB_ROWS_PER_PAGE 16
+// Array capacity for items (rows + group headings). The model has 26 rows in 4 groups today.
+#define KB_MAX_ITEMS 40
 
 class KeybindsMenu {
 public:
     KeybindsMenu();
     ~KeybindsMenu();
 
-    bool active() const { return m_active; }
-    void show();
-    void hide();
+    // Every label, once (on entering the tab, or a u() change) — a label is a texture upload.
+    void build();
+    void refresh();                    // every key button's text from the model (Defaults, capture)
+    // Per frame: row heights into the scroll view, rows placed from its first() row.
+    void layout(CGRect content, CGRect bar);
+    GLW::ScrollView& scroll()          { return m_scroll; }
 
-    void update(float etime);
-    void render();
+    // Input, under SettingsMenu's touch claim. down() presses the key button under the point and
+    // says whether it took the touch; up() arms a capture if the release is on that button.
+    bool down(float mx, float my);
+    void up(float mx, float my);
+    void clearPressed();
+    void poll();                       // a capture that resolved since last frame -> refresh()
+
+    bool capturing() const;
+    void cancelCapture();
+
+    void render();                     // rows + scrollbar; the caller has set up the GL state
+    void renderCapture(CGRect panel);  // the "Press a key" modal, over the whole screen
 
 private:
-    // One slot on a page: a group heading (vi < 0, group = its m_vis index) or a row (vi = index
-    // into m_vis).
-    struct Item { int vi; int head; };
-
-    void fit();                    // pitch + slots per page from SCREEN_*; re-pages on change
-    void build();                  // resolve the visible rows into pages, once per fit
-    void layout();                 // recompute rects from SCREEN_* (cheap, per frame)
-    void refreshKeyLabel(int k);   // slot k of the current page -> its labels + button text
+    // A row (mi = model index) or a group heading (mi < 0, `group` names it).
+    struct Item { int mi; const char* group; };
 
     KeybindsMenu(const KeybindsMenu&);
     KeybindsMenu& operator=(const KeybindsMenu&);
+    bool shown(int k) const;
+    float headingHeight() const;
 
-    bool  m_active;
+    std::vector<Item> m_items;
     bool  m_built;
-    int   m_page;
-    int   m_touchSlot;
-    int   m_slots;                 // fit()'s slots per page
-    int   m_maxPageLen;
-    float m_pitch, m_btnH;
+    bool  m_wasCapturing;
+    float m_builtU;
+    int   m_pressed;                   // item whose key button is held, -1 none
 
-    std::vector<int> m_vis;        // model row indices this build shows, in order
-    std::vector<std::vector<Item> > m_pages;
-
-    GLW::Label  m_title;
-    GLW::Label  m_rowLabel[KB_ROWS_PER_PAGE];   // a row's action, or a heading's group name
-    GLW::Label  m_secLabel[KB_ROWS_PER_PAGE];   // the fixed secondary binding, or empty
-    GLW::Label  m_capture;         // the "Press a key..." overlay text
-    GLW::Button m_key[KB_ROWS_PER_PAGE];
-    GLW::Button m_back, m_reset, m_prev, m_next;
-    GLW::Label  m_pageLabel;
-
-    CGRect m_panel;
-    CGRect m_content;              // the column the rows live in
-    CGRect m_slot[KB_ROWS_PER_PAGE];
-    float  m_titleY;
-    int    m_laidOutPage;          // which page the labels/buttons were last built for
+    GLW::TwoLineRow m_row[KB_MAX_ITEMS];
+    GLW::Label      m_head[KB_MAX_ITEMS];
+    GLW::Button     m_key[KB_MAX_ITEMS];
+    std::vector<std::string> m_hint;   // "also Up", or empty
+    GLW::Label      m_capture;
+    GLW::ScrollView m_scroll;
+    CGRect m_content;
 };
 
 #endif

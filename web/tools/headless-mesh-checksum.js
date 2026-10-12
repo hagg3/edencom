@@ -24,7 +24,10 @@
 // EDEN_DIAGNOSTICS-only): build-st works, and so does a Release+diagnostics tree.
 //
 // Usage:
-//   node tools/headless-mesh-checksum.js [path/to/eden.js] [--at=X,Y,Z] [--settle-ms=N] [--height=64|256]
+//   node tools/headless-mesh-checksum.js [path/to/eden.js] [--at=X,Y,Z] [--settle-ms=N] [--height=64|256] [--radius=N]
+//
+// `--radius=N` (B.5b-2) runs at window radius N through EDEN_WINDOW_RADIUS, the same override the native
+// harness's --radius sets; it also prints `mem` (eden_debug_heap) for the per-radius heap ceiling.
 //   node tools/headless-mesh-checksum.js [path/to/eden.js] --import=<file.eden>
 //
 // `--import` is criterion 4's cross-target half: instead of creating a world, it injects an
@@ -58,11 +61,17 @@ const SETTLE_MS = Number(flag('settle-ms', 8000));
 const HEIGHT = Number(flag('height', 64));
 const IMPORT = flag('import', null);
 const EXPORT = flag('export', null);
+const RADIUS = flag('radius', null);
 
 global.require = require;
 global.__dirname = edenDir;
 global.__filename = edenJsPath;
 global.Module = { print: () => {}, printErr: () => {} };
+
+if (RADIUS) {   // getenv() reads Emscripten's ENV, which preRun may still write
+    global.Module.preRun = global.Module.preRun || [];
+    global.Module.preRun.push(() => { global.ENV.EDEN_WINDOW_RADIUS = String(RADIUS); });
+}
 
 // The world file has to be in /documents BEFORE main() runs, because Menu::loadWorlds scans that
 // directory once during World construction — the same reason public/eden-storage.js does its
@@ -180,6 +189,7 @@ global.Module.postRun.push(async () => {
     console.log(`geometry  ${geometry}`);
     console.log(`checksum  ${checksum}`);
     console.log(`format    ${format}`);
+    if (global.Module._eden_debug_heap) console.log(`mem       ${utf8(global.Module._eden_debug_heap())}`);
 
     // Not an assertion: there is nothing checked-in to compare against, because the reference is
     // the OTHER TARGET's run. Print in the same shape the native harness prints so a diff is

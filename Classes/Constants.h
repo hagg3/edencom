@@ -39,10 +39,26 @@
 #define CHUNK_SIZE2 (CHUNK_SIZE*CHUNK_SIZE)
 #define CHUNK_SIZE3 (CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE)
 #define NOISE_CONSTANT ((128/CHUNK_SIZE)*CHUNK_SIZE)
-#define T_SIZE ((int)( ((300/CHUNK_SIZE)*CHUNK_SIZE)))
-#define T_RADIUS (T_SIZE/CHUNK_SIZE/2)
 #define T_SEALEVEL 2
-#define CHUNKS_PER_SIDE (T_SIZE/CHUNK_SIZE)
+
+// ---- resident window: RUNTIME, per world (B.5b-2, 2026-10-12) ----
+// T_SIZE/T_RADIUS/CHUNKS_PER_SIDE were the compile-time 288/9/18 (stock wrote T_SIZE as
+// ((300/CHUNK_SIZE)*CHUNK_SIZE)). They are now macros over globals set by eden_set_window_radius()
+// BEFORE Terrain::allocateMemory(), exactly like the world height below and under its three rules:
+// a fixed-size declaration uses the *_MAX forms; set before allocate (World::loadWorld does both);
+// and nothing on disk depends on it (WORKING/render-distance-runtime-plan-2026-10-11.md §1.2 --
+// GSIZE, the bundled map's side, has been the literal 2880 since B.5g). The window is 2R chunks a
+// side, corner-centred (Terrain.h windowOriginChunk), and its outer ring is data-only, so the
+// meshed radius is (R-1)*16-8 blocks at worst (eden_meshed_radius_blocks()).
+// The default IS the old constant, so anything that never calls the setter behaves as before.
+#define T_RADIUS_DEFAULT 9
+#define T_RADIUS_MIN 4
+#define T_RADIUS_MAX 16
+#define CHUNKS_PER_SIDE_MAX (T_RADIUS_MAX*2)
+#define T_SIZE_MAX (CHUNKS_PER_SIDE_MAX*CHUNK_SIZE)
+#define T_SIZE (g_t_size)
+#define T_RADIUS (g_window_radius)
+#define CHUNKS_PER_SIDE (g_chunks_per_side)
 
 // ---- world height: RUNTIME, per world (256z "New Dawn" support, 2026-08-06) ----
 // T_HEIGHT/T_BLOCKS/CHUNKS_PER_COLUMN/MAX_CREATURES_SAVED were compile-time constants
@@ -76,6 +92,11 @@ extern int g_column_bytes;        // on-disk column record: 32768 or 131072
 extern int g_max_creatures_saved; // creature slots in the save file, DERIVED from the file
 void eden_set_world_height(int height);
 void eden_set_creature_slots(int slots);
+extern int g_window_radius;       // T_RADIUS: 9 by default, T_RADIUS_MIN..T_RADIUS_MAX
+extern int g_chunks_per_side;     // CHUNKS_PER_SIDE = 2*g_window_radius
+extern int g_t_size;              // T_SIZE = g_chunks_per_side*CHUNK_SIZE (288 by default)
+void eden_set_window_radius(int radius);
+int eden_meshed_radius_blocks(void);   // (T_RADIUS-1)*CHUNK_SIZE-CHUNK_SIZE/2: 120 at R9
 
 // ---- save strategy: the size at which the whole-file copy stops (256z Stage 3, B5) ----
 // Every save used to run on a scratch whole-file COPY of the world (copyItemAtPath: -> .savetmp),

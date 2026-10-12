@@ -31,8 +31,13 @@ int g_offcx,g_offcz;
 // (that includes the offline TerrainGen2 bake, which is 64z by construction).
 int g_world_height=T_HEIGHT_DEFAULT;
 int g_chunks_per_column=T_HEIGHT_DEFAULT/CHUNK_SIZE;
-int g_xz_stride=T_SIZE*T_HEIGHT_DEFAULT;
-int g_t_blocks=T_SIZE*T_SIZE*T_HEIGHT_DEFAULT;
+// B.5b-2: the resident window, runtime too (Constants.h). Literal defaults, not T_SIZE, so no
+// initialiser below depends on another global's dynamic initialisation order.
+int g_window_radius=T_RADIUS_DEFAULT;
+int g_chunks_per_side=T_RADIUS_DEFAULT*2;
+int g_t_size=T_RADIUS_DEFAULT*2*CHUNK_SIZE;
+int g_xz_stride=T_RADIUS_DEFAULT*2*CHUNK_SIZE*T_HEIGHT_DEFAULT;
+int g_t_blocks=T_RADIUS_DEFAULT*2*CHUNK_SIZE*T_RADIUS_DEFAULT*2*CHUNK_SIZE*T_HEIGHT_DEFAULT;
 int g_column_bytes=CHUNK_SIZE3*(T_HEIGHT_DEFAULT/CHUNK_SIZE)*2;
 int g_max_creatures_saved=200;
 void eden_set_world_height(int height){
@@ -47,6 +52,25 @@ void eden_set_world_height(int height){
     g_column_bytes=CHUNK_SIZE3*g_chunks_per_column*2;
     printf("world height set to %d (%d bands, %d B per column record)\n",
            g_world_height,g_chunks_per_column,g_column_bytes);
+}
+// B.5b-2. Same contract as the height: once per world entry, before Terrain::allocateMemory(), and
+// never while a window is allocated (every per-world array, the light bricks and the toroidal
+// offsets are sized or aligned from it). g_offcx/g_offcz only keep `(x+g_offcx)%T_SIZE` positive,
+// so they must stay a multiple of T_SIZE -- the Terrain constructor set them once, for 288.
+void eden_set_window_radius(int radius){
+    if(radius<T_RADIUS_MIN)radius=T_RADIUS_MIN;
+    if(radius>T_RADIUS_MAX)radius=T_RADIUS_MAX;
+    g_window_radius=radius;
+    g_chunks_per_side=radius*2;
+    g_t_size=g_chunks_per_side*CHUNK_SIZE;
+    g_xz_stride=g_t_size*g_world_height;
+    g_t_blocks=g_t_size*g_t_size*g_world_height;
+    g_offcx=g_offcz=g_t_size*100;
+    printf("window radius set to %d (%d x %d blocks, %d columns)\n",
+           radius,g_t_size,g_t_size,g_chunks_per_side*g_chunks_per_side);
+}
+int eden_meshed_radius_blocks(void){
+    return (g_window_radius-1)*CHUNK_SIZE-CHUNK_SIZE/2;
 }
 // The creature block is sized from the FILE, not from its version: the sibling world editor
 // writes v5 saves with no creature block at all, and the one measured New Dawn specimen has

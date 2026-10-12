@@ -97,6 +97,7 @@ sequenceDiagram
 
 1. **A sliding toroidal window over an "infinite" world.**
    Only an 18×18-chunk-column area (288×288×64 blocks) around the player is resident.
+   *(Port: the height and, since B.5b-2, the window radius are runtime — up to 32×32 columns.)*
    World coordinates are absolute (the default world centre is at chunk 4096, block
    ~65,536); resident storage (`blockarray`, `chunkTable`) is indexed **modulo** the
    window size, so walking simply overwrites the far edge of the arrays with newly

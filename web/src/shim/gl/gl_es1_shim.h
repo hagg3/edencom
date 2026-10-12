@@ -280,11 +280,17 @@ void eden_scene_pass_end(void);
 //                                568x320 point space; clamps to a GL-safe maximum dimension.
 //   eden_gl_stat(which)        — per-frame draw-path call accounting for the dirty-tracking
 //                                caches: 0=draws, 1=setup calls issued, 2=elided by the caches,
-//                                3=issued+elided. Last completed frame.
+//                                3=issued+elided, 4=vertices (glDrawArrays count + glDrawElements
+//                                index count). Last completed frame.
+//   eden_gl_stat_live(which)   — the same counters for the frame IN PROGRESS, so a caller can
+//                                difference them around a pass (P.1b, Classes/PassTimers.h).
+//   eden_gl_finish()           — glFinish() if a context is live; P.1b's opt-in per-pass mode.
 // ---------------------------------------------------------------------------------------
 int  eden_gl_context_is_lost(void);
 void eden_set_drawable_size(int width, int height);
 int  eden_gl_stat(int which);
+long eden_gl_stat_live(int which);
+void eden_gl_finish(void);
 // Rotates eden_gl_stat()'s counters. Call once per frame, before the engine renders — glClear is
 // not a usable boundary here (prepareScene does not clear the colour buffer).
 void eden_gl_stats_frame_boundary(void);

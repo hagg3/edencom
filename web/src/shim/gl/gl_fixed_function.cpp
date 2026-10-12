@@ -666,6 +666,7 @@ struct DrawStats {
     long draws  = 0;
     long issued = 0;
     long elided = 0;
+    long verts  = 0;   // P.1b: glDrawArrays counts + glDrawElements index counts
 };
 DrawStats g_stats;      // accumulating, current frame
 DrawStats g_statsLast;  // last completed frame, what eden_gl_stat() reports
@@ -696,8 +697,30 @@ int eden_gl_stat(int which) {
         case 1: return (int)g_statsLast.issued;
         case 2: return (int)g_statsLast.elided;
         case 3: return (int)(g_statsLast.issued + g_statsLast.elided);
+        case 4: return (int)g_statsLast.verts;
         default: return 0;
     }
+}
+
+// P.1b: the same counters for the frame still being drawn, so Classes/PassTimers.h can difference
+// them around a pass. Plain reads of the accumulators above; nothing is reset.
+extern "C" EDEN_GL_EXPORT
+long eden_gl_stat_live(int which) {
+    switch (which) {
+        case 0: return g_stats.draws;
+        case 1: return g_stats.issued;
+        case 2: return g_stats.elided;
+        case 3: return g_stats.issued + g_stats.elided;
+        case 4: return g_stats.verts;
+        default: return 0;
+    }
+}
+
+// P.1b's opt-in glFinish-per-pass mode (an upper bound on a pass's GPU time). Never called unless
+// a harness asked for it.
+extern "C" EDEN_GL_EXPORT
+void eden_gl_finish(void) {
+    if (eden_gl_have_context()) glFinish();
 }
 
 // ---- P2 debug instrumentation (single-threaded browser bring-up) ------------------------
@@ -1883,6 +1906,7 @@ void eden_gl_glDrawArrays(GLenum mode, GLint first, GLsizei count) {
     if (!eden_gl_have_context()) { eden_gl_warn_once(); return; }
     if (count <= 0) return;
     g_stats.draws++;
+    g_stats.verts += count;
     // Skinned glDrawArrays does not occur today (Classes/Model.mm draws indexed only), but the
     // branch is here rather than in glDrawElements alone so the two paths cannot disagree about
     // which program a given GL state means.
@@ -1912,6 +1936,7 @@ void eden_gl_glDrawElements(GLenum mode, GLsizei count, GLenum type, const void*
     if (!eden_gl_have_context()) { eden_gl_warn_once(); return; }
     if (count <= 0) return;
     g_stats.draws++;
+    g_stats.verts += count;
     const bool skinned = eden_gl_skinning_active();
     if (skinned) {
         if (!eden_gl_ensure_skin_program()) return;

@@ -18,7 +18,10 @@
 //  drawing layer, Label (with word wrap), Button, and since Stage 5.4 / N.4.5 Toggle, Slider,
 //  Stepper (which is also the Cycler) and TextField, and since Stage 5.6 ListRow and a
 //  row-snapped ScrollView, and since Stage 5.9 a horizontal TabRail and progressBar() (the world
-//  browser's). A new control lands HERE, not in a screen.
+//  browser's). A new control lands HERE, not in a screen. Stage U.1 (WORKING/ui-rework-plan-
+//  2026-10-11.md) added the vertical IconRail, tinted atlas icons (icon()), the 104x34u Toggle with
+//  a muted state, Button::sizeToFit + a leading icon, variable row heights in ScrollView, and
+//  TwoLineRow; `--shot`'s `kit` page draws every one of them in every state.
 //
 //  COORDINATE SPACE. Everything below is in POINT space with y UP, the space Button/CGRect and
 //  Input's touch coordinates already use. GLW::fill()/bevel() apply the SCALE_* multiply that
@@ -29,6 +32,7 @@
 #define Eden_GLWidgets_h
 
 #import "Texture2D.h"
+#include "UIIcons.h"
 #include <string>
 #include <vector>
 
@@ -57,6 +61,7 @@ extern const Color kWindowKeyline; // --eden-gray-700
 extern const Color kText;          // --eden-text
 extern const Color kTextSecondary; // --eden-text-secondary
 extern const Color kTextPressed;   // --eden-text-pressed
+extern const Color kTextMuted;     // --eden-text-muted (U.1: a muted row, a disabled rail tile)
 extern const Color kWhite;
 extern const Color kBlack;
 
@@ -68,6 +73,13 @@ void fill(float x, float y, float w, float h, Color c);
 // OUTSIDE it (down-right in screen terms, i.e. -y here), as CSS box-shadow does.
 enum BevelStyle { BEVEL_RAISED, BEVEL_SUNKEN, BEVEL_PRESSED, BEVEL_WINDOW, BEVEL_CONTENT };
 void bevel(CGRect r, BevelStyle style);
+
+// --- icons (U.1) ---------------------------------------------------------------------------
+// One cell of media/ui/ui_icons.png (web/tools/ui-icons.py; ids in UIIcons.h), drawn into `r` and
+// tinted `c`. The art is white on transparent, so the tint IS the icon's colour: dark on a raised
+// tile, kTextPressed on a pressed one — the inversion `currentColor` gave the web's SVG icons. The
+// atlas is loaded on first use; an out-of-range id draws UIICON_FALLBACK.
+void icon(int id, CGRect r, Color c);
 
 // --- text ----------------------------------------------------------------------------------
 // The design system's two faces (design-system.md, "Type"): DISPLAY is Jersey 10, the pixel face
@@ -169,6 +181,15 @@ public:
     void setLabel(const char* text, float pt = 15.0f);
     void setPointSize(float pt);              // re-wraps in place; call before setRect()
     void setRect(CGRect r);                   // re-runs the label's wrap against the new width
+    // U.1: `.eden-btn--sm` shrink-wrapping. From this call on the button's width is its content
+    // (icon + label, measured by Label::width()) plus `padX` design px a side, never under 64u, and
+    // setRect() keeps only the origin and height it is given. The label stops wrapping. fitWidth()
+    // is that width, for a caller that right-aligns before it calls setRect().
+    void sizeToFit(float padX = 9.0f);
+    float fitWidth() const;
+    // U.1: an optional leading icon (UIIcons.h; -1 = none), 16u, gap 5u, tinted with the label.
+    // With no label the icon is centred and sized to the button (a tile).
+    void setIcon(int id)     { m_icon = id; }
     CGRect rect() const { return m_rect; }
     void setTone(Tone t)     { m_tone = t; }
 
@@ -197,6 +218,8 @@ private:
     float       m_pt;
     bool        m_pressed, m_enabled;
     Tone        m_tone;
+    int         m_icon;
+    float       m_fitPad;                     // < 0: fixed width (the default); else sizeToFit's padX
 };
 
 // The design system's 44pt touch floor (`pointer: coarse` in the CSS). It raises the HIT BOX,
@@ -206,19 +229,30 @@ private:
 extern const float kTouchFloor;
 float touchFloor();
 
-// --- Toggle (Stage 5.4) --------------------------------------------------------------------
+// --- Toggle (Stage 5.4, U.1) ---------------------------------------------------------------
 // `.eden-toggle`: a SUNKEN split pill, no sliding knob. The left half is lime when on, the right
-// half grey when off; the other half is the white content face. Holds a value, so it is SUNKEN
+// half dark grey when off; the other half is the white content face. Holds a value, so it is SUNKEN
 // (design-system.md, "New control that holds a value? It is SUNKEN."). Same input contract as
 // Button: the screen claims the touch and calls hit(); the toggle never reads Input itself.
+//
+// U.1: the reference's 104x34u with its heavy 2u keyline (designW()/designH() are those sizes in
+// points, for a screen that lays one out), and a MUTED state for a dependent row whose parent is
+// off: lighter fills and keyline, still opaque (design-system.md: a translucent ghost reads as a
+// rendering bug). Muting is display-only — a muted toggle still holds and reports its value, and
+// whether it still hits is the screen's call.
 class Toggle {
 public:
     Toggle();
+
+    static float designW();
+    static float designH();
 
     void setRect(CGRect r)   { m_rect = r; }
     CGRect rect() const      { return m_rect; }
     bool on() const          { return m_on; }
     void setOn(bool v)       { m_on = v; }
+    void setMuted(bool m)    { m_muted = m; }
+    bool muted() const       { return m_muted; }
     bool hit(float x, float y) const;
     void setHitRect(CGRect r) { m_hit = r; }  // as Button::setHitRect
 
@@ -226,7 +260,7 @@ public:
 
 private:
     CGRect m_rect, m_hit;
-    bool   m_on;
+    bool   m_on, m_muted;
 };
 
 // --- Slider (Stage 5.4) --------------------------------------------------------------------
@@ -346,11 +380,20 @@ private:
 //   - scrollBy(n) — the mouse wheel, arrow keys.
 // The bar is SUNKEN track + small RAISED thumb, the slider's parts stood on end. When everything
 // fits, the track stays and the thumb fills it (the CSS `.is-inert` state).
+//
+// U.1: VARIABLE ROW HEIGHTS. setRowHeights() hands it every row's real height (from built labels,
+// never estimates) and the view height; visible() is then how many rows from first() fit, so it
+// changes as the list scrolls, and a content drag moves by the real heights instead of setPitch().
+// A row taller than the view still counts as one visible row: it overflows downward rather than
+// leaving the list empty. setRows() puts the view back in the uniform mode the main menu and Get
+// Worlds use, unchanged.
 class ScrollView {
 public:
     ScrollView();
 
     void setRows(int total, int visible);    // clamps first()
+    void setRowHeights(const float* heights, int n, float viewH);   // clamps first()
+    float rowOffset(int index) const;        // variable mode: points from first()'s top to index's
     int  total() const       { return m_total; }
     int  visible() const     { return m_visible; }
     int  first() const       { return m_first; }
@@ -374,11 +417,15 @@ public:
 
 private:
     CGRect thumbRect() const;
-    int    maxFirst() const  { return m_total > m_visible ? m_total - m_visible : 0; }
+    int    maxFirst() const;
+    int    visibleFrom(int first) const;     // variable mode: rows from `first` that fit m_viewH
+    float  dragPitch() const;
 
     CGRect m_bar;
     float  m_pitch;
     int    m_total, m_visible, m_first;
+    std::vector<float> m_heights;            // empty = the uniform mode
+    float  m_viewH;
     // Drag state: the pointer y and first() at the down edge.
     bool   m_thumbDrag, m_contentDrag, m_contentScrolling;
     float  m_dragY0;
@@ -415,6 +462,102 @@ private:
     Button m_tabs[GLW_MAX_TABS];
     int    m_n, m_sel, m_held;
     CGRect m_rect;
+};
+
+// --- IconRail (U.1) ------------------------------------------------------------------------
+// `.eden-tabrail`: the settings screen's VERTICAL rail of square icon tiles on the translucent rail
+// surface — RAISED tiles, the selected one PRESSED, 6u apart inside 4u padding. Tiles are as wide
+// as the rect less its padding (64u in a 72u rail). No count cap: a rail with more tiles than fit
+// scrolls by whole tiles of its own (wheel over it, a touch drag — no visible bar, as in the CSS),
+// because later screens (a block picker) will carry more entries than Settings' seven. A DISABLED
+// tile draws a muted icon on its raised face and never hits (New World's not-yet-offered entries).
+// Same input contract as Button: the screen claims the touch, hit() on the down edge, setHeld()
+// while it is down; it starts a drag with beginDrag() and stops treating the touch as a tap once
+// dragTo() reports a scroll.
+class IconRail {
+public:
+    IconRail();
+
+    void setTiles(const int* icons, int n);           // UIIcons.h ids; resets enabled + scroll
+    int  count() const           { return (int)m_icons.size(); }
+    void setEnabled(int i, bool e);
+    bool enabled(int i) const;
+    void setRect(CGRect r);
+    CGRect rect() const          { return m_rect; }
+    static float designW();                           // 72u: one 64u tile + the padding
+
+    void setSelected(int i)      { m_sel = i; }       // -1 = none
+    int  selected() const        { return m_sel; }
+    void setHeld(int i)          { m_held = i; }
+    int  hit(float x, float y) const;                 // a visible, enabled tile, or -1
+    bool hitRail(float x, float y) const;
+    CGRect tileRect(int i) const;                     // zero-size when i is scrolled out of view
+
+    int  first() const           { return m_scroll.first(); }
+    int  visibleTiles() const    { return m_scroll.visible(); }
+    bool scrollBy(int tiles)     { return m_scroll.scrollBy(tiles); }
+    void ensureVisible(int i)    { m_scroll.ensureVisible(i); }
+    void beginDrag(float y)      { m_scroll.beginContentDrag(y); }
+    bool dragTo(float y)         { return m_scroll.contentDragTo(y); }
+    bool scrolling() const       { return m_scroll.scrolling(); }
+    void endDrag()               { m_scroll.endDrag(); }
+
+    void render() const;
+
+private:
+    IconRail(const IconRail&);
+    IconRail& operator=(const IconRail&);
+    float tileSize() const;
+
+    std::vector<int>  m_icons;
+    std::vector<char> m_enabled;
+    int        m_sel, m_held;
+    CGRect     m_rect;
+    ScrollView m_scroll;
+};
+
+// --- TwoLineRow (U.1) ----------------------------------------------------------------------
+// The reference's settings row on the one white CONTENT surface: a display-face title over a
+// body-face hint that wraps to as many lines as it needs, a 1u hairline under it unless it is the
+// last row, an optional left indent (a dependent row), and a muted palette (its parent is off).
+// The CONTROL is the caller's: the row reserves a right-hand column `controlW` wide, never draws
+// into it, and hands back where a control of a given size sits (controlRect) — right-aligned and
+// vertically centred. height() comes from the BUILT labels, which is what a variable-height
+// ScrollView must be given.
+//
+// build() is a texture upload per line, so it rebuilds only when an argument changed: calling it
+// from a per-frame layout is cheap, but call it on tab switch / resize anyway.
+class TwoLineRow {
+public:
+    TwoLineRow();
+
+    // Points throughout. `width` is the row's full width (the content rect's); `controlH` floors
+    // the height so the control fits inside the row's 4u padding. titlePt/hintPt 0 = 32u / 15u.
+    void build(const char* title, const char* hint, float width, float controlW, float controlH,
+               float indent = 0.0f, float titlePt = 0.0f, float hintPt = 0.0f);
+    float height() const     { return m_height; }
+
+    void setOrigin(float x, float yTop) { m_x = x; m_yTop = yTop; }   // the row's top-left
+    CGRect rect() const;
+    CGRect controlRect(float w, float h) const;
+    bool hit(float x, float y) const;
+
+    void setMuted(bool m)    { m_muted = m; }
+    bool muted() const       { return m_muted; }
+    void setLast(bool l)     { m_last = l; }
+
+    void render() const;
+
+private:
+    TwoLineRow(const TwoLineRow&);
+    TwoLineRow& operator=(const TwoLineRow&);
+    float titleHeight() const;
+
+    Label       m_title, m_hint;
+    std::string m_titleText, m_hintText;
+    float       m_width, m_controlW, m_controlH, m_indent, m_titlePt, m_hintPt;
+    float       m_height, m_x, m_yTop;
+    bool        m_muted, m_last;
 };
 
 // `.eden-progress` (Stage 5.9): a SUNKEN track with the lime 12% fill growing from the left.

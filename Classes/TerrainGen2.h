@@ -9,7 +9,7 @@
 #ifndef Eden_TerrainGen2_h
 #define Eden_TerrainGen2_h
 
-#define GSIZE (T_SIZE*10)  //12 norm
+#define GSIZE 2880  // B.5g: the bundled map side, literal (was T_SIZE*10); independent of the resident window
 #define WORM_FREQ 300
 #define PYRAMID_FREQ 175
 #define VOLCANO_FREQ 20

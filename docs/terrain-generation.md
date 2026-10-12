@@ -27,7 +27,7 @@ mostly disabled), `tg2_init()`, `fm->writeGenToDisk()`, and renders a 2D debug m
 (`tg2_render`) instead of the game.
 
 Working buffers: `block8* blockz`, `color8* colorz` sized
-`GSIZE×GSIZE×T_HEIGHT` where `GSIZE = T_SIZE*10 = 2880` (~1 GB total — desktop/
+`GSIZE×GSIZE×T_HEIGHT` where `GSIZE = 2880` (literal since B.5g; was `T_SIZE*10`) (~1 GB total — desktop/
 simulator only). Access macros `BLOCK(x,z,y)` / `COLOR(x,z,y)` in `TerrainGen2.h`.
 
 `tg2_init()` orchestrates the biome recipes (all in this file, grep-able by name):

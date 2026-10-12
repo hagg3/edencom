@@ -782,8 +782,8 @@ BOOL Hud::update(float etime){
                    /*
                     int ppx,ppz,ppy;
                     ppy=3*T_HEIGHT/4;
-                    ppx=T_SIZE/2+4096*CHUNK_SIZE-GSIZE/2;
-                    ppz=T_SIZE/2+4096*CHUNK_SIZE-GSIZE/2;
+                    ppx=144+4096*CHUNK_SIZE-GSIZE/2;
+                    ppz=144+4096*CHUNK_SIZE-GSIZE/2;
                     int dwarpx[]={0,      0,      0,        0,GSIZE/4,GSIZE/2,3*GSIZE/4};
                     int dwarpz[]={0,GSIZE/4,GSIZE/2,3*GSIZE/4,0,      0,      0,};
                     ppx+=dwarpx[warpCount];

@@ -10,10 +10,10 @@ top of the voxel grid.
 | Constant | Value | Meaning |
 |---|---|---|
 | `CHUNK_SIZE` | 16 | Blocks per chunk edge |
-| `T_SIZE` | 288 | Resident window edge, in blocks (18 chunks) |
+| `T_SIZE` | **288 by default, runtime** | Resident window edge, in blocks (`CHUNKS_PER_SIDE`×16; 512 at radius 16) |
 | `T_HEIGHT` | **64 or 256, runtime** | World height, blocks (4 or 16 chunks) |
-| `T_RADIUS` | 9 | Half the window, in chunks |
-| `CHUNKS_PER_SIDE` | 18 | Window edge in chunks |
+| `T_RADIUS` | **9 by default, runtime (4–16)** | Half the window, in chunks — the *Render distance* setting (B.5b-2) |
+| `CHUNKS_PER_SIDE` | **18 by default, runtime** | Window edge in chunks (`2·T_RADIUS`) |
 | `CHUNKS_PER_COLUMN` | **4 or 16, runtime** | Vertical chunks |
 | `NUM_BLOCKS` | 127 | Highest block type id (111 until Stage D.2a; the signed-byte id space is now full) |
 | `BLOCK_SIZE` | 1.0f | World units per block |
@@ -46,6 +46,45 @@ rules follow, and breaking any of them is silent:
    2026-08-06): median first-load 67.0 ms with runtime height vs 67.0 ms with the old literal
    constants, and the runtime build's `eden.wasm` is 540 B **smaller**. The cost is not
    detectable.
+
+## Runtime window radius (B.5b-2, 2026-10-12) — *modified from stock*
+
+The resident window is runtime too, by the same mechanism as the height. `T_SIZE`, `T_RADIUS` and
+`CHUNKS_PER_SIDE` are macros over `g_t_size`, `g_window_radius`, `g_chunks_per_side`, set by
+`eden_set_window_radius()` (`Globals.mm`; it also re-derives `g_xz_stride`, `g_t_blocks` and the
+toroidal offsets `g_offcx/z = T_SIZE*100`). `World::loadWorld` calls it right after
+`eden_set_world_height`, before `Terrain::allocateMemory`, with `eden_window_radius_for_world(height)`
+(`web/src/seam/Settings_web.mm`): the **Render distance** setting (9 / 10 / 12 / 16 chunks; iOS offers
+9 / 10), held to 12 for a 256z world on web (512 MB heap cap) and to 9 on a low-memory device;
+`EDEN_WINDOW_RADIUS=N` overrides it (the native harness pins 9 for every scripted mode unless
+`--radius=N`). It applies at the next world entry, never to an open world. The height's three rules
+hold unchanged: fixed-size declarations use `CHUNKS_PER_SIDE_MAX` (32) / `T_SIZE_MAX` (512) —
+`renderList`/`renderList2`, `rebuildList`, the dirty `list`, `stale[]`/`ring[]`, the stack `isloaded`
+(a stack VLA compiles on clang but not on every toolchain, so it is `[MAX][MAX]` too); set before
+allocate (`allocateMemory` also reallocates if it ever sees a live table of another shape); and the
+hot path was measured first. Nothing on disk depends on it (§1.2 of the plan; `GSIZE` is the literal
+2880 since B.5g).
+
+- **Hot-path cost: not measurable.** `GBLOCKIDXCLEAN`'s `%T_SIZE` is now a real divide (`sdiv` in
+  `TerrainChunk.mm.o`), where 288 compiled to a multiply. Native `--stage1 --mesh-bench=15` (Mac,
+  Release, 490 chunks re-meshed synchronously, medians of 15, three runs): 64z 42.3 ms literal vs
+  41.8 ms runtime, 256z 42.9 vs 42.4; the raw window read (5.3 M `GBLOCK`s) 0.67 vs 0.67 ms.
+- **Thresholds are fractions now:** the bulk reload's `count>140` / `count>300` became
+  `count*324 > 140*(2R)²` (exactly 140/300 at R9). Per-frame budgets stay absolute (the ring's 1
+  column, `BULK_RELOAD_CHUNK_BUDGET`, the lighting sweep's 108 columns): a bigger window takes more
+  frames, not more per frame.
+- **Fog follows the meshed radius** (`eden_meshed_radius_blocks()` = `(R−1)·16−8`: 120 at R9, 136 /
+  168 / 232 at R10 / 12 / 16): see [rendering.md](rendering.md) `setZFAR`.
+- **Per-frame whole-window loops** (`renderTree` ×2, the dirty and upload scans, the outer-ring sweep)
+  grow with (2R)²·`CHUNKS_PER_COLUMN` — 16,384 chunks at R16 256z. Headless Mac frame (update +
+  render, GL no-op'd): p50 0.042 ms at R9 256z, 0.154 ms at R16 256z; windowed `--preset-probe`
+  view Auto 2.03 → 2.41 ms. Cheap enough not to cap the radius or rewrite them (decision 2).
+- **Memory** (Mac headless footprint, CPU side): 64z 36 / 43 / 48 / 73 MB and 256z 84 / 102 / 141 /
+  230 MB at R9 / 10 / 12 / 16. Web `build-st` linear memory after one load: R16 64z 185 MB, R12 256z
+  228 MB, R16 256z 342 MB of the 512 MB cap. The iPad's numbers are owed (ROADMAP Stage T).
+- Gates: the B.5b-1 walk/evict/light gates at R12 and R16, both heights; native = web checksums at
+  R16 64z and R12 256z; ASan clean at R4, R10, R12 and R16 (it found `rebuildList[13000]`, which a
+  16,384-chunk window overran). `WORKING/render-distance-runtime-plan-2026-10-11.md` §4.1.
 
 ### Memory: what a tall world actually costs
 
@@ -111,7 +150,7 @@ The world is conceptually huge (chunk coordinates are packed into 15 bits each b
 `twoToOne` — `Util.mm:1053` — so the addressable world is 32,768 × 32,768 chunks;
 the default world's centre sits at chunk (4096, 4096) ⇒ block ≈ 65,536).
 
-Only a **288×288×`T_HEIGHT` window around the player** (64 tall normally, 256 for a v5/v6 world) is in memory, in two parallel
+Only a **`T_SIZE`×`T_SIZE`×`T_HEIGHT` window around the player** (288 wide by default, up to 512 at Render distance 16 — B.5b-2; 64 tall normally, 256 for a v5/v6 world) is in memory, in two parallel
 structures, both indexed *modulo the window size* so absolute world coordinates can be
 used directly:
 
@@ -127,7 +166,7 @@ used directly:
    overwrites the cells that now map to the newly-entered columns.
    Note colors are *not* in this array; color reads go through the chunk objects.
 
-2. **`TerrainChunk** chunkTable`** — 18×18×`CHUNKS_PER_COLUMN` = 1296 chunk objects (5184 at 256z), allocated once in
+2. **`TerrainChunk** chunkTable`** — `CHUNKS_PER_SIDE`²×`CHUNKS_PER_COLUMN` = 1296 chunk objects at the default 18×18 (5184 at 256z; 16,384 at radius 16, 256z), allocated once per world in
    `Terrain::allocateMemory()` (`Terrain.mm:241`) and **reused forever** (never
    freed/reallocated during play; `resetForReuse()`/`setBounds()` repurpose them).
    Indexed by the `threeToOne(cx,cy,cz)` macro (`Util.h:120`), again modulo
@@ -247,7 +286,7 @@ item 3, because the bulk path still runs it for teleports. Plan and gates:
    window" for creature activation) follows `m_chunkOffset*` the frame it changes, and
    `loaded_new_terrain` (sky regions) is set; the creature top-up waits until the ring has caught
    up (2a). Stock moved the render origin only on a bulk reload.
-2. For each of the 18×18 ground-level chunk slots, compare `pbounds` with the desired
+2. For each of the `CHUNKS_PER_SIDE`² ground-level chunk slots (18×18 by default), compare `pbounds` with the desired
    absolute coordinates → count stale slots.
 
    **2a. Ring streaming (`0 < count ≤ 140`, B.5b-1a).** Each frame lands the nearest stale
@@ -462,7 +501,7 @@ useless, now just iterates through chunk list" (`Terrain.mm:2430`).
   — saved worlds store raw type bytes), explosion radii, burn times, new gameplay ops
   built from `updateChunks`/`setColor`.
 - **Caution:** anything touching `GBLOCKIDX`/`threeToOne` indexing, `T_HEIGHT`
-  (changes save format column size! `SIZEOF_COLUMN` depends on it), `T_SIZE` (reaches no save file —
-  settled 2026-10-11 — but `GSIZE = T_SIZE*10` is the bundled map's side; see
+  (changes save format column size! `SIZEOF_COLUMN` depends on it), `T_SIZE` (runtime since B.5b-2;
+  reaches no save file — settled 2026-10-11 — and `GSIZE` is the literal 2880 since B.5g; see
   `WORKING/render-distance-runtime-plan-2026-10-11.md` §1.2 and §2), the streaming
   threshold logic, chunk reuse (`resetForReuse` assumes the slot is being overwritten).

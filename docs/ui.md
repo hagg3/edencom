@@ -49,7 +49,22 @@ with OpenGL by the game itself. There is **no UIKit UI** beyond the GL view (and
 `GLW::TabRail` (a horizontal row of equal RAISED tiles, the selected one PRESSED — the design
 system's "pressed == selected"; the web's `.eden-tabrail` is the settings screen's vertical icon
 rail, this is its few-words sibling) and `GLW::progressBar()` (`.eden-progress`: SUNKEN track, lime
-12% fill; a negative fraction draws an indeterminate block). **Two faces (2026-10-05):** `GLW::Label` takes a `GLW::Face` —
+12% fill; a negative fraction draws an indeterminate block). **Stage U.1 (2026-10-12) added** the
+pieces the settings / New World rebuild (U.3, U.5) is laid out from, all drawn on the `kit` page of
+`--shot`: `GLW::icon(id, rect, colour)` (one cell of the Lucide atlas `media/ui/ui_icons.png`, ids in
+generated `Classes/UIIcons.h`, white art tinted at draw time; loaded on first use, LINEAR + clamped
+unlike the engine's NEAREST art), `GLW::IconRail` (the vertical `.eden-tabrail`: 64u RAISED icon
+tiles in a 72u rail, selected/held PRESSED, disabled tiles muted and inert, no count cap — it scrolls
+by whole tiles of its own when they overflow, with no visible bar), the toggle restyled to the
+reference (heavy 2u gray-800 keyline, gray-500 off half, `Toggle::designW()/designH()` = 104×34u) with
+a **muted** state (lighter, still opaque, display-only), `Button::sizeToFit(padX)` (`.eden-btn--sm`
+shrink-wrap from `Label::width()`, 64u floor; `fitWidth()` for right-aligning) and
+`Button::setIcon()` (a 16u leading icon, or a centred tile icon with no label), **variable row
+heights** in `GLW::ScrollView` (`setRowHeights()`: `visible()` is how many whole rows from `first()`
+fit, a row taller than the view still shows; `rowOffset()`; content drags walk the real heights;
+`setRows()` is the unchanged uniform mode), and `GLW::TwoLineRow` (32u display title over a wrapping
+15u body hint, hairline, indent, muted palette; reserves a right-hand control column and reports
+`controlRect()` and a `height()` taken from the built labels). **Two faces (2026-10-05):** `GLW::Label` takes a `GLW::Face` —
   `FACE_DISPLAY` (the default: Jersey 10, the design system's pixel face, for every piece of
   chrome) or `FACE_BODY` (Rubik, for descriptive sentences — `GLDialog`'s body). The
   face reaches the raster through a sticky seam switch, `eden_text_raster_set_face()`, which
@@ -103,8 +118,8 @@ rail, this is its few-words sibling) and `GLW::progressBar()` (`.eden-progress`:
   Movement/Actions/Interface/Hotbar) of every rebindable action against its current key, drawn
   entirely in `GLWidgets` calls. Since 2026-10-05 it shares `SettingsMenu`'s shape exactly —
   titlebar (Back · "Controls" · Defaults), a heading slot per group, slots per page fitted to the
-  screen, a window shrink-wrapped to the column. **It is a CHILD of `SettingsMenu`, not a sibling** — its "Keys"
-  button shows it and `SettingsMenu::update/render` delegate to it wholesale while it is up. That
+  screen, a window shrink-wrapped to the column. **It is a CHILD of `SettingsMenu`, not a sibling** — the
+  settings rail's Keys tile (U.3) shows it and `SettingsMenu::update/render` delegate to it wholesale while it is up. That
   is deliberate and load-bearing: web `--wrap`s `SettingsMenu::update/render` to no-ops, so a
   screen reachable only from inside them cannot draw or take input on web, where the DOM Keys tab
   is authoritative. `SettingsMenu::showKeybinds()` is the programmatic entry point (the `--shot`
@@ -343,7 +358,25 @@ them — the ordering in `World::update` is the arbitration.
   Music/Sound) and their `NSUserDefaults` round-trip. **`render()`/`update()` were rewritten in
   Phase N Stage 2.5** into a generic paginated list over the shared settings table
   (`web/src/seam/Settings_web.mm`'s `kSettings[]`, reached via `eden_settings_*` scalar
-  accessors). **Stage 5.4 (2026-10-04) reskinned it onto `GLWidgets`**: a WINDOW panel with a
+  accessors; U.2 added `eden_settings_hint(i)` and `eden_settings_parent(i)` — the trailing `Setting::parent` key of
+  a toggle that mutes the row while off, -1 if none; every row now has a hint, and the schema JSON carries `parent`).
+  Interface → Video is a screen-side mapping (U.3): the `group` strings and persistence keys are unchanged.
+  **Stage U.3 (2026-10-12) rebuilt the screen on the reference layout** (`WORKING/ui-rework-plan-2026-10-11.md`
+  §3) — what this paragraph describes after the history below is the current shape: a **fixed panel** (the
+  783×587u design frame less a 12u margin, centred, the same size on every tab); a titlebar of a shrink-wrapped
+  Back and "*Tab* Settings" centred on the window; a `GLW::IconRail` of **7 tabs** (Gameplay · Audio · Controls ·
+  Keys · Video · Experiments · Saves; `kTabs[]` in the .mm, a tab with no native rows is a disabled tile); the
+  tab's rows as `GLW::TwoLineRow`s (title + hint) on one CONTENT surface in a variable-height, row-snapped
+  `GLW::ScrollView` (wheel, content drag, scrollbar); a row with a `parent` is indented 14u and **muted while that
+  toggle is off** — display-only, it still works. Control column: the 104×34u toggle, a 200u slider + readout, a
+  168u `<` value `>` stepper; on the touch profile a toggle's hit box is the whole row. Labels are built on a tab
+  switch or a `u()` change, never per frame. **Keys has no rows yet**: its tile opens `KeybindsMenu` as the child
+  screen (U.4 embeds it). The pages, the pager, `fit()`'s pointer/touch pitch split and the group headings are
+  gone. **Escape** reaches it as `eden_settings_menu_back()` (`Settings_web.mm`, called from `Input_native.cpp`'s
+  menu key) → `SettingsMenu::back()`: keybinds child → Settings → closed. It used to arrive as a synthetic tap on
+  the HUD's menu button, which this screen claimed as one of its own touches and dropped ("Escape inside in-game
+  Settings is swallowed"). Harness: `tabCount()/showTab()/tabName()/tabRowCount()` and `showRow(key, &rect)`
+  (switches tab, scrolls the row into view). *History:* **Stage 5.4 (2026-10-04) reskinned it onto `GLWidgets`**: a WINDOW panel with a
   titlebar (Back · "Settings" · Controls), CONTENT strips in a centred column, and per row a
   `GLW::Toggle`, a draggable `GLW::Slider` with a readout (KIND_RANGE; percentages for 0–1 ranges)
   or a `GLW::Stepper` with `<` `>` (KIND_ENUM). A group heading takes a slot of its own, every page
@@ -359,15 +392,14 @@ them — the ordering in `World::update` is the arbitration.
   Settings button; `World::update/render` run it as a modal over the frozen world, like
   `GLDialog`), and `resetView()` makes every opening start on page 1 of Settings proper.
   Rows stay hidden and inert until
-  `eden_settings_loaded()`. `pageCount()/showPage()/showRow(key, &rect)` exist for `--shot` and
-  `--ui-selftest`. **On web this code does not run**: `Settings_web.mm` `--wrap`s
+  `eden_settings_loaded()`. (Until U.3, `pageCount()/showPage()` were the harness's entry points.) **On web this code does not run**: `Settings_web.mm` `--wrap`s
   `SettingsMenu::update/render` to no-ops (the DOM panel owns settings there). Rows whose effect
   is web-only (`dpr_cap`, `ui_scale`, `display_mode`, `display_layout`, `input_mode`,
   `legacy_menu`) are hidden via `eden_settings_native_hidden()`. `render_scale` was on that list
   until N.4.11 (2026-10-04); native now renders the 3D pass at it (see rendering.md, "Scene-pass
   bracket"), so the Video page shows it. **Not on iOS since 2026-10-09 (N.4.12):** the row is hidden and
   `eden_get_render_scale_pct()` returns 100 there.
-  **Stage 5.3 added the keybinds entry** (the titlebar's "Controls" button since 5.4), which shows
+  **Stage 5.3 added the keybinds entry** (the titlebar's "Controls" button from 5.4, the Keys tile since U.3), which shows
   `KeybindsMenu` and hands it the whole frame until it closes.
 - **`WorldBrowser`** (`Classes/WorldBrowser.{h,mm}`, **added Stage 5.9, 2026-10-07**) — "Get
   Worlds" on the kit, replacing `SharedList` on the port targets (where SharedList/ShareUtil are

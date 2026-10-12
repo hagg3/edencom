@@ -96,7 +96,8 @@ Read this before writing any code. These are the implicit rules the codebase fol
   for a platform that pads differently silently corrupts save files.
 - `block8` is *signed* (types ≤ 127; negative = corrupt sentinel), `color8` unsigned.
 - World height exactly 64; chunk size exactly 16; window 18×18 (`T_SIZE` etc. are
-  `#define`s that many literals secretly depend on).
+  `#define`s that many literals secretly depend on). *(Port: height and window are both runtime
+  now — 2026-08-06 and B.5b-2, 2026-10-12; `rebuildList[13000]` was one such literal.)*
 - Chunk coordinates fit in 15 bits (`twoToOne`), non-negative.
 - The bundled `Eden.eden` exists and matches `DEFAULT_LEVEL_SEED` worlds.
 - Frame time ≈ 1/60 s; physics constants are tuned for it (with a 50 ms clamp).
@@ -105,7 +106,7 @@ Read this before writing any code. These are the implicit rules the codebase fol
 
 ## Known limitations
 
-- 1296 resident chunks at 64z, 5184 at 256z (`CHUNKS_PER_SIDE²·CHUNKS_PER_COLUMN`).
+- 1296 resident chunks at 64z, 5184 at 256z (`CHUNKS_PER_SIDE²·CHUNKS_PER_COLUMN`) at the default radius 9; 16,384 at radius 16, 256z.
 - One liquid update queue globally; heavy flow re-meshes chunks every tick.
 - 200 persisted creature slots in a 64z save (400 in a 256z one, and the real number is
   **derived from the file**, not the version — a save can legitimately have none); 300 live;
@@ -128,7 +129,7 @@ Read this before writing any code. These are the implicit rules the codebase fol
 | Block type enum / tables | Save compat (raw bytes on disk!), `blockinfo`, `blockTypeFaces`, `blockColor`, atlas, `blockTntMap`, `hudBlocksMap`, HUD picker list, `web/public/eden-hotbar.js`'s `MAX_BLOCK_TYPE`. **The id space is full at 127** (`block8` is signed; ids 112–127 since Stage D.2a): there is no room to append another type |
 | `colorTable` generation | Every painted block in every existing world re-tints |
 | `CHUNK_SIZE` | `SIZEOF_COLUMN` (file format!), progress divisors, `INDICES_MAX` sizing |
-| `T_SIZE` (window) | **not** the file format (no save field depends on it; 2026-10-11) — but `GSIZE = T_SIZE*10` is the bundled map's side (edge wall, sky regions, warp grid, home), the streaming threshold (`count>140`), compile-time arrays sized from it. Inventory: `WORKING/render-distance-runtime-plan-2026-10-11.md` §2 |
+| `T_SIZE`/`T_RADIUS`/`CHUNKS_PER_SIDE` (window; **runtime** since B.5b-2) | **not** the file format (no save field depends on it; 2026-10-11; `GSIZE` is the literal 2880 since B.5g). Same rules as the height: anything sized at compile time uses `CHUNKS_PER_SIDE_MAX`/`T_SIZE_MAX`; set by `eden_set_window_radius()` before `allocateMemory`; per-frame loops over the window cost (2R)²·bands. Inventory: `WORKING/render-distance-runtime-plan-2026-10-11.md` §2 |
 | `T_HEIGHT`/`CHUNKS_PER_COLUMN` (now **runtime** globals) | Anything sized at COMPILE time must use `T_HEIGHT_MAX`/`CHUNKS_PER_COLUMN_MAX`/`MAX_CREATURES_SAVED_MAX` instead — a file-scope VLA is a build error, a stack one is not |
 | `WorldFileHeader`/`EntityData`/`ColumnIndex` | All existing saves + the bundled `Eden.eden` + the upload server |
 | Meshing (`rebuild2`) | Counting pass and fill pass must agree exactly; `prepareVBO` swap |

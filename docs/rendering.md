@@ -55,13 +55,18 @@ linear fog band: start `ZFAR-ZFAR/1.6`, end `ZFAR-30`). Fog color tracks sky col
 `LOW_GRAPHICS` 115, else 145) and passes it through `Graphics::viewDistanceZFAR`, which applies the user's
 **View distance** setting (B.5a; `view_distance` enum, `eden_view_distance` global in `Settings_web.mm`:
 0 = Auto = the tier value, 1..6 = 4..9 chunks). The far plane is `ZFAR-25`, so ZFAR = blocks + 25, and blocks
-are capped at `VIEW_DISTANCE_MAX_BLOCKS` (120, the meshed radius — not the 144-block resident window; B.5b-2
-makes this radius-dependent). **Draw-culling only**: meshing and streaming are unchanged. Changing the setting
-re-calls `setZFAR` immediately.
+are capped at `eden_meshed_radius_blocks()` = `(T_RADIUS−1)·16−8`, the meshed radius (120 at the default radius 9 —
+the old `VIEW_DISTANCE_MAX_BLOCKS` literal — not the 144-block resident window). **B.5b-2:** with a larger window
+(the *Render distance* setting, [world-and-terrain.md](world-and-terrain.md) "Runtime window radius") Auto follows
+it out: ZFAR = meshed radius + 25 (161 / 193 / 257 at radius 10 / 12 / 16), so the far plane sits on the meshed edge
+and the fog ends 5 blocks short of it, as 145 does at radius 9; at radius 9 Auto is the tier value exactly as
+before. **Draw-culling only**: meshing and streaming are unchanged. Changing the setting re-calls `setZFAR`
+immediately.
 **Graphics preset** (B.8; `graphics_preset` row, `kPresets[]` in `Settings_web.mm`): Custom / Low / Default / High is a
 shortcut that writes `view_distance` (and `render_scale`, except on iOS where that row is hidden) — Low = 4 chunks + 75%,
-Default = Auto + 100% (the pre-B.8 look; shots match within animation noise), High = Default until B.5b-2. Moving either
-knob by hand sets the preset to Custom. It does not touch `LOW_MEM_DEVICE`/`LOW_GRAPHICS`: those pick resources at
+Default = Auto + 100% (the pre-B.8 look; shots match within animation noise). High = Default plus `render_distance`
+(B.5b-2): radius 16 on desktop native, 12 on web, still 9 on iOS until a device round measures more. Moving any of
+the three knobs by hand sets the preset to Custom. It does not touch `LOW_MEM_DEVICE`/`LOW_GRAPHICS`: those pick resources at
 load time and are not switchable mid-session.
 
 ## Chunk meshing — `TerrainChunk::rebuild2()` (`TerrainChunk.mm:184`, "here be dragons")
@@ -382,6 +387,25 @@ geometry) is a separate future item (row 24/C2, WebGL2) — not done here.
 - `max_render_objects = 300` caps doors/cubes/portals per frame; `MAX_FLOWERS 10000`.
 - Disabled experiments you may see: occlusion queries (`isTesting`), distance-based
   ZFAR throttling by FPS, face merging.
+
+## Per-pass instruments (modified from stock, 2026-10-12, ROADMAP P.1b)
+`Classes/PassTimers.h` brackets every update and render pass with `pass_begin(P_…)` /
+`pass_end(P_…)` (`World::update`, `World::renderFrame`, `Terrain::render`/`render2`, and the native
+seam's present). Each pair adds the pass's CPU milliseconds and the GL shim's draw / vertex /
+issued-setup counters (`eden_gl_stat_live()`, differenced) to `g_pass`. The hooks compile only under
+`EDEN_DIAGNOSTICS` and do nothing until a harness sets `g_pass.on`, so a normal frame pays one
+bool test per hook. With `g_pass.finish` set, every boundary first calls `glFinish`, so a pass's
+time becomes an upper bound that includes its own GPU work.
+- **Passes nest.** `r_opaque` (all of `Terrain::render`) contains `r_cull`, `r_chunks`,
+  `r_objects` and `r_sky`; `r_transparent` contains `r_tchunks` and the flower part of
+  `r_objects`; `r_cull` covers both `renderTree` walks and the back-to-front `qsort`. Sum only the
+  leaves. `render` is the play branch only, so a GL dialog drawn over it is not counted.
+- **One draw per chunk per pass, not six.** The opaque loop builds one index list per chunk from the
+  face buckets the camera can see, so `r_chunks.draws` is the number of chunks drawn. On the Mac, at
+  the three `--pass-probe` poses: 49–80 draws, 66k–110k vertices (`WORKING/low-end-perf-audit-2026-10-12.md` §4).
+- `present` exists only on native. With vsync off, the time blocked in the swap is the GPU proxy:
+  near zero means the GPU kept up with the CPU.
+- Harness: `--pass-probe` and `--stage1 --walk … --pass-timers` (native/README.md).
 
 ## Common pitfalls
 - Terrain vertex positions are shorts in quarter-block units — forgetting the ×4/×0.25

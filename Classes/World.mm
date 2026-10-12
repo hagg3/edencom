@@ -12,6 +12,7 @@
 #import "EAGLView.h"
 #import "Globals.h"
 #include "F3Timing.h"
+#include "PassTimers.h"   // P.1b per-pass instruments (no-ops unless a harness turns them on)
 #import "TerrainGen2.h"
 
 #import "Alert.h"
@@ -33,6 +34,7 @@ extern "C" int eden_load_failed(void);
 // below refuses such a world through the same eden_report_load_failure() channel a corrupt save
 // uses, so the JS recovery dialog can point the player at Settings -> Storage -> "Convert to 64z".
 extern "C" int eden_low_memory(void);
+extern "C" int eden_window_radius_for_world(int height);   // Settings_web.mm (B.5b-2)
 extern "C" void eden_report_load_failure(const char* world_file_name, const char* reason);
 // Port hook (GL shim, gl_es1_shim.h) — ROADMAP N.4.11. Brackets the play-mode 3D pass so native
 // can render it at the `render_scale` setting and upscale it under a full-density HUD. No-ops on
@@ -255,7 +257,7 @@ World::World(){
             int chunkOffsetX=player->pos.x/CHUNK_SIZE-T_RADIUS;
             int chunkOffsetZ=player->pos.z/CHUNK_SIZE-T_RADIUS;
             int r=T_RADIUS;
-            bool isloaded[T_RADIUS*2][T_RADIUS*2];
+            bool isloaded[CHUNKS_PER_SIDE_MAX][CHUNKS_PER_SIDE_MAX];
             int count=0;
                        //NSLog(@"player p
             for(int x=0;x<2*r;x++){
@@ -409,6 +411,9 @@ void World::loadWorld(NSString* name){
             return;
         }
         eden_set_world_height(probed_height);
+        // B.5b-2: the window radius, under the height's rules (set before allocateMemory, fixed for
+        // the session; Constants.h). It depends on the height on web (256z is held to 12 there).
+        eden_set_window_radius(eden_window_radius_for_world(probed_height));
         if(LOW_MEM_DEVICE){
             menu->deactivate();
             
@@ -430,7 +435,7 @@ void World::loadWorld(NSString* name){
         
     }
     if(doneLoading>=1){
-        int pct=100.0f*(float)(terrain->counter)/324.0f;
+        int pct=100.0f*(float)(terrain->counter)/(float)(CHUNKS_PER_SIDE*CHUNKS_PER_SIDE);   // B.5b-2: was 324
         
         if(pct>100)pct=100;
         if(fm->convertingWorld){
@@ -637,6 +642,7 @@ static inline void f3_drive(World*){}
 BOOL World::update(float etime){
     f3_frame_begin();
     f3_drive(this);
+    PassScope _passUpdate(P_UPDATE);
     if(JUST_TERRAIN_GEN){
         return FALSE;
     }
@@ -690,21 +696,35 @@ BOOL World::update(float etime){
 		if(etime>1.0f/20.0f)etime=1.0f/20.0f;
         cam->update(etime);
 		
+        pass_begin(P_U_TERRAIN);
 		terrain->update(etime);
+        pass_end(P_U_TERRAIN);
+        pass_begin(P_U_HUD);
         hud->update(etime);
+        pass_end(P_U_HUD);
         if(game_mode==GAME_MODE_WAIT){
             return FALSE;
         }
+        pass_begin(P_U_CREATURES);
          if(CREATURES_ON&&!player->dead)
         UpdateModels(etime);
+        pass_end(P_U_CREATURES);
        
+        pass_begin(P_U_PLAYER);
 		player->preupdate(etime);
+        pass_end(P_U_PLAYER);
+        pass_begin(P_U_EFFECTS);
          if(!player->dead)
 		effects->update(etime);
         CmdScript::update(etime); //D.4c: command-block scripts edit before this frame's meshing
+        pass_end(P_U_EFFECTS);
         
+        pass_begin(P_U_MESH);
         terrain->prepareAndLoadGeometry();
+        pass_end(P_U_MESH);
+        pass_begin(P_U_UPLOAD);
         terrain->updateAllImportantChunks();
+        pass_end(P_U_UPLOAD);
        
 		
 	}
@@ -761,27 +781,39 @@ void World::renderFrame(BOOL draw){
        // [[World getWorld] loadWorld:menu.selected_world->file_name];	
 		menu->render();
 	}else if(game_mode==GAME_MODE_PLAY){
+        pass_begin(P_RENDER);
+        pass_begin(P_R_SETUP);
         eden_scene_pass_begin(); //render-scale: the 3D pass may draw offscreen at its own resolution
         Graphics::prepareScene();
 		
         
         cam->render();
+        pass_end(P_R_SETUP);
 		
        
        // [Graphics setLighting];	
        // glShadeModel(GL_SMOOTH);
       //  glDisable(GL_TEXTURE_2D);
+        pass_begin(P_R_OPAQUE);
 		terrain->render();
+        pass_end(P_R_OPAQUE);
        // glEnable(GL_TEXTURE_2D);
+        pass_begin(P_R_MODELS);
         if(CREATURES_ON)
             RenderModels();
+        pass_end(P_R_MODELS);
+        pass_begin(P_R_SIGNS);
         SignRenderer::render(); //D.3b: signs, after the opaque pass, before the sorted transparent one
+        pass_end(P_R_SIGNS);
+        pass_begin(P_R_TRANSPARENT);
         terrain->render2();
+        pass_end(P_R_TRANSPARENT);
       //  glShadeModel(GL_FLAT);
        
        // glTranslatef([World getWorld].fm.chunkOffsetZ*CHUNK_SIZE,0,[World getWorld].fm.chunkOffsetZ*CHUNK_SIZE);
         glBindBuffer(GL_ARRAY_BUFFER,0);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,0);
+        pass_begin(P_R_EFFECTS);
         glPushMatrix();
         glTranslatef(-fm->chunkOffsetX*CHUNK_SIZE,0,-fm->chunkOffsetZ*CHUNK_SIZE);
 		effects->render();
@@ -789,9 +821,15 @@ void World::renderFrame(BOOL draw){
         player->render();
 				
          glPopMatrix();
+        pass_end(P_R_EFFECTS);
+        pass_begin(P_R_UPSCALE);
         eden_scene_pass_end(); //upscale the 3D pass; the hud draws at full resolution
+        pass_end(P_R_UPSCALE);
+        pass_begin(P_R_HUD);
 		hud->render(); //render hud last
 		if(menu->showsettings) menu->settings->render();   // Stage 5.5, see update()
+        pass_end(P_R_HUD);
+        pass_end(P_RENDER);
 
 	}
 

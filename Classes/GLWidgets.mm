@@ -4,8 +4,8 @@
 //
 //  See GLWidgets.h. This is web/docs/design-system.md expressed in Graphics::drawRect fills —
 //  which is the whole reason the kit was affordable: every bevel in the system is a stack of
-//  hard-edged rectangles (zero blur, square corners), so it needs NO new atlas art and no new
-//  shader. A "shadow" is a rectangle drawn offset behind the face; an "inset highlight" is two
+//  hard-edged rectangles (zero blur, square corners), so it needs NO new atlas art (the icons
+//  aside — U.1's media/ui/ui_icons.png) and no new shader. A "shadow" is a rectangle drawn offset behind the face; an "inset highlight" is two
 //  strips along the far edges; a keyline is a four-strip border.
 //
 //  THE ONE THING TO GET RIGHT WHEN EDITING: y is UP here and DOWN in CSS. Every token from the
@@ -82,6 +82,7 @@ const Color kWindowKeyline = { 0.251f, 0.251f, 0.251f, 1.0f };         // #40404
 const Color kText          = { 0.0f, 0.0f, 0.0f, 1.0f };
 const Color kTextSecondary = { 0.392f, 0.392f, 0.392f, 1.0f };         // #646464
 const Color kTextPressed   = { 0.788f, 0.788f, 0.788f, 1.0f };         // #c9c9c9
+const Color kTextMuted     = { 0x97/255.0f, 0x97/255.0f, 0x97/255.0f, 1.0f };   // --eden-gray-300
 const Color kWhite         = { 1.0f, 1.0f, 1.0f, 1.0f };
 const Color kBlack         = { 0.0f, 0.0f, 0.0f, 1.0f };
 
@@ -159,6 +160,49 @@ void bevel(CGRect r, BevelStyle style) {
         border(r, 1*U, kKeyline);
         break;
     }
+}
+
+// --- icons (U.1) ---------------------------------------------------------------------------
+// Loaded once, on first use, and never freed (it is 256 KB of texture for the life of the app).
+// LINEAR, unlike the engine's NEAREST art: a cell is 64 px of antialiased stroke drawn at anything
+// from ~16u to ~40u, so it is minified on some screens and magnified on others, and NEAREST
+// staircases a 2.4-wide stroke either way. CLAMP_TO_EDGE so the outer cells' edges do not sample
+// the opposite side of the atlas.
+static Texture2D* s_icons = NULL;
+
+static Texture2D* iconAtlas() {
+    if (!s_icons) {
+        s_icons = new Texture2D(@"ui_icons.png", FALSE);
+        glBindTexture(GL_TEXTURE_2D, s_icons->name);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+    return s_icons;
+}
+
+void icon(int id, CGRect r, Color c) {
+    if (r.size.width <= 0.0f || r.size.height <= 0.0f) return;
+    if (id < 0 || id >= UIICON_COUNT) id = UIICON_FALLBACK;
+    Texture2D* t = iconAtlas();
+    if (!t || !t->name) return;
+    // t = 0 is the PNG's TOP row (Texture2D::drawInRect's convention), and y is up here, so the
+    // quad's top edge takes the cell's t0.
+    const float cell = 1.0f / UIICON_GRID;
+    const float s0 = UIIconCol(id) * cell, s1 = s0 + cell;
+    const float t0 = UIIconRow(id) * cell, t1 = t0 + cell;
+    const float k = uiScale();
+    const float x0 = r.origin.x * k, y0 = r.origin.y * k;
+    const float x1 = (r.origin.x + r.size.width) * k, y1 = (r.origin.y + r.size.height) * k;
+    const GLfloat v[] = { x0, y0, 0,  x1, y0, 0,  x0, y1, 0,  x1, y1, 0 };
+    const GLfloat uv[] = { s0, t1,  s1, t1,  s0, t0,  s1, t0 };
+    glColor4f(c.r, c.g, c.b, c.a);
+    glBindTexture(GL_TEXTURE_2D, t->name);
+    glVertexPointer(3, GL_FLOAT, 0, v);
+    glTexCoordPointer(2, GL_FLOAT, 0, uv);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
 }
 
 // --- text ----------------------------------------------------------------------------------
@@ -342,7 +386,8 @@ void Toast::render() const {
 }
 
 // --- Button --------------------------------------------------------------------------------
-Button::Button() : m_pt(15.0f), m_pressed(false), m_enabled(true), m_tone(TONE_DEFAULT) {
+Button::Button() : m_pt(15.0f), m_pressed(false), m_enabled(true), m_tone(TONE_DEFAULT), m_icon(-1),
+                   m_fitPad(-1.0f) {
     m_rect = CGRectMake(0, 0, 0, 0);
     m_hit = CGRectMake(0, 0, 0, 0);
 }
@@ -351,8 +396,30 @@ Button::~Button() {}
 // The label is only rasterised once the box is known — its wrap width is the box's. A caller
 // therefore sets text and point size first and the rect last, and every setter is idempotent.
 void Button::rebuildLabel() {
+    // A shrink-wrapped button's width comes FROM the label, so its label never wraps.
+    if (m_fitPad >= 0.0f) {
+        if (m_text.empty()) m_label.clear();
+        else m_label.set(m_text.c_str(), m_pt, UITextAlignmentCenter);
+        m_rect.size.width = fitWidth();
+        return;
+    }
     if (m_text.empty() || m_rect.size.width <= 0.0f) { m_label.clear(); return; }
     m_label.set(m_text.c_str(), m_pt, UITextAlignmentCenter, m_rect.size.width - du(16));
+}
+
+// eden-ui.css `.eden-btn--sm`: 9u side padding, min-width 64u, a 16u icon 5u before the label.
+static const float kBtnIcon = 16.0f, kBtnIconGap = 5.0f, kBtnMinW = 64.0f;
+
+void Button::sizeToFit(float padX) {
+    m_fitPad = padX < 0.0f ? 0.0f : padX;
+    rebuildLabel();
+}
+
+float Button::fitWidth() const {
+    float w = m_label.empty() ? 0.0f : m_label.width();
+    if (m_icon >= 0) w += du(kBtnIcon) + (m_label.empty() ? 0.0f : du(kBtnIconGap));
+    w += 2.0f * du(m_fitPad >= 0.0f ? m_fitPad : 9.0f);
+    return std::max(w, du(kBtnMinW));
 }
 
 void Button::setLabel(const char* text, float pt) {
@@ -367,6 +434,13 @@ void Button::setPointSize(float pt) { m_pt = pt; rebuildLabel(); }
 // this rebuilt the label every time — a texture upload (and, since N.4.9, a glFlush) per button
 // per frame on every converted screen. Position changes need nothing: the label draws at render().
 void Button::setRect(CGRect r) {
+    if (m_fitPad >= 0.0f) {                   // shrink-wrapped: the width is the content's
+        const bool rebuild = m_label.empty() && !m_text.empty();
+        m_rect = r;
+        m_rect.size.width = fitWidth();
+        if (rebuild) rebuildLabel();
+        return;
+    }
     const bool rewrap = (r.size.width != m_rect.size.width) || m_label.empty();
     m_rect = r;
     if (rewrap) rebuildLabel();
@@ -398,8 +472,25 @@ void Button::render() const {
             insetBottomRight(in, 1*U, C(0x646464, 0.47f));
         }
     }
+    // The icon takes the label's colour, so a press inverts it the way `currentColor` did.
+    const Color ink = !m_enabled ? kKeyline
+                    : m_pressed ? (m_tone == TONE_DANGER ? kWhite : kTextPressed) : kText;
+    float cx = m_rect.origin.x + m_rect.size.width * 0.5f;
+    if (m_icon >= 0) {
+        if (m_label.empty()) {                // an icon tile: the icon IS the content
+            const float sz = std::min(m_rect.size.width, m_rect.size.height) * 0.6f;
+            icon(m_icon, CGRectMake(cx - sz * 0.5f, m_rect.origin.y + (m_rect.size.height - sz) * 0.5f,
+                                    sz, sz), ink);
+            return;
+        }
+        // Icon + label centred as one group; the label centres on what is left after the icon.
+        const float isz = du(kBtnIcon), gap = du(kBtnIconGap);
+        const float group = isz + gap + m_label.width();
+        const float gx = cx - group * 0.5f;
+        icon(m_icon, CGRectMake(gx, m_rect.origin.y + (m_rect.size.height - isz) * 0.5f, isz, isz), ink);
+        cx = gx + isz + gap + m_label.width() * 0.5f;
+    }
     if (m_label.empty()) return;
-    const float cx   = m_rect.origin.x + m_rect.size.width * 0.5f;
     const float yTop = m_rect.origin.y + (m_rect.size.height + m_label.height()) * 0.5f;
     // "Pressed == selected" inverts BOTH the label and its shadow — that inversion is the cue.
     if (!m_enabled) m_label.drawCentered(cx, yTop, kKeyline);
@@ -408,13 +499,12 @@ void Button::render() const {
 }
 
 // --- Toggle --------------------------------------------------------------------------------
-// eden-ui.css `.eden-toggle`: 104x34u, SUNKEN on the content face; each half is inset 2u and
-// (50% - 2u) wide. Checked: the ON half takes the lime 12% face (the toggle's own one-stop
-// gradient, a sibling of the button's 6% one) and the OFF half goes white; unchecked, ON is white
-// and OFF is grey-300.
+// eden-ui.css `.eden-toggle`: 104x34u, SUNKEN on the content face; each half is (50% - inset)
+// wide. Checked: the ON half takes the lime 12% face (the toggle's own one-stop gradient, a
+// sibling of the button's 6% one) and the OFF half goes white; unchecked, ON is white and OFF is
+// dark grey (U.1: gray-500, after the reference; the CSS says gray-300).
 static const Color kLimeTop    = { 0xc6/255.0f, 0xf1/255.0f, 0x75/255.0f, 1.0f };   // --eden-green-100
 static const Color kLime       = { 0x89/255.0f, 0xc3/255.0f, 0x1f/255.0f, 1.0f };   // --eden-green-500
-static const Color kOffHalf    = { 0x97/255.0f, 0x97/255.0f, 0x97/255.0f, 1.0f };   // --eden-gray-300
 static const Color kTrack      = { 0x45/255.0f, 0x45/255.0f, 0x45/255.0f, 1.0f };   // --eden-surface-track
 static const Color kPlaceholder = { 0.0f, 0.0f, 0.0f, 0.5f };                       // --eden-text-placeholder
 
@@ -423,28 +513,45 @@ static bool inRect(CGRect r, float x, float y) {
            y >= r.origin.y && y <= r.origin.y + r.size.height;
 }
 
-Toggle::Toggle() : m_on(false) { m_rect = m_hit = CGRectMake(0, 0, 0, 0); }
+Toggle::Toggle() : m_on(false), m_muted(false) { m_rect = m_hit = CGRectMake(0, 0, 0, 0); }
+
+float Toggle::designW() { return du(104); }
+float Toggle::designH() { return du(34); }
 
 bool Toggle::hit(float x, float y) const { return inBox(m_rect, m_hit, x, y); }
 
+// U.1, from the reference (WORKING/referenceui/ Gameplay Settings): the pill reads as heavy next
+// to a 32u title because its keyline is 2u of near-black and its off half is the dark gray-500,
+// not the CSS's gray-300 (which is what the 5.4 toggle drew, and why it looked faint). The muted
+// palette is the reference's "Hostile creatures" row: every part one step lighter, still opaque.
+static const Color kToggleKeyline      = { 0x2c/255.0f, 0x2c/255.0f, 0x2c/255.0f, 1.0f };   // --eden-gray-800
+static const Color kToggleOff          = { 0x64/255.0f, 0x64/255.0f, 0x64/255.0f, 1.0f };   // --eden-gray-500
+static const Color kToggleMutedKeyline = { 0x97/255.0f, 0x97/255.0f, 0x97/255.0f, 1.0f };   // --eden-gray-300
+static const Color kToggleMutedOff     = { 0xb4/255.0f, 0xb4/255.0f, 0xb4/255.0f, 1.0f };
+static const Color kToggleMutedLime    = { 0xc4/255.0f, 0xe1/255.0f, 0x8f/255.0f, 1.0f };   // green-500 50% on white
+static const Color kToggleMutedLimeTop = { 0xe2/255.0f, 0xf8/255.0f, 0xba/255.0f, 1.0f };   // green-100 50% on white
+
 void Toggle::render() const {
     const float U = u();
-    fill(m_rect, kContentFace);
-    const float x = m_rect.origin.x, y = m_rect.origin.y + 2*U;
-    const float hw = m_rect.size.width * 0.5f - 2*U, hh = m_rect.size.height - 4*U;
+    const CGRect r = m_rect;
+    fill(r, kContentFace);
+    // Halves sit inside the 2u keyline with a 1u white gutter, as in the reference.
+    const float in = 3*U;
+    const float x = r.origin.x, y = r.origin.y + in;
+    const float hw = r.size.width * 0.5f - in, hh = r.size.height - 2*in;
     if (m_on) {
         const float band = hh * 0.12f;
-        fill(x + 2*U, y, hw, hh - band, kLime);
-        fill(x + 2*U, y + hh - band, hw, band, kLimeTop);
-        fill(x + m_rect.size.width - 2*U - hw, y, hw, hh, kContentFace);
+        fill(x + in, y, hw, hh - band, m_muted ? kToggleMutedLime : kLime);
+        fill(x + in, y + hh - band, hw, band, m_muted ? kToggleMutedLimeTop : kLimeTop);
     } else {
-        fill(x + 2*U, y, hw, hh, kContentFace);
-        fill(x + m_rect.size.width - 2*U - hw, y, hw, hh, kOffHalf);
+        fill(x + r.size.width - in - hw, y, hw, hh, m_muted ? kToggleMutedOff : kToggleOff);
     }
-    // The bevel last: SUNKEN's inset shadow sits ON TOP of the halves, as the CSS box-shadow does
-    // (box-shadow paints over the background, under the children — and the halves are children,
-    // but they are inset 2u, inside the 1u keyline and mostly clear of the 3u recess).
-    bevel(m_rect, BEVEL_SUNKEN);
+    // SUNKEN's recess (the inset shadow from the top-left) over the halves, as the CSS box-shadow
+    // paints over the background; then the heavy keyline instead of SUNKEN's 1u one. Muted, the
+    // recess goes too: it is what makes the control read as live.
+    if (!m_muted) insetTopLeft(CGRectMake(r.origin.x + 2*U, r.origin.y + 2*U, r.size.width - 4*U,
+                                          r.size.height - 4*U), 2*U, C(0x2c2b2b, 0.30f));
+    border(r, 2*U, m_muted ? kToggleMutedKeyline : kToggleKeyline);
 }
 
 // --- Slider --------------------------------------------------------------------------------
@@ -611,20 +718,64 @@ void ListRow::render() const {
 
 // --- ScrollView ----------------------------------------------------------------------------
 ScrollView::ScrollView() : m_pitch(30.0f), m_total(0), m_visible(1), m_first(0), m_thumbDrag(false),
-                           m_contentDrag(false), m_contentScrolling(false), m_dragY0(0), m_dragFirst0(0) {
+                           m_contentDrag(false), m_contentScrolling(false), m_dragY0(0), m_dragFirst0(0),
+                           m_viewH(0) {
     m_bar = CGRectMake(0, 0, 0, 0);
 }
 
 void ScrollView::setRows(int total, int visible) {
+    m_heights.clear();
     m_total = total > 0 ? total : 0;
     m_visible = visible > 0 ? visible : 1;
     setFirst(m_first);
+}
+
+void ScrollView::setRowHeights(const float* heights, int n, float viewH) {
+    m_total = (n > 0 && heights) ? n : 0;
+    m_heights.assign(heights, heights + m_total);
+    m_viewH = viewH;
+    if (m_heights.empty()) m_visible = 1;
+    setFirst(m_first);
+}
+
+// Whole rows from `first` whose summed height fits the view; at least one, so a row taller than
+// the view still shows (and overflows) instead of the list going blank.
+int ScrollView::visibleFrom(int first) const {
+    int n = 0;
+    float used = 0.0f;
+    for (int i = first; i < m_total; i++) {
+        if (n > 0 && used + m_heights[i] > m_viewH + 0.01f) break;
+        used += m_heights[i];
+        n++;
+    }
+    return n > 0 ? n : 1;
+}
+
+// Variable mode: the first row from which everything to the end fits — scrolling stops with the
+// last row at the bottom, not with it alone at the top.
+int ScrollView::maxFirst() const {
+    if (m_heights.empty()) return m_total > m_visible ? m_total - m_visible : 0;
+    float used = 0.0f;
+    int f = m_total;
+    while (f > 0 && (f == m_total || used + m_heights[f - 1] <= m_viewH + 0.01f)) {
+        used += m_heights[f - 1];
+        f--;
+    }
+    return f;
+}
+
+float ScrollView::rowOffset(int index) const {
+    if (m_heights.empty()) return (index - m_first) * m_pitch;
+    float y = 0.0f;
+    for (int i = m_first; i < index && i < m_total; i++) y += m_heights[i];
+    return y;
 }
 
 void ScrollView::setFirst(int f) {
     if (f > maxFirst()) f = maxFirst();
     if (f < 0) f = 0;
     m_first = f;
+    if (!m_heights.empty()) m_visible = visibleFrom(m_first);
 }
 
 bool ScrollView::scrollBy(int rows) {
@@ -636,7 +787,12 @@ bool ScrollView::scrollBy(int rows) {
 void ScrollView::ensureVisible(int index) {
     if (index < 0) return;
     if (index < m_first) setFirst(index);
-    else if (index >= m_first + m_visible) setFirst(index - m_visible + 1);
+    else if (m_heights.empty()) { if (index >= m_first + m_visible) setFirst(index - m_visible + 1); }
+    else {
+        int f = m_first;                      // the least scroll: advance until index is in view
+        while (f < index && index >= f + visibleFrom(f)) f++;
+        setFirst(f);
+    }
 }
 
 // The thumb's length is the visible fraction, floored at the CSS's 24u min-height; it travels the
@@ -687,12 +843,32 @@ void ScrollView::beginContentDrag(float y) {
 
 // A finger moving UP pulls later rows into view, as a touch list does. Below the slop it is still
 // a tap; once past it, it is a scroll for the rest of the touch even if it comes back.
+// The slop is a third of a row; with variable heights that is the row the drag started on.
+float ScrollView::dragPitch() const {
+    if (m_heights.empty()) return m_pitch;
+    if (m_dragFirst0 >= 0 && m_dragFirst0 < m_total) return m_heights[m_dragFirst0];
+    return m_pitch;
+}
+
 bool ScrollView::contentDragTo(float y) {
     if (!m_contentDrag) return false;
     const float dy = y - m_dragY0;
-    if (!m_contentScrolling && std::fabs(dy) < std::max(du(8), m_pitch * 0.35f)) return false;
+    if (!m_contentScrolling && std::fabs(dy) < std::max(du(8), dragPitch() * 0.35f)) return false;
     m_contentScrolling = true;
-    if (m_pitch > 0.0f) setFirst(m_dragFirst0 + (int)lroundf(dy / m_pitch));
+    if (m_heights.empty()) {
+        if (m_pitch > 0.0f) setFirst(m_dragFirst0 + (int)lroundf(dy / m_pitch));
+        return true;
+    }
+    // Variable mode: walk the real heights from the row the drag started on, moving one row each
+    // time the finger has covered more than half of the next one (what lroundf does above).
+    int f = m_dragFirst0;
+    float left = std::fabs(dy);
+    if (dy > 0.0f) {                          // finger up: later rows
+        while (f < m_total && left > m_heights[f] * 0.5f) { left -= m_heights[f]; f++; }
+    } else {
+        while (f > 0 && left > m_heights[f - 1] * 0.5f) { left -= m_heights[f - 1]; f--; }
+    }
+    setFirst(f);
     return true;
 }
 
@@ -744,6 +920,133 @@ void TabRail::render() const {
         b.setPressed(i == m_sel || i == m_held);
         b.render();
     }
+}
+
+// --- IconRail (U.1) ------------------------------------------------------------------------
+// eden-ui.css `.eden-tabrail` + `.eden-btn--tab`: 64u tiles, 6u gap, 4u padding, a 38u icon, the
+// rgba(150,150,150,.55) rail surface under a 1u gray-500 keyline (--bevel-content's inset).
+static const float kRailPad = 4.0f, kRailGap = 6.0f, kRailTile = 64.0f, kRailIcon = 38.0f;
+static const Color kRailFace = { 150/255.0f, 150/255.0f, 150/255.0f, 0.55f };   // --eden-surface-rail
+
+IconRail::IconRail() : m_sel(0), m_held(-1) { m_rect = CGRectMake(0, 0, 0, 0); }
+
+float IconRail::designW() { return du(kRailTile + 2 * kRailPad); }
+
+void IconRail::setTiles(const int* icons, int n) {
+    m_icons.assign(icons, icons + (n > 0 && icons ? n : 0));
+    m_enabled.assign(m_icons.size(), 1);
+    m_scroll.setFirst(0);
+    setRect(m_rect);
+}
+
+void IconRail::setEnabled(int i, bool e) { if (i >= 0 && i < count()) m_enabled[i] = e ? 1 : 0; }
+bool IconRail::enabled(int i) const      { return i >= 0 && i < count() && m_enabled[i]; }
+
+float IconRail::tileSize() const { return std::max(0.0f, (float)m_rect.size.width - 2 * du(kRailPad)); }
+
+// The scroll model is the ScrollView's uniform mode with the tile pitch: a tile "row" is a tile
+// plus its gap, and the last tile's missing gap is what the +gap in the visible count pays for.
+void IconRail::setRect(CGRect r) {
+    m_rect = r;
+    const float pitch = tileSize() + du(kRailGap);
+    const float inner = r.size.height - 2 * du(kRailPad) + du(kRailGap);
+    m_scroll.setPitch(pitch);
+    m_scroll.setRows(count(), pitch > 0.0f ? (int)std::floor(inner / pitch + 0.001f) : 1);
+}
+
+CGRect IconRail::tileRect(int i) const {
+    const int k = i - m_scroll.first();
+    if (i < 0 || i >= count() || k < 0 || k >= m_scroll.visible()) return CGRectMake(0, 0, 0, 0);
+    const float t = tileSize(), p = du(kRailPad);
+    const float yTop = m_rect.origin.y + m_rect.size.height - p - k * (t + du(kRailGap));
+    return CGRectMake(m_rect.origin.x + p, yTop - t, t, t);
+}
+
+bool IconRail::hitRail(float x, float y) const { return inRect(m_rect, x, y); }
+
+int IconRail::hit(float x, float y) const {
+    for (int i = m_scroll.first(); i < count() && i < m_scroll.first() + m_scroll.visible(); i++)
+        if (m_enabled[i] && inRect(tileRect(i), x, y)) return i;
+    return -1;
+}
+
+void IconRail::render() const {
+    fill(m_rect, kRailFace);
+    border(m_rect, 1 * u(), kKeyline);
+    const float isz = du(kRailIcon) * (tileSize() / du(kRailTile));   // the icon scales with the tile
+    for (int i = m_scroll.first(); i < count() && i < m_scroll.first() + m_scroll.visible(); i++) {
+        const CGRect t = tileRect(i);
+        const bool down = m_enabled[i] && (i == m_sel || i == m_held);
+        bevel(t, down ? BEVEL_PRESSED : BEVEL_RAISED);
+        // Disabled is design-system.md's "solid chrome, grey ink": the CSS's grayscale(1) of an
+        // already grey tile is exactly a muted icon.
+        const Color ink = !m_enabled[i] ? kTextMuted : down ? kTextPressed : kText;
+        icon(m_icons[i], CGRectMake(t.origin.x + (t.size.width - isz) * 0.5f,
+                                    t.origin.y + (t.size.height - isz) * 0.5f, isz, isz), ink);
+    }
+}
+
+// --- TwoLineRow (U.1) ----------------------------------------------------------------------
+// eden-ui.css `.eden-listrow`: padding 4u 5u, a 10u gap before the control; the title is
+// display-md (32u) at line-height 1, the hint body-md (15u). Label lays lines out at 1.28 em, so
+// a one-line title is lifted (1.28 - 1) / 2 em — Label::blit centres the glyphs on the line — and
+// given a box of titleHeight().
+static const float kRowPadY = 4.0f, kRowPadX = 5.0f, kRowGap = 10.0f, kRowHintGap = 1.0f;
+
+TwoLineRow::TwoLineRow() : m_width(0), m_controlW(0), m_controlH(0), m_indent(0), m_titlePt(0),
+                           m_hintPt(0), m_height(0), m_x(0), m_yTop(0), m_muted(false), m_last(false) {}
+
+void TwoLineRow::build(const char* title, const char* hint, float width, float controlW, float controlH,
+                       float indent, float titlePt, float hintPt) {
+    const std::string t = title ? title : "", h = hint ? hint : "";
+    if (titlePt <= 0.0f) titlePt = du(32);
+    if (hintPt <= 0.0f) hintPt = du(15);
+    const bool same = t == m_titleText && h == m_hintText && width == m_width && controlW == m_controlW &&
+                      indent == m_indent && titlePt == m_titlePt && hintPt == m_hintPt &&
+                      (!m_title.empty() || t.empty());
+    m_controlH = controlH;
+    if (!same) {
+        m_titleText = t; m_hintText = h;
+        m_width = width; m_controlW = controlW; m_indent = indent;
+        m_titlePt = titlePt; m_hintPt = hintPt;
+        float textW = width - 2 * du(kRowPadX) - indent - (controlW > 0.0f ? controlW + du(kRowGap) : 0.0f);
+        if (textW < du(40)) textW = du(40);
+        m_title.set(t.c_str(), titlePt, UITextAlignmentLeft, textW, FACE_DISPLAY);
+        m_hint.set(h.c_str(), hintPt, UITextAlignmentLeft, textW, FACE_BODY);
+    }
+    // Height from the BUILT labels. A one-line title is a 0.85 em box; a title that had to wrap keeps
+    // Label's own 1.28 em spacing (tighter would overlap the lines) — render() mirrors this.
+    float text = m_title.empty() ? 0.0f : titleHeight();
+    if (!m_hint.empty()) text += du(kRowHintGap) + m_hint.height();
+    m_height = std::max(text, m_controlH) + 2 * du(kRowPadY);
+}
+
+// 0.85 em, not the CSS's 1: Jersey's raster leaves its descender room under the baseline and the
+// hint's own line adds leading above its caps, so a full em read as a loose gap in the U.1 kit shot.
+float TwoLineRow::titleHeight() const {
+    return m_title.height() <= m_title.lineHeight() * 1.01f ? m_titlePt * 0.85f : m_title.height();
+}
+
+CGRect TwoLineRow::rect() const { return CGRectMake(m_x, m_yTop - m_height, m_width, m_height); }
+
+CGRect TwoLineRow::controlRect(float w, float h) const {
+    return CGRectMake(m_x + m_width - du(kRowPadX) - w, m_yTop - m_height * 0.5f - h * 0.5f, w, h);
+}
+
+bool TwoLineRow::hit(float x, float y) const { return inRect(rect(), x, y); }
+
+void TwoLineRow::render() const {
+    const float U = u();
+    if (!m_last) fill(m_x, m_yTop - m_height, m_width, 1*U, C(0x000000, 0.28f));
+    const float x = m_x + du(kRowPadX) + m_indent;
+    float y = m_yTop - du(kRowPadY);
+    if (!m_title.empty()) {
+        const bool one = m_title.height() <= m_title.lineHeight() * 1.01f;
+        const float lift = one ? (m_title.lineHeight() - m_titlePt) * 0.5f : 0.0f;
+        m_title.draw(x, y + lift, m_muted ? kTextMuted : kText);
+        y -= titleHeight();
+    }
+    if (!m_hint.empty()) m_hint.draw(x, y - du(kRowHintGap), m_muted ? kTextMuted : kText);
 }
 
 void progressBar(CGRect r, float frac, float phase) {

@@ -78,6 +78,8 @@ struct Setting {
     float def;
     const char* hint;     // one line of explanation, shown under the control
     const char* options;  // KIND_ENUM only: comma-separated labels, e.g. "Auto,Touch,Keyboard+Mouse"
+    const char* parent;   // key of a KIND_TOGGLE row this one depends on (muted while that is off), or NULL.
+                          // TRAILING on purpose: positional init leaves it NULL for every row that omits it.
 };
 
 static const Setting kSettings[] = {
@@ -86,12 +88,12 @@ static const Setting kSettings[] = {
   { "autojump",          "Auto-jump",         "Gameplay",  KIND_TOGGLE, ENG_AUTOJUMP,   0,   1,   1,   1,  "Step up single blocks automatically.",                            NULL },
   { "creatures",         "Creatures",         "Gameplay",  KIND_TOGGLE, ENG_CREATURES,  0,   1,   1,   1,  "Spawn and render wildlife. Off is faster.",                       NULL },
 
-  { "music",             "Music",             "Audio",     KIND_TOGGLE, ENG_MUSIC,      0,   1,   1,   1,  NULL,                                                               NULL },
-  { "sound",             "Sound effects",     "Audio",     KIND_TOGGLE, ENG_SOUND,      0,   1,   1,   1,  NULL,                                                               NULL },
-  { "music_volume",      "Music volume",      "Audio",     KIND_RANGE,  -1,             0,   1, .05f,  1,  NULL,                                                               NULL },
-  { "ambience_volume",   "Ambience volume",   "Audio",     KIND_RANGE,  -1,             0,   1, .05f,  1,  NULL,                                                               NULL },
-  { "effects_volume",    "Effects volume",    "Audio",     KIND_RANGE,  -1,             0,   1, .05f,  1,  NULL,                                                               NULL },
-  { "touch_controls_sound", "Touch controls sound", "Audio", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Joystick and jump-button taps make a sound. Touchscreen only -- never fires for keyboard/mouse. Off by default.", NULL },
+  { "music",             "Music",             "Audio",     KIND_TOGGLE, ENG_MUSIC,      0,   1,   1,   1,  "Background music while you play.",                                                               NULL },
+  { "sound",             "Sound effects",     "Audio",     KIND_TOGGLE, ENG_SOUND,      0,   1,   1,   1,  "Block, footstep and creature sounds.",                                                               NULL },
+  { "music_volume",      "Music volume",      "Audio",     KIND_RANGE,  -1,             0,   1, .05f,  1,  "Loudness of the music.",                                                               NULL, "music" },
+  { "ambience_volume",   "Ambience volume",   "Audio",     KIND_RANGE,  -1,             0,   1, .05f,  1,  "Loudness of wind, water and other background sounds.",                                                               NULL },
+  { "effects_volume",    "Effects volume",    "Audio",     KIND_RANGE,  -1,             0,   1, .05f,  1,  "Loudness of block, footstep and creature sounds.",                                                               NULL, "sound" },
+  { "touch_controls_sound", "Touch controls sound", "Audio", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Joystick and jump-button taps make a sound. Touchscreen only -- never fires for keyboard/mouse. Off by default.", NULL, "sound" },
 
   // input_mode: 0=Auto (matchMedia + first-input detection, see eden-st.html), 1=Touch,
   // 2=Keyboard+Mouse. Auto is the default so nothing changes for players who never open Settings.
@@ -99,22 +101,35 @@ static const Setting kSettings[] = {
   { "hold_to_act",       "Hold to mine/build", "Controls",  KIND_TOGGLE, -1,            0,   1,   1,   1,  "Hold the mouse button to repeat, instead of one block per click.", NULL },
   { "mouse_sensitivity", "Mouse sensitivity", "Controls",  KIND_RANGE,  -1,          .25f,  3, .05f,  1,  "Look speed while the pointer is locked.",                         NULL },
   { "mouse_sensitivity_y", "Mouse sensitivity (Y)", "Controls", KIND_RANGE, -1,      .25f,  3, .05f,  1,  "Vertical look speed, if you want it different from horizontal.",  NULL },
-  { "invert_look",       "Invert look",       "Controls",  KIND_TOGGLE, -1,             0,   1,   1,   0,  NULL,                                                               NULL },
+  { "invert_look",       "Invert look",       "Controls",  KIND_TOGGLE, -1,             0,   1,   1,   0,  "Flip vertical look: pushing up looks down.",                                                               NULL },
   // Row #24 (gamepad). Two translators read these now — public/eden-gamepad.js on web and
   // native/src/seam/Input_native.cpp (Phase N Stage 2) on native — both of them pure translators
   // over the existing input entry points. The rows deliberately do
   // not touch the engine (engine >= 0). ON by default because the module is inert until a pad is
   // actually connected AND has been interacted with, so it costs a disconnected player nothing.
   { "gamepad",           "Gamepad",           "Controls",  KIND_TOGGLE, -1,             0,   1,   1,   1,  "Use a connected controller (standard mapping). Sticks move and look; triggers mine and build.", NULL },
-  { "gamepad_look_sensitivity", "Gamepad look speed", "Controls", KIND_RANGE, -1,     .25f,  3, .05f,  1,  "Right-stick look speed. Composes with mouse sensitivity.",        NULL },
-  { "gamepad_deadzone",  "Gamepad deadzone",  "Controls",  KIND_RANGE,  -1,          .05f, .5f, .05f, .15f, "Ignore stick movement smaller than this. Raise it if the camera drifts on its own.", NULL },
+  { "gamepad_look_sensitivity", "Gamepad look speed", "Controls", KIND_RANGE, -1,     .25f,  3, .05f,  1,  "Right-stick look speed. Composes with mouse sensitivity.",        NULL, "gamepad" },
+  { "gamepad_deadzone",  "Gamepad deadzone",  "Controls",  KIND_RANGE,  -1,          .05f, .5f, .05f, .15f, "Ignore stick movement smaller than this. Raise it if the camera drifts on its own.", NULL, "gamepad" },
 
   // B.8: a shortcut over view_distance + render_scale (see kPresets[]). Stored like any row, but
   // moving either knob by hand drops it to Custom. Default reproduces the pre-B.8 look exactly.
-  { "graphics_preset",   "Graphics preset",   "Video",     KIND_ENUM,   -1,             0,   3,   1,   2,  "Low trades distance and sharpness for speed. Default is the original look. High matches Default for now. Changing a setting below makes it Custom.", "Custom,Low,Default,High" },
+#if defined(EDEN_PLATFORM_IOS)
+  { "graphics_preset",   "Graphics preset",   "Video",     KIND_ENUM,   -1,             0,   3,   1,   2,  "Low trades distance and sharpness for speed. Default is the original look. High matches Default on this device for now. Changing a setting below makes it Custom.", "Custom,Low,Default,High" },
+#else
+  { "graphics_preset",   "Graphics preset",   "Video",     KIND_ENUM,   -1,             0,   3,   1,   2,  "Low trades distance and sharpness for speed. Default is the original look. High keeps more of the world loaded so you see further. Changing a setting below makes it Custom.", "Custom,Low,Default,High" },
+#endif
   { "fov",               "Field of view",     "Video",     KIND_RANGE,  -1,            60, 110,   1,  80,  "Vertical FOV in degrees. 80 is the original.",                    NULL },
   // B.5a: draw-culling only (Graphics::setZFAR); a "less" knob for weak CPUs/GPUs. Auto = the per-device value.
-  { "view_distance",     "View distance",     "Video",     KIND_ENUM,   -1,             0,   6,   1,   0,  "How far you can see, in chunks. Lower is faster. Auto picks by device; the cap is about 120 blocks.", "Auto,4,5,6,7,8,9" },
+  { "view_distance",     "View distance",     "Video",     KIND_ENUM,   -1,             0,   6,   1,   0,  "How far you can see, in chunks. Lower is faster. Auto picks by device, and reaches as far as Render distance allows.", "Auto,4,5,6,7,8,9" },
+  // B.5b-2: the resident window's radius in chunks (kRenderRadius[] below), read once per world
+  // entry by eden_window_radius_for_world() -- the arrays are sized from it, so it cannot change
+  // under an open world. 9 is stock. iOS offers 10 at most until a device round measures more
+  // (render-distance plan §1.4: iPad Air 2 projected ~216 / ~273 MB at R10, 64z / 256z).
+#if defined(EDEN_PLATFORM_IOS)
+  { "render_distance",   "Render distance",   "Video",     KIND_ENUM,   -1,             0,   1,   1,   0,  "Chunks kept loaded around you. More shows more world but uses more memory. Takes effect the next time you open a world.", "9,10" },
+#else
+  { "render_distance",   "Render distance",   "Video",     KIND_ENUM,   -1,             0,   3,   1,   0,  "Chunks kept loaded around you. More shows more world but uses more memory. Takes effect the next time you open a world.", "9,10,12,16" },
+#endif
   { "display_mode",      "Display",           "Video",     KIND_ENUM,   -1,             0,   2,   1,   0,  "Fixed size, fit the window, or a fullscreen button.",             "Fixed,Fit window,Fullscreen" },
   // Audit rows D1 + D4 — the two knobs on the (now derived) engine POINT space. Both default to
   // Auto, which defers to the active device profile (src/seam/DisplayProfile_web.mm's kProfiles[]):
@@ -194,6 +209,7 @@ static int eden_setting_index(const char* key) {
 float eden_look_sensitivity = 1.0f;   // read by eden_apply_look_delta
 float eden_fov_degrees      = 80.0f;  // read by __wrap_gluPerspective
 float eden_view_distance    = 0.0f;   // enum index (0=Auto, 1..6 = 4..9 chunks), read by Graphics::viewDistanceZFAR
+float eden_render_distance  = 0.0f;   // B.5b-2: enum index into kRenderRadius[], read by eden_window_radius_for_world
 // PC controls audit F1/F2 (Movement_web.mm's --wrap of Player::setSpeed). Default ON; a toggle
 // exists so stock (frame-time-dependent) feel can be A/B'd without a rebuild.
 float eden_fps_normalize    = 1.0f;
@@ -366,8 +382,18 @@ static void eden_apply_port_settings(void);
 // B.8 presets: enum indexes of view_distance (0 = Auto, 1 = 4 chunks) and render_scale (1 = 75%,
 // 2 = 100%). Index 0 (Custom) has no row. iOS hides render_scale and reads it as 100% whatever is
 // stored, so there the preset is judged on view distance alone.
-struct GfxPreset { int view_distance, render_scale; };
-static const GfxPreset kPresets[] = { {0, 0}, {1, 1}, {0, 2}, {0, 2} };   // Custom, Low, Default, High
+// B.5b-2 adds render_distance (an index into kRenderRadius[]): High is radius 16 on desktop native,
+// 12 on web (the 512 MB heap cap; a 256z world is held to 12 there anyway), and stays 9 on iOS until
+// a device round has measured a larger window (ROADMAP Stage T).
+struct GfxPreset { int view_distance, render_scale, render_distance; };
+#if defined(EDEN_PLATFORM_IOS)
+static const GfxPreset kPresets[] = { {0, 0, 0}, {1, 1, 0}, {0, 2, 0}, {0, 2, 0} };   // Custom, Low, Default, High
+#elif defined(__EMSCRIPTEN__)
+static const GfxPreset kPresets[] = { {0, 0, 0}, {1, 1, 0}, {0, 2, 0}, {0, 2, 2} };
+#else
+static const GfxPreset kPresets[] = { {0, 0, 0}, {1, 1, 0}, {0, 2, 0}, {0, 2, 3} };
+#endif
+static const int kRenderRadius[] = { 9, 10, 12, 16 };
 static void eden_preset_sync(int changedKnob);
 extern "C" void eden_settings_set(int i, float v);
 static bool g_presetApplying = false;
@@ -408,6 +434,9 @@ static void eden_apply_setting(int i, bool commitEngine) {
         eden_view_distance = v;
         if (World::getWorld) Graphics::setZFAR(0);   // re-derive ZFAR now (it is otherwise only set on world load)
         eden_preset_sync(i);
+    } else if (std::strcmp(s.key, "render_distance") == 0) {
+        eden_render_distance = v;   // read at the next world entry, never applied to an open one
+        eden_preset_sync(i);
     } else if (std::strcmp(s.key, "graphics_preset") == 0) {
         // Only a deliberate change applies the knobs; the init/re-apply pass must not overwrite
         // stored knobs (or the low-memory seeds) with the preset's.
@@ -415,6 +444,7 @@ static void eden_apply_setting(int i, bool commitEngine) {
         if (commitEngine && p >= 1 && p < (int)(sizeof(kPresets) / sizeof(kPresets[0]))) {
             g_presetApplying = true;
             eden_settings_set(eden_setting_index("view_distance"), (float)kPresets[p].view_distance);
+            eden_settings_set(eden_setting_index("render_distance"), (float)kPresets[p].render_distance);
 #if !defined(EDEN_PLATFORM_IOS)
             eden_settings_set(eden_setting_index("render_scale"), (float)kPresets[p].render_scale);
 #endif
@@ -505,11 +535,12 @@ static void eden_preset_sync(int changedKnob) {
     (void)changedKnob;
     if (g_presetApplying) return;
     int pi = eden_setting_index("graphics_preset"), vi = eden_setting_index("view_distance"),
-        ri = eden_setting_index("render_scale");
-    if (pi < 0 || vi < 0 || ri < 0) return;
+        ri = eden_setting_index("render_scale"), di = eden_setting_index("render_distance");
+    if (pi < 0 || vi < 0 || ri < 0 || di < 0) return;
     int p = (int)lroundf(g_value[pi]);
     if (p < 1 || p >= (int)(sizeof(kPresets) / sizeof(kPresets[0]))) return;
-    bool match = (int)lroundf(g_value[vi]) == kPresets[p].view_distance;
+    bool match = (int)lroundf(g_value[vi]) == kPresets[p].view_distance &&
+                 (int)lroundf(g_value[di]) == kPresets[p].render_distance;
 #if !defined(EDEN_PLATFORM_IOS)
     match = match && (int)lroundf(g_value[ri]) == kPresets[p].render_scale;
 #endif
@@ -555,8 +586,10 @@ void eden_settings_init(void) {
     {   // B.8: a preset nobody chose is whatever the knobs add up to (Default, unless a seed moved them)
         int pi = eden_setting_index("graphics_preset");
         if (pi >= 0 && !g_hadStored[pi]) {
-            int vi = eden_setting_index("view_distance"), ri = eden_setting_index("render_scale");
+            int vi = eden_setting_index("view_distance"), ri = eden_setting_index("render_scale"),
+                di = eden_setting_index("render_distance");
             bool isDefault = (int)lroundf(g_value[vi]) == kPresets[2].view_distance
+                          && (int)lroundf(g_value[di]) == kPresets[2].render_distance
 #if !defined(EDEN_PLATFORM_IOS)
                           && (int)lroundf(g_value[ri]) == kPresets[2].render_scale
 #endif
@@ -590,10 +623,11 @@ const char* eden_settings_schema(void) {
         const Setting& s = kSettings[i];
         n += snprintf(buf + n, sizeof(buf) - n,
             "%s{\"i\":%d,\"key\":\"%s\",\"label\":\"%s\",\"group\":\"%s\",\"kind\":%d,"
-            "\"min\":%g,\"max\":%g,\"step\":%g,\"hint\":%s%s%s,\"options\":%s%s%s}",
+            "\"min\":%g,\"max\":%g,\"step\":%g,\"hint\":%s%s%s,\"options\":%s%s%s,\"parent\":%s%s%s}",
             i ? "," : "", i, s.key, s.label, s.group, s.kind, s.min, s.max, s.step,
             s.hint ? "\"" : "", s.hint ? s.hint : "null", s.hint ? "\"" : "",
-            s.options ? "\"" : "", s.options ? s.options : "null", s.options ? "\"" : "");
+            s.options ? "\"" : "", s.options ? s.options : "null", s.options ? "\"" : "",
+            s.parent ? "\"" : "", s.parent ? s.parent : "null", s.parent ? "\"" : "");
     }
     // snprintf's return is what WOULD have been written, so `n` running past the buffer is the
     // truncation signal. Say so out loud — the alternative is a settings panel that renders nothing
@@ -670,6 +704,19 @@ void eden_settings_menu_close(void) {
     Input::getInput()->clearAll();
 }
 
+// U.3: the "menu" key (Escape) while the engine's settings screen is up. 1 = consumed: the screen
+// closed (as its Back does; since U.4 Keys is a tab, not a child screen). 0 = settings is not showing, and the key
+// keeps its usual meaning. Native only calls it (Input_native.cpp) — the key used to reach the screen
+// as a synthetic tap on the HUD's menu button, which the screen claimed as its own touch and dropped.
+EDEN_EXPORT
+int eden_settings_menu_back(void) {
+    if (!eden_settings_menu_open()) return 0;
+    SettingsMenu* sm = eden_engine_settings();
+    if (sm) sm->back();
+    else eden_settings_menu_close();
+    return 1;
+}
+
 // Opens the engine's settings state from the port side (the in-game gear button). Only meaningful
 // in the menu; in game the panel is shown by the JS on its own and this is not called.
 EDEN_EXPORT
@@ -702,6 +749,27 @@ int eden_get_upgrade_256z(void) {
     const char* e = getenv("EDEN_UPGRADE_256Z");
     if (e && e[0]) return e[0] != '0';
     return eden_upgrade_256z != 0.0f;
+}
+// B.5b-2: the window radius World::loadWorld hands eden_set_window_radius() for a world of this
+// height, before Terrain::allocateMemory(). EDEN_WINDOW_RADIUS=N wins, the way EDEN_UPGRADE_256Z
+// does (every native scripted mode pins it to 9 unless --radius= is given, so a gate's checksums do
+// not depend on a stored setting). Then the setting, held to what the platform can afford: web
+// keeps a 256z world to 12 (linear memory is capped at 512 MB and a 256z window at 16 projects past
+// ~370 MB, plan §1.4), and a low-memory device to the stock 9.
+EDEN_EXPORT
+int eden_window_radius_for_world(int height) {
+    const char* e = getenv("EDEN_WINDOW_RADIUS");
+    if (e && e[0]) return atoi(e);
+    int i = (int)lroundf(eden_render_distance);
+    const int n = (int)(sizeof(kRenderRadius) / sizeof(kRenderRadius[0]));
+    int r = (i >= 0 && i < n) ? kRenderRadius[i] : T_RADIUS_DEFAULT;
+#if defined(__EMSCRIPTEN__)
+    if (height >= T_HEIGHT_MAX && r > 12) r = 12;
+#else
+    (void)height;
+#endif
+    if (eden_low_memory()) r = T_RADIUS_DEFAULT;
+    return r;
 }
 
 // Audit item #6. Returned as integer percent / hundredths rather than floats so the page does no
@@ -756,6 +824,19 @@ static const Setting* eden_row(int i) {
 
 EDEN_EXPORT const char* eden_settings_label(int i) { const Setting* s = eden_row(i); return s ? s->label : ""; }
 EDEN_EXPORT const char* eden_settings_group(int i) { const Setting* s = eden_row(i); return s ? s->group : ""; }
+EDEN_EXPORT const char* eden_settings_hint(int i)  { const Setting* s = eden_row(i); return (s && s->hint) ? s->hint : ""; }
+// Index of the toggle row `i` depends on (muted while it is off), or -1. A parent that is missing or
+// not a KIND_TOGGLE is a table bug (muting under a range/enum has no meaning): reported, then ignored.
+EDEN_EXPORT int eden_settings_parent(int i) {
+    const Setting* s = eden_row(i);
+    if (!s || !s->parent) return -1;
+    const int p = eden_setting_index(s->parent);
+    if (p < 0 || kSettings[p].kind != KIND_TOGGLE) {
+        std::fprintf(stderr, "[eden-settings] row '%s': parent '%s' is not a toggle row\n", s->key, s->parent);
+        return -1;
+    }
+    return p;
+}
 EDEN_EXPORT const char* eden_settings_key(int i)   { const Setting* s = eden_row(i); return s ? s->key   : ""; }
 EDEN_EXPORT int   eden_settings_kind(int i) { const Setting* s = eden_row(i); return s ? s->kind : KIND_TOGGLE; }
 EDEN_EXPORT float eden_settings_min(int i)  { const Setting* s = eden_row(i); return s ? s->min  : 0.0f; }

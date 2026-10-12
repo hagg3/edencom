@@ -220,13 +220,19 @@ void Graphics::setCameraFog(float zfar){
 // B.5a: user view distance. eden_view_distance is the Settings enum index (0 = Auto = the per-tier value
 // below, 1..6 = 4..9 chunks of radius). The far plane is ZFAR-25, so ZFAR = blocks + 25. Draw-culling only:
 // meshing and streaming are untouched. The cap is the meshed radius (~120 blocks), not the resident window.
+// B.5b-2: the cap is eden_meshed_radius_blocks() (120 at the default radius 9, the old literal), and
+// Auto follows a larger window out to it: at radius R the far plane sits at the meshed edge and the
+// fog ends 5 blocks short of it, as the tier value 145 does at R9. A smaller window clamps it.
 extern float eden_view_distance;
-#define VIEW_DISTANCE_MAX_BLOCKS 120
 float Graphics::viewDistanceZFAR(float tierZfar){
+    const int cap=eden_meshed_radius_blocks();
     int idx=(int)(eden_view_distance+.5f);
-    if(idx<=0)return tierZfar;
+    if(idx<=0){
+        if(T_RADIUS>T_RADIUS_DEFAULT)return cap+25>tierZfar?cap+25:tierZfar;
+        return cap+25<tierZfar?cap+25:tierZfar;
+    }
     int blocks=(idx+3)*CHUNK_SIZE;
-    if(blocks>VIEW_DISTANCE_MAX_BLOCKS)blocks=VIEW_DISTANCE_MAX_BLOCKS;
+    if(blocks>cap)blocks=cap;
     return blocks+25;
 }
 void Graphics::setZFAR(float zfar){

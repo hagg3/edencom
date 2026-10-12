@@ -33,7 +33,8 @@
 //                        someone sitting at the keyboard, and that is not a regression test.
 //   --shot[=PREFIX]      opens a REAL WINDOW and writes BMP captures of three screens — the main
 //                        menu, the in-world HUD and the in-game (ESC) panel — as
-//                        PREFIX-menu.bmp / -settings.bmp (+ -settings-pN.bmp per page) /
+//                        PREFIX-menu.bmp / -kit.bmp (U.1: every GL kit control, every state) /
+//                        -settings.bmp (+ -settings-pN.bmp per page) /
 //                        -keybinds.bmp / -hud.bmp / -pausemenu.bmp / -dialog.bmp /
 //                        -menu-world.bmp / -rename.bmp (default prefix eden-shot), -hud-sign.bmp / -sign-prompt.bmp
 //                        (D.3c, where GL text entry exists), and since 5.9
@@ -98,6 +99,12 @@
 //   --upgrade-256z=0|1   Stage S / S.5e: whether a conversion promotes a 64z source to 256z
 //                        (EDEN_UPGRADE_256Z). Scripted modes and --live-cmds default to 0 -- the
 //                        source's height -- whatever the Settings toggle says; a player run follows it.
+//   --radius=N           B.5b-2: the resident window's radius in chunks, 4..16 (EDEN_WINDOW_RADIUS). Scripted
+//                        modes and --live-cmds default to 9 -- stock -- whatever the Render distance setting
+//                        says, so every checksum gate keeps meaning the same window; a player run follows it.
+//   --mesh-bench=PASSES  B.5b-2: --stage1 also times PASSES synchronous re-meshes of every meshed chunk and
+//                        PASSES reads of every window voxel through GBLOCK (`.bench` line, medians): the
+//                        hot-path cost of the runtime `%T_SIZE`, A/B'd against a literal build.
 //   --world-format=...    Stage S / S.8: accepted and ignored (old scripts pass it). Every world is an
 //                        `.emod`; a `.eden`/archive converts when played (S.5d).
 //   --empty-shortcut=0   Stage R / R.2's A/B lever: 0 restores the pre-R.2 mesh scheduling (all-air
@@ -137,7 +144,7 @@
 //   --light-selftest     R.3: lightbox place/repaint/break (incl. saturation, the y clip and the
 //                        toroidal seam) through the engine's own edit paths, light hash per step.
 //   --evict-selftest     B.5b-1b: ring streaming's evict-save, node dropping and autosave. Edits in three
-//                        columns survive a 320-block walk out and back and a quit/reload (gate 2);
+//                        columns survive a 320-block walk (longer past radius 14) out and back and a quit/reload (gate 2);
 //                        a fire tower + water in the -x outer-ring column, evicted by one chunk of
 //                        walking, leave no node outside the window and no committed column but their
 //                        own (gate 3); the autosave timer saves an edit and the fire keeps burning.
@@ -226,6 +233,7 @@
 #include "../../../Classes/SignTool.h"       // --signs-selftest (D.3c)
 #include "../../../Classes/CmdScript.h"      // --cmds-selftest (D.4c)
 #include "../../../Classes/Model.h"          // --cmds-selftest: CountActiveCreatures
+#include "../../../Classes/PassTimers.h"     // --pass-probe / --pass-timers (P.1b)
 extern Vector colorTable[256];               // --cmds-selftest: the night sky (palette 54)
 extern int g_ring_columns_landed, g_bulk_reloads, g_ring_evict_saves, g_ring_dynamics_dropped, g_autosaves; // Terrain.mm, --evict-selftest
 extern int g_light_test_mutation;            // Lighting.mm (B.5b-1c), --light-mutate
@@ -235,6 +243,7 @@ extern int regionSkyColors[4][4];            // FileManager.mm: the saved per-re
 void paintSky(int color);                    // TerrainGen2.mm
 extern BOOL* chunksToUpdate;                 // Terrain.mm: the mesher's dirty flags (--ring-light-selftest)
 extern BOOL* columnsToUpdate;
+extern block8* blockarray;                   // Terrain.mm: --mesh-bench's raw window read (B.5b-2)
 #include "../../../Classes/Terrain.h"
 #include "../../../Classes/Player.h"
 #include "../../../Classes/Camera.h"
@@ -285,6 +294,7 @@ void  eden_settings_init(void);
 void  eden_set_detected_touch(int isTouch);
 int   eden_settings_loaded(void);
 void  eden_heap_pressure_tick(void);
+int   eden_native_thermal_state(void);   // SDLView_native.mm (P.1a)
 void  eden_native_gl_set_headless(int on);
 void  eden_native_gl_set_present(int on);
 int   eden_native_gl_present_guard_fires(void);
@@ -416,6 +426,10 @@ struct Options {
     int  walkLegs = 0;
     int  lightLattice = 0;               // --light-lattice=STEP: --stage1 prepares the ring-light gate's world (B.5b-1c)
     int  renderScalePct = 0;             // --render-scale=50|75|100|125: 0 leaves the setting alone
+    int  passFrames = 600;               // --pass-probe=N: timed frames per pose (P.1b)
+    bool passTimers = false;             // --pass-timers: --stage1 --walk also prints `walk.passes`
+    bool passFinish = false;             // --pass-finish: glFinish at every pass boundary (upper bound per pass)
+    bool passVsync = false;              // --pass-vsync: keep vsync on (the player's frame; present then holds the vsync wait)
     std::string convertAnswer;           // --convert-answer=upgrade|keep|cancel: --convert-prompt-selftest
 };
 
@@ -648,6 +662,127 @@ int light_lattice_prep() {
     return placed > 0 ? 0 : 1;
 }
 
+// --mesh-bench=PASSES (B.5b-2): the hot-path cost of the window's toroidal index, the 2026-08-06
+// stride method moved from a whole load to the two loops that are nothing BUT that index. Pass A
+// re-meshes every chunk that holds geometry, synchronously on this thread (rebuild2 + prepareVBO;
+// the GL calls no-op headless); pass B reads every voxel of the window through GBLOCK by WORLD
+// coordinate, which is the raw `%T_SIZE` cost and nothing else. Median of PASSES of each, so a
+// runtime-radius build can be compared with the literal-288 one on the same machine.
+static int g_meshBenchPasses = 0;
+void mesh_bench(const char* phase) {
+    if (g_meshBenchPasses <= 0) return;
+    Terrain* t = World::getWorld->terrain;
+    const int n = CHUNKS_PER_SIDE * CHUNKS_PER_SIDE * CHUNKS_PER_COLUMN;
+    std::vector<TerrainChunk*> meshed;
+    for (int i = 0; i < n; ++i) {
+        TerrainChunk* c = t->chunkTable[i];
+        if (c && (c->rtn_vertices > 0 || c->rtn_vertices2 > 0)) meshed.push_back(c);
+    }
+    const int x0 = World::getWorld->fm->chunkOffsetX * CHUNK_SIZE, z0 = World::getWorld->fm->chunkOffsetZ * CHUNK_SIZE;
+    // Pass C first, on the settled window: whole frames (World::update + renderFrame; the GL calls
+    // no-op headless, the CPU loops over the window -- renderTree x2, the dirty-list scan, the
+    // upload scan, the outer-ring sweep -- all run). Plan §2 group G: the cost a bigger radius adds
+    // to EVERY frame, which a re-mesh pass does not see.
+    std::vector<double> frameMs;
+    for (int k = 0; k < 300; ++k) {
+        Uint64 a = SDL_GetPerformanceCounter();
+        g_app->viewController.drawFrame(true);
+        frameMs.push_back((double)(SDL_GetPerformanceCounter() - a) * 1000.0 / (double)SDL_GetPerformanceFrequency());
+    }
+    std::sort(frameMs.begin(), frameMs.end());
+    std::vector<double> meshMs, readMs;
+    unsigned long long sink = 0;
+    for (int p = 0; p < g_meshBenchPasses; ++p) {
+        Uint64 a = SDL_GetPerformanceCounter();
+        for (TerrainChunk* c : meshed) { c->rebuild2(); c->prepareVBO(); }
+        Uint64 b = SDL_GetPerformanceCounter();
+        for (int x = x0; x < x0 + T_SIZE; ++x)
+            for (int z = z0; z < z0 + T_SIZE; ++z)
+                for (int y = 0; y < T_HEIGHT; ++y) sink += (unsigned char)GBLOCK(x, z, y);
+        Uint64 c = SDL_GetPerformanceCounter();
+        const double f = 1000.0 / (double)SDL_GetPerformanceFrequency();
+        meshMs.push_back((double)(b - a) * f);
+        readMs.push_back((double)(c - b) * f);
+    }
+    std::sort(meshMs.begin(), meshMs.end());
+    std::sort(readMs.begin(), readMs.end());
+    std::printf("[eden-stage1] %s.bench {\"t_size\":%d,\"passes\":%d,\"chunks\":%d,\"mesh_ms\":%.2f,\"mesh_min_ms\":%.2f,"
+                "\"read_ms\":%.2f,\"read_min_ms\":%.2f,\"frame_p50_ms\":%.3f,\"frame_p90_ms\":%.3f,"
+                "\"frame_max_ms\":%.3f,\"sink\":%llu}\n",
+                phase, T_SIZE, g_meshBenchPasses, (int)meshed.size(), meshMs[meshMs.size() / 2], meshMs[0],
+                readMs[readMs.size() / 2], readMs[0], frameMs[150], frameMs[270], frameMs[299], sink);
+    std::fflush(stdout);
+}
+
+// P.1b: per-pass samples over a run (Classes/PassTimers.h). add() after every tick(1) whose frame
+// should count; print() emits one `[<tag>] <label>.passes {...}` JSON line: the whole-tick frame
+// p50/p90, and per pass p50/p90/mean ms plus the median draws / vertices / issued setup calls the
+// GL shim counted inside it. Parents include their children (docs/rendering.md, "Per-pass instruments").
+struct PassAgg {
+    std::vector<double> frame, ms[P_COUNT];
+    std::vector<long> draws[P_COUNT], verts[P_COUNT], setup[P_COUNT];
+    std::vector<long> fDraws, fVerts, fSetup, fElided;
+    void add(double frameMs) {
+        frame.push_back(frameMs);
+        for (int i = 0; i < P_COUNT; ++i) {
+            ms[i].push_back(g_pass.ms[i]);
+            draws[i].push_back(g_pass.draws[i]); verts[i].push_back(g_pass.verts[i]); setup[i].push_back(g_pass.setup[i]);
+        }
+        // eden_gl_stat() is the frame before this one's (it rotates at drawFrame's boundary); over
+        // hundreds of frames at a still pose that is the same distribution.
+        fDraws.push_back(eden_gl_stat(0)); fVerts.push_back(eden_gl_stat(4));
+        fSetup.push_back(eden_gl_stat(1)); fElided.push_back(eden_gl_stat(2));
+    }
+    template <typename T> static T q(std::vector<T> v, double f) {
+        if (v.empty()) return T();
+        std::sort(v.begin(), v.end());
+        return v[std::min(v.size() - 1, (size_t)(f * (double)v.size()))];
+    }
+    static double mean(const std::vector<double>& v) {
+        double t = 0; for (double x : v) t += x; return v.empty() ? 0 : t / (double)v.size();
+    }
+    void print(const char* tag, const char* label, int vsync, int thermal0, int batt0) const {
+        std::string out;
+        char b[256];
+        std::snprintf(b, sizeof b, "{\"frames\":%d,\"vsync\":%d,\"finish\":%d,\"frame_p50_ms\":%.3f,\"frame_p90_ms\":%.3f,"
+                      "\"frame_max_ms\":%.3f,\"thermal_start\":%d,\"thermal_end\":%d,\"battery_pct_start\":%d,"
+                      "\"draws\":%ld,\"verts\":%ld,\"setup\":%ld,\"elided\":%ld,\"p\":{",
+                      (int)frame.size(), vsync, g_pass.finish ? 1 : 0, q(frame, 0.5), q(frame, 0.9),
+                      q(frame, 1.0), thermal0, eden_native_thermal_state(), batt0,
+                      q(fDraws, 0.5), q(fVerts, 0.5), q(fSetup, 0.5), q(fElided, 0.5));
+        out += b;
+        for (int i = 0; i < P_COUNT; ++i) {
+            std::snprintf(b, sizeof b, "%s\"%s\":{\"p50\":%.3f,\"p90\":%.3f,\"mean\":%.3f,\"draws\":%ld,\"verts\":%ld,\"setup\":%ld}",
+                          i ? "," : "", kEdenPassNames[i], q(ms[i], 0.5), q(ms[i], 0.9), mean(ms[i]),
+                          q(draws[i], 0.5), q(verts[i], 0.5), q(setup[i], 0.5));
+            out += b;
+        }
+        std::printf("[%s] %s.passes %s}}\n", tag, label, out.c_str());
+        std::fflush(stdout);
+    }
+};
+
+// P.1a (= X.10): frame-time summary of a scripted windowed run. Each sample is one whole tick() --
+// event pump, World::update + render, present (vsync blocks in it), audio -- minus nothing, so it is
+// what a player's frame costs on this machine. Headless it measures the CPU side only. Printed as a
+// `[eden-stage1] <phase>.frames {...}` JSON line; `thermal` is NSProcessInfo.thermalState at the
+// start (0 nominal..3 critical, -1 unknown) and `battery_pct`/`on_battery` come from SDL_GetPowerInfo.
+static void frame_summary(const char* phase, std::vector<double>& ms, int thermal0, int batt0, int onBatt0) {
+    if (ms.empty()) return;
+    std::sort(ms.begin(), ms.end());
+    const size_t n = ms.size();
+    auto pct = [&](double q) { return ms[std::min(n - 1, (size_t)(q * (double)n))]; };
+    size_t over16 = 0, over33 = 0;
+    for (double v : ms) { if (v > 16.7) ++over16; if (v > 33.3) ++over33; }
+    std::printf("[eden-stage1] %s.frames {\"frames\":%d,\"p50_ms\":%.2f,\"p90_ms\":%.2f,\"p99_ms\":%.2f,"
+                "\"worst_ms\":%.2f,\"pct_over_16_7\":%.1f,\"pct_over_33_3\":%.1f,\"thermal_start\":%d,"
+                "\"thermal_end\":%d,\"battery_pct_start\":%d,\"on_battery\":%d}\n",
+                phase, (int)n, pct(0.50), pct(0.90), pct(0.99), ms[n - 1],
+                100.0 * (double)over16 / (double)n, 100.0 * (double)over33 / (double)n,
+                thermal0, eden_native_thermal_state(), batt0, onBatt0);
+    std::fflush(stdout);
+}
+
 int run_stage1() {
     const char* name = g_opt.world.empty() ? "stage1" : g_opt.world.c_str();
 
@@ -667,22 +802,36 @@ int run_stage1() {
     eden_console_teleport(g_opt.at[0], g_opt.at[1], g_opt.at[2]);
     tick(g_opt.frames);
     report(g_opt.height == 256 ? "world256" : "world64");
+    mesh_bench(g_opt.height == 256 ? "world256" : "world64");
 
     // B.5b-1a: a straight walk, the way the F3 driver walks (position set each frame, y pinned, no
     // velocity), so the window streams column by column instead of reloading. The checksums after
     // it must equal a fresh --stage1 at the printed end position.
     if (g_opt.walkLegs > 0) {
         float x = g_opt.at[0], z = g_opt.at[2];
+        std::vector<double> walkMs;
+        int pctBatt = -1;
+        const bool onBatt = SDL_GetPowerInfo(nullptr, &pctBatt) == SDL_POWERSTATE_ON_BATTERY;
+        const int thermal0 = eden_native_thermal_state();
+        PassAgg walkPasses;
+        g_pass.on = g_opt.passTimers; g_pass.finish = g_opt.passTimers && g_opt.passFinish;
         for (int leg = 0; leg < g_opt.walkLegs; ++leg) {
             const float dx = g_opt.walk[leg * 2], dz = g_opt.walk[leg * 2 + 1];
             const int steps = (int)std::ceil(std::sqrt(dx * dx + dz * dz) / 0.25f);
             for (int k = 1; k <= steps; ++k) {
                 const float f = (float)k / (float)steps;
                 eden_console_teleport(x + dx * f, g_opt.at[1], z + dz * f);
+                pass_frame_reset();
+                const Uint64 t0 = SDL_GetPerformanceCounter();
                 tick(1);
+                walkMs.push_back((double)(SDL_GetPerformanceCounter() - t0) * 1000.0 / (double)SDL_GetPerformanceFrequency());
+                if (g_pass.on) walkPasses.add(walkMs.back());
             }
             x += dx; z += dz;
         }
+        frame_summary("walk", walkMs, thermal0, pctBatt, onBatt ? 1 : 0);
+        if (g_pass.on) walkPasses.print("eden-stage1", "walk", g_opt.headless ? 0 : 1, thermal0, pctBatt);
+        g_pass.on = g_pass.finish = false;
         tick(g_opt.frames);
         const Vector p = World::getWorld->player->pos;
         std::printf("[eden-stage1] walked.end %.2f,%.2f,%.2f\n", p.x, p.y, p.z);
@@ -821,12 +970,14 @@ bool write_bmp(const char* path, int w, int h, const std::vector<unsigned char>&
 // Draws one more frame WITHOUT presenting it and reads the whole back buffer, the same trick
 // run_smoke()'s centre readback uses — a presented frame's back buffer is undefined after
 // SDL_GL_SwapWindow, so reading it after the fact is a race with the driver.
-bool capture(const char* label) {
+// `overlay`, when given, draws over that frame before the readback (the `kit` page's way in).
+bool capture(const char* label, void (*overlay)() = nullptr) {
     int w = 0, h = 0;
     eden_gl_context_get_drawable_size(&w, &h);
     if (w <= 0 || h <= 0) { std::fprintf(stderr, "[eden-shot] no drawable\n"); return false; }
     eden_native_gl_set_present(0);
     tick(1);
+    if (overlay) overlay();
     std::vector<unsigned char> px((size_t)w * h * 4);
     eden_gl_glReadPixels(0, 0, w, h, 0x1908, 0x1401, px.data());   // GL_RGBA, GL_UNSIGNED_BYTE
     eden_native_gl_set_present(1);
@@ -850,6 +1001,142 @@ bool capture(const char* label) {
 
 void ui_tap(float x, float yUp);   // --ui-selftest's pointer tap, defined below
 
+// --shot's `kit` page (U.1): every GL kit control in every state, laid out in the Stage U panel
+// (WORKING/ui-rework-plan-2026-10-11.md §3.1) so the geometry can be judged against the reference
+// screenshots. It is drawn by the harness over the main-menu frame, not by a screen: the controls
+// are the subject, and no screen uses all of them yet. Built once (labels are texture uploads).
+void render_kit_page() {
+    using namespace GLW;
+    struct Kit {
+        IconRail rail;
+        GLW::Button back, play, defaults, share, tile;
+        Label title;
+        TwoLineRow rows[9];
+        Toggle toggles[9];
+        Slider slider;
+        Stepper stepper;
+        ScrollView scroll;
+        CGRect panel, content;
+    };
+    static Kit* k = nullptr;
+    const float pad = du(9), gap = du(6);
+    if (!k) {
+        k = new Kit;
+        const int icons[] = { UIICON_WRENCH, UIICON_VOLUME_2, UIICON_GAMEPAD_2, UIICON_KEYBOARD,
+                              UIICON_MONITOR, UIICON_FLASK_CONICAL, UIICON_HARD_DRIVE, UIICON_SETTINGS,
+                              UIICON_SQUARE, UIICON_MOUNTAIN, UIICON_PLAY, UIICON_INFO };
+        k->rail.setTiles(icons, 12);              // 12 > what fits: the rail scrolls
+        k->rail.setEnabled(5, false);
+        k->rail.setSelected(0);
+        k->rail.setHeld(2);
+        k->back.setLabel("Back", du(20));     k->back.sizeToFit();
+        k->play.setLabel("Play", du(20));     k->play.setIcon(UIICON_PLAY);
+        k->play.setTone(GLW::Button::TONE_POSITIVE); k->play.sizeToFit();
+        k->defaults.setLabel("Defaults", du(20)); k->defaults.sizeToFit(); k->defaults.setPressed(true);
+        k->share.setLabel("Share", du(20));   k->share.sizeToFit(); k->share.setEnabled(false);
+        k->tile.setIcon(UIICON_INFO);         k->tile.sizeToFit();
+        k->title.set("Kit Settings", du(32), UITextAlignmentCenter);
+    }
+    const float W = std::min(SCREEN_WIDTH - 2 * du(12), du(783));
+    const float H = std::min(SCREEN_HEIGHT - 2 * du(12), du(587));
+    k->panel = CGRectMake((SCREEN_WIDTH - W) * 0.5f, (SCREEN_HEIGHT - H) * 0.5f, W, H);
+    const CGRect& P = k->panel;
+    const float barH = du(29), barTop = P.origin.y + P.size.height - du(7);
+    const float left = P.origin.x + pad, right = P.origin.x + P.size.width - pad;
+    k->back.setRect(CGRectMake(left, barTop - barH, 0, barH));
+    float x = right;
+    GLW::Button* acts[] = { &k->play, &k->defaults, &k->share, &k->tile };
+    for (GLW::Button* b : acts) { x -= b->fitWidth(); b->setRect(CGRectMake(x, barTop - barH, 0, barH)); x -= du(5); }
+    const float bodyTop = barTop - barH - pad, bodyBot = P.origin.y + pad;
+    k->rail.setRect(CGRectMake(left, bodyBot, IconRail::designW(), bodyTop - bodyBot));
+    const float barW = du(18);
+    const CGRect bar = CGRectMake(right - barW, bodyBot, barW, bodyTop - bodyBot);
+    k->scroll.setBarRect(bar);
+    const float cx0 = left + IconRail::designW() + gap;
+    k->content = CGRectMake(cx0, bodyBot, bar.origin.x - gap - cx0, bodyTop - bodyBot);
+    const CGRect& C = k->content;
+
+    // Rows: every toggle state, a dependent pair, a wrapping hint, a slider, a stepper, no hint.
+    struct R { const char* t; const char* h; int kind; bool on, muted, indent; };
+    static const R spec[9] = {
+        { "Health", "Take damage from creatures, explosions and lava.", 0, true, false, false },
+        { "Creatures", "Spawn and render creatures.", 0, false, false, false },
+        { "Hostile creatures", "Spawn and render Chargers and Stalkers (muted, parent off).", 0, true, true, true },
+        { "Night creatures", "Muted and off.", 0, false, true, true },
+        { "Render distance", "How far the world draws. Longer is slower; on an old iPad the Low "
+          "preset keeps it at four chunks and this hint wraps to a second line to prove it can.", 1, false, false, false },
+        { "Graphics preset", "Low, Default or High.", 2, false, false, false },
+        { "Auto-jump", nullptr, 0, true, false, false },
+        { "Mouse sensitivity", "A slider row.", 1, false, false, false },
+        { "Experiments", "Off.", 0, false, false, false },
+    };
+    float heights[9];
+    const float sliderW = du(200), stepW = du(29) * 2 + du(110);
+    for (int i = 0; i < 9; ++i) {
+        const float cw = spec[i].kind == 0 ? Toggle::designW() : spec[i].kind == 1 ? sliderW : stepW;
+        const float ch = spec[i].kind == 0 ? Toggle::designH() : du(29);
+        k->rows[i].build(spec[i].t, spec[i].h, C.size.width, cw, ch, spec[i].indent ? du(14) : 0.0f);
+        k->rows[i].setMuted(spec[i].muted);
+        heights[i] = k->rows[i].height();
+    }
+    k->scroll.setRowHeights(heights, 9, C.size.height);
+
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glDisable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glEnable(GL_TEXTURE_2D);
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+    glDisableClientState(GL_COLOR_ARRAY);
+    const float sc = IS_IPAD ? SCALE_WIDTH : 1.0f;
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
+    glLoadIdentity();
+    glOrthof(0, SCREEN_WIDTH * sc, 0, SCREEN_HEIGHT * sc, -1, 1);
+    glMatrixMode(GL_MODELVIEW);
+    glPushMatrix();
+    glLoadIdentity();
+
+    fill(CGRectMake(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT), kScrim);
+    bevel(P, BEVEL_WINDOW);
+    k->back.render();
+    for (GLW::Button* b : acts) b->render();
+    k->title.drawCentered(P.origin.x + P.size.width * 0.5f, barTop - (barH - k->title.height()) * 0.5f, kText);
+    k->rail.render();
+    bevel(C, BEVEL_CONTENT);
+    const int first = k->scroll.first(), last = first + k->scroll.visible();
+    for (int i = first; i < last && i < 9; ++i) {
+        TwoLineRow& row = k->rows[i];
+        row.setOrigin(C.origin.x, C.origin.y + C.size.height - k->scroll.rowOffset(i));
+        row.setLast(i == 8);
+        row.render();
+        if (spec[i].kind == 0) {
+            Toggle& t = k->toggles[i];
+            t.setRect(row.controlRect(Toggle::designW(), Toggle::designH()));
+            t.setOn(spec[i].on);
+            t.setMuted(spec[i].muted);
+            t.render();
+        } else if (spec[i].kind == 1) {
+            k->slider.setRange(0, 1, 0.05f);
+            k->slider.setValue(i == 4 ? 0.6f : 0.25f);
+            k->slider.setRect(row.controlRect(sliderW, du(29)));
+            k->slider.render();
+        } else {
+            k->stepper.setGlyphs("<", ">");
+            k->stepper.setValueText("Default", du(20));
+            k->stepper.setRect(row.controlRect(stepW, du(29)));
+            k->stepper.render();
+        }
+    }
+    k->scroll.render();
+
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
+    glPopMatrix();
+}
+
 int run_shot() {
     const char* name = g_opt.world.empty() ? "shot" : g_opt.world.c_str();
     // No vsync: a capture needs drawn frames, not paced ones, and a vsync-blocked swap never
@@ -858,6 +1145,7 @@ int run_shot() {
     SDL_GL_SetSwapInterval(0);
     tick(180);
     capture("menu");
+    capture("kit", render_kit_page);
 
     // Stage 5.9: Get Worlds, on the archive tab and on the current server's, each with its first
     // world selected and (when the host has one) its preview. Live network unless --net-fixtures
@@ -885,18 +1173,19 @@ int run_shot() {
     eden_settings_menu_open_now();
     tick(30);
     capture("settings");
-    // Stage 5.4: every page, so a row whose control does not fit is visible without a human
-    // paging through. -settings.bmp stays page 1 (its name predates paging).
+    // U.3: every tab, so a row whose control does not fit is visible without a human clicking
+    // through the rail. -settings.bmp stays the first tab (Gameplay; its name predates tabs), then
+    // -settings-<tab> for the rest, Keys included (the rail with that tile selected).
     if (World::getWorld && World::getWorld->menu && World::getWorld->menu->settings) {
         SettingsMenu* sm = World::getWorld->menu->settings;
-        for (int p = 1; p < sm->pageCount(); ++p) {
-            sm->showPage(p);
+        for (int t = 1; t < sm->tabCount(); ++t) {
+            sm->showTab(t);
             tick(4);
-            char label[32];
-            std::snprintf(label, sizeof(label), "settings-p%d", p + 1);
+            char label[48];
+            std::snprintf(label, sizeof(label), "settings-%s", sm->tabName(t));
             capture(label);
         }
-        sm->showPage(0);
+        sm->resetView();
     }
 
     // Stage 5.3's keybinds screen, reached the way the Keys button reaches it. Shown through
@@ -1036,6 +1325,7 @@ extern "C" int eden_settings_count(void);
 extern "C" const char* eden_settings_key(int i);
 extern "C" void eden_settings_set(int i, float v);
 extern "C" int eden_get_render_scale_pct(void);
+extern "C" int eden_settings_native_hidden(int i);
 bool set_render_scale_pct(int pct) {
     static const int kPct[] = {50, 75, 100, 125};
     int opt = -1;
@@ -1139,6 +1429,67 @@ int run_preset_probe() {
     }
     SDL_GL_SetSwapInterval(1);
     return 0;
+}
+
+// --pass-probe[=N] (P.1b): where a frame goes, at the Stage P benchmark poses. Opens a world, and
+// per pose teleports, settles (--frames, default 600), then times N frames (default 600) with the
+// per-pass timers on (Classes/PassTimers.h) and prints one `[eden-pass] <pose>.passes {...}` line
+// (PassAgg::print). Vsync is OFF unless --pass-vsync, so the `present` pass is time blocked in the
+// swap -- the GPU proxy: near zero means the GPU kept up with the CPU. --pass-finish adds a
+// glFinish at every pass boundary (each pass then includes its own GPU work; an upper bound, and
+// the frame total is no longer a real frame). --at/--look replace the pose list with one pose.
+int run_pass_probe() {
+    const char* name = g_opt.world.empty() ? "pass-probe" : g_opt.world.c_str();
+    struct Pose { const char* label; float x, y, z, yaw, pitch; };
+    // The bundled map. `home` is the stock harness origin (--stage1's, 43 blocks above a lake), kept
+    // so these numbers sit beside every other run's; `forest` and `water` are, of the 16x16 tiles in
+    // the window loaded there, the one with the most leaf/trunk blocks (390) and a tile of the
+    // 256-column lake, each ~8 blocks above its surface (picked once by a scan, 2026-10-12). All
+    // three are inside that first window, so moving between them streams little.
+    std::vector<Pose> poses = {
+        {"home",   65536.5f, 60.0f, 65536.5f,  45.0f, -10.0f},
+        {"forest", 65656.5f, 30.0f, 65448.5f, 135.0f, -15.0f},
+        {"water",  65528.5f, 25.0f, 65592.5f,  45.0f, -10.0f},
+    };
+    if (g_opt.haveAt)
+        poses = {{"at", g_opt.at[0], g_opt.at[1], g_opt.at[2], g_opt.haveLook ? g_opt.look[0] : 45.0f,
+                  g_opt.haveLook ? g_opt.look[1] : -10.0f}};
+    if (!open_world(name, g_opt.height)) return 1;
+    {
+        const char* ext = (const char*)glGetString(GL_EXTENSIONS);   // ES / compatibility only; core says NULL
+        std::printf("[eden-pass] gl {\"renderer\":\"%s\",\"version\":\"%s\",\"ext_disjoint_timer_query\":%d}\n",
+                    (const char*)glGetString(GL_RENDERER), (const char*)glGetString(GL_VERSION),
+                    ext ? (std::strstr(ext, "GL_EXT_disjoint_timer_query") != nullptr) : -1);
+        while (glGetError() != GL_NO_ERROR) {}   // a core context answers GL_EXTENSIONS with INVALID_ENUM
+    }
+    if (!g_opt.passVsync) SDL_GL_SetSwapInterval(0);
+    Player* pl = World::getWorld->player;
+    int rc = 0;
+    for (const Pose& ps : poses) {
+        for (int k = 0; k < g_opt.frames; ++k) {
+            eden_console_teleport(ps.x, ps.y, ps.z);
+            pl->yaw = ps.yaw; pl->pitch = ps.pitch;
+            tick(1);
+        }
+        int batt = -1;
+        SDL_GetPowerInfo(nullptr, &batt);
+        const int thermal0 = eden_native_thermal_state();
+        PassAgg agg;
+        g_pass.on = true; g_pass.finish = g_opt.passFinish;
+        for (int k = 0; k < g_opt.passFrames; ++k) {
+            eden_console_teleport(ps.x, ps.y, ps.z);
+            pl->yaw = ps.yaw; pl->pitch = ps.pitch;
+            pass_frame_reset();
+            const Uint64 t0 = SDL_GetPerformanceCounter();
+            tick(1);
+            agg.add((double)(SDL_GetPerformanceCounter() - t0) * 1000.0 / (double)SDL_GetPerformanceFrequency());
+        }
+        agg.print("eden-pass", ps.label, g_opt.passVsync ? 1 : 0, thermal0, batt);
+        g_pass.on = g_pass.finish = false;
+        if (!g_opt.headless && PassAgg::q(agg.draws[P_R_CHUNKS], 0.5) == 0) rc = 1;   // a window that drew no terrain
+    }
+    SDL_GL_SetSwapInterval(1);
+    return rc;
 }
 
 // Push a real SDL_Event through SDL_PushEvent so it comes back out of SDL_PollEvent and travels
@@ -3013,14 +3364,16 @@ int run_evict_selftest() {
     }
     tick(10);
     const int saves0 = g_ring_evict_saves, bulk0 = g_bulk_reloads, ring0 = g_ring_columns_landed;
-    walk(320, 0);
+    // B.5b-2: far enough that the window's trailing edge passes the +4 column at any radius (320 at 9..14).
+    const float W = (float)std::max(320, CHUNK_SIZE * (T_RADIUS + 6));
+    walk(W, 0);
     tick(200);
     bool gone = true;
     for (const Col& c : E) gone = gone && !isColumnResident(c.cx * CHUNK_SIZE, c.cz * CHUNK_SIZE);
     std::snprintf(d, sizeof(d), "evict-saves %d, ring columns +%d, bulk reloads %d->%d", g_ring_evict_saves - saves0,
                   g_ring_columns_landed - ring0, bulk0, g_bulk_reloads);
-    check(gone && g_bulk_reloads == bulk0 && g_ring_columns_landed > ring0, "a 320-block walk streams the edited columns out", d);
-    walk(-320, 0);
+    check(gone && g_bulk_reloads == bulk0 && g_ring_columns_landed > ring0, "a long walk streams the edited columns out", d);
+    walk(-W, 0);
     tick(g_opt.frames);
     int same = 0;
     for (int i = 0; i < 3; ++i) same += colHash(E[i].cx, E[i].cz) == eh[i];
@@ -4450,6 +4803,56 @@ int run_ui_selftest() {
               "Slider pins to its ends, snaps to min+k*step, reports only real changes", detail);
     }
 
+    // --- U.1: the kit's new arithmetic (variable-height ScrollView, IconRail, sizeToFit) -------
+    {
+        GLW::ScrollView sv;
+        const float hs[] = { 50, 50, 120, 30, 30, 30 };   // 310 tall in a 100 view
+        sv.setRowHeights(hs, 6, 100.0f);
+        const int v0 = sv.visible();                       // 50+50 fit, the 120 does not
+        sv.ensureVisible(2);                               // the tall row: alone, overflowing
+        const int f2 = sv.first(), v2 = sv.visible();
+        sv.setFirst(99);                                   // clamps to the last row that fills
+        const int fmax = sv.first(), vmax = sv.visible();
+        sv.setFirst(0);
+        sv.beginContentDrag(0.0f);
+        sv.contentDragTo(76.0f);                           // > 50 + 25: two rows on
+        const int fd = sv.first();
+        sv.endDrag();
+        const float off = (sv.setFirst(1), sv.rowOffset(3));   // 50 + 120
+        sv.setRows(10, 4);                                 // back to uniform
+        const bool uni = sv.visible() == 4 && sv.total() == 10;
+        std::snprintf(detail, sizeof(detail), "v0 %d first/visible at 2: %d/%d max %d/%d drag %d off %.0f uniform %d",
+                      v0, f2, v2, fmax, vmax, fd, off, uni);
+        check(v0 == 2 && f2 == 2 && v2 == 1 && fmax == 3 && vmax == 3 && fd == 2 && off == 170.0f && uni,
+              "ScrollView variable row heights: visible/first/clamp/drag/rowOffset", detail);
+
+        GLW::IconRail rail;
+        const int icons[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+        rail.setTiles(icons, 10);
+        const float tw = GLW::IconRail::designW();
+        rail.setRect(CGRectMake(0, 0, tw, GLW::du(4 * 2 + 64 * 3 + 6 * 2)));   // exactly 3 tiles
+        rail.setEnabled(1, false);
+        const CGRect t0 = rail.tileRect(0), t3 = rail.tileRect(3);
+        const int h0 = rail.hit(t0.origin.x + 2, t0.origin.y + 2);
+        const CGRect t1 = rail.tileRect(1);
+        const int h1 = rail.hit(t1.origin.x + 2, t1.origin.y + 2);   // disabled: inert
+        const bool moved = rail.scrollBy(100);
+        const int rf = rail.first();
+        std::snprintf(detail, sizeof(detail), "visible %d tile0 %.0fx%.0f hidden3 %.0f hit0 %d hit1 %d scrolled %d first %d",
+                      rail.visibleTiles(), t0.size.width, t0.size.height, t3.size.width, h0, h1, moved, rf);
+        check(rail.visibleTiles() == 3 && t0.size.width > 0 && t3.size.width == 0 && h0 == 0 && h1 == -1 &&
+              moved && rf == 7, "IconRail: whole tiles, disabled tiles inert, scrolls to the last page", detail);
+
+        GLW::Button a, b;
+        a.setLabel("Ok", GLW::du(20));   a.sizeToFit();
+        b.setLabel("A much longer action label", GLW::du(20)); b.sizeToFit();
+        a.setRect(CGRectMake(10, 10, 500, 29));          // the width is ignored once fitted
+        std::snprintf(detail, sizeof(detail), "short %.1f (min %.1f) long %.1f rect %.1f",
+                      a.fitWidth(), GLW::du(64), b.fitWidth(), a.rect().size.width);
+        check(std::fabs(a.fitWidth() - GLW::du(64)) < 0.01f && b.fitWidth() > GLW::du(64) &&
+              a.rect().size.width == a.fitWidth(), "Button::sizeToFit shrink-wraps with a 64u floor", detail);
+    }
+
     // --- N.5.11: the toast's lifetime, and the HUD-style statusbar routed through it ----------
     {
         GLW::Toast t;
@@ -4488,8 +4891,14 @@ int run_ui_selftest() {
     tick(10);
     SettingsMenu* sm = (World::getWorld && World::getWorld->menu) ? World::getWorld->menu->settings : nullptr;
     if (!sm) { check(false, "the settings screen exists", ""); return 1; }
-    std::snprintf(detail, sizeof(detail), "%d pages", sm->pageCount());
-    check(sm->pageCount() > 1, "settings paginate", detail);
+    {   // U.3: seven tabs, every settings row on exactly one of them
+        int rows = 0, shown = 0;
+        for (int t = 0; t < sm->tabCount(); ++t) rows += sm->tabRowCount(t);
+        for (int i = 0; i < eden_settings_count(); ++i) if (!eden_settings_native_hidden(i)) shown++;
+        std::snprintf(detail, sizeof(detail), "%d tabs, %d rows on them, %d rows shown", sm->tabCount(), rows, shown);
+        check(sm->tabCount() == 7 && rows == shown && sm->tabRowCount(3) == 0,
+              "settings has 7 tabs and every native row is on one", detail);
+    }
 
     const int iHealth = settings_index("health");
     const int iVol    = settings_index("music_volume");
@@ -4503,19 +4912,28 @@ int run_ui_selftest() {
     CGRect r;
 
     {   // B.8: presets drive view_distance (+ render_scale off iOS); a hand edit drops to Custom
-        const int iP = settings_index("graphics_preset"), iV = settings_index("view_distance");
-        const float p0 = iP >= 0 ? eden_settings_get(iP) : 0.0f, v0 = iV >= 0 ? eden_settings_get(iV) : 0.0f;
-        bool ok = iP >= 0 && iV >= 0;
+        const int iP = settings_index("graphics_preset"), iV = settings_index("view_distance"),
+                  iD = settings_index("render_distance");   // B.5b-2
+        const float p0 = iP >= 0 ? eden_settings_get(iP) : 0.0f, v0 = iV >= 0 ? eden_settings_get(iV) : 0.0f,
+                    d0 = iD >= 0 ? eden_settings_get(iD) : 0.0f;
+#if defined(EDEN_PLATFORM_IOS)
+        const float highD = 0.0f;                              // radius 9 until a device round measures more
+#else
+        const float highD = 3.0f;                              // radius 16 (kRenderRadius[3])
+#endif
+        bool ok = iP >= 0 && iV >= 0 && iD >= 0;
         if (ok) {
             eden_settings_set(iP, 1.0f);                       // Low
-            ok = eden_settings_get(iV) == 1.0f && eden_settings_get(iP) == 1.0f;
-            eden_settings_set(iP, 3.0f);                       // High == Default for now
-            ok = ok && eden_settings_get(iV) == 0.0f && eden_settings_get(iP) == 3.0f;
+            ok = eden_settings_get(iV) == 1.0f && eden_settings_get(iD) == 0.0f && eden_settings_get(iP) == 1.0f;
+            eden_settings_set(iP, 3.0f);                       // High: Auto view, the larger window
+            ok = ok && eden_settings_get(iV) == 0.0f && eden_settings_get(iD) == highD && eden_settings_get(iP) == 3.0f;
             eden_settings_set(iV, 3.0f);                       // by hand
             ok = ok && eden_settings_get(iP) == 0.0f;          // -> Custom
-            eden_settings_set(iP, 2.0f);                       // Default restores Auto
-            ok = ok && eden_settings_get(iV) == 0.0f;
-            eden_settings_set(iV, v0); eden_settings_set(iP, p0);
+            eden_settings_set(iP, 2.0f);                       // Default restores Auto and radius 9
+            ok = ok && eden_settings_get(iV) == 0.0f && eden_settings_get(iD) == 0.0f;
+            eden_settings_set(iD, 2.0f);                       // the radius by hand -> Custom too
+            ok = ok && eden_settings_get(iP) == 0.0f;
+            eden_settings_set(iV, v0); eden_settings_set(iD, d0); eden_settings_set(iP, p0);
         }
         check(ok, "graphics presets set their knobs; a hand edit becomes Custom", "");
     }
@@ -4676,6 +5094,21 @@ int run_ui_selftest() {
         std::snprintf(detail, sizeof(detail), "showsettings=%d in_menu=%d", (int)menu->showsettings,
                       eden_hud_in_menu());
         check(!menu->showsettings && eden_hud_in_menu() == 1, "Settings' Back returns to the pause menu", detail);
+        // U.3: Escape over in-game Settings is its Back (it used to be swallowed), and over the
+        // keybinds child it returns to Settings first.
+        ui_tap(rs.origin.x + rs.size.width * 0.5f, rs.origin.y + rs.size.height * 0.5f);
+        tick(5);
+        menu->settings->showKeybinds();
+        tick(2);
+        push_tap_key(SDL_SCANCODE_ESCAPE);
+        tick(5);
+        const bool stillSettings = menu->showsettings;
+        push_tap_key(SDL_SCANCODE_ESCAPE);
+        tick(5);
+        std::snprintf(detail, sizeof(detail), "after 1st Esc showsettings=%d; after 2nd showsettings=%d in_menu=%d",
+                      (int)stillSettings, (int)menu->showsettings, eden_hud_in_menu());
+        check(stillSettings && !menu->showsettings && eden_hud_in_menu() == 1,
+              "Escape steps back Keys -> Settings -> the pause menu", detail);
         const Button rr = hud->rresume;
         ui_tap(rr.origin.x + rr.size.width * 0.5f, rr.origin.y + rr.size.height * 0.5f);
         tick(5);
@@ -6077,6 +6510,7 @@ static int parse_one_arg(const char* a) {
         if (!std::strcmp(a, "--headless"))            g_opt.headless = true;
         else if (!std::strcmp(a, "--p1-gate"))        { g_opt.mode = "p1-gate";  g_opt.headless = true; }
         else if (!std::strcmp(a, "--stage1"))         g_opt.mode = "stage1";
+        else if (starts_with(a, "--mesh-bench="))     g_meshBenchPasses = atoi(a + 13);
         else if (!std::strcmp(a, "--smoke"))          g_opt.mode = "smoke";
 #if defined(EDEN_DIAGNOSTICS)
         else if (starts_with(a, "--save-bench="))     { g_opt.mode = "save-bench"; g_opt.headless = true; g_saveBenchList = a + 13; }
@@ -6140,10 +6574,16 @@ static int parse_one_arg(const char* a) {
         else if (!std::strcmp(a, "--save-roundtrip")) g_opt.mode = "save-roundtrip";
         else if (!std::strcmp(a, "--save-inplace")) { /* S.8: ignored -- there is no in-place .eden save any more */ }
         else if (!std::strcmp(a, "--background-selftest")) { g_opt.mode = "background-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--pass-probe"))     g_opt.mode = "pass-probe";
+        else if (starts_with(a, "--pass-probe="))     { g_opt.mode = "pass-probe"; g_opt.passFrames = std::max(10, atoi(a + 13)); }
+        else if (!std::strcmp(a, "--pass-timers"))    g_opt.passTimers = true;
+        else if (!std::strcmp(a, "--pass-finish"))    g_opt.passFinish = true;
+        else if (!std::strcmp(a, "--pass-vsync"))     g_opt.passVsync = true;
         else if (!std::strcmp(a, "--shot"))           g_opt.mode = "shot";
         else if (starts_with(a, "--shot="))           { g_opt.mode = "shot"; g_opt.shot = a + 7; }
         else if (starts_with(a, "--height="))         g_opt.height = atoi(a + 9);
         else if (starts_with(a, "--world-format="))   { /* S.8: ignored -- every world is an .emod */ }
+        else if (starts_with(a, "--radius="))         eden_setenv("EDEN_WINDOW_RADIUS", a + 9);
         else if (starts_with(a, "--upgrade-256z="))   eden_setenv("EDEN_UPGRADE_256Z", atoi(a + 15) ? "1" : "0");
         else if (starts_with(a, "--empty-shortcut=")) { extern bool g_empty_shortcut; g_empty_shortcut = atoi(a + 17) != 0; }
         else if (std::strcmp(a, "--empty-selfcheck") == 0) eden_debug_set_empty_selfcheck(1);
@@ -6212,6 +6652,8 @@ static int eden_main_after_args(int argc, char** argv) {
     // (or EDEN_UPGRADE_256Z) says otherwise -- never the Settings toggle, which a --docs directory
     // starts at its default (on) and which would silently change what every convert gate measures.
     if ((g_opt.mode || !g_opt.liveCmds.empty()) && !getenv("EDEN_UPGRADE_256Z")) eden_setenv("EDEN_UPGRADE_256Z", "0");
+    // B.5b-2: likewise the window radius -- stock 9 unless --radius= (or EDEN_WINDOW_RADIUS) says otherwise.
+    if ((g_opt.mode || !g_opt.liveCmds.empty()) && !getenv("EDEN_WINDOW_RADIUS")) eden_setenv("EDEN_WINDOW_RADIUS", "9");
     // Stage S / S.5: the world-file tools need no engine, no window and no save directory.
     if (g_opt.mode && !std::strcmp(g_opt.mode, "world-tool")) {
         std::vector<char*> av(argv, argv + argc);
@@ -6440,6 +6882,7 @@ static int eden_main_after_args(int argc, char** argv) {
         else if (!std::strcmp(g_opt.mode, "shot"))          rc = run_shot();
         else if (!std::strcmp(g_opt.mode, "scale-probe"))   rc = run_scale_probe();
         else if (!std::strcmp(g_opt.mode, "preset-probe"))  rc = run_preset_probe();
+        else if (!std::strcmp(g_opt.mode, "pass-probe"))    rc = run_pass_probe();
         else if (!std::strcmp(g_opt.mode, "leak-probe"))    rc = run_leak_probe();
     } else {
         // Interactive. The frame-rate cap is the same setting the web build's frame gate reads

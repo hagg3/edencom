@@ -12,6 +12,7 @@
 #include "gl_es1_shim.h"
 #include "platform_shims.h"
 #include "NSAutoreleasePool.h"
+#include "../../../Classes/PassTimers.h"
 
 extern "C" void eden_native_gl_present(void);
 
@@ -110,7 +111,8 @@ bool EdenViewController::drawFrame(bool renderThisFrame) {
     // THE ONE REAL DIVERGENCE FROM THE WEB TWIN: WebGL presents implicitly when the animation
     // frame callback returns; desktop GL has to be told. Guarded on renderThisFrame so a capped
     // frame does not block on vsync for a frame it never drew.
-    if (renderThisFrame) eden_native_gl_present();
+    // P.1b: with vsync off (--pass-probe), the time blocked here is the GPU proxy.
+    if (renderThisFrame) { pass_begin(P_PRESENT); eden_native_gl_present(); pass_end(P_PRESENT); }
 
     return retinaSwapRequested;
 }

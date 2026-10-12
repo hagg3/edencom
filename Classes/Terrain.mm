@@ -25,6 +25,7 @@
 // this file is a stale snapshot with no prototypes, hence these explicit decls.
 void calculateLighting();
 #include "F3Timing.h"
+#include "PassTimers.h"   // P.1b per-pass instruments
 BOOL calculateLightingSlice();
 void calculateLightingSliceReset();
 
@@ -265,7 +266,24 @@ Terrain::Terrain(){
 TreeNode* addToTree(TreeNode* node,int* bounds,NSNumber* data);
 
 void Terrain::allocateMemory(){
-    if(chunkTablec!=NULL)return;
+    // B.5b-2: every array below is sized from the height and the window radius of the world being
+    // entered. A table left over from a different shape cannot be reused (World::exitToMenu frees
+    // it, so this is insurance, not a path any caller takes today).
+    static int alloc_side=0,alloc_height=0;
+    if(chunkTablec!=NULL){
+        if(alloc_side==CHUNKS_PER_SIDE&&alloc_height==T_HEIGHT)return;
+        printf("allocateMemory: window changed shape under a live table (%d/%d -> %d/%d), reallocating\n",
+               alloc_side,alloc_height,CHUNKS_PER_SIDE,T_HEIGHT);
+        // deallocateMemory walks the CURRENT CHUNKS_PER_SIDE/T_HEIGHT; free with the old shape.
+        const int height=T_HEIGHT,radius=T_RADIUS;
+        eden_set_world_height(alloc_height);
+        eden_set_window_radius(alloc_side/2);
+        deallocateMemory();
+        eden_set_world_height(height);
+        eden_set_window_radius(radius);
+    }
+    alloc_side=CHUNKS_PER_SIDE;
+    alloc_height=T_HEIGHT;
     chunkTablec=chunkTable=(TerrainChunk**)malloc(sizeof(TerrainChunk*)*CHUNKS_PER_SIDE*CHUNKS_PER_SIDE*CHUNKS_PER_COLUMN);
     const int tbounds[6]={-1,-1,-1,-1,-1,-1};
     for(int i=0;i<CHUNKS_PER_SIDE*CHUNKS_PER_SIDE*CHUNKS_PER_COLUMN;i++)
@@ -526,7 +544,9 @@ int compare_rebuild_order (const void *a, const void *b);
 int compare_back2front (const void *a, const void *b);
 
  int idxrl=0;
-TerrainChunk* rebuildList[13000];
+// B.5b-2: was [13000] -- enough for any window up to 256z at radius 14, overrun at 16 (16,384 chunks;
+// ASan, R16 256z walk). Sized to the largest window, like prepareAndLoadGeometry's dirty list.
+TerrainChunk* rebuildList[CHUNKS_PER_SIDE_MAX*CHUNKS_PER_SIDE_MAX*CHUNKS_PER_COLUMN_MAX];
 //static int sanity_test=0;
 /*- (void)chunkBuildingThread:(id)object{
     return;
@@ -2362,7 +2382,7 @@ static int compare_stale_column(const void* a,const void* b){
 // than garbage until it is meshed. A worker-thread mesher produces the same "resident but not yet
 // meshed" state by construction and depends on the same initialisation.
 static bool columnMeshable(int x,int z,int ox,int oz,
-                           const bool isloaded[T_RADIUS*2][T_RADIUS*2]){
+                           const bool isloaded[CHUNKS_PER_SIDE_MAX][CHUNKS_PER_SIDE_MAX]){
     int wx=((x-ox)%CHUNKS_PER_SIDE+CHUNKS_PER_SIDE)%CHUNKS_PER_SIDE;
     int wz=((z-oz)%CHUNKS_PER_SIDE+CHUNKS_PER_SIDE)%CHUNKS_PER_SIDE;
     if(!isloaded[wx][wz])return false;
@@ -2429,7 +2449,8 @@ void Terrain::prepareAndLoadGeometry(){
     // Hoisted out of the load block below because the meshing pass reads it too: mid-bulk-reload
     // it is the record of which columns of the window are resident RIGHT NOW, which is what tells
     // the mesher which chunks are worth meshing yet (see BULK_RELOAD_CHUNK_BUDGET).
-    bool isloaded[T_RADIUS*2][T_RADIUS*2];
+    // B.5b-2: sized to the largest window; only [0,2*T_RADIUS) of each axis is used.
+    bool isloaded[CHUNKS_PER_SIDE_MAX][CHUNKS_PER_SIDE_MAX];
 
     ///////////load geom from file or gen
     if(loaded){
@@ -2505,12 +2526,15 @@ void Terrain::prepareAndLoadGeometry(){
         // world position, drawn where its pbounds put it, i.e. outside the view distance). A
         // slice only extends that tolerated state by a handful of frames. The one thing that
         // must not wait is the ground under the player, hence the nearest-first ordering below.
-        if(count>140||bulk_reload_active) {
+        // B.5b-2: stock's 140 and 300 of 324 slots, kept as fractions of the window (exactly 140
+        // and 300 at the default radius), so a jump is a jump at every radius.
+        const int ncols=4*r*r;
+        if(count*324>140*ncols||bulk_reload_active) {
             if(!bulk_reload_active){
                 hit_load_counter++;
                 if(hit_load_counter==1){
                     World::getWorld->hud->sb->setStatus(@"Loading",999);
-                    if(count>300){
+                    if(count*324>300*ncols){
                         hit_load_counter++;
                     }
 
@@ -2546,7 +2570,7 @@ void Terrain::prepareAndLoadGeometry(){
                 // player is standing in must not be the ones that wait -- collision reads
                 // blockarray directly, so a far-away column can be late but the player's own
                 // column cannot.
-                static StaleColumn stale[T_RADIUS*2*T_RADIUS*2];
+                static StaleColumn stale[CHUNKS_PER_SIDE_MAX*CHUNKS_PER_SIDE_MAX];
                 int nstale=0;
                 int pcx=player->pos.x/CHUNK_SIZE;
                 int pcz=player->pos.z/CHUNK_SIZE;
@@ -2657,7 +2681,7 @@ void Terrain::prepareAndLoadGeometry(){
             // in one burst. Now every frame lands the nearest stale columns under RING_COLUMN_BUDGET,
             // so the window keeps up with a walk; the bulk path above is left for jumps (teleport,
             // console tp, ice faster than the budget), and warps stay synchronous.
-            static StaleColumn ring[T_RADIUS*2*T_RADIUS*2];
+            static StaleColumn ring[CHUNKS_PER_SIDE_MAX*CHUNKS_PER_SIDE_MAX];
             int nring=0;
             int pcx=player->pos.x/CHUNK_SIZE;
             int pcz=player->pos.z/CHUNK_SIZE;
@@ -2796,7 +2820,7 @@ void Terrain::prepareAndLoadGeometry(){
         // CHUNKS_PER_SIDE^2*CHUNKS_PER_COLUMN -- 1296 at 64z (already 65% full, one bulk-dirty
         // event from overrunning) and 5184 at 256z. Sized to that worst case now, and the fill is
         // guarded: dropping a dirty chunk costs one stale frame, overrunning the stack costs the tab.
-        static int list[CHUNKS_PER_SIDE*CHUNKS_PER_SIDE*CHUNKS_PER_COLUMN_MAX];
+        static int list[CHUNKS_PER_SIDE_MAX*CHUNKS_PER_SIDE_MAX*CHUNKS_PER_COLUMN_MAX];
         const int list_max=CHUNKS_PER_SIDE*CHUNKS_PER_SIDE*CHUNKS_PER_COLUMN;
         // While a bulk reload is in flight the same per-frame budget that limits its column reads
         // limits its meshing, using the deferral list_max already had. Outside a reload this is
@@ -3074,8 +3098,8 @@ void Terrain::updateAllImportantChunks(){
 void Terrain::colort(float r,float g,float b){
 	glColor4f(r,g,b,1);
 }
-static TerrainChunk* renderList[(T_SIZE/CHUNK_SIZE)*(T_SIZE/CHUNK_SIZE)*CHUNKS_PER_COLUMN_MAX];
-static TerrainChunk* renderList2[(T_SIZE/CHUNK_SIZE)*(T_SIZE/CHUNK_SIZE)*CHUNKS_PER_COLUMN_MAX];
+static TerrainChunk* renderList[CHUNKS_PER_SIDE_MAX*CHUNKS_PER_SIDE_MAX*CHUNKS_PER_COLUMN_MAX];
+static TerrainChunk* renderList2[CHUNKS_PER_SIDE_MAX*CHUNKS_PER_SIDE_MAX*CHUNKS_PER_COLUMN_MAX];
 void renderTree(TreeNode* node,int state){
     //once upon a time this descended an oct-tree, profiling showed it was useless, now just iterates through chunk list
     for(int i=0;i<CHUNKS_PER_SIDE*CHUNKS_PER_SIDE*CHUNKS_PER_COLUMN;i++){
@@ -3352,12 +3376,15 @@ void Terrain::render(){
 	//float pushz=World::getWorld->fm.chunkOffsetZ*CHUNK_SIZE*BLOCK_SIZE;
 	//glTranslatef(-pushx, 0, -pushz);
    // printg("-------------start renderTree------------\n");
+    pass_begin(P_R_CULL);
 	renderTree(&troot,0);
+    pass_end(P_R_CULL);
    //printg("--------x--x--x----end----x--x--x--------\n");
     
    // qsort (renderList, chunks_rendered, sizeof (TerrainChunk*), compare_front2back);
   //  glDisable(GL_TEXTURE_2D);
     int chunksr=chunks_rendered;
+    pass_begin(P_R_CHUNKS);
     for(int i=0;i<chunks_rendered;i++){
       
         vertices_rendered+=renderList[i]->render();
@@ -3369,6 +3396,8 @@ void Terrain::render(){
             }
         }*/
     }
+    pass_end(P_R_CHUNKS);
+    pass_begin(P_R_OBJECTS);
 #define max_render_objects 300
     glEnable(GL_LIGHTING);
     
@@ -3801,10 +3830,12 @@ void Terrain::render(){
     
     glBindTexture(GL_TEXTURE_2D, Resources::getResources->getTex(ICO_PORTAL)->name);
     objBatchDraw(&g_portalBatch,vert,FALSE);
+    pass_end(P_R_OBJECTS);
     
     
     
     
+    pass_begin(P_R_SKY);
     ///////////sky
     glDisable(GL_FOG);
 	glDisableClientState(GL_COLOR_ARRAY);
@@ -3908,6 +3939,8 @@ void Terrain::render(){
     glMatrixMode(GL_MODELVIEW);
 
     ////////////////sky
+    pass_end(P_R_SKY);
+    pass_begin(P_R_OBJECTS);
     
     glEnableClientState(GL_COLOR_ARRAY);
     
@@ -4007,6 +4040,7 @@ void Terrain::render(){
         glBindTexture(GL_TEXTURE_2D, Resources::getResources->getTex(ICO_SWIRL)->name);
         objBatchDraw(&g_swirlBatch,vert,FALSE);
         }
+    pass_end(P_R_OBJECTS);
 
    // }
     
@@ -4087,12 +4121,17 @@ void Terrain::render2(){
 	//float pushz=World::getWorld->fm.chunkOffsetZ*CHUNK_SIZE*BLOCK_SIZE;
 	//glTranslatef(-pushx, 0, -pushz);
     secondPass=TRUE;
+    pass_begin(P_R_CULL);
 	renderTree(&troot,0);
     qsort (renderList2, chunks_rendered2, sizeof (TerrainChunk*), compare_back2front);
+    pass_end(P_R_CULL);
     
+    pass_begin(P_R_TCHUNKS);
     for(int i=0;i<chunks_rendered2;i++){
         renderList2[i]->render2();
     }
+    pass_end(P_R_TCHUNKS);
+    pass_begin(P_R_OBJECTS);
     glMatrixMode(GL_TEXTURE);
     glTranslatef(0,-(int)(frame/16),0);
     glScalef(1,(float)ATLAS_TILES,1);
@@ -4223,6 +4262,7 @@ void Terrain::render2(){
     //glDepthMask(GL_FALSE);
     glDepthMask(GL_TRUE);
     objBatchDraw(&g_flowerBatch,vert,FALSE);
+    pass_end(P_R_OBJECTS);
 
     
    

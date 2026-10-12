@@ -38,6 +38,16 @@ extern "C" void eden_native_apply_display_mode(void);   // src/seam/DisplayMode_
 //
 // Deliberately never released — matches the original's process-lifetime nib ownership, and
 // G_EAGL_VIEW is a raw global the engine dereferences with no ownership protocol at all.
+// P.1a: NSProcessInfo.thermalState (0 nominal, 1 fair, 2 serious, 3 critical), -1 where there is
+// no such notion (Linux/Windows, or a Foundation too old to have it).
+extern "C" int eden_native_thermal_state(void) {
+#if defined(__APPLE__)
+    return (int)[[NSProcessInfo processInfo] thermalState];
+#else
+    return -1;
+#endif
+}
+
 extern "C" void eden_seam_create_eagl_view(void) {
     if (G_EAGL_VIEW) return;
     (void)[[EAGLView alloc] init];

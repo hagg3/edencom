@@ -70,6 +70,7 @@ int  eden_pick_block_at_crosshair(void);
 void eden_tap_hud_button_begin(int which);
 int  eden_picker_page_step(int delta);   // Input_web.mm (D.2p)
 void eden_tap_hud_button_end(int which);
+int  eden_settings_menu_back(void);      // Settings_web.mm (U.3): Escape over the settings screen
 void eden_ui_tick(void);
 int  eden_get_hold_to_act(void);
 double eden_platform_now_ms(void);
@@ -812,7 +813,9 @@ void eden_native_input_handle_event(const SDL_Event& e) {
                 // Hud::update's touch loop — tapping the rect tracks any future layout or
                 // behaviour change for free. Indices are Input_web.mm's: 0=menu, 1=blocks,
                 // 2=colours, 7=fire/burn.
-                if      (mi == g_miMenu)         hud_tap(0);
+                // U.3: over the settings screen the menu key is its Back, not a HUD tap (which
+                // the screen claimed as a touch of its own and dropped).
+                if      (mi == g_miMenu)         { if (!eden_settings_menu_back()) hud_tap(0); }
                 else if (mi == g_miBlockPicker)  hud_tap(1);
                 else if (mi == g_miColorPicker)  hud_tap(2);
                 else if (mi == g_miFireTool)     hud_tap(7);
