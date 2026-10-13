@@ -469,7 +469,9 @@ int TerrainChunk::rebuild2(){   //here be dragons//
     int ex=pbounds[0]+CHUNK_SIZE;
     int ez=pbounds[2]+CHUNK_SIZE;
     int ey=pbounds[1]+CHUNK_SIZE;
-    
+    // P.8: neighbour colour; inside this chunk read pcolors directly (what getColorc would return).
+    #define nbColor(x,z,y) (((x)>=pbounds[0]&&(x)<ex&&(z)>=pbounds[2]&&(z)<ez&&(y)>=pbounds[1]&&(y)<ey)? \
+        pcolors[((x)-pbounds[0])*(CHUNK_SIZE*CHUNK_SIZE)+((z)-pbounds[2])*(CHUNK_SIZE)+((y)-pbounds[1])] : getColorc((x),(z),(y)))
    
     if(hasSeeThrough){
         for(int gy=pbounds[1];gy<ey;gy++){
@@ -501,13 +503,13 @@ int TerrainChunk::rebuild2(){   //here be dragons//
                             if(blockinfo[type]&IS_ATLAS2){
                                 if(blockinfo[type]&IS_LIQUID){
                                     if(blockinfo[type]==blockinfo[blockarray[idx1]]) 
-                                        if((f==4||f==5||getLevel(type)>=getLevel(blockarray[idx1]))&&mcolors[(gx-pbounds[0])*(CHUNK_SIZE*CHUNK_SIZE)+(gz-pbounds[2])*(CHUNK_SIZE)+(gy-pbounds[1])]==getColorc(gx+dx2[f] ,gz+dz2[f] ,gy+dy2[f])){
+                                        if((f==4||f==5||getLevel(type)>=getLevel(blockarray[idx1]))&&mcolors[(gx-pbounds[0])*(CHUNK_SIZE*CHUNK_SIZE)+(gz-pbounds[2])*(CHUNK_SIZE)+(gy-pbounds[1])]==nbColor(gx+dx2[f],gz+dz2[f],gy+dy2[f])){
                                             isvisible&=~(1<<f);
                                         }
                                     
                                 }else 
                                     if(type==blockarray[idx1]){
-                                        if(mcolors[(gx-pbounds[0])*(CHUNK_SIZE*CHUNK_SIZE)+(gz-pbounds[2])*(CHUNK_SIZE)+(gy-pbounds[1])]==getColorc(gx+dx2[f],gz+dz2[f],gy+dy2[f])){
+                                        if(mcolors[(gx-pbounds[0])*(CHUNK_SIZE*CHUNK_SIZE)+(gz-pbounds[2])*(CHUNK_SIZE)+(gy-pbounds[1])]==nbColor(gx+dx2[f],gz+dz2[f],gy+dy2[f])){
                                             
                                             
                                             isvisible&=~(1<<f);

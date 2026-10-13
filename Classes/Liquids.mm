@@ -331,20 +331,6 @@ void addHoriz(int x,int y,int z,block8 type,color8 color){/*
     return type;
 }
 
-int getLevel(int type){
-   
-    if(type==TYPE_LAVA1||type==TYPE_WATER1)return 1;
-    if(type==TYPE_LAVA2||type==TYPE_WATER2)return 2;
-    if(type==TYPE_LAVA3||type==TYPE_WATER3)return 3;
-    if(type==TYPE_LAVA||type==TYPE_WATER)return 4;
-    return 0;
-}
- int getBaseType(int type){
-    if(type==TYPE_WATER2||type==TYPE_WATER3||type==TYPE_WATER1)return TYPE_WATER;
-    if(type==TYPE_LAVA2||type==TYPE_LAVA3||type==TYPE_LAVA1)return TYPE_LAVA;
-  
-    return type;
-}
 static BOOL updateNode2(PNode2* pnode){
     
     int nx,ny,nz,type;  

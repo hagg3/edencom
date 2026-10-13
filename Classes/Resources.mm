@@ -450,6 +450,7 @@ typedef struct{
     int color;
     int model_type;
     int state;
+    unsigned lastUse;   // P.15: LRU stamp (skin_use_clock)
 }CTexture;
 UIImage* storedSkins[5][2];
 UIImage* storedMasks[5][2];
@@ -467,8 +468,9 @@ UIImage* storedPortalico;
 UIImage* storedPortalicoMask;
 CocosDenshion::SimpleAudioEngine*  audio;
 
-#define SKIN_CACHE_SIZE 200
+#define SKIN_CACHE_SIZE 48   // P.15: was 200 (worst case 68 -> 16 MB); evicts least-recently-used
 CTexture skin_cache[SKIN_CACHE_SIZE];
+static unsigned skin_use_clock=0;
 
 Texture2D* door_cache[100];
 
@@ -633,6 +635,7 @@ int Resources::getDoorTex(int color){
 int Resources::getSkin(int model_type,int color,int state){
     for(int i=0;i<SKIN_CACHE_SIZE;i++){
         if(skin_cache[i].tex!=NULL&&skin_cache[i].model_type==model_type&&skin_cache[i].color==color&&skin_cache[i].state==state){
+            skin_cache[i].lastUse=++skin_use_clock;
             return skin_cache[i].tex->name;
         }
     }
@@ -645,7 +648,10 @@ int Resources::getSkin(int model_type,int color,int state){
         }
     }
     if(cidx==-1){
-        cidx=randi(SKIN_CACHE_SIZE);
+        cidx=0;   // P.15: least recently used
+        for(int i=1;i<SKIN_CACHE_SIZE;i++){
+            if((int)(skin_cache[i].lastUse-skin_cache[cidx].lastUse)<0) cidx=i;
+        }
         if(skin_cache[cidx].tex){
             delete skin_cache[cidx].tex;
             
@@ -667,6 +673,7 @@ int Resources::getSkin(int model_type,int color,int state){
     skin_cache[cidx].model_type=model_type;
     skin_cache[cidx].color=color;
     skin_cache[cidx].state=state;
+    skin_cache[cidx].lastUse=++skin_use_clock;
     
     printg("storing skin in cache idx: %d\n",cidx);
     return skin_cache[cidx].tex->name;

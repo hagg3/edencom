@@ -3102,38 +3102,25 @@ static TerrainChunk* renderList[CHUNKS_PER_SIDE_MAX*CHUNKS_PER_SIDE_MAX*CHUNKS_P
 static TerrainChunk* renderList2[CHUNKS_PER_SIDE_MAX*CHUNKS_PER_SIDE_MAX*CHUNKS_PER_COLUMN_MAX];
 void renderTree(TreeNode* node,int state){
     //once upon a time this descended an oct-tree, profiling showed it was useless, now just iterates through chunk list
-    for(int i=0;i<CHUNKS_PER_SIDE*CHUNKS_PER_SIDE*CHUNKS_PER_COLUMN;i++){
+    //P.7: one walk fills BOTH lists (was two walks, one per pass), one frustum test per chunk, table order kept.
+    //in_view keeps its old meaning: membership in the transparent list (the second walk used to overwrite it).
+    int n=CHUNKS_PER_SIDE*CHUNKS_PER_SIDE*CHUNKS_PER_COLUMN;
+    int r1=chunks_rendered,r2=chunks_rendered2;
+    for(int i=0;i<n;i++){
         TerrainChunk* chunk=chunkTablec[i];
         chunk->in_view=FALSE;
-        if(secondPass){
-        if(chunk->rtn_vertices2==0){
-            continue;
-        }
-        }else if(chunk->rtn_vertices==0&&chunk->rtnum_objects==0){
-            continue;
-        }
-        int istate=ViewTestAABB(chunk->rbounds,state);
-       /* if(node==&troot){
-            istate=VT_INSIDE;
-        
-        }*/
-        if(istate&VT_OUTSIDE) continue;
-        chunk->in_view=TRUE;
-        
-        if(secondPass){
-                                renderList2[chunks_rendered2]=chunk;
-                                //[chunk render2];
-                                chunks_rendered2+=1;
-            
-        }else{
-        
-                                renderList[chunks_rendered]=chunk;
-                                // [chunk render];
-                                
-                                chunks_rendered+=1;
+        BOOL want1=chunk->rtn_vertices!=0||chunk->rtnum_objects!=0;
+        BOOL want2=chunk->rtn_vertices2!=0;
+        if(!want1&&!want2)continue;
+        if(ViewTestAABB(chunk->rbounds,state)&VT_OUTSIDE) continue;
+        if(want1)renderList[r1++]=chunk;
+        if(want2){
+            chunk->in_view=TRUE;
+            renderList2[r2++]=chunk;
         }
     }
-		
+    chunks_rendered=r1;
+    chunks_rendered2=r2;
 }
 int compare_rebuild_order (const void *a, const void *b)
 {
@@ -4122,7 +4109,7 @@ void Terrain::render2(){
 	//glTranslatef(-pushx, 0, -pushz);
     secondPass=TRUE;
     pass_begin(P_R_CULL);
-	renderTree(&troot,0);
+    //P.7: renderList2 was filled by the single renderTree walk above
     qsort (renderList2, chunks_rendered2, sizeof (TerrainChunk*), compare_back2front);
     pass_end(P_R_CULL);
     

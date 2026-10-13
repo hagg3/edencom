@@ -2333,8 +2333,12 @@ void Hud::render(){
         
 		
 	}
-    if(fade_out>0){
-        glColor4f(0,0,0,fade_out);
+    // P.5: the warp home loads + meshes synchronously (330 / 222 ms). Dim the last frames before it so the
+    // freeze reads as "Saving and warping home.." rather than a hang (delayedtimer 2 -> 1 -> fires).
+    float cover=fade_out;
+    if(delayedtimer>0&&delayedaction==6&&cover<.8f)cover=.8f;
+    if(cover>0){
+        glColor4f(0,0,0,cover);
         glDisable(GL_TEXTURE_2D);
 		glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         if(IS_IPAD){
@@ -2348,6 +2352,7 @@ void Hud::render(){
         }else
             Graphics::drawRect(0,0,SCREEN_WIDTH,SCREEN_HEIGHT);
 		glEnable(GL_TEXTURE_2D);
+        if(cover>fade_out)sb->render(); // status text was drawn before the overlay; redraw on top
 
     }
   /*  glDisable(GL_TEXTURE_2D);

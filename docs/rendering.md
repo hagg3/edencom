@@ -239,7 +239,7 @@ while a chunk cannot exceed 32768 vertices, and is the guard to revisit if one e
 
 ```mermaid
 flowchart TD
-    A[Terrain::render — pass 1] --> A1[renderTree: linear scan 1296 chunks,<br/>frustum ViewTestAABB → renderList]
+    A[Terrain::render — pass 1] --> A1[renderTree: one linear scan, one frustum test per chunk<br/>→ renderList AND renderList2 (P.7)]
     A1 --> A2[chunk render: directional face culling —<br/>camera-vs-bounds picks visible buckets,<br/>indices memcpy'd from allIndices, glDrawElements]
     A2 --> A3[Doors: rebuilt as float verts per frame,<br/>swing animation by player proximity, GL_LIGHT0]
     A3 --> A4[Golden cubes: tessellated, rotating,<br/>spheremap texture + specular GL_LIGHT1]
@@ -247,7 +247,7 @@ flowchart TD
     A5 --> A6[Portal quads: swirl texture, rotating UVs]
     B[RenderModels — creatures] --> C
     A6 --> B
-    C[Terrain::render2 — pass 2] --> C1[renderTree secondPass → renderList2,<br/>back-to-front qsort by distance]
+    C[Terrain::render2 — pass 2] --> C1[renderList2 (filled by the pass-1 renderTree walk),<br/>back-to-front qsort by distance]
     C1 --> C2[chunk render2: per-face glDrawArrays,<br/>animated water/lava via texture-matrix translate<br/>frame/16 row shift]
     C2 --> C3[Flowers: billboards facing player,<br/>back-to-front sorted, flower atlas]
 ```
@@ -398,13 +398,19 @@ bool test per hook. With `g_pass.finish` set, every boundary first calls `glFini
 time becomes an upper bound that includes its own GPU work.
 - **Passes nest.** `r_opaque` (all of `Terrain::render`) contains `r_cull`, `r_chunks`,
   `r_objects` and `r_sky`; `r_transparent` contains `r_tchunks` and the flower part of
-  `r_objects`; `r_cull` covers both `renderTree` walks and the back-to-front `qsort`. Sum only the
+  `r_objects`; `r_cull` covers the single `renderTree` walk (P.7; was two) and the back-to-front `qsort`. Sum only the
   leaves. `render` is the play branch only, so a GL dialog drawn over it is not counted.
 - **One draw per chunk per pass, not six.** The opaque loop builds one index list per chunk from the
   face buckets the camera can see, so `r_chunks.draws` is the number of chunks drawn. On the Mac, at
   the three `--pass-probe` poses: 49–80 draws, 66k–110k vertices (`WORKING/low-end-perf-audit-2026-10-12.md` §4).
 - `present` exists only on native. With vsync off, the time blocked in the swap is the GPU proxy:
   near zero means the GPU kept up with the CPU.
+- **On iOS (Air 2, 2026-10-13, Stage P.3)** the swap interval stays 1 whatever the probe asks, and the
+  vsync wait shows up in **`r_setup`** (the frame's first framebuffer touch), not in `present`. CPU work
+  per frame is therefore `frame − r_setup`. **`--pass-finish` on a tile-based GPU** charges every pass
+  that draws anything a tile store/reload of ≥ ~2.7 ms (one 4-vertex quad reads 7 ms). Use it to
+  compare a pass against itself, never as that pass's GPU cost.
+  `WORKING/low-end-perf-audit-2026-10-12.md` §5.1 has the evidence.
 - Harness: `--pass-probe` and `--stage1 --walk … --pass-timers` (native/README.md).
 
 ## Common pitfalls

@@ -149,7 +149,7 @@ change. It is exactly 1 on web and at 100%, where the uploaded values are bit-id
 ES1's `GL_GENERATE_MIPMAP` is a texture *parameter*; GLES2+ has only `glGenerateMipmap()` after the
 upload, so `eden_gl_glTexParameteri` records it as a one-shot flag and `eden_gl_glTexImage2D` acts on
 it. Stock `Texture2D::initData` sets it on **every** texture (both of its branches), so every texture
-the engine uploads, HUD art and text included, carries a mip chain. `g_tex_upload_bytes` counts
+the engine uploaded, HUD art and text included, carried a mip chain. **Since P.15 (2026-10-13) the web/native seam's `initData` sets it only when `genMips` is true**; the other branch uses `GL_NEAREST` min filtering and no chain. `g_tex_upload_bytes` counts
 level 0 × 4/3 for those (`eden_debug_gl_tex_bytes()`).
 
 **Every upload ends in a `glFlush()` (`g_tex_flush`, N.4.9's fix, 2026-10-04).** Without it, the iOS

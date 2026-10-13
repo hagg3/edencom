@@ -148,7 +148,7 @@ exactly that until R.3 and now imports `"../Lighting.h"`.
 
 Water and lava are voxels with the fill level encoded in the type
 (`TYPE_WATER` full=4 → `WATER3/2/1`; same for lava). Helpers: `getLevel(type)`,
-`getBaseType(type)`, `genLevel(baseType, level)`.
+`getBaseType(type)`, `genLevel(baseType, level)`. (`getLevel`/`getBaseType` are `static inline` in `Liquids.h` since P.8.)
 
 - `addSource(x,z,y)` — pushes onto `plist` (spread queue);
   `removeSource` — onto `plist2` (drain queue with the removed type/level).

@@ -75,7 +75,7 @@ hot path was measured first. Nothing on disk depends on it (§1.2 of the plan; `
   frames, not more per frame.
 - **Fog follows the meshed radius** (`eden_meshed_radius_blocks()` = `(R−1)·16−8`: 120 at R9, 136 /
   168 / 232 at R10 / 12 / 16): see [rendering.md](rendering.md) `setZFAR`.
-- **Per-frame whole-window loops** (`renderTree` ×2, the dirty and upload scans, the outer-ring sweep)
+- **Per-frame whole-window loops** (`renderTree` ×1 since P.7, the dirty and upload scans, the outer-ring sweep)
   grow with (2R)²·`CHUNKS_PER_COLUMN` — 16,384 chunks at R16 256z. Headless Mac frame (update +
   render, GL no-op'd): p50 0.042 ms at R9 256z, 0.154 ms at R16 256z; windowed `--preset-probe`
   view Auto 2.03 → 2.41 ms. Cheap enough not to cap the radius or rewrite them (decision 2).

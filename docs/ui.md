@@ -27,6 +27,10 @@ with OpenGL by the game itself. There is **no UIKit UI** beyond the GL view (and
   itself uses; web: canvas `measureText`; 0 headless, where `GLW::Label::width()` falls back to
   the `kAvgGlyph` estimate). `--shot`'s `hud-status` is the artefact; `--ui-selftest` covers the
   lifetime rules.
+- **Warp cover (P.5, 2026-10-13).** `Hud::awarpHome` arms `delayedtimer=2`/`delayedaction=6`; while it counts down
+  (two frames before the synchronous `warpToHome`) `Hud::render` draws an 80 % black overlay (the same quad as
+  `fade_out`) and redraws the status bar on top, so the 220–330 ms freeze reads as "Saving and warping home..".
+  Death warps already fade to black via `fade_out`.
 - `VKeyboard` (`Classes/VKeyboard.mm`) — custom GL keyboard for world names and
   search (the app predates reliable transparent UIKit overlays on GL).
 - `Alert` (`Classes/Alert.mm`) — the original iOS `UIAlertView` modals (delete world, warp-home
@@ -113,17 +117,19 @@ fit, a row taller than the view still shows; `rowOffset()`; content drags walk t
   focused on show: Return picks button 0, Escape the LAST one, and the callback gets the text.
   Callers check `GLDialog::textEntryAvailable()` first (false on web). `GLDialog::dismiss()` closes
   without a callback — the harness's way out of a modal.
-- `KeybindsMenu` (`Classes/KeybindsMenu.{h,mm}`) — **added Phase N Stage 5.3.** The GL keybinds
-  screen, and the kit's second consumer: a paginated list (grouped
-  Movement/Actions/Interface/Hotbar) of every rebindable action against its current key, drawn
-  entirely in `GLWidgets` calls. Since 2026-10-05 it shares `SettingsMenu`'s shape exactly —
-  titlebar (Back · "Controls" · Defaults), a heading slot per group, slots per page fitted to the
-  screen, a window shrink-wrapped to the column. **It is a CHILD of `SettingsMenu`, not a sibling** — the
-  settings rail's Keys tile (U.3) shows it and `SettingsMenu::update/render` delegate to it wholesale while it is up. That
-  is deliberate and load-bearing: web `--wrap`s `SettingsMenu::update/render` to no-ops, so a
-  screen reachable only from inside them cannot draw or take input on web, where the DOM Keys tab
-  is authoritative. `SettingsMenu::showKeybinds()` is the programmatic entry point (the `--shot`
-  harness and `--keybind-selftest` use it rather than hit-testing the button).
+- `KeybindsMenu` (`Classes/KeybindsMenu.{h,mm}`) — **added Phase N Stage 5.3; since U.4 (2026-10-12)
+  the CONTENT of `SettingsMenu`'s Keys tab, not a screen.** Every rebindable action against its current key,
+  grouped Movement/Actions/Interface/Hotbar: a small grey heading per group, then a `GLW::TwoLineRow` per action
+  (title · "also X" as the second line · a 96×29u key button; on touch the button's hit box is the row's height),
+  in its own variable-height `GLW::ScrollView`. `SettingsMenu` owns the panel, the titlebar (Back · "Keys
+  Settings" · **Defaults**), the rail, the touch claim, the wheel and the drag/scrollbar gestures, and forwards
+  row taps (`down()`/`up()`: pressed on the down edge, a capture armed on release, so a drag that starts on a
+  button still scrolls). While a capture is armed the whole screen is inert and any tap cancels it; the
+  "Press a key" modal (`renderCapture`) is a second full-screen scrim. That nesting is load-bearing: web
+  `--wrap`s `SettingsMenu::update/render` to no-ops, so this cannot draw or take input on web, where the DOM
+  Keys tab is authoritative. `SettingsMenu::showKeybinds()` selects the tab; `keyRect(action, &r)` /
+  `defaultsRect()` are `--ui-selftest`'s handles. The paged standalone screen (its own Back, pager,
+  `fit()`) is gone, and so is the `--shot` `-keybinds` image (it is `-settings-keys`).
   - **The data is not here.** Bindings live in the shared keybind model — see the KEYBINDS section
     below — and this screen only reads `eden_keybind_*`.
   - **`Button::setRect()` re-wraps only on a width change** (5.4). Every converted screen lays out
@@ -359,7 +365,9 @@ them — the ordering in `World::update` is the arbitration.
   Phase N Stage 2.5** into a generic paginated list over the shared settings table
   (`web/src/seam/Settings_web.mm`'s `kSettings[]`, reached via `eden_settings_*` scalar
   accessors; U.2 added `eden_settings_hint(i)` and `eden_settings_parent(i)` — the trailing `Setting::parent` key of
-  a toggle that mutes the row while off, -1 if none; every row now has a hint, and the schema JSON carries `parent`).
+  a toggle that mutes the row while off, -1 if none; the schema JSON carries `parent`). U.2 gave every row a hint;
+  **U.4 trimmed them** (the user, 2026-10-12: brief, and only where the label does not already say it) — a row
+  may have none (`NULL` → `""`, and `TwoLineRow` drops the second line).
   Interface → Video is a screen-side mapping (U.3): the `group` strings and persistence keys are unchanged.
   **Stage U.3 (2026-10-12) rebuilt the screen on the reference layout** (`WORKING/ui-rework-plan-2026-10-11.md`
   §3) — what this paragraph describes after the history below is the current shape: a **fixed panel** (the
@@ -370,10 +378,11 @@ them — the ordering in `World::update` is the arbitration.
   `GLW::ScrollView` (wheel, content drag, scrollbar); a row with a `parent` is indented 14u and **muted while that
   toggle is off** — display-only, it still works. Control column: the 104×34u toggle, a 200u slider + readout, a
   168u `<` value `>` stepper; on the touch profile a toggle's hit box is the whole row. Labels are built on a tab
-  switch or a `u()` change, never per frame. **Keys has no rows yet**: its tile opens `KeybindsMenu` as the child
-  screen (U.4 embeds it). The pages, the pager, `fit()`'s pointer/touch pitch split and the group headings are
+  switch or a `u()` change, never per frame. **Keys has no settings rows**: its content is the embedded
+  `KeybindsMenu` (U.4, above) and its titlebar gains Defaults. The pages, the pager, `fit()`'s pointer/touch pitch split and the group headings are
   gone. **Escape** reaches it as `eden_settings_menu_back()` (`Settings_web.mm`, called from `Input_native.cpp`'s
-  menu key) → `SettingsMenu::back()`: keybinds child → Settings → closed. It used to arrive as a synthetic tap on
+  menu key) → `SettingsMenu::back()`: closes the screen (an armed key capture never sees it — the keybind
+  model consumes Escape as "cancel"). It used to arrive as a synthetic tap on
   the HUD's menu button, which this screen claimed as one of its own touches and dropped ("Escape inside in-game
   Settings is swallowed"). Harness: `tabCount()/showTab()/tabName()/tabRowCount()` and `showRow(key, &rect)`
   (switches tab, scrolls the row into view). *History:* **Stage 5.4 (2026-10-04) reskinned it onto `GLWidgets`**: a WINDOW panel with a
@@ -399,8 +408,8 @@ them — the ordering in `World::update` is the arbitration.
   until N.4.11 (2026-10-04); native now renders the 3D pass at it (see rendering.md, "Scene-pass
   bracket"), so the Video page shows it. **Not on iOS since 2026-10-09 (N.4.12):** the row is hidden and
   `eden_get_render_scale_pct()` returns 100 there.
-  **Stage 5.3 added the keybinds entry** (the titlebar's "Controls" button from 5.4, the Keys tile since U.3), which shows
-  `KeybindsMenu` and hands it the whole frame until it closes.
+  **Stage 5.3 added the keybinds entry** (the titlebar's "Controls" button from 5.4, the Keys tile since U.3); since
+  U.4 it is the Keys tab's content rather than a screen of its own.
 - **`WorldBrowser`** (`Classes/WorldBrowser.{h,mm}`, **added Stage 5.9, 2026-10-07**) — "Get
   Worlds" on the kit, replacing `SharedList` on the port targets (where SharedList/ShareUtil are
   seam-excluded NSURLConnection code). One `TabRail` tab per SOURCE: **Archive** (the community's

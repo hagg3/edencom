@@ -157,7 +157,13 @@ static const Setting kSettings[] = {
   // game at an uncapped rAF is a thermal-throttle machine there — perf-audit §4b). Uncapped is the
   // default for everyone; eden_apply_input_profile() below sets it to 60 the first time a touch
   // profile is detected AND the player has never explicitly touched this row.
+#if defined(EDEN_PLATFORM_IOS)
+  // P.14 (decision P.4-4): 45 stays so stored indices and the low-mem profile keep meaning, but it is
+  // labelled -- at vsync 1 on a 60 Hz panel it alternates 16.7 / 33.3 ms frames.
+  { "fps_cap",           "Frame rate cap",    "Video",     KIND_ENUM,   -1,             0,   3,   1,   0,  "Lower saves battery and heat. 45 is uneven on a 60 Hz screen.", "Uncapped,30,45 (uneven),60" },
+#else
   { "fps_cap",           "Frame rate cap",    "Video",     KIND_ENUM,   -1,             0,   3,   1,   0,  "Lower saves battery and heat.", "Uncapped,30,45,60" },
+#endif
 
   { "crosshair",         "Crosshair",         "Interface", KIND_TOGGLE, -1,             0,   1,   1,   1,  NULL,             NULL },
   { "block_preview",     "Block preview",     "Interface", KIND_TOGGLE, -1,             0,   1,   1,   0,  "Shows where the next block goes.",      NULL },
