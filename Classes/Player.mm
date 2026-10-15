@@ -46,6 +46,10 @@ bool CROUCH_ENABLED=false;
 // separately require the touch to be a real one (UITouch's isRealTouch), so this setting can never
 // make Space/mouse trigger them even if turned on.
 bool touchControlsSoundEnabled=false;
+// Settings toggle ("night_ambience", Audio) -- off by default. The night loop is repetitive, so
+// until it's turned on the bed layer keeps playing AMBIENT_OPEN at night (the pre-night behaviour).
+// Only gates the isNight substitution below; biome/cave/underwater/sky-high beds are untouched.
+bool nightAmbienceEnabled=false;
 #define STAND_BOX_HEIGHT (BLOCK_SIZE*1.85f)
 #define CROUCH_BOX_HEIGHT (BLOCK_SIZE*0.925f)
 // Full stand<->crouch transition takes this long, eased by Player::preupdate rate-limiting
@@ -778,7 +782,7 @@ static BOOL ladderSound=FALSE;
 static BOOL ladderIsVine=FALSE;
 static BOOL lastOnIce;
 
-void Player::takeDamage(float damage){
+void Player::takeDamage(float damage,int cause){
     life-=damage;
     if(!health_option){
         if(life<.36){
@@ -786,11 +790,13 @@ void Player::takeDamage(float damage){
         }
     }
     if(life<0){
-        if(damage==.08f){
+        // H.6: by cause, not by comparing the damage float (creatures deal .333/.5, so the old
+        // damage==.2f test made S_DEATH_BY_CREATURE unreachable).
+        if(cause==DEATH_LAVA){
             Resources::getResources->playSound(S_DEATH_BY_LAVA);
-        }else if(damage==.2f){
+        }else if(cause==DEATH_CREATURE){
             Resources::getResources->playSound(S_DEATH_BY_CREATURE);
-        }else if(damage==.38f||damage==.05f){
+        }else if(cause==DEATH_TNT){
             Resources::getResources->playSound(S_DEATH_BY_TNT);
         }
         dead=TRUE;
@@ -1003,6 +1009,7 @@ BOOL Player::update(float etime){
             if(onground){
                 vel.x*=.9;
                 vel.z*=.9;
+                Resources::getResources->playSound(S_JUMP);   // H.6: the shipped player_jump_1/2
             }
 			jumping=TRUE;
             climbing=FALSE;
@@ -1285,7 +1292,7 @@ BOOL Player::update(float etime){
             // bed channel, so it only ever plays in place of (never alongside) the default overworld
             // soundscape, and any of the specific biome/cave/underwater/skyhigh ambiences below
             // still take priority over it exactly as they do over AMBIENT_OPEN.
-            BOOL isNight=v_equals(World::getWorld->terrain->final_skycolor,colorTable[54]);
+            BOOL isNight=nightAmbienceEnabled&&v_equals(World::getWorld->terrain->final_skycolor,colorTable[54]);
             if(World::getWorld->terrain->tgen->LEVEL_SEED!=DEFAULT_LEVEL_SEED){
                  Resources::getResources->soundEventBed(isNight?AMBIENT_NIGHT:AMBIENT_OPEN,pos);
             }else
@@ -1539,7 +1546,7 @@ BOOL Player::vertc(){
       //  NSLog(@"before-vel:(%f,%f,%f)  normal:(%f,%f,%f) dotp: %f",vel.x,vel.y,vel.z,normal.x,normal.y,normal.z,n);
         if(blockinfo[collided]&IS_LAVA){
             
-            takeDamage(.08f);
+            takeDamage(.08f,DEATH_LAVA);
             n*=1.8;
             
             Resources::getResources->playSound(S_LAVA_BURN);

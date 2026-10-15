@@ -8,7 +8,7 @@
 //  `legacy_menu` fallback all get the same chrome without a per-platform toolkit and without a
 //  new dependency.
 //
-//  It is a transcription of web/docs/design-system.md — the same tokens, the same THREE bevel
+//  It is a transcription of web-port-final:web/docs/design-system.md — the same tokens, the same THREE bevel
 //  mechanics (RAISED / SUNKEN / PRESSED, plus the two surfaces WINDOW / CONTENT), square corners,
 //  hard-edged zero-blur shadows. Read that document before changing anything here; if you think
 //  you need a fourth bevel you almost certainly need one of the three.
@@ -46,7 +46,7 @@ namespace GLW {
 float u();
 inline float du(float designPx) { return designPx * u(); }
 
-// --- palette (web/public/eden-ui.css :root) ------------------------------------------------
+// --- palette (web-port-final:web/public/eden-ui.css :root) ------------------------------------------------
 struct Color { float r, g, b, a; };
 Color rgb(unsigned int hex, float a = 1.0f);
 
@@ -75,7 +75,7 @@ enum BevelStyle { BEVEL_RAISED, BEVEL_SUNKEN, BEVEL_PRESSED, BEVEL_WINDOW, BEVEL
 void bevel(CGRect r, BevelStyle style);
 
 // --- icons (U.1) ---------------------------------------------------------------------------
-// One cell of media/ui/ui_icons.png (web/tools/ui-icons.py; ids in UIIcons.h), drawn into `r` and
+// One cell of media/ui/ui_icons.png (port/tools/ui-icons.py; ids in UIIcons.h), drawn into `r` and
 // tinted `c`. The art is white on transparent, so the tint IS the icon's colour: dark on a raised
 // tile, kTextPressed on a pressed one — the inversion `currentColor` gave the web's SVG icons. The
 // atlas is loaded on first use; an out-of-range id draws UIICON_FALLBACK.
@@ -516,6 +516,23 @@ private:
     ScrollView m_scroll;
 };
 
+// --- RailFrame (U.5) -----------------------------------------------------------------------
+// The fixed panel every rail screen shares (ui-rework-plan §3.1; Settings since U.3, New World
+// since U.5), so two screens can never drift apart by a pixel: the 783x587u design frame less a 12u
+// margin, centred, the same whatever the content; a 29u titlebar (7u from the top, 9u side
+// padding); then rail | content | 18u scrollbar, 6u apart, 9u under the titlebar and above the
+// bottom. Pure arithmetic from SCREEN_* — call it from a per-frame layout.
+struct RailFrame {
+    CGRect panel;
+    CGRect titlebar;     // the 29u strip: Back at its left, actions at its right
+    CGRect rail, content, bar;
+    float  titleY(const Label& title) const;   // the yTop that centres `title` on the titlebar
+};
+RailFrame railFrame();
+// A titlebar button's touch target: on touch the hit box grows to the 44pt floor around the art
+// (design-system.md, "Touch floor"), on a pointer it is the art.
+void titlebarHit(Button& b);
+
 // --- TwoLineRow (U.1) ----------------------------------------------------------------------
 // The reference's settings row on the one white CONTENT surface: a display-face title over a
 // body-face hint that wraps to as many lines as it needs, a 1u hairline under it unless it is the
@@ -637,7 +654,7 @@ private:
 }  // namespace GLW
 
 // The platform text-input seam (N.4.5). Native: native/src/seam/Input_native.cpp (SDL text input,
-// the system keyboard on iOS). Web: stubs in web/src/seam/seam_link_stubs.mm returning 0 — the
+// the system keyboard on iOS). Web: stubs in web-port-final:web/src/seam/seam_link_stubs.mm returning 0 — the
 // DOM owns text entry there until Stage 5.10, so a GL screen must check available() before
 // offering an editable field. The rect is POINT space, y up, and only positions the IME / keyboard.
 // take() drains typed UTF-8; editing keys arrive inline as '\b' (backspace), '\r' (return/done)

@@ -1,9 +1,9 @@
-// NSUserDefaults_native.mm — native twin of web/src/shim/foundation/NSUserDefaults.mm
+// NSUserDefaults_native.mm — native twin of web-port-final:web/src/shim/foundation/NSUserDefaults.mm
 // (Phase N Stage 1, WORKING/native-migration-plan-2026-09-04.md).
 //
 // This is the ONE Foundation shim file that genuinely forks between the two targets: the web one
 // is write-through to `localStorage` via EM_JS, and there is no localStorage here. Everything else
-// under web/src/shim/foundation/ compiles into the native target unchanged.
+// under port/src/shim/foundation/ compiles into the native target unchanged.
 //
 // The store is a single flat text file, one `key<TAB>tagged-value` line per entry, written whole
 // on each set. That is the right shape for the traffic: Classes/SettingsMenu.mm's save() is the

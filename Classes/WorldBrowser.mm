@@ -26,7 +26,7 @@
 #include <zlib.h>
 #include <ctime>
 #include "EdenWorldSource.h"   // emod::ImportJob (S.5)
-extern "C" int eden_get_upgrade_256z(void);   // web/src/seam/Settings_web.mm (S.5e)
+extern "C" int eden_get_upgrade_256z(void);   // port/src/seam/Settings_web.mm (S.5e)
 
 #include <algorithm>
 #include <cmath>

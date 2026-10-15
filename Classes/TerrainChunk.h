@@ -82,6 +82,10 @@ typedef struct _mesh_side_effect{
 void tc_meshSetSource(const block8* blocks,const color8* colors,const unsigned char* burnMask,
                       MeshSideEffect* sink,int sink_max,int* sink_count);
 void tc_meshClearSource();
+// H.2: a worker's shadow tops (SHADOW_GATHER_N bytes, Shadow.h), gathered on the main thread at
+// dispatch, and the mode they were gathered for. mode 0 (or never called) = shadows Off. Cleared
+// by tc_meshClearSource().
+void tc_meshSetShade(const unsigned char* tops,int mode);
 // Main thread: replay what a worker mesh deferred. Safe to call with count==0.
 void tc_meshReplaySideEffects(const MeshSideEffect* sink,int count);
 
@@ -160,7 +164,7 @@ public:
     // so identical between any two runs over the same world at the same origin, on any platform);
     // `rtFullHash` adds the baked vertex colours, which carry incrementally-propagated lighting
     // and therefore only converge after the same number of settled frames. Read together by
-    // eden_debug_mesh_checksum(); see that export in web/src/seam/DebugState_web.mm for why the
+    // eden_debug_mesh_checksum(); see that export in port/src/seam/DebugState_web.mm for why the
     // split is the useful part.
     //
     // OFF BY DEFAULT and off the hot path: computing them costs a pass over every vertex, so

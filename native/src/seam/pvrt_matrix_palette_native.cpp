@@ -3,7 +3,7 @@
 // that file defines — CPVRTglesExt::LoadExtensions() and ::IsGLExtensionSupported() — and, as
 // part of LoadExtensions, installs the shim's GL_OES_matrix_palette entry points so creature
 // models draw. Web achieves the same thing with `-Wl,--wrap=` over the real file
-// (web/src/seam/pvrt_matrix_palette.cpp); read that file's header for the WHY, which is identical.
+// (web-port-final:web/src/seam/pvrt_matrix_palette.cpp); read that file's header for the WHY, which is identical.
 //
 // TWO REASONS THIS IS A REPLACEMENT RATHER THAN A WRAP, and both are load-bearing:
 //
@@ -23,7 +23,7 @@
 // because Model.mm calls through them with no null check and the extension probes are what keep
 // it away from them — and only then are the four matrix-palette pointers overwritten.
 #include "../../../Classes/PVRTglesExt.h"
-#include "../../../web/src/shim/gl/gl_es1_shim.h"
+#include "../../../port/src/shim/gl/gl_es1_shim.h"
 
 #include <cstdio>
 #include <cstring>

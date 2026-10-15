@@ -381,7 +381,7 @@ void Graphics::beginHud(){
 }
 
 // The vertical FOV setting. On web gluPerspective is intercepted by --wrap and fed this same
-// value (web/src/seam/Settings_web.mm); Apple's ld64 has no --wrap, so the native build reads it
+// value (port/src/seam/Settings_web.mm); Apple's ld64 has no --wrap, so the native build reads it
 // at the call site instead. Defined in Settings_web.mm, which both targets compile; a from-scratch
 // iOS build would supply its own stub (same convention as eden_report_load_failure).
 extern float eden_fov_degrees;

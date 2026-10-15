@@ -11,6 +11,7 @@
 
 #import "Texture2D.h"
 #import "SettingsMenu.h"
+#import "NewWorldMenu.h"
 #import "Input.h"
 #import "ShareUtil.h"
 #import "statusbar.h"
@@ -117,6 +118,15 @@ public:
     BOOL showbrowser;
     bool browserOffered();
     void openBrowser();
+
+    // Stage U.5: "New" opens the New World screen (name, type, height) instead of adding "World N"
+    // to the list at once; a full screen over the menu background like settings. Its Play calls
+    // startNewWorld(): the list entry, selected, and loading=1 — the type and height are already
+    // parked in the pending seam, so the stock world-type prompt never shows for it.
+    NewWorldMenu* newworld;
+    BOOL shownewworld;
+    void openNewWorld();
+    void startNewWorld(NSString* name);
 
     void a_genFlat(BOOL b);
     void a_deleteCancel();

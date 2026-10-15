@@ -12,6 +12,7 @@
 #import "Liquids.h"
 #import "Terrain.h"
 #import "Geometry.h"
+#import "Shadow.h"   // H.2 baked shadows
 
 
 
@@ -28,7 +29,7 @@ static Terrain* ter;
 // kill switch and the A/B lever: FALSE restores the old scheduling exactly (the bit is still kept,
 // nothing reads it). g_empty_selfcheck makes rebuild2() run the full scan on a chunk the bit calls
 // empty and count the ones that were not (must stay 0). Both written only by diagnostics exports
-// (web/src/seam/DebugState_web.mm) and read only on the main thread.
+// (port/src/seam/DebugState_web.mm) and read only on the main thread.
 bool g_empty_shortcut = true;
 bool g_empty_selfcheck = false;
 int  g_empty_selfcheck_runs = 0;
@@ -41,6 +42,10 @@ EDEN_MESH_TLS static const unsigned char* t_mesh_burn=NULL;
 EDEN_MESH_TLS static MeshSideEffect* t_mesh_sink=NULL;
 EDEN_MESH_TLS static int t_mesh_sink_max=0;
 EDEN_MESH_TLS static int* t_mesh_sink_count=NULL;
+// H.2: the shadow tops a worker meshes with (gathered at dispatch, Shadow.h), and the mode they
+// were gathered for. Read only while t_mesh_blocks is set; NULL = shadows Off = the stock colours.
+EDEN_MESH_TLS static const unsigned char* t_mesh_shade=NULL;
+EDEN_MESH_TLS static int t_mesh_shade_mode=0;
 
 void tc_meshSetSource(const block8* blocks,const color8* colors,const unsigned char* burnMask,
                       MeshSideEffect* sink,int sink_max,int* sink_count){
@@ -52,7 +57,13 @@ void tc_meshSetSource(const block8* blocks,const color8* colors,const unsigned c
     t_mesh_sink_count=sink_count;
     if(sink_count)*sink_count=0;
 }
+void tc_meshSetShade(const unsigned char* tops,int mode){
+    t_mesh_shade=mode?tops:NULL;
+    t_mesh_shade_mode=mode;
+}
 void tc_meshClearSource(){
+    t_mesh_shade=NULL;
+    t_mesh_shade_mode=0;
     t_mesh_blocks=NULL;
     t_mesh_colors=NULL;
     t_mesh_burn=NULL;
@@ -858,6 +869,20 @@ int TerrainChunk::rebuild2(){   //here be dragons//
     float light[3]={1.0f,1.0f,1.0f};
     if(!LOW_MEM_DEVICE&&v_equals(World::getWorld->terrain->final_skycolor,colorTable[54]))
         skylight=.35f;
+    // H.2: the shadow tops round this chunk. A worker was handed them at dispatch (shadowTop is
+    // main-thread state); inline, gather them now. NULL = Off: every colour below is stock.
+    unsigned char shadeLocal[SHADOW_GATHER_N];
+    const unsigned char* mshade=NULL;
+    int mshadeMode=SHADOW_OFF;
+    if(t_mesh_blocks){
+        mshade=t_mesh_shade;
+        mshadeMode=t_mesh_shade_mode;
+    }else if(g_shadow_mode!=SHADOW_OFF){
+        shadow_gather(pbounds[0],pbounds[2],shadeLocal);
+        mshade=shadeLocal;
+        mshadeMode=g_shadow_mode;
+    }
+    if(!mshade)mshadeMode=SHADOW_OFF;
     
     Resources* res=Resources::getResources;
 	for(int idx=0;idx<CHUNK_SIZE3;idx++){
@@ -1238,6 +1263,24 @@ int TerrainChunk::rebuild2(){   //here be dragons//
         light[1]=calcLight(x+pbounds[0],z+pbounds[2],y+pbounds[1],skylight,1);
         light[2]=calcLight(x+pbounds[0],z+pbounds[2],y+pbounds[1],skylight,2);
         }
+        // H.2: the top face's light with the baked shadow (Shadow.h). Classic: one shade per face
+        // (light_top); Smooth: one per corner (light_corner[vx*2+vz]). Unshaded, both are light[].
+        // Colours only -- the counting pass never sees this.
+        float light_top[3]={light[0],light[1],light[2]};
+        float light_corner[4][3];
+        if(mshadeMode!=SHADOW_OFF&&(FACE_TOP&isvisible)){
+            const int gx=x+pbounds[0],gz=z+pbounds[2],gy=y+pbounds[1];
+            if(mshadeMode==SHADOW_CLASSIC){
+                const int sh=shadow_classic(mshade,x,z,gy);
+                if(sh<255)shadow_lightTop(gx,gz,gy,skylight,sh,light,light_top);
+            }else{
+                int sh[4];
+                if(shadow_corners(mshade,x,z,gy,sh))
+                    shadow_lightTops(gx,gz,gy,skylight,sh,4,light,light_corner);
+                else
+                    for(int k=0;k<4;k++){ light_corner[k][0]=light[0]; light_corner[k][1]=light[1]; light_corner[k][2]=light[2]; }
+            }
+        }
         /*lightsf[CC(x,z,y)]+*/
     //    Vector lightv=lighting[(x)*CHUNK_SIZE*CHUNK_SIZE+(z)*CHUNK_SIZE+(y)];
     //    light[0]=lightv.x;
@@ -1506,6 +1549,10 @@ int TerrainChunk::rebuild2(){   //here be dragons//
             
             for(int v=0;v<6;v++){
                 int sv=sf+v*3;
+                // H.2: this vertex's top-face light -- the face's, or (Smooth) its corner's.
+                const float* lt=light_top;
+                if(f==5&&mshadeMode==SHADOW_SMOOTH)
+                    lt=light_corner[(cubeShortVertices[sv]?2:0)+(cubeShortVertices[sv+2]?1:0)];
                
                 //if(f==0&&v==0)
                // printg("vert position1: (%d,%d,%d)\n",offsets[0], offsets[1], offsets[2]);
@@ -1527,8 +1574,8 @@ int TerrainChunk::rebuild2(){   //here be dragons//
                     if(type==TYPE_CLOUD&&f==4&&FALSE)
                         color=light[coord]*paint[coord]*180;
                     else if(f==5){
-                        
-                        color=light[coord]*paint[coord]*(float)cubeColors[f*3+coord];//*top_shadow;
+                        // H.2: lt (above), never top_shadow (Shadow.h).
+                        color=lt[coord]*paint[coord]*(float)cubeColors[f*3+coord];//*top_shadow;
                     }else if(type>=TYPE_STONE_SIDE1&&type<=TYPE_ICE_SIDE4&&sideface==f){
                         color=light[coord]*paint[coord]*wshadow;
                     }
@@ -1634,7 +1681,7 @@ static void chunkUploadArray(GLuint* name,int* capBytes,const void* data,int byt
 }
 // Phase N Stage 1: opt-in mesh fingerprinting. Default OFF — this is a pass over every published
 // vertex, and prepareVBO() runs for every re-meshed chunk. eden_debug_set_mesh_checksum() (a
-// diagnostics-only export, web/src/seam/DebugState_web.mm) is the only writer.
+// diagnostics-only export, port/src/seam/DebugState_web.mm) is the only writer.
 bool g_mesh_checksum_enabled = false;
 
 // FNV-1a 64. Not a security hash — chosen because it is six lines with no dependency and its

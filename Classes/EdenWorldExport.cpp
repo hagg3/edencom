@@ -1,7 +1,7 @@
 //
 //  EdenWorldExport.cpp
 //  Eden — Stage S / S.5 + S.5b. See EdenWorldExport.h. The OWN target restates `emod.py export`
-//  (web/tools/emod.py), and LEGACY64Z restates FileManager::convertWorldTo64's cut rules; the S.5b
+//  (port/tools/emod.py), and LEGACY64Z restates FileManager::convertWorldTo64's cut rules; the S.5b
 //  gates hold the three side by side.
 //
 #include "EdenWorldExport.h"
@@ -577,9 +577,6 @@ uint64_t free_bytes(const std::string& dir) {
     if (!MultiByteToWideChar(CP_UTF8, 0, dir.c_str(), -1, wp, 1024) || !GetDiskFreeSpaceExW(wp, &avail, NULL, NULL))
         return UINT64_MAX;
     return (uint64_t)avail.QuadPart;
-#elif defined(__EMSCRIPTEN__)
-    (void)dir;
-    return UINT64_MAX;                     // MEMFS: the browser's quota is the page's question
 #else
     struct statvfs sv;
     if (statvfs(dir.c_str(), &sv) != 0) return UINT64_MAX;

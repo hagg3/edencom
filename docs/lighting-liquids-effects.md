@@ -23,7 +23,7 @@ exactly that until R.3 and now imports `"../Lighting.h"`.
   (`light_brickSlot`, `light_brickIndex`, `light_get`), store functions in `Lighting.mm`
   (`light_storeAllocate/Free/Clear`). Entirely disabled on `LOW_MEM_DEVICE`, as before.
   - **Bricks are never freed during play.** `MeshPool`'s workers call `calcLight` off the main thread
-    without a lock (threaded web only; no native target has workers), which was safe for the dense
+    without a lock (only under `EDEN_THREADED`, which no current build defines), which was safe for the dense
     array only because it never moved. `light_storeClear()` (what the memset was) NULLs each lit slot,
     zeroes the brick in place and moves it to a pool that `addlight` reuses; only `light_storeFree()`
     in `Terrain::deallocateMemory`, after `mp_drain`, frees memory. A worker that loaded a pointer
@@ -51,7 +51,8 @@ exactly that until R.3 and now imports `"../Lighting.h"`.
   rebuild below — goes through `light_splat`, so a load and a walk agree on what the edge gets.
 - `calculateLighting()` (`Lighting.mm`) — full rebuild: finds every `TYPE_LIGHTBOX` in the resident
   window and re-adds its light, refreshing affected chunk meshes.
-  Triggered via `updateLightingBegin()` (zero the array + set a flag) after world
+  Triggered via `updateLightingBegin()` (sets `update_lighting`, clears the brick store with
+  `light_storeClear()`, resets the sliced sweep cursor) after world
   load, warps and bulk reloads — lights are **not** persisted, they're re-derived from lightbox
   blocks. The per-column body is `sweepLightingColumn(cx,cz,hit)`, shared with the sliced form below
   and with the per-column rebuild; a sweep hit goes through `sweepLightingHit` (`addlight` +
@@ -82,11 +83,29 @@ exactly that until R.3 and now imports `"../Lighting.h"`.
     whatever the sweep wrote for their departed occupants.
   - **Cost** (Mac, Release, 784 lightboxes over the walk area, ~0.5 per column): 0.10 ms per landed
     column on average, 0.15 ms worst at 64z; 0.16 / 0.35 ms at 256z. `eden_debug_light_state()` reports
-    `rebuilds`, `rebuild_ms`, `rebuild_max_ms` (the times only with `EDEN_F3_HOOKS`).
+    `rebuilds`, `rebuild_ms`, `rebuild_max_ms` (the times only with `EDEN_F3_HOOKS`). Since P.10 most of
+    that cost is gone (next bullet).
+  - **Lightbox-free columns are not rescanned (P.10, 2026-10-14; modified from stock).** Of the 25
+    slots a rebuild visits, 24 were scanned by the previous landings, and on a world with no
+    lightboxes the scan *was* the cost (0.51 / 1.01 ms per landed column on the A8X at 64z / 256z).
+    `Lighting.mm` keeps, per column slot, a "scanned, holds no lightbox" byte (`lbfree`) and the world
+    column it was true for (`lbfree_col`); `sweepLightingColumn` returns 0 at once while both hold. Only
+    "none" is ever trusted — a slot with lightboxes is always scanned — so the one way to be wrong is
+    a lightbox appearing behind the flag's back, and every route clears it: an occupant change
+    (checked on each use), `Terrain::addChunk` (`light_markLanded`), `Terrain::setLand` of
+    `TYPE_LIGHTBOX` (`light_onSetLand`; every runtime edit lands there), and `light_storeClear` /
+    the start of any full sweep (every load, warp, bulk reload, `clearBlocks`). Only the regular strip
+    path records "none"; an irregular column is scanned every time. Mac, Release, `--stage1 --walk=
+    160,0,0,160` from 65536 with no lightboxes (360 rebuilds, mean of 3 reps after a discarded one):
+    **0.215 → 0.011 ms per rebuild at 64z, 0.369 → 0.016 ms at 256z**, walked `geom` unchanged.
+    `eden_debug_light_state()` reports `cols_scanned` / `cols_skipped`.
   - **Gates.** `WORKING/b5b1/ring-light-gate.sh H OUT` (fresh load at the end of 7 walks on a lightbox
     lattice world at night = walked geometry, chunk state and light) and native `--ring-light-selftest`
-    (the in-process CI form: walked light + meshes = a full re-sweep + re-mesh). `--light-mutate=nosync`
-    and `=nomark` fail both; `=wrap` fails `--light-selftest`'s window-edge step. **Test at night**:
+    (the in-process CI form: walked light + meshes = a full re-sweep + re-mesh; since P.10 it also
+    builds a lightbox in a remembered-free column at the +x edge and walks one more chunk so that
+    column's 3×3 is rebuilt). `--light-mutate=nosync` and `=nomark` fail both; `=nolbmark` (P.10: the
+    landing/edit hooks never clear `lbfree`) fails the selftest's P.10 step, light and mesh checks;
+    `=wrap` fails `--light-selftest`'s window-edge step. **Test at night**:
     by day `TerrainChunk` never calls `calcLight` (`skylight==1.0`), so a mesh baked from stale light is
     invisible to every checksum; the lattice prep paints all 16 sky regions night (palette 54) and saves.
 - **The scan is a `memchr` (Stage R / R.1, 2026-10-03).** `blockarray` is y-fastest, so each (x,z) of a
@@ -102,7 +121,7 @@ exactly that until R.3 and now imports `"../Lighting.h"`.
     chunk of the column present, stacked at `cy*CHUNK_SIZE` and sharing x/z bounds; otherwise (a
     deferred or unpublished slot) the old per-chunk scan runs, honouring each chunk's own `pbounds`.
     That fallback was kept verbatim, not deleted.
-- `calculateLightingSlice()` (`Lighting.mm`, web-port perf change 2026-08-27) — the
+- `calculateLightingSlice()` (`Lighting.mm`, port perf change 2026-08-27) — the
   same sweep but a budgeted strip of columns per frame, holding a cursor between frames and
   returning TRUE only when the window is fully swept. This is what the **post-bulk-reload**
   `update_lighting` path calls: the old full scan was one unbudgeted ~20 ms (64z) / ~80 ms (256z)
@@ -129,7 +148,7 @@ exactly that until R.3 and now imports `"../Lighting.h"`.
   `8f02…` / `349d…`. Use a world with lightboxes (Diane's home window has 6; `F3 W64` is its lossless
   `--to-64` copy, `--at=65408,30,66288`) and compare an FNV-1a hash of the light after the sweep
   completes, and run it once with the bug put back. Since R.3 that hash is permanent:
-  `eden_debug_light_state()` (`web/src/seam/DebugState_web.mm`; `.light` on native `--stage1`) walks
+  `eden_debug_light_state()` (`port/src/seam/DebugState_web.mm`; `.light` on native `--stage1`) walks
   every voxel in the dense order through `lightAtToroidal()`, so it reads the same for the dense array
   and the bricks (`580637df278f24c9` on W64, `7fd87220d15161e5` on W256, 2732 lit voxels, both).
   **`--stage1` alone does not exercise brick reuse:** a deliberately broken clear (bricks pooled
@@ -141,8 +160,49 @@ exactly that until R.3 and now imports `"../Lighting.h"`.
 - Consumption: `calcLight(x,z,y, skylight, channel)` (`Terrain.mm`) adds
   `light/64` to the base skylight and clamps to 1.5; the mesher bakes this into
   vertex colors. Skylight is 1.0 by day, 0.35 when the sky color is the night palette
-  entry (`colorTable[54]`). There is **no** sunlight occlusion — `getShadow` returns
-  a constant 1.0 (the 1.7-era shadow system is commented out).
+  entry (`colorTable[54]`). There is no sun direction; `getShadow` still returns a constant 1.0
+  and the 1.x `shadowarray` code stays commented out as archaeology. The port's replacement is the
+  baked top-face shadows below (H.2).
+
+### Baked shadows (`Classes/Shadow.{h,mm}`) — *modified from stock (H.2, 2026-10-14)*
+The 1.x feature (top faces under a canopy, roof or overhang are darker), restored on the port's
+terms. Plan and gates: `WORKING/feature-archaeology-2026-10-13/shadows-plan.md`.
+- **Setting:** Video › *Shadows* = Off / Classic / Smooth (`shadows` in `Settings_web.mm`; engine
+  global `g_shadow_mode`). **Default Off** until the user's T look picks the shipped one. Not in
+  the graphics presets (CPU meshing only). Native `--shadows=off|classic|smooth` is a
+  **non-persisting override** (`shadow_setOverride`): native prefs are global, not per `--docs`, so
+  a test must not write the player's setting.
+- **Data:** `shadowTop[T_SIZE*T_SIZE]` = the y of each block column's topmost **caster** (0 = none),
+  toroidal like `GBLOCK`; 83 KB at R9, 256 KB at R16. Derived, never saved — no format change.
+  Casters: everything except air, cloud, liquids (every level), glass, weave and `IS_OBJECT` blocks
+  (`g_shadow_caster[]`, built from `blockinfo` flags, so a new block type needs no table edit).
+- **Shade:** a covering column's weight is 16 when its top is 1–8 blocks above the face's block,
+  fading to 0 at 24 (`SHADOW_REACH_FULL/END`), so deep caves keep today's brightness and the
+  ground under a sky island is not shaded. Classic: the 3×3 of columns, `255-100*S/144`
+  (155..255; exactly 1.x's `255-100*count/9` when every gap ≤ 8). Smooth: per vertex, the 2×2
+  meeting at each corner, `255-100*S/64`. Integer, so every target agrees.
+- **Applied to the sky term only:** `light_top = calcLight(x,z,y, skylight*s, c)` (`s = shade/255`),
+  and by day capped at 1.0 so a shaded face beside a lightbox never outshines an unshaded one. Only
+  `f==5` (top) faces; side faces are not shaded (deferred to the T look). `top_shadow` in
+  `rebuild2()` stays dead: it carries the ramp factor, and reviving it would darken ramp tops even
+  with shadows Off. The light store itself is untouched (`--shadow-selftest` step 4 checks its hash).
+- **Upkeep (on or off):** `Terrain::addChunk` flags the column; `shadow_syncLandedColumns()` rescans
+  flagged columns right before the mesh pass in `prepareAndLoadGeometry`; `Terrain::setLand` calls
+  `shadow_onSetLand` after its `GBLOCK` write (one table load + a compare unless the top moves).
+  Only with shadows on: a top change dirties the chunks covering the 3×3 of columns × `[lo−23, hi−1]`,
+  and `columnMeshable` also waits for the 4 diagonal columns. So **Off schedules and meshes
+  byte-for-byte like stock** (same `geom`/`full`, same mesh-bench time).
+- **Workers** (dormant: only under `EDEN_THREADED`, which no current build defines): `shadowTop` is
+  main-thread state, so `mp_dispatch` gathers the 18×18 tops into the
+  `MeshJob` (`tc_meshSetShade`); inline meshes gather their own. Colours only — the counting pass
+  never sees it.
+- **Cost (Mac, `--mesh-bench=31`, 3 interleaved runs):** Classic +2.2 % (64z) / +1.1 % (256z) per
+  re-mesh, Smooth +3.9 % / +3.1 %; Off = stock.
+- **Gates:** `--shadow-selftest` (CI runs it at the default radius and at `--radius=16`; `--height=256`
+  is a manual leg; `--shadow-mutate=nohook|nodirty|
+  nolanding|nodiag` must each FAIL), and CI's "geometry 64z shadows" leg (`geom` unchanged, `full`
+  pinned in `check-stage1.py`). Probes: `eden_debug_shadow_state` (`stale` must be 0),
+  `eden_debug_top_shade`, `eden_debug_chunk_mesh_hash`.
 
 ## Liquids (`Classes/Liquids.mm`)
 
@@ -152,7 +212,7 @@ Water and lava are voxels with the fill level encoded in the type
 
 - `addSource(x,z,y)` — pushes onto `plist` (spread queue);
   `removeSource` — onto `plist2` (drain queue with the removed type/level).
-- `update(etime)` (`Liquids.mm:495`) runs on a delay timer and processes queues:
+- `Liquids::update(etime)` runs on a delay timer and processes queues:
   spread flows downhill first (full-level block below), then sideways with
   decreasing level (`genLevel(type, level−1)`), inheriting the source's color;
   lava additionally refuses to flow into the player (`player->test`). Draining
@@ -176,7 +236,7 @@ Water and lava are voxels with the fill level encoded in the type
 
 - Registry of up to `MAX_PORTAL 1000` `sportal{x,y,z,dir,color}` records.
 - Populated **from the mesher**: when `rebuild2` encounters `TYPE_PORTAL_TOP` it calls
-  `portals->addPortal(...)` (`TerrainChunk.mm:530`) — so the registry always reflects
+  `portals->addPortal(...)` (from `TerrainChunk`'s mesher) — so the registry always reflects
   currently-resident chunks. `removeAllPortals` on unload.
 - `enterPortal(x,y,z, vel)` — finds the **next portal of the same color** in the
   registry (cycling, so pairs/chains work) and returns destination + exit vector;
@@ -189,8 +249,8 @@ Water and lava are voxels with the fill level encoded in the type
 `sfirework{pos, color, fuse, vel}` pool (`MAX_FIREWORK 80`). A burning
 `TYPE_FIREWORK` block launches one (`Terrain::shootFirework`): rises with a fuse,
 then explodes into particles colored by the block's paint
-(`SpecialEffects::addFirework`). Rendered as camera-facing quads
-(`Graphics::drawFirework`).
+(`SpecialEffects::addFirework`). While rising it is drawn as a small spinning, lit, textured cube
+(`Graphics::drawFirework`, `blockTypeFaces[TYPE_CLOUD]` faces, `GL_LIGHT0`).
 
 ## Particles & block-break effects (`SpecialEffects.mm`, `Fire.mm`, `BlockBreak.mm`)
 

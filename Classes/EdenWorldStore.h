@@ -5,8 +5,8 @@
 //  Standalone on purpose: C++ only, no ObjC, no engine globals, no FileManager. S.4 routes
 //  FileManager to it behind g_world_format; until then nothing in the game calls it, and the
 //  only callers are its self-test (EdenWorldStoreSelftest.cpp: `eden_native --emod-selftest`,
-//  web/tools/headless-emod-store-test.js). The reference it is checked against is
-//  web/tools/emod.py, which shares no code with this file on purpose.
+//  web-port-final:web/tools/headless-emod-store-test.js). The reference it is checked against is
+//  port/tools/emod.py, which shares no code with this file on purpose.
 //
 //  Two classes:
 //    EdenWorldStore     open / scan / recover a `.emod`; read columns (with the spec's

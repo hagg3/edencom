@@ -18,7 +18,7 @@
 // FORWARDING TO THE C++ PERSONALITY IS CORRECT HERE, NOT A STUB. GNUstep's own version differs
 // from `__gxx_personality_v0` in exactly one respect: it can match an `@catch(SomeClass *)`
 // against a thrown Objective-C object, using the runtime's class hierarchy. This engine throws no
-// Objective-C exception and catches none — grep-verified across `Classes/`, `web/src/` and
+// Objective-C exception and catches none — grep-verified across `Classes/`, `port/src/` and
 // `native/src/`: not one `@throw`, `@try` or `@catch` anywhere, and the Foundation shim's own
 // NSException aborts rather than unwinding (see NSErrorException.h). Every exception that can
 // unwind through an engine frame is therefore a C++ one, and `__gxx_personality_v0` is the right
@@ -29,7 +29,7 @@
 // Objective-C type and the exception will reach std::terminate, which is loud. The fix at that
 // point is a real personality routine (and a real `objc_exception_throw`), not a wider stub.
 
-#if !defined(__APPLE__) && !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+#if !defined(__APPLE__) && !defined(_WIN32)
 
 #include <unwind.h>
 

@@ -2,7 +2,7 @@
 //  EdenWorldStore.cpp
 //  Eden — Stage S / S.3. See EdenWorldStore.h; the format is docs/emod-file-format.md, and every
 //  rule below cites the section it implements. The structure deliberately follows
-//  web/tools/emod.py (Layout / StreamConverter / Store._scan / Store._evaluate / Store.verify)
+//  port/tools/emod.py (Layout / StreamConverter / Store._scan / Store._evaluate / Store.verify)
 //  so a reader can hold the two side by side; the code is not shared.
 //
 #define ZSTD_STATIC_LINKING_ONLY     // ZSTD_getFrameHeader: the strict single-frame checks
@@ -115,7 +115,7 @@ bool sync_file(FILE* f) {
 }
 
 void sync_parent_dir(const std::string& path) {
-#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+#if !defined(_WIN32)
     std::string d = path;
     size_t s = d.find_last_of('/');
     d = (s == std::string::npos) ? "." : (s == 0 ? "/" : d.substr(0, s));

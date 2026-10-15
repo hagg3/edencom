@@ -28,7 +28,7 @@ not something to do now**.
 | Column file format + streaming | `FileManager` | static state; UI callouts (statusbar) mid-I/O; Menu supplies display name during save |
 | Particle systems | `SpecialEffects`, `Fire`, `BlockBreak` | pull textures from `Resources` by game-specific ids |
 | Input layer | `Input.mm` | generic 5-touch tracker, but consumers poll it with game rules |
-| GL immediate-UI kit | `statusbar`, `VKeyboard`, `Alert`, `Button`/`inbox*`, `Joystick` | a decent retained-nothing UI toolkit hiding inside game files |
+| GL immediate-UI kit | `statusbar`, `VKeyboard`, `Alert`, the `Button` type and `inbox` helpers (`Util.h`), `Joystick` (port: `GLWidgets`/`GLDialog` grew out of this) | a decent retained-nothing UI toolkit hiding inside game files |
 
 ### Purely game-specific
 `World` (mode machine), block tables (`Constants.h`, `Globals.mm`), gameplay ops in
@@ -56,13 +56,16 @@ not something to do now**.
 
 ## Suggested incremental roadmap (lowest risk first)
 
-1. **Documentation & tests first** (done here): pin the file format with a round-trip
-   test against the bundled `Eden.eden` before touching any I/O code.
+1. **Documentation & tests first** (done): pin the file format with a round-trip
+   test against the bundled `Eden.eden` before touching any I/O code. *(Port: `--emod-selftest`,
+   `--bundled-map-selftest` and `--save-roundtrip` run in CI.)*
 2. **Extract pure-C modules**: math/SAT out of `Util.mm`; file-format arithmetic out
    of `FileManager` (keep NSFileHandle at the edges).
 3. **Data-drive the block tables**: generate `Constants.h`/`Globals.mm` tables from a
    single declarative source; eliminates the multi-file update trap.
-4. **De-globalize screen metrics** behind a `Display` struct passed to Graphics/UI.
+4. **De-globalize screen metrics** behind a `Display` struct passed to Graphics/UI. *(Port, partly:
+   the metrics are still globals, but derived and re-laid-out — `Hud::layoutForScreen`,
+   `port/src/seam/DisplayProfile_web.mm`.)*
 5. **Split Terrain** into `VoxelStore` (arrays, paging, dirty lists) and
    `TerrainGameplay` (build/burn/explode/paint) — the current class already has this
    internal boundary.
@@ -72,7 +75,8 @@ not something to do now**.
 7. **Renderer port** (the big one): the fixed-function usage is narrow (matrices,
    vertex arrays, fog, two lights, texture matrix). A thin RHI covering those would
    unlock ES2/Metal/GL desktop with the same passes. The texture-matrix atlas trick
-   and vertex-color baking translate directly to a trivial shader.
+   and vertex-color baking translate directly to a trivial shader. *(Port: done by another route —
+   an ES1→ES3/GL translator under the unchanged engine calls, `port/src/shim/gl/`.)*
 8. Only after 5–7: revisit background meshing/streaming with real synchronization —
    the original author's `//issue` comments are the test plan.
 
@@ -81,5 +85,6 @@ Platform-touching code is confined to: `EAGLView`/`EdenViewController` (surface 
 loop + touches), `Texture2D` (image decode, string raster), Foundation file I/O in
 `FileManager`/helpers, CocosDenshion (audio), NSURLConnection networking, and
 `arc4random`/`CFAbsoluteTimeGetCurrent` sprinkles. Everything else is C/C++ with
-OpenGL ES 1.1 — the `Eden_mac`/`Eden-mac` stubs in the repo suggest a desktop port
-was once contemplated but never started.
+OpenGL ES 1.1 — the `archive/Eden-mac/` stub suggests a desktop port was contemplated in the
+original era. The native port (`native/` + `port/`, see `../port/CLAUDE.md`) is this seam map
+realized: each item above is a seam replacement or a shim.

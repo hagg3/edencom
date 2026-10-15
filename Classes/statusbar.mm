@@ -43,7 +43,7 @@ void statusbar::useToast(){
 void statusbar::setStatus(NSString* status,float time){
 	this->setStatus(status,time,UITextAlignmentCenter);
 }
-extern "C" float eden_ui_raster_density(void);   // web/src/seam/DisplayProfile_web.mm
+extern "C" float eden_ui_raster_density(void);   // port/src/seam/DisplayProfile_web.mm
 void statusbar::setStatus(NSString* status,float time,UITextAlignment align){
    if(message&&[status isEqualToString:message]){
         textlife=time;

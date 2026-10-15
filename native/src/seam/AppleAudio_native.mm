@@ -3,7 +3,7 @@
 // and <AVFoundation/...> on purpose) and why the wall between here and the rest of the backend is
 // plain C.
 //
-// This file must NOT include anything from Classes/, web/src/shim/, or the GL shim. It sees the
+// This file must NOT include anything from Classes/, port/src/shim/, or the GL shim. It sees the
 // real SDK and nothing else, which is the whole point — its CMake object library is configured
 // without the shim's framework/ directory on the include path.
 

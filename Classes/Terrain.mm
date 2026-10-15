@@ -20,6 +20,7 @@
 #import "SignTool.h"
 #import "CmdScript.h"
 #import "FileManagerHelper.h"   // fmh_defaultBandCount (Stage R / R.2b)
+#import "Shadow.h"              // H.2 baked shadows
 
 // Repo-root Lighting.h is the built one (Eden.xcodeproj / web CMake); the Classes/ copy next to
 // this file is a stale snapshot with no prototypes, hence these explicit decls.
@@ -71,6 +72,7 @@ TerrainChunk** chunkTablec;
 static BOOL secondPass;
 static NSDate* start;
 extern bool firstframe;
+extern bool pendingRespawnSound;
 
 
 
@@ -82,6 +84,21 @@ extern bool firstframe;
 //bot face
 //top face
 BurnNode* burnList;
+// H.8 Experiments toggles (Settings_web.mm "fire_melts_ice"/"fire_chars_vines"), off by default.
+// eden_set_fire_*() add/remove IS_FLAMMABLE on the ice family / vine so burnBlock accepts them;
+// the burn-expiry branch in update() then turns ice into water and vines into dark stone.
+bool FIRE_MELTS_ICE=false;
+bool FIRE_CHARS_VINES=false;
+static void eden_apply_fire_flags(void){
+    static const int ice[]={TYPE_ICE,TYPE_ICE_RAMP1,TYPE_ICE_RAMP2,TYPE_ICE_RAMP3,TYPE_ICE_RAMP4,
+                            TYPE_ICE_SIDE1,TYPE_ICE_SIDE2,TYPE_ICE_SIDE3,TYPE_ICE_SIDE4};
+    for(size_t i=0;i<sizeof(ice)/sizeof(ice[0]);i++){
+        if(FIRE_MELTS_ICE)blockinfo[ice[i]]|=IS_FLAMMABLE; else blockinfo[ice[i]]&=~IS_FLAMMABLE;
+    }
+    if(FIRE_CHARS_VINES)blockinfo[TYPE_VINE]|=IS_FLAMMABLE; else blockinfo[TYPE_VINE]&=~IS_FLAMMABLE;
+}
+extern "C" void eden_set_fire_melts_ice(int on){FIRE_MELTS_ICE=on!=0;eden_apply_fire_flags();}
+extern "C" void eden_set_fire_chars_vines(int on){FIRE_CHARS_VINES=on!=0;eden_apply_fire_flags();}
 static TreeNode troot={};
 static int do_reload=0;
 
@@ -226,6 +243,7 @@ void Terrain::clearBlocks(){
 	
 	memset(blockarray,0,sizeof(block8)*T_SIZE*T_SIZE*T_HEIGHT);
   //  memset(shadowarray,0,sizeof(color8)*T_SIZE*T_SIZE);
+    shadow_clear();   // H.2: the 1.x shadowarray's successor (Shadow.h)
     if(!LOW_MEM_DEVICE)
     light_storeClear();   // Stage R / R.3 (Lighting.h); was memset(lightarray,...)
 }
@@ -303,6 +321,7 @@ void Terrain::allocateMemory(){
     chunksToUpdateImmediatley=(BOOL*)malloc(sizeof(BOOL)*CHUNKS_PER_SIDE*CHUNKS_PER_SIDE*CHUNKS_PER_COLUMN);
     memset(chunksToUpdateImmediatley,0,sizeof(BOOL)*CHUNKS_PER_SIDE*CHUNKS_PER_SIDE*CHUNKS_PER_COLUMN);
     blockarray=(block8*)malloc(sizeof(block8)*(T_SIZE+1)*(T_SIZE+1)*(T_HEIGHT+1));
+    shadow_allocate();   // H.2: T_SIZE*T_SIZE tops, sized like blockarray from the window radius
     if(!LOW_MEM_DEVICE)
     light_storeAllocate();   // Stage R / R.3: a brick table, not the dense lightarray (Lighting.h)
 }
@@ -331,6 +350,7 @@ void Terrain::deallocateMemory(){
     chunksToUpdateImmediatley=NULL;
     free(blockarray);
     blockarray=NULL;
+    shadow_free();
     if(!LOW_MEM_DEVICE)
 light_storeFree();   // R.3: the only place a light brick is freed -- mp_drain above (Lighting.h)
     
@@ -710,6 +730,10 @@ void Terrain::addChunk(TerrainChunk* chunk, int cx,int cy,int cz,BOOL rebuild){
     // short), fmh_publishColumnFromDefault (also via MeshPool's decode publish), and every
     // TerrainGenerator column. So this is the one place the empty bit is computed from scratch.
     tc_refreshTypesEmpty(chunk);
+    // H.2: the column's shadow tops are rescanned before the next mesh pass (Shadow.h).
+    shadow_markLanded(cx,cz);
+    // P.10: and its "no lightbox" memory is forgotten (Lighting.h).
+    light_markLanded(cx,cz);
     // B.5b-1a: the slot's old mesh belongs to the column that just left it. Stock re-meshed every
     // landed column within a frame or so, so drawing that mesh at the new pbounds was a brief
     // glitch; now a column landing on the window's outer ring is never meshed (it is data for its
@@ -782,6 +806,11 @@ void Terrain::setLand(int x,int z,int y,int type,BOOL chunkToo){
 	if(y<0||y>=T_HEIGHT)return;
    
     GBLOCK(x,z,y)=type;
+    // H.2: every runtime edit lands here (TerrainChunk::setLand forwards both of its branches), so
+    // this is where a column's shadow top follows the edit. One table load and a compare unless the
+    // top really moved (Shadow.h).
+    shadow_onSetLand(x,z,y,type);
+    light_onSetLand(x,z,type);   // P.10: a new lightbox un-forgets its column (Lighting.h)
 
 	if(chunkToo){
         int cx=x/CHUNK_SIZE;
@@ -1990,6 +2019,32 @@ void Terrain::blocktntexplode(int x,int z,int y,int btype){
     }
 }
 
+// H.9: the explosion sound follows the blast's majority material. Counts the solid blocks in the same
+// sphere the explode() loop visits; glass/crystal/ice >=25% -> mix_glass_crystal, else dirt/sand/grass
+// or stone majority picks that sound, anything else (wood, brick, mixed) is tnt_explode_mix.
+int Terrain::tntSoundForBlast(int x,int z,int y){
+    int dirt=0,stone=0,glass=0,total=0;
+    for(int j=x-EXPLOSION_RADIUS;j<=x+EXPLOSION_RADIUS;j++){
+        for(int k=z-EXPLOSION_RADIUS;k<=z+EXPLOSION_RADIUS;k++){
+            if(!isColumnResident(j,k))continue;
+            for(int yy=-EXPLOSION_RADIUS;yy<=EXPLOSION_RADIUS;yy++){
+                if((j-x)*(j-x)+(k-z)*(k-z)+yy*yy>EXPLOSION_RADIUS*EXPLOSION_RADIUS)continue;
+                if(y+yy<0||y+yy>=T_HEIGHT)continue;
+                int t=getLandc(j,k,y+yy);
+                if(t<=TYPE_NONE||(blockinfo[t]&IS_LIQUID))continue;
+                total++;
+                if(t==TYPE_DIRT||t==TYPE_SAND||t==TYPE_GRASS||t==TYPE_GRASS2||t==TYPE_GRASS3)dirt++;
+                else if(t==TYPE_STONE||t==TYPE_DARK_STONE||t==TYPE_COBBLESTONE||t==TYPE_BEDROCK||(t>=TYPE_STONE_RAMP1&&t<=TYPE_STONE_RAMP4)||(t>=TYPE_STONE_SIDE1&&t<=TYPE_STONE_SIDE4))stone++;
+                else if(t==TYPE_GLASS||t==TYPE_CRYSTAL||(blockinfo[t]&IS_ICE))glass++;
+            }
+        }
+    }
+    if(total==0)return S_EXPLODE;
+    if(glass*4>=total)return S_TNT_MIX_GLASS;
+    if(dirt*2>total)return S_TNT_DIRT;
+    if(stone*2>total)return S_TNT_STONE;
+    return S_TNT_MIX;
+}
 void Terrain::explode(int x,int z,int y){
     
 	
@@ -1997,7 +2052,7 @@ void Terrain::explode(int x,int z,int y){
     if(color!=0)
          Resources::getResources->playSound(S_GOOP_EXPLODE);
     else
-        Resources::getResources->playSound(S_EXPLODE);
+        Resources::getResources->playSound(tntSoundForBlast(x,z,y));
     
     Vector v=MakeVector(x+.5f,y+.5f,z+.5f);
     
@@ -2174,8 +2229,13 @@ BOOL Terrain::update(float etime){
 			nburn--;
 			Resources::getResources->endBurnId(node->sid);
 			World::getWorld->effects->removeFire(node->pid);
-			if(tz!=TYPE_NONE)
-			updateChunks(node->x ,node->z ,node->y ,TYPE_NONE);
+			if(tz!=TYPE_NONE){
+				int after=TYPE_NONE;
+				if(FIRE_MELTS_ICE&&blockinfo[node->type]&IS_ICE)after=TYPE_WATER;
+				else if(FIRE_CHARS_VINES&&node->type==TYPE_VINE)after=TYPE_DARK_STONE;
+				updateChunks(node->x ,node->z ,node->y ,after);
+				if(after==TYPE_WATER)liquids->addSource(node->x ,node->z ,node->y);
+			}
 			free(node);			
 			node=NULL;
 			if(prev!=NULL)
@@ -2396,6 +2456,16 @@ static bool columnMeshable(int x,int z,int ox,int oz,
         int nz=wz+dz[d];
         if(nx<0||nx>=CHUNKS_PER_SIDE||nz<0||nz>=CHUNKS_PER_SIDE)return false;
         if(!isloaded[nx][nz])return false;
+    }
+    // H.2: with shadows on, a column's top faces read the shadow tops of all 8 neighbours
+    // (Shadow.h), so it also waits for the 4 diagonals. Off, this is the stock 4-wait.
+    if(g_shadow_mode!=SHADOW_OFF&&g_shadow_test_mutation!=4){
+        for(int d=0;d<4;d++){
+            const int nx=wx+((d&1)?1:-1);
+            const int nz=wz+((d&2)?1:-1);
+            if(nx<0||nx>=CHUNKS_PER_SIDE||nz<0||nz>=CHUNKS_PER_SIDE)return false;
+            if(!isloaded[nx][nz])return false;
+        }
     }
     return true;
 }
@@ -2813,6 +2883,11 @@ void Terrain::prepareAndLoadGeometry(){
     
     
     
+    // H.2: rescan the shadow tops of every column that landed since the last mesh pass (a ring or
+    // bulk read above, a decode published at the top of this frame, a load), unconditionally and
+    // with shadows on or off, so no mesh below can read a previous occupant's tops (Shadow.h).
+    shadow_syncLandedColumns();
+
     //////////////////build geom
     if(loaded){
         int num=0;
@@ -3255,7 +3330,7 @@ int lolc=0;
 // Each batch used to fill a fixed-size `vertexObject objVertices[max_render_objects*6*6]` STACK
 // local (~380 KB) and hand it to GL as four CLIENT-SIDE arrays. On real ES 1.1 that was free. On
 // WebGL it is not: client-side vertex data is forbidden outright, so the GL shim
-// (web/src/shim/gl/gl_es1_shim.cpp, eden_gl_setup_attributes) had to copy the span into a streaming
+// (web-port-final:web/src/shim/gl/gl_es1_shim.cpp, eden_gl_setup_attributes) had to copy the span into a streaming
 // VBO once per ENABLED ARRAY per draw -- four uploads of the same interleaved bytes every frame,
 // plus a fresh glVertexAttribPointer each time because the buffer it latched kept changing.
 //
@@ -4057,6 +4132,7 @@ void Terrain::render(){
    
     
     firstframe=FALSE;
+    if(pendingRespawnSound){pendingRespawnSound=FALSE;Resources::getResources->playSound(S_RESPAWN);}   // H.9
 	if(frame_counter==120){
 	//printg("chunks: %d, faces: %d, vertices: %d\n",chunks_rendered,faces_rendered,vertices_rendered);
 		frame_counter=0;

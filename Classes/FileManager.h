@@ -58,7 +58,7 @@ typedef struct{
 }EdenChunkHeader;
 
 // 256z Stage 3 item 5: the in-app "Convert to 64z" action (Settings -> Storage tab). Same report
-// shape as web/tools/eden-convert.js's --to-64 direction, whose algorithm this is a from-scratch
+// shape as port/tools/eden-convert.js's --to-64 direction, whose algorithm this is a from-scratch
 // C++ port of (see FileManager::convertWorldTo64's own header comment for what's shared and what
 // isn't). `ok`==FALSE means nothing was written; `error` explains why.
 typedef struct{
@@ -83,7 +83,7 @@ typedef struct{
 // bytes aside. The WEB build leaves it NULL — its Foundation shim owns every file open and puts
 // the same guard on NSFileHandle instead, which is strictly better placed (it also covers the
 // rollback journal). NATIVE installs it, because it links Apple's real Foundation and has no such
-// choke point. See web/src/shim/foundation/save_backup.h.
+// choke point. See port/src/shim/foundation/save_backup.h.
 extern void (*eden_save_backup_hook)(const char* worldFilePath);
 
 // The save directory, for a host that wants to choose it rather than let the platform decide.

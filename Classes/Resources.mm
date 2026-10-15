@@ -128,13 +128,13 @@ static int sfxNumVariations[NUM_SOUNDS]={
     [ S_BUILD_DIRT]=4,
     [ S_BUILD_GENERIC]=4,
     [ S_BREAK_GENERIC]=4,
-    [ S_BREAK_WOOD]=4,
+    [ S_BREAK_WOOD]=7,
     [ S_BREAK_WATER]=4,
-    [S_BREAK_STONE ]=4,
-    [  S_BREAK_LEAVES]=4,
+    [S_BREAK_STONE ]=8,
+    [  S_BREAK_LEAVES]=7,
     [  S_BREAK_LAVA]=4,
-    [  S_BREAK_DIRT]=4,
-     [ S_BREAK_GLASS]=4,
+    [  S_BREAK_DIRT]=8,
+     [ S_BREAK_GLASS]=7,
     [  S_ATTEMPT_FIRE]=3,
     [  S_SPLASH_BIG]=4,
     [S_SPLASH_SMALL ]=4,
@@ -185,6 +185,12 @@ static int sfxNumVariations[NUM_SOUNDS]={
     [S_JUMP_BUTTON_PRESS]=1,
     [S_JUMP_BUTTON_RELEASE]=1,
     [S_MODE_SELECTION]=3,
+    [S_JUMP]=2,
+    [S_TNT_DIRT]=1,
+    [S_TNT_STONE]=1,
+    [S_TNT_MIX]=1,
+    [S_TNT_MIX_GLASS]=1,
+    [S_RESPAWN]=1,
 
 };
 static const char* soundFiles[NUM_SOUNDS][MAX_VARIATIONS2]={
@@ -196,13 +202,13 @@ static const char* soundFiles[NUM_SOUNDS][MAX_VARIATIONS2]={
     [S_PAINT_BLOCK]={"paint_block_1.caf","paint_block_2_v2.caf","paint_block_3.caf","paint_block_4.caf"},
      [S_LAVA_BURN]={"lava_burn_1_v2.caf","lava_burn_2_v2.caf","lava_burn_3_v2.caf","lava_burn_4_v2.caf"},
     [S_EXPLODE]={"explosion.caf","explosion_2.caf","explosion_3.caf","explosion_4.caf","explosion_1_v2.caf","explosion_2_v2.caf","explosion_3_v2.caf","explosion_4_v2.caf"},
-    [S_BREAK_WOOD]={"block_break_wood_1_v2.caf","block_break_wood_2_v2.caf","block_break_wood_3_v2.caf","block_break_wood_4_v2.caf"},
+    [S_BREAK_WOOD]={"block_break_wood_1_v2.caf","block_break_wood_2_v2.caf","block_break_wood_3_v2.caf","block_break_wood_4_v2.caf","block_break_wood_5_v2.caf","block_break_wood_6_v2.caf","block_break_wood_7_v2.caf"},
     [S_BREAK_WATER]={"block_break_water_1_v2.caf","block_break_water_2_v2.caf","block_break_water_3_v2.caf","block_break_water_4_v2.caf"},
-    [S_BREAK_STONE]={"block_break_stone_1.caf","block_break_stone_2.caf","block_break_stone_3.caf","block_break_stone_4.caf"},
-    [S_BREAK_LEAVES]={"block break_leaves_1.caf","block break_leaves_2.caf","block break_leaves_3.caf","block break_leaves_4.caf"},
+    [S_BREAK_STONE]={"block_break_stone_1.caf","block_break_stone_2.caf","block_break_stone_3.caf","block_break_stone_4.caf","block_break_stone_5.caf","block_break_stone_6.caf","block_break_stone_7.caf","block_break_stone_1_v2.caf"},
+    [S_BREAK_LEAVES]={"block break_leaves_1.caf","block break_leaves_2.caf","block break_leaves_3.caf","block break_leaves_4.caf","block break_leaves_5.caf","block break_leaves_6.caf","block break_leaves_7.caf"},
     [S_BREAK_LAVA]={"block_break_lava_1_v2.caf","block_break_lava_2_v2.caf","block_break_lava_3_v2.caf","block_break_lava_4_v2.caf"},
-    [S_BREAK_DIRT]={"block_break_dirt_1.caf","block_break_dirt_2.caf","block_break_dirt_3.caf","block_break_dirt_4.caf"},
-    [S_BREAK_GLASS]={"block_break_glass_1.caf","block_break_glass_2.caf","block_break_glass_3.caf","block_break_glass_4.caf"},
+    [S_BREAK_DIRT]={"block_break_dirt_1.caf","block_break_dirt_2.caf","block_break_dirt_3.caf","block_break_dirt_4.caf","block_break_dirt_5.caf","block_break_dirt_6.caf","block_break_dirt_7.caf","block_break_dirt_1_v2.caf"},
+    [S_BREAK_GLASS]={"block_break_glass_1.caf","block_break_glass_2.caf","block_break_glass_3.caf","block_break_glass_4.caf","block_break_glass_5.caf","block_break_glass_6.caf","block_break_glass_7.caf"},
     [S_BREAK_GENERIC]={"block_break_generic_1_v2.caf","block_break_generic_2_v2.caf","block_break_generic_3_v2.caf","block_break_generic_4_v2.caf"},
     [S_BUILD_WOOD]={"block_build_wood_1.caf","block_build_wood_2.caf","block_build_wood_3.caf","block_build_wood_4.caf"},
     [S_BUILD_WATER]={"block_build_water_1.caf","block_build_water_2.caf","block_build_water_3.caf","block_build_water_4.caf"},
@@ -262,6 +268,12 @@ static const char* soundFiles[NUM_SOUNDS][MAX_VARIATIONS2]={
     [S_JUMP_BUTTON_PRESS]={"jump_button_press.mp3"},
     [S_JUMP_BUTTON_RELEASE]={"jump_button_release.mp3"},
     [S_MODE_SELECTION]={"mode_selection_1.caf","mode_selection_2.caf","mode_selection_3.caf"},
+    [S_JUMP]={"player_jump_1.caf","player_jump_2.caf"},
+    [S_TNT_DIRT]={"tnt_explode_dirt.mp3"},
+    [S_TNT_STONE]={"tnt_explode_stone.mp3"},
+    [S_TNT_MIX]={"tnt_explode_mix.mp3"},
+    [S_TNT_MIX_GLASS]={"tnt_explode_mix_glass_crystal.mp3"},
+    [S_RESPAWN]={"respawn_fade_from_black_to_world.mp3"},
 
 };
 
@@ -304,7 +316,7 @@ static const char* voFiles[NUM_CREATURES][NUM_VO_ACTIONS][MAX_VARIATIONS]={
     [M_MOOF][VO_ANGRY]={"Moof_Angry_1.caf","Moof_Angry_2.caf","Moof_Angry_3.caf","Moof_Angry_4.caf","Moof_Angry_5.caf"},   
     
     [M_NERGLE][VO_WALKING]={"Nergle_Walking_1.caf","Nergle_Walking_2.caf","Nergle_Walking_3.caf","Nergle_Walking_4.caf","Nergle_Walking_5.caf"},
-    [M_NERGLE][VO_STRETCHING]={"Nergle_Stretching_1.caf","Nergle_Stretching_2.caf","Nergle_Stretching_3.caf","Nergle_Stretching_4.caf","Nergle_Stretching_5.caf"},
+    [M_NERGLE][VO_STRETCHING]={"Nergle_Stretch_1.caf","Nergle_Stretch_2.caf"},
     [M_NERGLE][VO_SCARED]={"Nergle_Scared_1.caf","Nergle_Scared_2.caf","Nergle_Scared_3.caf","Nergle_Scared_4.caf","Nergle_Scared_5.caf"},
     [M_NERGLE][VO_RELIEVED]={"Nergle_Relieved_1.caf","Nergle_Relieved_2.caf","Nergle_Relieved_3.caf","Nergle_Relieved_4.caf","Nergle_Relieved_5.caf"},
     [M_NERGLE][VO_APPROACH]={"Nergle_PlayerApproaches_1.caf","Nergle_PlayerApproaches_2.caf","Nergle_PlayerApproaches_3.caf","Nergle_PlayerApproaches_4.caf","Nergle_PlayerApproaches_5.caf"},
@@ -747,6 +759,7 @@ void Resources::unloadGameAssets(){
 
 
 bool firstframe=FALSE;
+bool pendingRespawnSound=FALSE;   // H.9: set by Hud::update on the death warp, played after the load
 int Resources::playSound(int soundid){
     
 	if(playsound&&!firstframe&&soundid!=lasteffectplayed){

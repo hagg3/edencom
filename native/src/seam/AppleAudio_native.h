@@ -2,7 +2,7 @@
 // plain-C wall. Phase N Stage 2 (see SimpleAudioEngine_native.mm for the design this serves).
 //
 // *** WHY THIS IS A SEPARATE TRANSLATION UNIT AND NOT JUST MORE #imports ***
-// `web/src/shim/foundation/framework/` deliberately SHADOWS <AudioToolbox/...> and
+// `port/src/shim/foundation/framework/` deliberately SHADOWS <AudioToolbox/...> and
 // <AVFoundation/...> with this port's own type-only stubs, on every target including native macOS.
 // Read that AudioToolbox.h's header comment before touching this: the reason is measured, not
 // stylistic — the real headers transitively pull in CoreServices, and CarbonCore/AIFF.h defines a

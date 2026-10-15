@@ -1,10 +1,10 @@
 // gl_context_native.cpp — desktop-GL context ownership, the native twin of
-// web/src/shim/gl/gl_context_web.cpp (Phase N Stage 1,
+// web-port-final:web/src/shim/gl/gl_context_web.cpp (Phase N Stage 1,
 // WORKING/native-migration-plan-2026-09-04.md).
 //
 // It implements exactly the interface gl_es1_shim.h GROUP 2c declares, against the same shared
 // state gl_shim_internal.h carries, so the 1,900-line portable translator
-// (web/src/shim/gl/gl_fixed_function.cpp) is compiled unchanged into both targets. Shorter than
+// (port/src/shim/gl/gl_fixed_function.cpp) is compiled unchanged into both targets. Shorter than
 // the web twin for one structural reason: desktop GL has no context-loss concept, so the
 // webglcontext{lost,restored} half of that file has no counterpart here.
 //
@@ -20,7 +20,7 @@
 //  2. **One global VAO, bound once and never switched.** Core profile REQUIRES a non-zero vertex
 //     array object bound for any draw, and the shim deliberately does not use VAOs (it is an ES1
 //     translator, and Classes/TerrainChunk.mm binds its element buffer outside a draw call — see
-//     web/docs/gl-shim.md). Binding one at context creation and leaving it bound satisfies the
+//     web-port-final:web/docs/gl-shim.md). Binding one at context creation and leaving it bound satisfies the
 //     profile without the shim having to learn what a VAO is. The plan named this as Stage 1's
 //     most likely failure point; it is handled here and nowhere else.
 //
@@ -124,6 +124,14 @@ void eden_native_gl_present(void) {
                              (int)rb, (int)g_view_rb);
             glBindRenderbuffer(GL_RENDERBUFFER, (GLuint)g_view_rb);
         }
+        // P.11: stock EAGLView discarded depth before presentRenderbuffer; SDL's swap does not, so
+        // a tile GPU stores the whole depth buffer every frame (≈ 12.6 MB at 2048x1536 on an Air 2)
+        // for nobody to read. The bound framebuffer is SDL's view FBO (never 0 on UIKit), but name
+        // the default-framebuffer token too in case that ever changes.
+        GLint fb = 0;
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fb);
+        const GLenum depth = fb ? GL_DEPTH_ATTACHMENT : GL_DEPTH;
+        glInvalidateFramebuffer(GL_FRAMEBUFFER, 1, &depth);
     }
 #endif
     if (g_window && g_present_enabled) SDL_GL_SwapWindow(g_window);
@@ -474,6 +482,12 @@ void eden_scene_pass_end(void) {
     glBlitFramebuffer(0, 0, g_scene_fbo_w, g_scene_fbo_h,
                       g_vp_x, g_vp_y, g_vp_x + g_drawable_w, g_vp_y + g_drawable_h,
                       GL_COLOR_BUFFER_BIT, GL_LINEAR);
+#if defined(EDEN_PLATFORM_IOS)
+    {   // P.11: the scaled scene's depth is dead once blitted; don't let the tiler store it.
+        const GLenum depth = GL_DEPTH_ATTACHMENT;
+        glInvalidateFramebuffer(GL_READ_FRAMEBUFFER, 1, &depth);
+    }
+#endif
     glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)g_scene_prev_fbo);
     eden_apply_viewport();
 }

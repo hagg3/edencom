@@ -101,13 +101,13 @@ int eden_meshed_radius_blocks(void);   // (T_RADIUS-1)*CHUNK_SIZE-CHUNK_SIZE/2: 
 // ---- save strategy: the size at which the whole-file copy stops (256z Stage 3, B5) ----
 // Every save used to run on a scratch whole-file COPY of the world (copyItemAtPath: -> .savetmp),
 // committed with one rename. Measured against a real 279 MB 256z specimen with NOTHING edited
-// (web/tools/headless-save-io-probe.js): 558 MB read + 558 MB written per save -- 2x the file
+// (web-port-final:web/tools/headless-save-io-probe.js): 558 MB read + 558 MB written per save -- 2x the file
 // each way -- against ~155 KB of actually-changed bytes, plus a transient allocation of the
 // ENTIRE file (the read buffer), which on a 32-bit wasm heap cannot succeed at all for the
 // multi-GB worlds the 256z format allows. A file at or above this many bytes is saved IN PLACE
 // with a small rollback journal instead (FileManager::saveWorld); below it, nothing changes.
 // A runtime global rather than a bare #define at the use site so a test can force either path
-// on a small world -- see web/tools/headless-save-inplace-test.js.
+// on a small world -- see web-port-final:web/tools/headless-save-inplace-test.js.
 #define EDEN_SAVE_INPLACE_THRESHOLD_DEFAULT (16ull*1024*1024)
 extern unsigned long long g_save_inplace_threshold;
 void eden_set_save_inplace_threshold(unsigned long long bytes);
@@ -329,7 +329,7 @@ enum BLOCK_TEXTURES{
     TEX_ICE=29,
     // D.2t: the atlas grew to 64 tiles (ATLAS_TILES). 32-47 are blocks 112-127 drawn unpainted (the art
     // carries its colour, drawn white); 48-63 the same 16 in greyscale, which blockTypeFaces names and the
-    // paint multiplies onto. Art: the 2026 game's atlas (web/tools/atlas-d2t.py).
+    // paint multiplies onto. Art: the 2026 game's atlas (port/tools/atlas-d2t.py).
     TEX_NEWBLOCK_COLOR=32,
     TEX_NEWBLOCK=48,
     

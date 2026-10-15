@@ -60,8 +60,16 @@ int light_syncLandedColumns();
 extern int g_light_rebuilds;        // diagnostics: neighbourhoods rebuilt since launch,
 extern double g_light_rebuild_ms,g_light_rebuild_max_ms;   // their total and worst wall time
 // --ring-light-gate's bug-put-back switch (native --light-mutate=): 1 = never rebuild, 2 = rebuild
-// but do not re-mesh what changed, 3 = let light wrap past the window edge (stock). 0 = off.
+// but do not re-mesh what changed, 3 = let light wrap past the window edge (stock), 4 = never
+// forget a "no lightbox here" slot on a landing or a lightbox edit (P.10). 0 = off.
 extern int g_light_test_mutation;
+// P.10: a column slot found to hold no lightbox is not scanned again until one of these (or an
+// occupant change, or a full sweep / store clear) says it might hold one now. addChunk takes world
+// chunk coordinates; setLand world block coordinates, after the GBLOCK write.
+void light_markLanded(int cx,int cz);              // Terrain::addChunk
+void light_onSetLand(int x,int z,int type);         // Terrain::setLand
+extern int g_light_cols_scanned,g_light_cols_skipped;   // diagnostics: sweepLightingColumn calls
+BOOL light_columnKnownFree(int cx,int cz);          // diagnostics: world chunk column remembered as free
 
 void light_storeAllocate();   // Terrain::allocateMemory
 void light_storeFree();       // Terrain::deallocateMemory, after mp_drain

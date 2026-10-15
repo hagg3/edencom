@@ -5,21 +5,25 @@
 the entire audio layer (sound effects, ambience, music, creature voices).
 
 ## Important files
-- `Classes/Resources.mm/.h` (1590 lines) — the manager, `Resources::getResources`
-  singleton.
-- `Classes/Texture2D.mm` — texture loading (PNG/PVR paths) + string rasterization.
-- Audio stack: `Classes/SimpleAudioEngine.mm` (C++ wrapper) over
-  `SimpleAudioEngine_objc` / `CocosDenshion` / `CDAudioManager` (OpenAL) — the
-  CocosDenshion library, vendored.
-- Sound assets: the hundreds of `.caf`/`.m4a` files referenced in the Xcode project
-  (block break/build per material ×4 variants, footsteps, creature voice sets per
-  species×emotion×5, ambience loops, UI clicks, music `Eden_1..6.m4a`).
+- `Classes/Resources.mm/.h` — the manager, `Resources::getResources` singleton.
+- `Classes/Texture2D.mm` — texture loading (PNG/PVR paths) + string rasterization. *Port:*
+  seam-excluded; `port/src/seam/Texture2D_web.mm` (stb_image decode, 2048 px cap) and
+  `native/src/seam/TextRaster_native.cpp` (string raster) replace it.
+- Audio: `Classes/SimpleAudioEngine.h` is the contract. Stock implements it with
+  `Classes/SimpleAudioEngine.mm` (C++ wrapper) over `SimpleAudioEngine_objc` / `CocosDenshion` /
+  `CDAudioManager` (OpenAL). *Port:* none of that is compiled; `native/src/seam/SimpleAudioEngine_native.mm`
+  implements the contract (effects decoded once and mixed as `SDL_AudioStream`s; music + four ambience
+  layers streamed), decoding through `AppleAudio_native.mm` (Apple) or `PortableAudio_native.cpp`
+  (Linux/Windows). Gate: `--audio-selftest` (CI; decoders, mixer, slider vs fade).
+- Sound assets: the hundreds of `.caf`/`.mp3` files under `media/` (block break/build per material
+  with up to 8 variants, footsteps, creature voice sets per species×emotion×5, ambience loops, UI
+  clicks, music `Eden_1..6.mp3` + the two title tracks).
 
 ## Textures
 - `atlas` — the opaque block atlas: a vertical strip of `ATLAS_TILES` (64) tiles; the mesher stores
   a tile index and the texture matrix scales v by 1/`ATLAS_TILES` ([rendering.md](rendering.md)).
   Tiles 0–31 are stock; 32–47 / 48–63 are blocks 112–127 in colour / greyscale (D.2t, 2026-10-10,
-  from the 2026 game's atlas via `web/tools/atlas-d2t.py`, which also pads `atlas2` to 64).
+  from the 2026 game's atlas via `port/tools/atlas-d2t.py`, which also pads `atlas2` to 64).
   `getBlockTexShort(texId)` returns the tile origin/height.
 - `atlas2` — the transparent/animated atlas (water/lava frames, glass, leaves…);
   rows are animation frames advanced by the render pass.
@@ -28,10 +32,21 @@ the entire audio layer (sound effects, ambience, music, creature voices).
   world enter/exit (`loadGameAssets`/`unloadGameAssets`,
   `loadMenuTextures`/`unloadMenuTextures`) to fit early-device memory.
 - `getDoorTex(color)`, `getPaintTex`, `getPaintedTex(type,color)`,
-  `getSkin(model,color,state)` — lazily-built colored variants.
+  `getSkin(model,color,state)` — lazily-built colored variants. `getSkin` keeps at most
+  `SKIN_CACHE_SIZE` 48 recoloured creature skins, evicting the least recently used (P.15; was 200,
+  worst case ≈ 68 → 16 MB). Gate for the recolour inputs: `--recolor-selftest`.
 
 ## Audio
-- `playSound(soundId)` — `NUM_SOUNDS 73` effect groups (`enum SOUND_TYPES`,
+- H.6/H.9 (2026-10-14): `S_JUMP` (73, `player_jump_1/2`, on grounded jumps), `S_TNT_DIRT/STONE/MIX/MIX_GLASS`
+  (74–77, picked by `Terrain::tntSoundForBlast` from the blast sphere's majority material; painted TNT
+  keeps `S_GOOP_EXPLODE`) and `S_RESPAWN` (78, `pendingRespawnSound` set in `Hud::update`'s death warp,
+  played in `Terrain::render` right after `firstframe` clears). `Player::takeDamage(damage, cause)` picks the
+  death sound by `DEATH_*` cause, not the damage float. Break tables use the shipped variations 5–7/`_v2`
+  (wood/leaves/glass 7, stone/dirt 8; `MAX_VARIATIONS2` 8). Nergle's `VO_STRETCHING` is `Nergle_Stretch_1/2`.
+- H.11: `CREATURE_WALK_VOICES` (Experiments "Creature walking sounds", off) plays `VO_WALKING` on a
+  creature's transition into `DEFAULT_WALK`, at most once per creature per 8 s, never for Batty
+  (`Model.mm setState`).
+- `playSound(soundId)` — `NUM_SOUNDS 79` effect groups (`enum SOUND_TYPES`,
   `Resources.h`), each with random variants, preloaded via
   `[SimpleAudioEngine preloadEffect:]`. `S_MENU_BUTTON_PRESS`/`_RELEASE`,
   `S_SKY_CHANGE_DARK_TO_LIGHT`/`_LIGHT_TO_DARK`/`S_SKY_PAINTING`,
@@ -46,8 +61,8 @@ the entire audio layer (sound effects, ambience, music, creature voices).
   later, sourced from `menu_button_press_01.mp3`/`menu_button_release_01.mp3` —
   those two files were pulled OUT of `S_MENU_BUTTON_PRESS`/`_RELEASE`'s random-
   variation pool (now 4 variations, `_02` through `_05`) because variation 01
-  audibly stands out from the rest; it's reserved for the web port's settings-
-  panel boolean switches (`eden_play_switch_toggle_sound`, `Settings_web.mm`) and
+  audibly stands out from the rest; it's reserved for the settings
+  screen's toggles (`eden_play_switch_toggle_sound`, `Settings_web.mm`) and
   no longer turns up on an ordinary button click. Appending/reorganizing sound
   IDs freely is fine — unlike block types/`colorTable`, sound IDs aren't part of
   any on-disk struct, so the format-freeze rule doesn't apply to them.
@@ -60,30 +75,29 @@ the entire audio layer (sound effects, ambience, music, creature voices).
   unlike `playSound`'s one-shot-only `playEffect` call) and restarts it on a bucket
   change, held for at least .4s (`iceBucketHoldTimer`) before another switch is allowed:
   `mag` is re-evaluated every frame and naturally hovers right on a threshold during
-  normal sliding, and `SimpleAudioEngine_web.mm`'s `playEffect` fetches+decodes
-  asynchronously before calling `start()`, so a same-frame stop+restart cancels the new
-  voice before its fetch resolves (its id is already gone from `A.voices` by the time
-  the promise lands) — without the hold, only whichever bucket `mag` stayed in longest
-  was ever actually heard, and an occasional switch that *did* survive read as a quiet,
-  cut-off blip. `S_ICE_TURN` fires on the existing 45°-cross-product wedge/ramp auto-turn
+  normal sliding. The hold was found on the retired web build, whose `playEffect` fetched and
+  decoded asynchronously, so a same-frame stop+restart cancelled the new voice before it
+  started: without the hold, only whichever bucket `mag` stayed in longest was ever heard, and an
+  occasional switch that *did* survive read as a quiet, cut-off blip. It stays to keep the loop
+  from flapping at a threshold. `S_ICE_TURN` fires on the existing 45°-cross-product wedge/ramp auto-turn
   detection, which already only fires once per real turn. `Joystick.mm`'s drag-begin
   (first frame a touch claims the joystick, `touches[i].inuse==0`) and release
   (`touches[i].down==M_RELEASE`); `Hud.mm`'s jump button needed a prev-frame latch
   (`wasJumpPressed`) since `m_jump` is re-derived from touches every frame (level, not
-  edge — see `web/CLAUDE.md`'s "any `hud->` input flag" note) and would otherwise fire
+  edge — see `port/CLAUDE.md`'s "any `hud->` input flag" note) and would otherwise fire
   every frame it's held. `S_MODE_SELECTION` plays from `eden_menu_create_world`
-  (`web/src/seam/Menu_web.mm`) on a successful world creation.
+  (`port/src/seam/Menu_web.mm`) on a successful world creation.
 - **Touch-controls sounds** (joystick begin/release, jump-button press/release) are
   gated on two independent things: the `touch_controls_sound` setting
   (`Settings_web.mm`, `bool touchControlsSoundEnabled` in `Classes/Player.mm`) — off by
   default — and, regardless of that setting, `UITouch`'s `isRealTouch`
-  (`web/src/shim/foundation/uikit_stubs.h/.mm`), which is `FALSE` for a synthetic touch
-  Input_web.mm manufactures to drive a HUD button from the keyboard or mouse (its
-  identity is negative; only a real `Touch.identifier` from the browser is `>=0`) — so
+  (`port/src/shim/foundation/uikit_stubs.h/.mm`), which is `FALSE` for a synthetic touch
+  `Input_web.mm` manufactures to drive a HUD button from the keyboard or mouse (its
+  identity is negative; only a real SDL finger id is `>=0`) — so
   e.g. Space-to-jump can never make a sound even with the setting on. Keeping the
   identity-numbering scheme itself inside the shim (`isRealTouch` is a yes/no method,
   not a raw identity comparison) is what lets `Classes/Hud.mm`/`Joystick.mm` ask the
-  question without knowing a platform detail, per `web/CLAUDE.md` rule 2.
+  question without knowing a platform detail, per `port/CLAUDE.md` rule 2.
 - **Bugs fixed alongside the above** (all previously-shipped, previously-silent):
   `S_WARP_HOME_ACTIVATED` was called *after* `Terrain::warpToHome()`, which calls
   `loadTerrain()`, which sets the file-scope `firstframe=TRUE` for the rest of that
@@ -141,14 +155,15 @@ the entire audio layer (sound effects, ambience, music, creature voices).
   - **Bed layer** (`soundEventBed`, `Player.mm`): exactly one of
     {underwater, sky-high, cave, open, the 11 biome ambiences} at a time, chosen by the
     same underwater>sky-high>cave>biome priority chain as before, crossfading between
-    changes. `AMBIENT_NIGHT` (already had a file, `night_time_ambience.mp3`, but no call
-    site) now substitutes for `AMBIENT_OPEN` whenever `Terrain::final_skycolor` equals
-    the night sky color (`colorTable[54]`, the same test `Terrain::render` uses to dim
-    the world lights for lamps to matter) — so it plays instead of, never alongside,
-    the plain overworld ambience, and every biome/cave/underwater/sky-high ambience
-    still takes priority over it exactly as they do over `AMBIENT_OPEN`.
+    changes. `AMBIENT_NIGHT` (`night_time_ambience.mp3`, which shipped with no call site) substitutes
+    for `AMBIENT_OPEN` whenever `Terrain::final_skycolor` equals the night sky color
+    (`colorTable[54]`, the same test `Terrain::render` uses to dim the world lights for lamps to
+    matter), but only when the Audio setting `night_ambience` is on (`nightAmbienceEnabled`,
+    `Player.mm`; off by default because the loop is repetitive). Off, night keeps `AMBIENT_OPEN`. It
+    plays instead of, never alongside, the plain overworld ambience, and every
+    biome/cave/underwater/sky-high ambience still takes priority over it.
   - **Three of the bed layer's filenames never resolved** (found 2026-09-05, Phase N Stage 2,
-    and dead on **both** targets — the web manifest is keyed by basename, so a name with no file
+    and dead on every target — assets are looked up flat by basename, so a name with no file
     behind it just resolves to null and the bed plays silence). `AMBIENT_GRASSLANDS` asked for
     `ambience_open.mp3`, which has never existed; the shipped file is
     `media/new_sound/grasslands_ambience.mp3`, and `ambience_open` is the name of the `.wav` bed.
@@ -175,15 +190,15 @@ the entire audio layer (sound effects, ambience, music, creature voices).
   - **Treasure-cube proximity layer** (`soundEventTreasureProximity(active, location)`,
     `Player.mm`): same shape as the portal layer, `ambience_nearby_treasure_cube.mp3`
     within 15 blocks of the nearest `TYPE_GOLDEN_CUBE`. Treasure cubes are plain voxels
-    with no position registry, so `Player.mm` runs a flat 31×31×3 box scan around the
+    with no position registry, so `Player.mm` runs a flat 31×31×4 box scan around the
     player to find the true nearest one — throttled to 4×/sec (a static timer) since the
     ambience fade is slow enough that this cadence reads as continuous, and doing it
     every frame would be needlessly expensive when nothing is nearby.
   - All four layers are gated on `playmusic`/`GAME_MODE_PLAY` exactly as the old single
     `soundEvent` was, and no longer gated on `songisplaying` — music and ambience are
     fully independent channels now (see `Classes/SimpleAudioEngine.h`'s `playAmbience`/
-    `setAmbienceFade`/`setAmbienceVolume` family, web-only; see
-    `web/docs/resources-and-audio.md`). `playAmbience`'s `layer` parameter: 0=bed,
+    `setAmbienceFade`/`setAmbienceVolume` family, a port addition implemented in
+    `SimpleAudioEngine_native.mm`; see `port/docs/resources-and-audio.md`). `playAmbience`'s `layer` parameter: 0=bed,
     1=water/lava proximity, 2=portal proximity, 3=treasure-cube proximity.
 - Music: `playMenuTune/stopMenuTune` — title screen rotates randomly (no immediate
   repeat) through `NUM_TITLE_SONGS 2` tracks (`titleSongFiles`: `Eden_title.mp3`,
@@ -192,7 +207,7 @@ the entire audio layer (sound effects, ambience, music, creature voices).
   `GAME_MODE_MENU` poll of `isBackgroundMusicPlaying()` in `update(etime)`; in-game
   music tracks (`NUM_SONGS 6`, `songFiles`) rotate the same way via the same engine
   but on a `TIME_BETWEEN_SONGS` cadence instead of track-end. **Port (2026-10-05):** the
-  crossfade drives `setBackgroundMusicFade`, not the user's volume (web/docs/resources-and-audio.md),
+  crossfade drives `setBackgroundMusicFade`, not the user's volume (port/docs/resources-and-audio.md),
   and the Music setting's side effect is `Resources::musicToggled()` — title tune in the menu, the
   next in-game song in a world. The port used to call `playMenuTune()` on every switch-on, which
   started a title track over gameplay.
@@ -207,9 +222,10 @@ both swapped in `World::loadWorld`/`exitToMenu`.
 - Texture loads must happen with the GL context current (main thread).
 - The `ICO_*` indices are positional — adding a texture mid-list shifts everything
   after it; append only.
-- Preloading all sounds at startup is why first launch is slow in the simulator.
-- `Sound.h/.m` (a distinct, older wrapper) coexists with CocosDenshion; `Resources`
-  is the only sanctioned entry point — don't call the engines directly.
+- Every effect is preloaded (decoded) in `Resources::loadGameAssets`, which is most of the world-entry
+  cost on a slow device.
+- `Sound.h/.m` (a distinct, older wrapper) coexists with CocosDenshion in stock; neither is compiled
+  by the port. `Resources` is the only sanctioned entry point — don't call the engines directly.
 
 ## Safe vs. risky to modify
 - **Safe:** adding sounds/textures via the existing tables, tuning ambience rules.

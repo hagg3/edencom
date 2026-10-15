@@ -2,6 +2,7 @@
 ///Modified PVRT Skinning/Bone mesh Example code.
 
 
+#include <chrono>
 #import "PVRTModelPOD.h"
 #import <math.h>
 #import "PVRTResourceFile.h"
@@ -868,8 +869,23 @@ void LoadModels2(){
     }*/
 }
 
+// H.11 Experiments toggle ("creature_walk_voices", Settings_web.mm), off by default. One VO_WALKING
+// per creature per CREATURE_WALK_VOICE_GAP seconds on the transition into DEFAULT_WALK.
+bool CREATURE_WALK_VOICES=false;
+#define CREATURE_WALK_VOICE_GAP 8.0
+static double walkVoiceLast[nguys+1];
+static double walkVoiceNow(){
+    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 void setState(int idx,int state){
     if(guys[idx].state!=state){
+        if(CREATURE_WALK_VOICES&&state==DEFAULT_WALK&&guys[idx].model_type!=M_BATTY){
+            double now=walkVoiceNow();
+            if(now-walkVoiceLast[idx]>CREATURE_WALK_VOICE_GAP){
+                walkVoiceLast[idx]=now;
+                PlaySound(idx,VO_WALKING);
+            }
+        }
         if(state==DEFAULT_WALK&&(guys[idx].model_type==M_GREEN||guys[idx].model_type==M_NERGLE)){
             guys[idx].frame=0;
         }else
@@ -990,9 +1006,9 @@ void MMM::ExplodeModels(Vector p,int color){
             e->vel=vel;
             Resources::getResources->playSound(S_HIT);
             if(World::getWorld->player->life>.5f)
-                World::getWorld->player->takeDamage(.38f);
+                World::getWorld->player->takeDamage(.38f,DEATH_TNT);
             else
-                World::getWorld->player->takeDamage(.05f);
+                World::getWorld->player->takeDamage(.05f,DEATH_TNT);
        
         }
     }
@@ -1040,9 +1056,9 @@ bool CheckCollision(Entity* e){
                 vel.z+=pos.z;
                 ep->vel=vel;
                 if(e->model_type==M_CHARGER||e->model_type==M_STALKER)
-                ep->takeDamage(.33333333f);
+                ep->takeDamage(.33333333f,DEATH_CREATURE);
                 else
-                ep->takeDamage(.5f);
+                ep->takeDamage(.5f,DEATH_CREATURE);
             
                 ep->flash=0.6f;
                 Resources::getResources->playSound(S_HIT);

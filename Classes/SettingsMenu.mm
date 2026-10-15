@@ -8,7 +8,7 @@
 //  Phase N Stage 2.5 (WORKING/native-migration-plan-2026-09-04.md): render()/update() were a
 //  fixed five-row panel of hand-placed ON/OFF images with a hard-coded `if` chain. They are now a
 //  generic paginated list over the shared settings table — the same data
-//  web/src/seam/Settings_web.mm feeds public/eden-settings.js, reached here through the
+//  port/src/seam/Settings_web.mm feeds public/eden-settings.js, reached here through the
 //  eden_settings_* accessors (added in that file's portable half, so both targets link them).
 //
 //  Stage 5.4 (WORKING/ROADMAP.md) reskinned it onto the GL widget kit: a WINDOW panel with a
@@ -299,41 +299,29 @@ void SettingsMenu::layout(){
     if(m_builtTab!=m_tab||m_builtU!=u()) buildRows();
 
     // THE PANEL IS FIXED (plan D3, §3.1): the 783x587u design frame less a 12u margin, centred, the
-    // same on every tab so switching never resizes it. On the constraining axis it is exactly the
-    // design frame, since u() = min(W/783, H/587).
-    const float W=std::min(SCREEN_WIDTH-2.0f*du(12),du(783));
-    const float H=std::min(SCREEN_HEIGHT-2.0f*du(12),du(587));
-    m_panel=CGRectMake((SCREEN_WIDTH-W)*0.5f,(SCREEN_HEIGHT-H)*0.5f,W,H);
-    const float pad=du(9), gap=du(6);
-    const float left=m_panel.origin.x+pad, right=m_panel.origin.x+W-pad;
+    // same on every tab so switching never resizes it. Since U.5 the arithmetic is the kit's
+    // railFrame(), shared with New World.
+    const RailFrame f=railFrame();
+    m_panel=f.panel;
+    const CGRect& T=f.titlebar;
 
     // Titlebar: Back shrink-wrapped at the left, the title centred on the WINDOW. 29u art; on touch
     // the hit box grows to the 44pt floor, the art does not.
-    const float barH=du(29), barTop=m_panel.origin.y+H-du(7);
-    m_back.setRect(CGRectMake(left,barTop-barH,0,barH));
-    const float tf=touchFloor();
-    if(tf>barH){
-        const CGRect b=m_back.rect();
-        m_back.setHitRect(CGRectMake(b.origin.x,b.origin.y+(barH-tf)*0.5f,b.size.width,tf));
-    }else m_back.setHitRect(CGRectMake(0,0,0,0));
+    m_back.setRect(CGRectMake(T.origin.x,T.origin.y,0,T.size.height));
+    titlebarHit(m_back);
     // Defaults (Keys only), shrink-wrapped at the right: the tab's titlebar action (plan §3, U.4).
-    m_defaults.setRect(CGRectMake(right-m_defaults.fitWidth(),barTop-barH,0,barH));
-    if(tf>barH){
-        const CGRect d=m_defaults.rect();
-        m_defaults.setHitRect(CGRectMake(d.origin.x,d.origin.y+(barH-tf)*0.5f,d.size.width,tf));
-    }else m_defaults.setHitRect(CGRectMake(0,0,0,0));
-    m_titleY=barTop-(barH-m_title.height())*0.5f;
+    m_defaults.setRect(CGRectMake(T.origin.x+T.size.width-m_defaults.fitWidth(),T.origin.y,0,T.size.height));
+    titlebarHit(m_defaults);
+    m_titleY=f.titleY(m_title);
 
     // Body: rail | content | scrollbar, 6u apart.
-    const float bodyTop=barTop-barH-pad, bodyBot=m_panel.origin.y+pad;
-    m_rail.setRect(CGRectMake(left,bodyBot,IconRail::designW(),bodyTop-bodyBot));
+    m_rail.setRect(f.rail);
     m_rail.setSelected(m_tab);
-    const float barW=du(18);
-    const CGRect barRect=CGRectMake(right-barW,bodyBot,barW,bodyTop-bodyBot);
+    const CGRect barRect=f.bar;
     m_scroll.setBarRect(barRect);
-    const float cx0=left+IconRail::designW()+gap;
-    m_content=CGRectMake(cx0,bodyBot,right-barW-gap-cx0,bodyTop-bodyBot);
+    m_content=f.content;
     const CGRect& C=m_content;
+    const float tf=touchFloor();
     if(m_tab==SM_TAB_KEYS){
         if(m_keys) m_keys->layout(C,barRect);
         return;

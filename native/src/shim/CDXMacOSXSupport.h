@@ -12,12 +12,12 @@
 // The native target cannot take the first branch by the obvious route: defining
 // __IPHONE_OS_VERSION_MIN_REQUIRED on a real macOS SDK makes every system header compile as if
 // for iOS 3.0, which detonates inside CoreServices/Security (see
-// web/src/shim/foundation/framework/Availability.h for the exact failure). So it takes the SECOND
+// port/src/shim/foundation/framework/Availability.h for the exact failure). So it takes the SECOND
 // branch and this file supplies what the first one would have. A quoted
 // `#import "CDXMacOSXSupport.h"` searches the including file's own directory (Classes/) first and
 // then the -I list, which is how this is reached at all.
 //
-// It resolves to the PORT'S OWN <AVFoundation/AVFoundation.h> (web/src/shim/foundation/framework/),
+// It resolves to the PORT'S OWN <AVFoundation/AVFoundation.h> (port/src/shim/foundation/framework/),
 // not Apple's — deliberately. The real one drags CoreServices in, whose CarbonCore/AIFF.h defines
 // `ChunkHeader`, and so does Classes/FileManager.h; see that trampoline's header for the full
 // note.

@@ -1,11 +1,15 @@
 # The `.eden` World File Format
 
 Authoritative reference, reconstructed from `Classes/FileManager.h/.mm`,
-`FileManagerHelper.mm`, and cross-checked against the two documents in the repo root:
+`FileManagerHelper.mm`, and cross-checked against the two documents in `docs/reference/`:
 - `Eden_file_format.txt` — the developer's own 24-line summary.
 - `MROB.txt` — Robert Munafo's pre-source-release reverse engineering (matches the
   code exactly for v2-era files; his "12×12 columns" observation is the 1.7-era
   window size, 18×18 in this version).
+
+**In this fork `.eden` is an import, convert and export format only** (Stage S, S.8): every world
+the engine creates, plays and saves is an `.emod` ([emod-file-format.md](emod-file-format.md)). The
+`.eden` writer paths described below as "saves" are stock behaviour or the export path.
 
 The sister project `eden-world-editor` (a separate Tauri/Rust/React `.eden`
 editor, independent of this codebase) reimplements this same on-disk format from
@@ -33,7 +37,7 @@ Design rationale (from `Eden_file_format.txt`): newly touched columns are **appe
 — they overwrite the creatures+directory region, which is then rewritten after the
 new data, and only `directory_offset` in the header changes. Block data never shifts.
 
-## Header — `WorldFileHeader` (`FileManager.h:20-35`)
+## Header — `WorldFileHeader` (`FileManager.h`)
 
 ```c
 typedef struct {
@@ -53,7 +57,7 @@ typedef struct {
 ```
 
 The comment in the header is emphatic: **192 bytes including padding is load-bearing**
-("be careful modifying this to not corrupt old maps"). `saveColumn` even asserts
+("be careful modifying this to not corrupt old maps"). Stock's `saveColumn` (removed in S.8) even asserted
 `(chunk_offset−192) % SIZEOF_COLUMN == 0`. The `hash` links a world file to its
 uploaded `.png` preview for the sharing service (see [networking.md](networking.md)).
 
@@ -63,8 +67,9 @@ Note: the struct is written/read by raw `memcpy`/`fwrite` — the format is
 empirically (directory pointer observed at bytes 0x20–0x27).
 
 **Every byte of the header is now zeroed before it is filled** (Phase N Stage 3,
-2026-09-06). It was not before: `saveWorld` and `writeGenToDisk` `malloc` the 192 bytes and
-assign the eleven fields they use, and `-getCString:maxLength:` NUL-*terminates* rather than
+2026-09-06). It was not before: the `.eden` `saveWorld` (removed in S.8) and `writeGenToDisk`
+`malloc`ed the 192 bytes and assigned the eleven fields they use (`saveEmodWorld` now starts from the
+world's own `WORLD_HEADER` record or zeros), and `-getCString:maxLength:` NUL-*terminates* rather than
 pads — so the tail of `name[50]`, the tail of `hash[36]`, the whole of `reserved[]` and the
 struct's own padding went to disk as whatever `malloc` last returned. Three consequences,
 which is why this is recorded here rather than as a tidy-up:
@@ -73,8 +78,8 @@ which is why this is recorded here rather than as a tidy-up:
   which is what defeated Stage 3's cross-platform byte comparison and is how this was found;
 - a world file carries a few dozen bytes of the writing process's heap, and the sharing
   service **uploads world files** ([networking.md](networking.md));
-- `reserved[]` has not actually been zero in any file written since 2.1.1, so the note at
-  line 208 below ("a real v5 file, whose `reserved[]` was entirely zero") described a file
+- `reserved[]` has not actually been zero in any file written since 2.1.1, so the note in the
+  256z section below ("a real v5 file, whose `reserved[]` was entirely zero") described a file
   written by the *original* app, not by this fork. **A future format version growing into
   `reserved[]` must still treat a non-zero value there as "old file, field absent"** — files
   written between 2.1.1 and 2026-09-06 have garbage in it.
@@ -169,8 +174,9 @@ the file to that point. Rows that fail the gate *interior* to the real entries a
 as before — those are corruption, not a trailer. Since Stage D / D.3a the game also parses it (the
 model below), but an untouched trailer is still written back as the exact bytes read — and moving
 columns can never invalidate it, since its records hold world block coordinates and never file
-offsets. Regression cover: `web/tools/headless-save-trailer-test.js`, using the
-literal 192 bytes from `quarry.eden`. Full provenance:
+offsets. Regression cover: `eden_native --trailer-selftest [--trailer-file=…]` (manual, not in CI; it
+replaced the retired web `headless-save-trailer-test.js`) and `emod.py trailer --check`; in CI,
+`--emod-selftest` round-trips the trailer record inside the `.emod` fixtures. Test input: the literal 192 bytes from `quarry.eden`. Full provenance:
 `WORKING/newformat256z-sign-trailer-2026-08-24.md`.
 
 The engine draws signs (D.3b, `Classes/SignRenderer.mm`, docs/rendering.md) and places, edits and removes
@@ -216,7 +222,7 @@ The anchor `(x, y, z)` is the block the sign hangs on; `z` is the height. Script
 
 ### The trailer model (Stage D / D.3a, 2026-10-10)
 
-`Classes/WorldTrailer.{h,cpp}` (engine) and `web/tools/emod.py trailer` (the reference; no shared code)
+`Classes/WorldTrailer.{h,cpp}` (engine) and `port/tools/emod.py trailer` (the reference; no shared code)
 read the trailer by these rules, on both containers (an `.emod`'s `SIGN_TRAILER` record holds the same
 bytes):
 
@@ -250,7 +256,7 @@ tools. The 2026 game's `signlab` sidecars (14 signs, 4 command blocks) adopt int
 
 **Every reader of the directory must apply the coordinate gate (fixed S.5b, 2026-10-10).** Trailer rows
 look like directory rows to a reader that does not: `FileManager::convertWorldTo64` and
-`web/tools/eden-convert.js` used to count them as columns, so alpinecraft and Quarry were refused ("1897
+`port/tools/eden-convert.js` used to count them as columns, so alpinecraft and Quarry were refused ("1897
 of 3227 columns are not 131072 B"). Both now keep only addressable rows (`0 ≤ x, z < 32768`, key ≠ 0).
 Neither carries the trailer into a 64z file. The exporter (`Classes/EdenWorldExport.cpp`, save-load.md
 § Export) parses it into sections only to count, prune or drop records: a record's column is
@@ -276,19 +282,19 @@ per chunk (4 per column):
 Additionally the voxel order inside RLE chunks is **transposed** to `CC(y,z,x)`
 (x fastest) "to maximize compression" (horizontal runs compress better), and the
 reader un-transposes: `pblocks[CC(x,z,y)] = tblocks[CC(y,z,x)]`
-(`FileManagerHelper.mm:203-208`). User save files are always raw (the `rle` flag in
-`FileManager::readColumn` is hardcoded `false`).
+(`fmh_decodeColumnBands`). User worlds are `.emod` (S.8); only the bundle source and the offline
+generator's output use RLE.
 
 ## Version history (as handled by `FileManager::loadWorld`)
 
 | version | Era | Differences |
 |---|---|---|
-| garbage (<1 or >1000) | 1.x | Legacy format: 1 byte/block, **no colors**, 30 block types. Converted in place by `convertFile` using `convertType`/`convertColor` tables (old colored blocks become type+paint). |
+| garbage (<1 or >1000) | 1.x | Legacy format: 1 byte/block, **no colors**, 30 block types. Stock converted it in place by `convertFile` using `convertType`/`convertColor` tables (old colored blocks become type+paint). That converter was deleted in S.8: 1.x files are no longer listed or converted. |
 | 2 | early 2.0 | Current layout, no creature block (`chunk_offset` points relative to a file without it). |
 | 3 | 2.x | Adds the creatures block before the directory. |
 | 4 | 2.1 (current, `FILE_VERSION`) | Adds `goldencubes` + `skycolors[16]` to the header (upgraded in-place on load: v3 files get 10 cubes and all-blue sky). |
 
-Files are silently upgraded to v4 on the first save — **64z files only** since S.3b: a 256z world
+Files are silently upgraded to v4 on the first (`.emod`) save — **64z files only** since S.3b: a 256z world
 keeps its version verbatim (5, 6, or the 2 the 2026 game writes).
 
 **The version is not a height marker** (S.3b, measured 2026-10-09 on `TESTERS/alpinecraft spawn
@@ -347,8 +353,8 @@ same per-band RLE framing with 16 bands; whether anything is ever written into `
 ### Height detection (S.3b, 2026-10-09)
 
 One rule, the sibling editor's (VuencEdit `detect_chunk_size_by_creature_gap`), in one function,
-`emod::eden_detect_bands` (`Classes/EdenWorldStore.cpp`), restated in `web/tools/emod.py`
-(`detect_bands`) and `web/tools/eden-convert.js` (`detectBands`):
+`emod::eden_detect_bands` (`Classes/EdenWorldStore.cpp`), restated in `port/tools/emod.py`
+(`detect_bands`) and `port/tools/eden-convert.js` (`detectBands`):
 1. `version` 5 or 6 → 256z.
 2. Otherwise, over the **live** directory rows (twoToOne-addressable, last row wins), try the stride
    131,072 then 32,768: the one for which `directory_offset − (highest offset + stride)` is 0 or a
@@ -366,22 +372,22 @@ Callers: `FileManager::probeWorldHeight` (reads `directory_offset`..EOF before a
 | Step | Where |
 |---|---|
 | Decide the height before any allocation: 5/6 → 256, else the creature-gap detection above (S.3b) | `FileManager::probeWorldHeight`, called from `World::loadWorld` |
-| Size `blockarray`/`lightarray`/chunk table for that height | `Terrain::allocateMemory` |
+| Size `blockarray`/`lightbricks`/chunk table for that height | `Terrain::allocateMemory` |
 | Derive creature-slot count and per-column spans from the directory | `FileManager::deriveColumnSpans` (see [save-load.md](save-load.md)) |
 | Read 16 bands per column, zero-filling any the file is too short to hold | `FileManager::readColumn` |
-| Seed unlisted columns from the bundled 64z `Eden.eden`, air above its 4 bands | `fmh_readColumnFromDefault` |
-| Write 16 bands per column, keep the file's own version (including a 256z v2) | `saveColumn` / `saveWorld` |
+| Seed unlisted columns from the bundled 64z map (`Eden.emod`), air above its 4 bands | `fmh_readColumnFromDefault` |
+| Write 16 bands per column, keep the file's own version (including a 256z v2) | `saveEmodWorld` |
 
 The bundled `Eden.eden` is deliberately **not** regenerated at 256z: the offline `TerrainGen2`
 bake would need ~4 GB and its formulas mix proportional with absolute offsets, so a naive
 stretch produces a differently-shaped world that would need an art pass. A 256z world seeded
 from the default map therefore gets its 4 real bands and air above them.
 
-Creating a *new* 256z world in-game (Stage 3 item 4) shipped 2026-08-26: the web port's New
-World screen has a height choice that is 64z by default, and the choice flows into
-`FileManager::probeWorldHeight` for the not-yet-existing file (see web/docs/eden-file-format.md
-for the seam-level wiring). Landing this surfaced a latent bug in `saveWorld()`'s brand-new-file
-path: the very first save of a new file relied on `sfh->version<3` to know whether
+Creating a *new* 256z world in-game (Stage 3 item 4) shipped 2026-08-26; today it is the New World
+screen's height row (`Classes/NewWorldMenu`, U.5), whose default is New Dawn 256 (S.5e). The choice
+is parked by `eden_menu_set_pending_world_height` and consumed by `FileManager::probeWorldHeight` for
+the not-yet-existing file. *History (the `.eden` writer, removed in S.8):* landing this surfaced a
+latent bug in `saveWorld()`'s brand-new-file path: the very first save of a new file relied on `sfh->version<3` to know whether
 `directory_offset` still needed its one-time bump past the creature block, which was always true
 for a 64z world (new worlds always started at version 2) but is false for one stamped straight to
 version 5 — that world's first save left `directory_offset` pointing AT the creature block instead
@@ -391,7 +397,7 @@ up front for a 256z-stamped new file instead of relying on the version<3 bump.
 
 ### Converting between the two
 
-`web/tools/eden-convert.js` converts both directions offline (pure byte surgery, no engine):
+`port/tools/eden-convert.js` converts both directions offline (pure byte surgery, no engine):
 
 ```
 node tools/eden-convert.js --info   <in.eden>          # parse + report, change nothing
@@ -407,10 +413,16 @@ asking, clears door/portal bottoms whose `*_TOP` half was cut off at y=63, clamp
 drops creatures above the ceiling before compacting 400 slots into 200. It refuses the
 RLE-compressed bundled `Eden.eden` and 1.x legacy files rather than mangling them.
 
-The web port also has an **in-app** "Convert to 64z" action (Settings → Storage tab), backed by
-`FileManager::convertWorldTo64` — a from-scratch C++ restatement of this same `--to-64` algorithm
-over `NSFileHandle`, since a browser has no Node to shell out to `eden-convert.js`. The two are
-hand-kept in sync, not shared code; see web/docs/eden-file-format.md for what that implies.
+The engine's restatement is `FileManager::convertWorldTo64` — a from-scratch C++ version of this
+same `--to-64` algorithm over `NSFileHandle`. The two are hand-kept in sync, not shared code. No
+native UI reaches it yet (the retired web build had Settings → Storage → "Convert to 64z"; a native
+Storage page is ROADMAP W.6); `--convert64-selftest` and the cross-check below exercise it.
+The drift gate is `node port/tools/convert64-crosscheck.js <eden_native> <docs>` (W.2, CI linux + macOS): a 256z
+world with bricks, orphaned doors and creatures above y=63, converted by the engine (the `.emod`, and an exported
+`.eden`) and by `eden-convert.js`; all seven counters must agree. **Modified from stock (2026-10-14):** the `.eden`
+leg creates its `.64zconv` scratch file before opening it, because Apple's Foundation returns nil from
+`fileHandleForWritingAtPath:` for a missing file (only the port's shim created one) — so on macOS/iOS "Convert to
+64z" on a `.eden` always failed with "could not create scratch file" until then.
 
 Both directions are verified against **real** v5 files as of 2026-08-06 (the earlier session had
 only synthesised fixtures): `~/eden-specimens/v5-flat-8x8.eden` and `v5-natural-18x18.eden`,
@@ -422,7 +434,7 @@ block**, the adversarial case for the derived-size logic above. Regenerate them 
 ## Compressibility and band occupancy (measured 2026-10-03)
 
 The `.emod` Phase 0 study measured real worlds against this format with
-`web/tools/eden-format-measure.py`. The tool is read-only, and its `--corrupt-gate` proves the
+`port/tools/eden-format-measure.py`. The tool is read-only, and its `--corrupt-gate` proves the
 round-trip check can fail. Raw results: `WORKING/emod-format-phase0-f1-results-2026-10-03.md`. Plan and
 recommendation: `WORKING/emod-format-phase0-f2-plan-2026-10-03.md`. The facts that outlive the study:
 
@@ -450,22 +462,24 @@ recommendation: `WORKING/emod-format-phase0-f2-plan-2026-10-03.md`. The facts th
   so treat the figure as a best case.
 
 The container those numbers led to is specified in [emod-file-format.md](emod-file-format.md)
-(S.1, 2026-10-09). `web/tools/emod.py` converts any `.eden` to it and back, byte-identically for an
+(S.1, 2026-10-09). `port/tools/emod.py` converts any `.eden` to it and back, byte-identically for an
 engine-written world.
 
 ## Auxiliary files
 - `<world>.png` in Documents — preview screenshot (taken by the HUD camera mode),
   uploaded alongside the world when sharing; MD5 stored in the header.
-- `<world>.savetmp` — the scratch copy an ordinary (below-threshold) save is built in, swapped in
-  by one rename. `<world>.savetmp.bak` / `<world>.bak` — whole-file backup slots the web port's
-  `NSFileHandle` shim keeps for the load-failure dialog. None of these are `.eden` files and none
-  are listed as worlds; all three are absent above the in-place-save threshold.
-- `<world>.savejrnl` — the rollback journal a large in-place save writes before it starts, and
-  deletes on commit. Its own small header (`EDNJRNL`, version 2) plus the world's previous 192-byte
+- `.emod` temporaries (`.creating`, `.compact`, `.converting`, `.spill`, `.exporting`, `.layerN`) —
+  see [emod-file-format.md](emod-file-format.md) and save-load.md; `FileManager::cleanConversionTemps`
+  removes leftovers.
+- *Legacy, `.eden` saves only (removed in S.8; nothing writes these now):* `<world>.savetmp` — the
+  scratch copy an ordinary (below-threshold) save was built in, swapped in by one rename.
+  `<world>.savetmp.bak` / `<world>.bak` — whole-file backup slots the shim `NSFileHandle` kept for the
+  load-failure dialog. `<world>.savejrnl` — the rollback journal a large in-place save wrote before
+  it started, and deleted on commit. Its own small header (`EDNJRNL`, version 2) plus the world's previous 192-byte
   header and the file's pre-save tail, then zero or more `EDNJCOL` records — a 24-byte
   `{magic, offset, length}` followed by `length` bytes — holding the pre-save contents of each
-  column the save overwrites in place. If you find one on disk the last save was interrupted; the
-  engine replays it on next load. See [save-load.md](save-load.md).
+  column the save overwrote in place. The replay (`recoverInterruptedSave`) went with the `.eden`
+  writer; `deleteWorld` still removes a stray `.savejrnl`.
 - `FileArchive.h` (compress-on-exit via zlib/`zpipe`) is **entirely commented out** —
   `compressLastPlayed()` is a no-op. Worlds on disk are uncompressed.
 
@@ -507,12 +521,12 @@ engine-written world.
   found that real large-world files can contain a directory entry whose gap to
   the *next* entry is smaller than the column size (one observed case: 107,072 B
   instead of 131,072 B — exactly one 24,000-byte **400-slot creature block** short,
-  i.e. what this engine's own `saveColumn` offset formula produces when
+  i.e. what stock's `saveColumn` offset formula produced when
   `MAX_CREATURES_SAVED` is wrong for the file; strong hypothesis, not proven). A
   robust external reader should derive each column's readable span from
   `next_offset − offset` (clamped to the record size), not assume every entry
   owns the full record size unconditionally — and should zero-pad the shortfall
-  rather than read on into the neighbour. `web/tools/eden-convert.js` does both,
+  rather than read on into the neighbour. `port/tools/eden-convert.js` does both,
   and repairs the anomaly by always *writing* full-size records.
 
 ## Uncertainties

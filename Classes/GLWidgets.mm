@@ -2,7 +2,7 @@
 //  GLWidgets.mm
 //  Eden
 //
-//  See GLWidgets.h. This is web/docs/design-system.md expressed in Graphics::drawRect fills —
+//  See GLWidgets.h. This is web-port-final:web/docs/design-system.md expressed in Graphics::drawRect fills —
 //  which is the whole reason the kit was affordable: every bevel in the system is a stack of
 //  hard-edged rectangles (zero blur, square corners), so it needs NO new atlas art (the icons
 //  aside — U.1's media/ui/ui_icons.png) and no new shader. A "shadow" is a rectangle drawn offset behind the face; an "inset highlight" is two
@@ -24,7 +24,7 @@
 
 extern float SCREEN_WIDTH;
 extern float SCREEN_HEIGHT;
-extern "C" float eden_ui_raster_density(void);   // web/src/seam/DisplayProfile_web.mm
+extern "C" float eden_ui_raster_density(void);   // port/src/seam/DisplayProfile_web.mm
 
 namespace GLW {
 
@@ -50,7 +50,7 @@ float u() {
 
 const float kTouchFloor = 44.0f;
 
-extern "C" int eden_effective_input_is_touch(void);   // web/src/seam/Settings_web.mm (both targets)
+extern "C" int eden_effective_input_is_touch(void);   // port/src/seam/Settings_web.mm (both targets)
 float touchFloor() { return eden_effective_input_is_touch() ? kTouchFloor : 0.0f; }
 
 // A hit box: the explicit one if a screen set it, else the drawn rect.
@@ -172,7 +172,10 @@ static Texture2D* s_icons = NULL;
 
 static Texture2D* iconAtlas() {
     if (!s_icons) {
-        s_icons = new Texture2D(@"ui_icons.png", FALSE);
+        // genMips TRUE: the LINEAR_MIPMAP_LINEAR below needs the chain. Since P.15 a non-mip load
+        // builds none, and the atlas sampled as an incomplete texture — every icon a black square
+        // (found by U.5's shots, 2026-10-14).
+        s_icons = new Texture2D(@"ui_icons.png", FALSE, TRUE);
         glBindTexture(GL_TEXTURE_2D, s_icons->name);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -920,6 +923,40 @@ void TabRail::render() const {
         b.setPressed(i == m_sel || i == m_held);
         b.render();
     }
+}
+
+// --- RailFrame (U.5) -----------------------------------------------------------------------
+// Lifted unchanged out of SettingsMenu::layout() (U.3), so New World shares it.
+RailFrame railFrame() {
+    RailFrame f;
+    // THE PANEL IS FIXED (plan D3): on the constraining axis it is exactly the design frame, since
+    // u() = min(W/783, H/587).
+    const float W = std::min(SCREEN_WIDTH - 2.0f * du(12), du(783));
+    const float H = std::min(SCREEN_HEIGHT - 2.0f * du(12), du(587));
+    f.panel = CGRectMake((SCREEN_WIDTH - W) * 0.5f, (SCREEN_HEIGHT - H) * 0.5f, W, H);
+    const float pad = du(9), gap = du(6);
+    const float left = f.panel.origin.x + pad, right = f.panel.origin.x + W - pad;
+    const float barH = du(29), barTop = f.panel.origin.y + H - du(7);
+    f.titlebar = CGRectMake(left, barTop - barH, right - left, barH);
+    const float bodyTop = barTop - barH - pad, bodyBot = f.panel.origin.y + pad;
+    f.rail = CGRectMake(left, bodyBot, IconRail::designW(), bodyTop - bodyBot);
+    const float barW = du(18);
+    f.bar = CGRectMake(right - barW, bodyBot, barW, bodyTop - bodyBot);
+    const float cx0 = left + IconRail::designW() + gap;
+    f.content = CGRectMake(cx0, bodyBot, right - barW - gap - cx0, bodyTop - bodyBot);
+    return f;
+}
+
+float RailFrame::titleY(const Label& title) const {
+    return titlebar.origin.y + titlebar.size.height - (titlebar.size.height - title.height()) * 0.5f;
+}
+
+void titlebarHit(Button& b) {
+    const float tf = touchFloor();
+    const CGRect r = b.rect();
+    if (tf > r.size.height)
+        b.setHitRect(CGRectMake(r.origin.x, r.origin.y + (r.size.height - tf) * 0.5f, r.size.width, tf));
+    else b.setHitRect(CGRectMake(0, 0, 0, 0));
 }
 
 // --- IconRail (U.1) ------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 // NSAutoreleasePool_native.mm — the C push/drain pair from
-// web/src/shim/foundation/NSAutoreleasePool.h, over Apple's real runtime (Phase N Stage 1,
+// port/src/shim/foundation/NSAutoreleasePool.h, over Apple's real runtime (Phase N Stage 1,
 // WORKING/native-migration-plan-2026-09-04.md).
 //
 // The @interface half of that header is web-only (real Foundation has NSAutoreleasePool); the C

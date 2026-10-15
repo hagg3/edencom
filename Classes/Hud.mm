@@ -6,6 +6,7 @@
 //  Copyright 2010 __MyCompanyName__. All rights reserved.
 //
 
+extern bool pendingRespawnSound;
 #import "Hud.h"
 #import "GLWidgets.h"
 #include <algorithm>
@@ -259,13 +260,13 @@ void Hud::genColorTable(){
 // Each rt* text rect now equals its icon rect (the label is ON the button), so every existing
 // `inbox2(r)||inbox2(rt)` test still means "this button".
 //
-// Two actions are new, both from the DOM pause menu (web/public/eden-pausemenu.js): Resume, and
+// Two actions are new, both from the DOM pause menu (web-port-final:web/public/eden-pausemenu.js): Resume, and
 // Settings — the GL SettingsMenu as an in-game modal (World::update), offered only where that
 // screen is live (eden_gl_settings_available(): not on web, where the DOM owns settings).
 //
 // The engine's own action icons stay, drawn on the left of each button — design-system.md's
 // "Action icons" rule: the same painted objects the 2010 HUD used for these actions.
-extern "C" int eden_gl_settings_available(void);   // web/src/seam/Settings_web.mm (both targets)
+extern "C" int eden_gl_settings_available(void);   // port/src/seam/Settings_web.mm (both targets)
 
 enum { PM_RESUME, PM_SAVE, PM_HOME, PM_PHOTO, PM_SETTINGS, PM_QUIT, PM_COUNT };
 static const char* kPauseLabels[PM_COUNT] = {
@@ -601,6 +602,7 @@ BOOL Hud::update(float etime){
             fade_out+=etime/4;
         }else if(fade_out>=1){
             printg("warping home\n");
+            pendingRespawnSound=TRUE;   // H.9: played by Terrain::render once firstframe clears
             World::getWorld->terrain->warpToHome();
             printg("finished warping\n");
         }

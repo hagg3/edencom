@@ -11,7 +11,7 @@
 //  a light beveled window with a display-face title, an optional wrapped body sentence, and a
 //  TWO-COLUMN button grid whose odd last button (in practice "Cancel") spans the full width.
 //
-//  The web build's DEFAULT UI does not use this: web/src/seam/seam_link_stubs.mm overrides
+//  The web build's DEFAULT UI does not use this: web-port-final:web/src/seam/seam_link_stubs.mm overrides
 //  showAlertWorldType()/showAlertWarpHome() with DOM overlays and never calls GLDialog::show(),
 //  so GLDialog::active() is permanently false there and World::render/update skip it.
 //

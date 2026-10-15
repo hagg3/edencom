@@ -1,6 +1,6 @@
 // seam_link_stubs_native.mm — the definitions the native target's excluded seam files owe the
 // linker (Phase N Stage 1, WORKING/native-migration-plan-2026-09-04.md). Native twin of
-// web/src/seam/seam_link_stubs.mm; read that file's header first — the reasoning for each stub is
+// web-port-final:web/src/seam/seam_link_stubs.mm; read that file's header first — the reasoning for each stub is
 // there and is not repeated, and the two exclude lists are deliberately kept identical so the
 // files stay diffable.
 //
@@ -13,11 +13,11 @@
 //   * the three dialogs are console/auto-answer rather than DOM overlays. Stage 2 gives them the
 //     engine's own GL UI, which is where the plan puts native's UI;
 //   * SimpleAudioEngine is REPLACED on both targets now, but by different backends:
-//     web/src/seam/SimpleAudioEngine_web.mm (Web Audio) and src/seam/SimpleAudioEngine_native.mm
+//     web-port-final:web/src/seam/SimpleAudioEngine_web.mm (Web Audio) and src/seam/SimpleAudioEngine_native.mm
 //     (SDL_AudioStream + AVAudioPlayer). Neither file appears in the exclude list.
 // Everything else is the web file's behaviour verbatim.
 
-#import "../../../web/src/shim/foundation/uikit_stubs.h"
+#import "../../../port/src/shim/foundation/uikit_stubs.h"
 
 #include "../../../Classes/FileManager.h"
 #include "../../../Classes/Alert.h"
@@ -36,7 +36,7 @@
 // =============================================================================================
 void alert_init() {}
 
-// Defined in web/src/seam/Menu_web.mm, which the native target also compiles: the New World
+// Defined in port/src/seam/Menu_web.mm, which the native target also compiles: the New World
 // screen's pending choices (one-shot "take" semantics, -1 = none).
 extern "C" int  eden_menu_take_pending_world_type(void);
 extern "C" int  eden_menu_take_pending_world_height(void);

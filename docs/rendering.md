@@ -5,11 +5,20 @@ Everything drawn on screen: GL state management, chunk meshing, the two terrain
 passes, special objects, sky, and the per-vertex data formats.
 
 ## Fixed constraints
-- **OpenGL ES 1.1, fixed-function.** No shaders anywhere. Lighting effects are baked
-  into vertex colors; the only uses of GL lighting are doors and the golden cube's
-  env-mapped specular highlight.
-- Single 16-bit depth buffer, RGBA8 color, depth attachment discarded before present
-  (`EAGLView.mm:303`).
+- **OpenGL ES 1.1, fixed-function.** The engine has no shaders of its own. *(Port: its ES 1.1
+  calls run through the ES1→ES3/GL translator in `port/src/shim/gl/` ([gl-shim.md](../port/docs/gl-shim.md)),
+  which supplies the shaders: one shared program, whose fragment shader emulates the alpha test with
+  a `discard`, and a second one for the matrix palette. Fixed-function semantics — fog, texture
+  matrix, `GL_LIGHT*`, matrix palette — are what the engine sees, not what the GPU runs.)*
+- Lighting effects are baked into vertex colors. GL lighting (`GL_LIGHT0`/`GL_LIGHT1`) is used only
+  for immediate-mode objects: doors and the golden cube's env-mapped specular highlight
+  (`Terrain.mm`), creatures (`Model.mm`), block-break debris (`BlockBreak.mm`) and the rising
+  firework cube (`Firework.mm`).
+- Stock: a single 16-bit depth buffer, RGBA8 color, the depth attachment discarded before present
+  (`EAGLView`). *Port:* 24-bit depth (`gl_context_native.cpp`). SDL's swap does not discard, so on
+  iOS `eden_native_gl_present` invalidates the view FBO's depth before `SDL_GL_SwapWindow` and
+  `eden_scene_pass_end` invalidates the scaled scene FBO's after its blit (P.11,
+  `glInvalidateFramebuffer`; ≈ 12.6 MB/frame of tile store on an Air 2). Desktop does not.
 
 ## Important files
 - `Classes/Graphics.mm/.h` — static GL state helpers + the vertex struct definitions.
@@ -22,7 +31,7 @@ passes, special objects, sky, and the per-vertex data formats.
 - `Classes/Camera.mm` — view matrix from player state.
 - `Classes/glu.h`, `project.c` — GLU port used for `gluPerspective`/`gluUnProject`.
 
-## Vertex formats (`Graphics.h:51-84`)
+## Vertex formats (`Graphics.h`; `vertexObject` is in `Vector.h`)
 - `vertexStructSmall` — terrain: `GLshort position[3]` + pad, `GLubyte colors[4]`,
   `GLshort texs[2]`. Positions are **premultiplied by 4** (quarter-block units) and
   chunk-local; the chunk's `render()` translates by `(pbounds - chunkOffset*16)*4`
@@ -46,8 +55,7 @@ passes, special objects, sky, and the per-vertex data formats.
 ## Graphics state helpers (`Graphics.mm`)
 `prepareScene` (clear + `gluPerspective(eden_fov_degrees, aspect, 0.012, ZFAR-25)` — the fovy
 was a hard-coded `80` until Phase N Stage 2.5; it now reads the shared FOV setting
-(`web/src/seam/Settings_web.mm`, `> 0` guard falls back to 80). Web additionally intercepts the
-call with `--wrap` and feeds the same value, so both targets agree.),
+(`port/src/seam/Settings_web.mm`, `> 0` guard falls back to 80).),
 `beginTerrain/endTerrain` (fog on, color arrays, atlas bind, ×0.25 scale),
 `beginHud/endHud` and `prepareMenu/endMenu` (ortho 2D), `setZFAR` (also re-derives the
 linear fog band: start `ZFAR-ZFAR/1.6`, end `ZFAR-30`). Fog color tracks sky color
@@ -65,11 +73,11 @@ immediately.
 **Graphics preset** (B.8; `graphics_preset` row, `kPresets[]` in `Settings_web.mm`): Custom / Low / Default / High is a
 shortcut that writes `view_distance` (and `render_scale`, except on iOS where that row is hidden) — Low = 4 chunks + 75%,
 Default = Auto + 100% (the pre-B.8 look; shots match within animation noise). High = Default plus `render_distance`
-(B.5b-2): radius 16 on desktop native, 12 on web, still 9 on iOS until a device round measures more. Moving any of
+(B.5b-2): radius 16 on desktop, still 9 on iOS until a device round measures more (T.B16 decides R10). Moving any of
 the three knobs by hand sets the preset to Custom. It does not touch `LOW_MEM_DEVICE`/`LOW_GRAPHICS`: those pick resources at
 load time and are not switchable mid-session.
 
-## Chunk meshing — `TerrainChunk::rebuild2()` (`TerrainChunk.mm:184`, "here be dragons")
+## Chunk meshing — `TerrainChunk::rebuild2()` ("here be dragons")
 
 CPU-side, runs on the main thread inside `prepareAndLoadGeometry`. Stages:
 
@@ -105,7 +113,11 @@ CPU-side, runs on the main thread inside `prepareAndLoadGeometry`. Stages:
    per-face shade (fake directional light), `light` comes from `calcLight`
    (skylight 0.35 at night + colored `lightarray` contribution), plus special cases:
    burned blocks half-brightness, lava/lightbox fullbright, ramps/side pieces get
-   precomputed `gshadows` face shades, water alpha 145. Unpainted (`color==0`)
+   precomputed `gshadows` face shades, water alpha 145. **Top faces (`f==5`) use `light_top`**,
+   which is `light` unless baked shadows are on (H.2, *modified from stock*): then the sky term is
+   scaled by the face's shade (Classic: one per face; Smooth: one per corner, picked from the unit
+   cube's x/z), see docs/lighting-liquids-effects.md "Baked shadows". Geometry never changes, so
+   `geom` is the same in every mode and only `full` moves. Unpainted (`color==0`)
    colorable blocks (grass, TNT, brick, vine…, and since D.2t blocks 112–127) set `coloring`:
    their face swaps to the `_COLOR` atlas tile (`TEX_NEWBLOCK`→`TEX_NEWBLOCK_COLOR` for 112–127)
    drawn with paint = white, since that art carries its own colour; the other unpainted blocks
@@ -141,7 +153,11 @@ it meshes changed. Three things did:
   mutable `burnList` is replaced by a precomputed per-chunk burn mask. With no sink and no mask
   installed — the single-threaded default — all three behave exactly as stock.
 
-### Off-thread meshing (modified from stock, 2026-08-27)
+### Off-thread meshing (modified from stock, 2026-08-27; dormant — no live build compiles it)
+**No current build defines `EDEN_THREADED`** (the retired web build's threaded trees were its only
+users), so the whole pool below compiles to no-ops and every native target meshes and decodes
+inline on the main thread. The design is kept for a future threaded native build.
+
 The re-entrancy above exists because bulk-reload chunks are now meshed on **worker threads**
 (`Classes/MeshPool.{h,mm}`; design in `WORKING/b3-off-thread-meshing-plan.md`). The split follows
 the `rt*` boundary that `prepareVBO()` already was:
@@ -176,9 +192,9 @@ the `rt*` boundary that `prepareVBO()` already was:
 - **Two kill switches, both intentional.** Without `EDEN_THREADED` every `mp_*` entry point compiles
   to a no-op and `mp_dispatch()` always answers "mesh it yourself" — the stock path, byte for byte.
   And "no free job slot → mesh inline" means a pool size of 0 disables the feature without removing
-  it. **Only web's threaded trees (`-DEDEN_THREADED=ON`: `build-thr`, `relthr`) define it.** No native target does, iOS
-  included (checked 2026-10-03), so on native every mesh and every column decode runs inline on the
-  main thread, even though native links real pthreads.
+  it. **Only the retired web build's threaded trees (`build-thr`, `relthr`) defined it.** No native
+  target does, iOS included (re-checked 2026-10-14), so every mesh and every column decode runs
+  inline on the main thread, even though native links real pthreads.
 - The same pool also **decodes streamed columns** off-thread. `fmh_readColumnFromDefault` is split
   into a main-thread raw read, a **pure** `fmh_decodeColumnBands()` (RLE run-expansion + the
   `CC(x,z,y)`↔`CC(y,z,x)` band transpose) that a worker runs, and a main-thread publish that
@@ -186,12 +202,12 @@ the `rt*` boundary that `prepareVBO()` already was:
   chunks are marked busy together. `FileManager::readColumnDeferred()` is the reload's entry point;
   answering FALSE means "dispatched, not landed", and the column must not be marked resident yet.
   `readColumn()` itself is unchanged and still synchronous for every other caller.
-- Measured effect on a teleport burst: frames over the 16.66 ms budget 4–7 per 5 bursts → 0,
+- Measured effect on a teleport burst (on the retired threaded web build): frames over the 16.66 ms budget 4–7 per 5 bursts → 0,
   frames over 8.3 ms 60–66 → 19–24, main-thread column read 129–147 → 110–119 ms, with the window
   still filling in the same wall clock and the resulting geometry byte-identical to the inline
   mesher's. The mesher (not the decoder) is what produced the frame-level change.
 
-### VBO upload — `prepareVBO()` (`TerrainChunk.mm:1433`)
+### VBO upload — `TerrainChunk::prepareVBO()`
 Copies the plain fields into the `rt*` (render) fields, mallocs the per-chunk index
 scratch `rtindices`, uploads the two vertex streams and (re)creates `elementBuffer`,
 then frees the staging arrays. The plain/`rt` split is leftover double-buffering from the
@@ -206,8 +222,8 @@ only to grow — the same pattern row E3 gave the object batches. The names are 
 real in `unbuild()`, the destructor, and the `clearOldVerticesOnly` clear path. `render()`
 early-returns on `rtn_vertices==0` and `render2()` only runs for chunks with `rtn_vertices2>0`,
 so a name left allocated with stale contents is never drawn. Done for driver/CPU churn, not
-memory — the buffers live in the browser's GPU process (see `WORKING/web-port-memory-plan.md`
-§M3).
+memory — on the web build, where this was done, the buffers lived in the browser's GPU process
+(`WORKING/web-port-memory-plan.md` §M3).
 
 **Since Phase N Stage 1 (2026-09-05) `prepareVBO()` can also fingerprint what it publishes.**
 `rtGeomHash`/`rtFullHash` (`TerrainChunk.h`) are FNV-1a hashes of the vertex arrays, folded *just
@@ -219,8 +235,9 @@ the data exists. `geom` covers position+texcoord (deterministic across platforms
 baked vertex colours (lighting, so it only converges after equal settling); `pad` is excluded
 because the mesher never assigns it. The whole pass is **off by default** —
 `eden_debug_set_mesh_checksum(1)` enables it, and it must be called before the world is meshed.
-This is what proved the native (SDL3 + desktop GL) build meshes byte-identically to the web build
-at both heights: `WORKING/phase-n-stage1-results-2026-09-05.md`.
+This is what proved the native (SDL3 + desktop GL) build meshes byte-identically to the (now
+retired) web build at both heights: `WORKING/phase-n-stage1-results-2026-09-05.md`. Today every
+native target must match the pair pinned in `.github/scripts/check-stage1.py`.
 
 **`render()`'s only "is there geometry" test is `rtn_vertices==0`, so every `rt*` field has to
 say "empty" from construction, not from the first `prepareVBO()`.** The constructor did not
@@ -265,7 +282,7 @@ buckets in `vertexBuffer2` are laid out back-to-back by construction
 (`face_idx2[i]=num_vertices2[i-1]+face_idx2[i-1]`, `TerrainChunk.mm` around the mesher's
 counting pass), but `render2()` used to issue one `glDrawArrays` per visible bucket, in a
 scrambled per-axis order (5,1,0,3,2,4, not ascending index order) — 6 draw calls, an ES1
-artefact once WebGL made per-call overhead real (§2/C2 of the perf audit). Since 2026-07-30
+artefact once WebGL (and now the shim on every target) made per-call overhead real (§2/C2 of the perf audit). Since 2026-07-30
 it collapses to **one** `glDrawArrays` over the whole contiguous span when all 6 buckets are
 visible (the common case: it just means the camera sits within the chunk's XYZ bounds), and
 falls back to the original 6 separate per-face draws, in their original order, otherwise
@@ -312,7 +329,7 @@ frame's counts (`cmds`, `cmdInRange`, `cmdFaces`, `cmdRunning` since D.4b).
 
 The sky is not a skybox mesh — it's screen-space ortho quads (`Texture2D::drawSky`)
 drawn *between* pass 1 and pass 2 at near-far depth, with a colored/B&W crossfade
-state machine for sky-color regions (`Terrain.mm:3073-3170`).
+state machine for sky-color regions (the `drawSky` calls in `Terrain::render`, `ICO_SKY_BOX`/`ICO_SKY_BOX_BW`).
 
 ### Scene-pass bracket (modified from stock, 2026-10-04, ROADMAP N.4.11)
 
@@ -320,8 +337,7 @@ state machine for sky-color regions (`Terrain.mm:3073-3170`).
 `Graphics::prepareScene()` and `eden_scene_pass_end()` just before `hud->render()`. Everything
 between them (sky, terrain passes 1 and 2, creatures, effects, fireworks, the player's selection
 outline) is the **3D pass**; the HUD, menus and `GLDialog` come after it. Both are port hooks in the
-GL shim (`gl_es1_shim.h`): on web they are no-ops (the page scales the whole canvas by
-`render_scale`), and on native at 100% they are no-ops too. On iOS `render_scale` is always 100% (N.4.12: the setting was dropped there). At any other `render_scale` the native
+GL shim (`gl_es1_shim.h`); at 100% they are no-ops. On iOS `render_scale` is always 100% (N.4.12: the setting was dropped there). At any other `render_scale` the native
 shim (`native/src/shim/gl/gl_context_native.cpp`) points the 3D pass at an offscreen colour+depth
 framebuffer of drawable × scale and blits it, linearly filtered, into the letterbox box at `_end`,
 so the 2D UI still draws at full density. Point-sprite sizes are compensated for the scale; picking
@@ -334,7 +350,7 @@ the wrong resolution.
 than SDL's view's bound at the end of a frame. The scene framebuffer's allocation once ended with
 `glBindRenderbuffer(0)`; at 50%/75% the iPad then stopped presenting from the first world frame on
 (screen frozen on the loading bar, game running underneath) while every readback-based harness
-passed. The allocation now restores the previous binding, and `eden_native_gl_present()` carries an
+passed. The allocation now restores the previous binding, and `eden_native_gl_present()` (which also does P.11's depth discard) carries an
 iOS-only **present guard**: it rebinds the view's renderbuffer if anything else is bound, logs
 `[eden-gl] PRESENT GUARD` once, and `--smoke` fails if it ever fired.
 
@@ -360,11 +376,12 @@ filling a stack-local `vertexObject objVertices[]` and handing GL four client-si
 array pointers. The frame still fills a staging array exactly as before; the change is
 one `glBufferSubData` upload per batch (growing via `glBufferData` in power-of-two
 steps) instead of the GL shim silently re-uploading all four client arrays' worth of
-the same bytes per draw (`gl_es1_shim.cpp`, `eden_gl_setup_attributes` — client-side
-vertex data isn't legal in WebGL). One buffer per batch, not a shared one — a shared
+the same bytes per draw (`gl_fixed_function.cpp`, `eden_gl_setup_attributes` — client-side
+vertex data isn't legal in the core/ES3 contexts the shim targets). One buffer per batch, not a shared one — a shared
 buffer would make its `glBufferSubData` a write the previous batch's draw is still
 reading (driver sync stall each batch); five small elidable rebinds cost less than
-that. Measured live in Safari (`web/tools/safari-objbatch-probe.js`, 24 doors + 24
+that. Measured live in Safari on the retired web build (`web-port-final:web/tools/safari-objbatch-probe.js`;
+no native twin), 24 doors + 24
 golden cubes + 24 portals + 144 flowers): upload traffic dropped from 47
 `glBufferData`/frame, 756.5 KB/frame (44.3 MB/s @ 60fps) to 8 `glBufferData` + 5
 `glBufferSubData`/frame, 176.6 KB/frame (10.3 MB/s) — a 4.3× drop.
@@ -377,14 +394,18 @@ it), and `doorso`/`portalso` were unbounded writes into 500/200-entry stack arra
 rather than lying — every call site guards its loop with `objVertices&&`.
 
 Instancing for the non-animated subset (portal frames, which reuse regular cube
-geometry) is a separate future item (row 24/C2, WebGL2) — not done here.
+geometry) is a separate future item (row 24/C2, ES3 instancing) — not done.
 
 ## Performance characteristics & knobs
-- Meshing a chunk is O(4096·faces); a full window re-mesh (~1296 chunks) happens on
+- Meshing a chunk is O(4096·faces); a full window re-mesh (1296 chunks at the default radius and
+  64z, 5184 at 256z) happens on
   load and on lighting changes — this is the main hitch source.
 - `INDICES_MAX = 32768` (`Geometry.h`) caps vertices per chunk stream; faces beyond it
   are silently dropped (`render` guards with `continue`).
 - `max_render_objects = 300` caps doors/cubes/portals per frame; `MAX_FLOWERS 10000`.
+- Non-mip textures upload no mip chain and sample `GL_NEAREST` (P.15, `Texture2D_web.mm` `initData`).
+  A texture that sets a mip filter must be loaded with mips, or it samples an incomplete texture
+  and draws black (the UI icon atlas, `GLWidgets.mm` `iconAtlas()`, did until 2026-10-14).
 - Disabled experiments you may see: occlusion queries (`isTesting`), distance-based
   ZFAR throttling by FPS, face merging.
 
@@ -421,7 +442,7 @@ time becomes an upper bound that includes its own GPU work.
   above) that `realloc` to fit, so this is no longer a stack-overflow risk.
 - GL state leaks easily: every pass assumes the previous one restored texture-matrix
   scale, fog, blend, and client arrays. Match every `glScalef` on `GL_TEXTURE` with
-  its inverse (the code does this manually, e.g. `Terrain.mm:3299`).
+  its inverse (the code does this manually: the `glScalef(1,(float)ATLAS_TILES,1)` pairs in `Terrain::render`).
 - `glDrawElements` with a stale `elementBuffer` after buffer deletion order changes
   crashes on device but often works in simulator.
 
@@ -429,7 +450,7 @@ time becomes an upper bound that includes its own GPU work.
 - **Safe:** colors/shade tables, fog parameters, adding a new object batch modeled on
   the flower/portal loops, atlas layout changes (update `getBlockTexShort` +
   `blockTypeFaces`; growing the strip past `ATLAS_TILES` means changing that one constant and
-  regenerating both PNGs with `web/tools/atlas-d2t.py`'s pattern).
+  regenerating both PNGs with `port/tools/atlas-d2t.py`'s pattern).
 - **Caution:** `rebuild2` (counting and fill passes must stay exactly consistent or
   you'll write past `verticesbg`), bucket/`face_idx` bookkeeping, `prepareVBO`
   swap ordering, anything shared with the old threading design.

@@ -1,7 +1,7 @@
 # The `.emod` World Container (format version 1)
 
 **Normative.** This file is the specification. The reference implementation is
-[`web/tools/emod.py`](../web/tools/emod.py). If the two disagree, this file wins and the tool has
+[`port/tools/emod.py`](../port/tools/emod.py). If the two disagree, this file wins and the tool has
 a bug. Status: specified and tool-verified (S.1, 2026-10-09); **implemented in the engine as
 `Classes/EdenWorldStore.{h,cpp}`** (S.3, 2026-10-09: the store and the forward-only converter,
 byte-identical to `emod.py` on every target tested), and **played by the engine since S.4**
@@ -23,7 +23,7 @@ nothing in them has to be understood to round-trip it.
 
 **Naming.** The extension is `.emod`, never `.eden`: the shipped game lists every `*.eden` and
 would run its 1.x in-place conversion on this file, destroying it. Code symbols stay Eden
-(`EdenWorldStore`, `eden_*`). The bundled map in this container will be `Eden.emod` (S.6).
+(`EdenWorldStore`, `eden_*`). The bundled map in this container is `Eden.emod` (S.6, baked by `emod.py bake-default`).
 
 ## Conventions
 
@@ -187,8 +187,7 @@ Pairing a `.emod` with its source `.eden` (S.5) compares `source_size` and the S
 A **batch** is one save: records that share one `seq`, followed by a `COMMIT` carrying that `seq`.
 - The first batch has seq 1, and each later batch has seq = previous + 1.
 - **Every record of the batch is written before its COMMIT**, the whole batch is flushed, and then
-  the file is `fsync`ed (`FlushFileBuffers` on Windows; a no-op on web, whose ordered OPFS mirror
-  provides the ordering).
+  the file is `fsync`ed (`FlushFileBuffers` on Windows).
 - **The next batch starts only after that `fsync` returns.** Only the last batch in a file can
   therefore be torn by a crash or power loss; the reading rules below rely on it.
 
@@ -401,13 +400,13 @@ specified.
   and no trailer. Prune keeps 158 of 250 signs, all in-region, and the trailer parses. `emod.py`
   converts and verifies every output.
 - BlockmapWIP 64z → NewDawn256z → Legacy64z is byte-identical to the source.
-- W256 (Diane, 266 MB `.eden`) from its 1 MB `.emod` as a streamed `.eden.gz` in wasm: 1.13 MB live
+- W256 (Diane, 266 MB `.eden`) from its 1 MB `.emod` as a streamed `.eden.gz` (measured in the retired wasm build): 1.13 MB live
   allocation peak, and the inflated output is the original's SHA-256.
 - Full record: `WORKING/s5-results-2026-10-10.md`.
 
 ## Verified (S.4, 2026-10-09) — the engine
 - `--headless --stage1` new world as `.emod` (values before B.5b-1a re-recorded them): `geom c26fa4fd2a5b2660 / full 49b71a4e16afb125` (64z) and
-  `b19d3e33a8717c60` (256z), identical to `.eden`.
+  `b19d3e33a8717c60` (256z), identical to `.eden`. Today's pins are in `.github/scripts/check-stage1.py`.
 - Real worlds, the same checksum loaded from the `.eden`, from the engine's own conversion, and from
   the `.emod` reloaded: Diane (256z v5), alpinecraft (v2 256z + signs), CanvasXEN0, BlockmapWIP.
   The engine's conversion is byte-identical to `emod.py convert` (alpinecraft, Diane).
@@ -417,9 +416,9 @@ specified.
 
 ## Verified (S.3, 2026-10-09)
 
-Results: `WORKING/archive/s3-results-2026-10-09.md`. `eden_native --emod-selftest` and
-`web/tools/headless-emod-store-test.js` (wasm) run the same gates over the checked-in pack
-`web/tools/fixtures/emod/`, which `emod.py fixtures-pack` writes:
+Results: `WORKING/archive/s3-results-2026-10-09.md`. `eden_native --emod-selftest` (every native target, CI)
+runs the gates over the checked-in pack
+`port/tools/fixtures/emod/`, which `emod.py fixtures-pack` writes:
 - every S.1 fixture is stream-converted to emod.py's exact bytes (SHA-256), and emod.py's
   two-batch, zlib and raw files read back to emod.py's state;
 - crash injection at every byte of a batch, killed prefix and zero-filled: always the old or the new

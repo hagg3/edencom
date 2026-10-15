@@ -26,7 +26,7 @@ typedef struct{
 #define NUM_PROP 5
 
 // Phase N Stage 2.5: the GL settings screen is a generic list over the shared kSettings[] table
-// (web/src/seam/Settings_web.mm), reached through eden_settings_* accessors — see SettingsMenu.mm.
+// (port/src/seam/Settings_web.mm), reached through eden_settings_* accessors — see SettingsMenu.mm.
 // Stage 5.4 reskinned it onto the GL widget kit (Classes/GLWidgets.h).
 // `properties[]` and load()/save()/getNewWorldName() are untouched: the engine-visible meaning of
 // the five engine-backed toggles and the NSUserDefaults round-trip still live there, and

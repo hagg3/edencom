@@ -40,7 +40,8 @@ extern bool LOW_GRAPHICS;
 
 extern const int blockTypeFaces[NUM_BLOCKS+1][6];
 extern const GLubyte blockColor[NUM_BLOCKS+1][3];
-extern const int blockinfo[NUM_BLOCKS+1];
+// non-const since H.8: Terrain.mm toggles IS_FLAMMABLE on ice/vine at runtime
+extern int blockinfo[NUM_BLOCKS+1];
 
 
 

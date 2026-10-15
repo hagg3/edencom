@@ -1,4 +1,4 @@
-// main_native.h/.cpp — native twin of web/src/seam/main_web.{h,cpp} (Phase N Stage 1).
+// main_native.h/.cpp — native twin of web-port-final:web/src/seam/main_web.{h,cpp} (Phase N Stage 1).
 //
 // Preserves the original split rather than collapsing it into the entry point: this is "what the
 // repo-root main.m used to orchestrate" (construct the app-delegate-equivalent and hand control

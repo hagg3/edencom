@@ -3,7 +3,7 @@
 //
 // WHY THIS FILE EXISTS, AND WHAT ITS ABSENCE COST. The engine's point space is DERIVED — from a
 // profile (desktop/touch), a UI scale, and the shape of the box it is being drawn into — by
-// web/src/seam/DisplayProfile_web.mm, which both targets compile. That file needs one input from
+// port/src/seam/DisplayProfile_web.mm, which both targets compile. That file needs one input from
 // the host: `eden_display_set_viewport(w, h)`, "here is the box you have". **No native code ever
 // called it.** Its own header says the call is load-bearing and must happen before the view is
 // created; the desktop legs got away with it for three stages because their default window is

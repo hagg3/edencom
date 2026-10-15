@@ -43,14 +43,14 @@ const char* (*eden_documents_root_hook)(void) = NULL;
 
 //#import "TestFlight.h"
 
-// Web port hook (web/src/seam/LoadFailure_web.mm): reports a corrupt/truncated save to the
+// Web port hook (port/src/seam/LoadFailure_web.mm): reports a corrupt/truncated save to the
 // browser so it can offer a recovery dialog instead of silently reading garbage (perf-audit C4's
 // still-open "load-failure recovery UI" item). Plain cross-TU C function call, NOT a --wrap --
 // there is no existing call site to intercept, this is a new one loadWorld() makes directly. Only
 // linked when the web seam sources are built; a from-scratch iOS build would need its own stub.
 extern "C" void eden_report_load_failure(const char* world_file_name, const char* reason);
 
-// Web port hook (web/src/seam/Menu_web.mm): the DOM New World screen's height picker parks its
+// Web port hook (port/src/seam/Menu_web.mm): the DOM New World screen's height picker parks its
 // choice here the same way it already does for flat/normal (eden_menu_take_pending_world_type),
 // so probeWorldHeight() below can answer something other than the 64z default for a world that
 // doesn't exist yet. "Take" semantics: one-shot, -1 means nothing pending. Only linked when the
@@ -198,7 +198,7 @@ FileManager::FileManager(){
 	// headless suites died inside a later FileManager::readDirectory() as a bare wasm "function
 	// signature mismatch" with nothing naming NSString, i.e. `documents` had been freed under it.
 	// The shim's array is deliberately immortal for exactly this pointer (see the comment in
-	// web/src/shim/foundation/NSFileManager.mm); a shim-autoreleased string plus a retain is not
+	// port/src/shim/foundation/NSFileManager.mm); a shim-autoreleased string plus a retain is not
 	// the same thing. So web keeps the path it already had, and only a host that installs the hook
 	// — native, where this is real Foundation and real refcounting — takes the other branch.
 	if (eden_documents_root_hook) {
@@ -1484,7 +1484,7 @@ int FileManager::probeWorldHeight(NSString* name,BOOL fromArchive){
 
 // ---- 256z Stage 3 item 5: in-app "Convert to 64z" (Settings -> Storage tab) ----
 //
-// A from-scratch C++ port of web/tools/eden-convert.js's `analyseAndConvertTo64` (Stage 1), not a
+// A from-scratch C++ port of port/tools/eden-convert.js's `analyseAndConvertTo64` (Stage 1), not a
 // call into it -- that tool is a standalone Node script (fs.readSync/writeSync over a plain fd)
 // with no wasm/engine dependency, which is exactly what makes it independently trustworthy as a
 // recovery/authoring tool outside the browser. This function is the SAME algorithm restated over
@@ -1638,6 +1638,10 @@ ConvertTo64Report FileManager::convertWorldTo64(NSString* name){
     // yet (just removed above), so its eager backup-before-overwrite is a no-op, whereas the
     // Updating variant's DEFERRED backup would fire on our first write and leave a stray
     // "<temp_name>.bak" of the empty scratch file behind.
+    // Created empty first: Apple's Foundation (macOS/iOS) returns nil from fileHandleForWritingAtPath:
+    // for a file that does not exist; only the port's shim created it, so on Apple targets this
+    // always failed with "could not create scratch file" (W.2, --convert64-selftest).
+    [nsfm createFileAtPath:temp_name contents:nil attributes:nil];
     NSFileHandle* wh=[NSFileHandle fileHandleForWritingAtPath:temp_name];
     if(wh==NULL){
         [fh closeFile];
@@ -2412,7 +2416,7 @@ BOOL FileManager::conversionActive(){return convJob!=NULL;}
 // ---- S.5e: the height a conversion writes ---------------------------------------------------------
 // Every `.emod` is 256z by default (the user, 2026-10-10; plan §10 Q9): the Settings toggle decides,
 // and the prompt below lets the player keep one world 64z. One prompt at a time, for one source.
-extern "C" int eden_get_upgrade_256z(void);   // web/src/seam/Settings_web.mm
+extern "C" int eden_get_upgrade_256z(void);   // port/src/seam/Settings_web.mm
 static NSString* heightAskName=nil;   // the source the prompt is (or was) about
 static int heightChoice=-3;           // -3 not asked, -2 waiting, -1 cancelled, 0 keep, 1 upgrade
 static void clearHeightChoice(){[heightAskName release];heightAskName=nil;heightChoice=-3;}

@@ -79,7 +79,7 @@ private:
 };
 
 // The network seam (ROADMAP 5.9). Native: native/src/seam/Net_native.cpp. Web: stubs in
-// web/src/seam/seam_link_stubs.mm reporting no network. A fetch never blocks: it starts a job and
+// web-port-final:web/src/seam/seam_link_stubs.mm reporting no network. A fetch never blocks: it starts a job and
 // the caller polls it every frame.
 extern "C" {
 int  eden_net_available(void);

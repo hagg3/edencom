@@ -1,8 +1,8 @@
-// HeapProbe_native.cpp — native twin of web/src/seam/HeapProbe_web.mm (Phase N Stage 1,
+// HeapProbe_native.cpp — native twin of web-port-final:web/src/seam/HeapProbe_web.mm (Phase N Stage 1,
 // WORKING/native-migration-plan-2026-09-04.md). Pure measurement, no behaviour change.
 //
 // Stage 1's criterion 3 is "report peak RSS at menu / 64z / 256z, in the same three phases as
-// web/tools/headless-heap-ceiling-probe.js, so the figures are directly comparable" — and the
+// web-port-final:web/tools/headless-heap-ceiling-probe.js, so the figures are directly comparable" — and the
 // number that decides the plan's kill criterion (>250 MB at 64z → stop and re-plan) has to come
 // from the process itself, because there is no browser here to ask.
 //

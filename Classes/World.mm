@@ -24,12 +24,12 @@
 
 #import "VKeyboard.h"
 
-// Web port hook (web/src/seam/LoadFailure_web.mm), same cross-TU-call convention FileManager.mm
+// Web port hook (port/src/seam/LoadFailure_web.mm), same cross-TU-call convention FileManager.mm
 // already uses for eden_report_load_failure -- see the doneLoading==2 check in World::loadWorld
 // below for why the engine's own state machine now consults it. Only linked when the web seam
 // sources are built; a from-scratch iOS build would need its own stub.
 extern "C" int eden_load_failed(void);
-// Web port hook (web/src/seam/DisplayProfile_web.mm) — ROADMAP Phase M / M5.3. Non-zero when the
+// Web port hook (port/src/seam/DisplayProfile_web.mm) — ROADMAP Phase M / M5.3. Non-zero when the
 // page has flagged this device as too RAM-poor for the port's 256z ("New Dawn") worlds. loadWorld
 // below refuses such a world through the same eden_report_load_failure() channel a corrupt save
 // uses, so the JS recovery dialog can point the player at Settings -> Storage -> "Convert to 64z".

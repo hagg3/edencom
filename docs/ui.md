@@ -4,10 +4,13 @@
 Every pixel of UI — HUD, menus, world browser, sharing screens, keyboard — is drawn
 with OpenGL by the game itself. There is **no UIKit UI** beyond the GL view (and
 `UIAlertView`-era code in `Alert.mm`). Text is rendered by rasterizing strings through
-`Texture2D`'s string initializer and caching the textures.
+`Texture2D`'s string initializer and caching the textures. On the port the GL UI is the
+*only* UI on every target (the retired web build drew DOM screens; see
+[port/docs/ui.md](../port/docs/ui.md) for that history).
 
 ## Building blocks
-- `Texture2D` (`Classes/Texture2D.mm`) — Apple's classic texture class, extended with
+- `Texture2D` (`Classes/Texture2D.mm`; on the port seam-excluded for `port/src/seam/Texture2D_web.mm`,
+  which rasterises through the `eden_text_raster_*` seam) — Apple's classic texture class, extended with
   string rendering and `drawSky`/`drawInRect` helpers. UI text = one texture per
   string (regenerated when the string changes — expensive if done per frame).
 - `Button` (struct in `Texture2D.h` area; used via `inbox2/inbox3` in `Util.mm`) —
@@ -16,7 +19,7 @@ with OpenGL by the game itself. There is **no UIKit UI** beyond the GL view (and
   (`setStatus(text, seconds)`, `clear()`; `seconds >= 1000` never expires, so the engine's `999`
   messages do, after ~16 min); instances owned by Hud, Menu, SharedList.
   **Modified from stock (N.5.11, 2026-10-10): Hud's bar calls `useToast()` and draws as
-  `GLW::Toast`** (GLWidgets.h, `.eden-toast` in eden-ui.css): a dark 85% box with the 2u grey
+  `GLW::Toast`** (GLWidgets.h; the design system's `.eden-toast`): a dark 85% box with the 2u grey
   keyline, white Jersey 10 text, shrink-wrapped to the text and centred `du(16)` above the bottom
   edge, 0.2 s fade in/out. Every `hud->sb->setStatus()` ("World Saved", "Loading World 47%") is
   therefore a toast, and that is the call a new in-game message makes. The stock line was a
@@ -24,7 +27,7 @@ with OpenGL by the game itself. There is **no UIKit UI** beyond the GL view (and
   twice at opposite ends of the screen. `pos` and the alignment argument are ignored in toast
   mode; the Menu/SharedList/ShareMenu bars are stock. The pill's width comes from the raster
   seam's `eden_text_raster_measure()` (native: the stb_truetype advance loop the rasteriser
-  itself uses; web: canvas `measureText`; 0 headless, where `GLW::Label::width()` falls back to
+  itself uses; 0 headless, where `GLW::Label::width()` falls back to
   the `kAvgGlyph` estimate). `--shot`'s `hud-status` is the artefact; `--ui-selftest` covers the
   lifetime rules.
 - **Warp cover (P.5, 2026-10-13).** `Hud::awarpHome` arms `delayedtimer=2`/`delayedaction=6`; while it counts down
@@ -34,9 +37,10 @@ with OpenGL by the game itself. There is **no UIKit UI** beyond the GL view (and
 - `VKeyboard` (`Classes/VKeyboard.mm`) — custom GL keyboard for world names and
   search (the app predates reliable transparent UIKit overlays on GL).
 - `Alert` (`Classes/Alert.mm`) — the original iOS `UIAlertView` modals (delete world, warp-home
-  menu, pick-world-type). **Excluded on web and native**; each host supplies `showAlert*`.
+  menu, pick-world-type). **Seam-excluded on every port target**; `native/src/seam/seam_link_stubs_native.mm`
+  supplies the `showAlert*` functions over `GLDialog` (below).
 - `GLWidgets` (`Classes/GLWidgets.{h,mm}`) — **added Phase N Stage 5.1.** The engine-side GL
-  widget kit: `web/docs/design-system.md` transcribed into `Graphics::drawRect` fills. It owns the
+  widget kit: `port/docs/design-system.md` transcribed into `Graphics::drawRect` fills. It owns the
   `GLW::u()` scale unit (the CSS `--u`, but against POINT space), the palette, the three bevel
   mechanics (`BEVEL_RAISED`/`SUNKEN`/`PRESSED`) plus the two surfaces (`WINDOW`/`CONTENT`), a
   word-wrapping `GLW::Label`, `GLW::Button`, and since Stage 5.4 / N.4.5 (2026-10-04) the value
@@ -49,15 +53,16 @@ with OpenGL by the game itself. There is **no UIKit UI** beyond the GL view (and
   FBO path — so a half-visible row would draw outside its box), `Button::setTone()` (positive /
   danger faces) and `Button::setEnabled()` (solid chrome, grey label, never hits). Wheel notches
   reach a GL list through `eden_ui_take_wheel()` (native counts them only while the mouse is not
-  captured — captured, the wheel is the hotbar's; web returns 0). **Stage 5.9 (2026-10-07) added**
+  captured — captured, the wheel is the hotbar's). **Stage 5.9 (2026-10-07) added**
 `GLW::TabRail` (a horizontal row of equal RAISED tiles, the selected one PRESSED — the design
-system's "pressed == selected"; the web's `.eden-tabrail` is the settings screen's vertical icon
-rail, this is its few-words sibling) and `GLW::progressBar()` (`.eden-progress`: SUNKEN track, lime
+system's "pressed == selected"; the design system's `.eden-tabrail` is the vertical icon rail
+(`GLW::IconRail`, below), this is its few-words sibling) and `GLW::progressBar()` (`.eden-progress`: SUNKEN track, lime
 12% fill; a negative fraction draws an indeterminate block). **Stage U.1 (2026-10-12) added** the
 pieces the settings / New World rebuild (U.3, U.5) is laid out from, all drawn on the `kit` page of
 `--shot`: `GLW::icon(id, rect, colour)` (one cell of the Lucide atlas `media/ui/ui_icons.png`, ids in
-generated `Classes/UIIcons.h`, white art tinted at draw time; loaded on first use, LINEAR + clamped
-unlike the engine's NEAREST art), `GLW::IconRail` (the vertical `.eden-tabrail`: 64u RAISED icon
+generated `Classes/UIIcons.h`, white art tinted at draw time; loaded on first use **with mips** — since
+P.15 a non-mip load builds no chain, and its `LINEAR_MIPMAP_LINEAR` filter then sampled an incomplete
+texture: every icon a black square until U.5 caught it — LINEAR + clamped unlike the engine's NEAREST art), `GLW::IconRail` (the vertical `.eden-tabrail`: 64u RAISED icon
 tiles in a 72u rail, selected/held PRESSED, disabled tiles muted and inert, no count cap — it scrolls
 by whole tiles of its own when they overflow, with no visible bar), the toggle restyled to the
 reference (heavy 2u gray-800 keyline, gray-500 off half, `Toggle::designW()/designH()` = 104×34u) with
@@ -74,8 +79,8 @@ fit, a row taller than the view still shows; `rowOffset()`; content drags walk t
   face reaches the raster through a sticky seam switch, `eden_text_raster_set_face()`, which
   `Label` sets around its own rasters and puts back to body, so `statusbar`/`SharedList` text is
   unchanged. Native loads `Jersey10-Regular.ttf` from the bundle (linked there by
-  `native/CMakeLists.txt` from `web/public/assets/fonts/`) and falls back to the body face if it
-  is missing; web selects `"Jersey 10"` in the canvas raster. **Density (2026-10-05):**
+  `native/CMakeLists.txt` from `media/fonts/`) and falls back to the body face if it
+  is missing. **Density (2026-10-05):**
   `GLW::touchFloor()` is the 44pt floor on the touch profile and 0 otherwise, and the floor
   raises HIT BOXES, not art — `Button`/`Toggle`/`Slider`/`Stepper` take `setHitRect()` — so a
   desktop screen lays rows out at ~30u and a touch one at 44pt. **It applies the `SCALE_*` corrections itself**, so
@@ -87,7 +92,7 @@ fit, a row taller than the view still shows; `rowOffset()`; content drags walk t
     unit, so every label was magnified 1.8x through `GL_MAG_FILTER NEAREST` (doubled, uneven pixels;
     the "dialogs are slightly blurry" report). `GLW::Label`, `SettingsMenu`'s `sm_text` and `statusbar` (the IS_IPAD branch) now build
     through `Texture2D(string, dims, align, font, density)` with `eden_ui_raster_density()`
-    (`web/src/seam/DisplayProfile_web.mm`: drawable height / ortho height, clamped 1–4, **1 headless**
+    (`port/src/seam/DisplayProfile_web.mm`: drawable height / ortho height, clamped 1–4, **1 headless**
     so no hash moves). The texture remembers its `_density`; `drawText` and `drawAtPoint` divide the quad by it
     (`drawText` also snaps the origin to a device pixel), so the layout in ortho units is unchanged. Any other
     `new Texture2D(NSString*, …)` site (SharedList, stubbed on native) still rasterises at 1 texel/unit and
@@ -107,15 +112,15 @@ fit, a row taller than the view still shows; `rowOffset()`; content drags walk t
   its own full-width row, so the order the seam passes buttons in is a layout decision. `World::update` routes input to it and freezes the screen underneath while
   `GLDialog::active()`; `World::render`'s tail draws it on top. The native seam
   (`native/src/seam/seam_link_stubs_native.mm`) points `showAlertWorldType()` (a chained
-  type→height pair), `showAlertWarpHome()` and, since 5.6, `showAlertDeleteConfirm()` at it.
-  `GLDialog::buttonRect(j, &r)` (5.6) tells a harness where button j is. **Web never activates it** — its
-  `seam_link_stubs.mm` keeps the DOM overlays — so `GLDialog::active()` is permanently false there.
+  type→height pair; since U.5 only for a world not made through `NewWorldMenu`, which parks both answers), `showAlertWarpHome()`, since 5.6 `showAlertDeleteConfirm()`, and since S.5 `showAlertDeleteOriginal()`
+  (Share › Remove original) and `showAlertConvertHeight()` (convert-on-play's Upgrade to 256 · Keep 64 · Cancel) at it.
+  `GLDialog::buttonRect(j, &r)` (5.6) tells a harness where button j is.
   `eden_ui_wants_cursor()` returns true while a `GLDialog` is up, so the native mouse-capture
   predicate releases the pointer for it — needed because `Hud::handlePickMenu` clears `inmenu` in
   the same breath as `showAlertWarpHome()`, so the "in a menu" term alone would not cover it.
   **`GLDialog::prompt()` (N.4.5)** is the same dialog with a `GLW::TextField` above the buttons,
   focused on show: Return picks button 0, Escape the LAST one, and the callback gets the text.
-  Callers check `GLDialog::textEntryAvailable()` first (false on web). `GLDialog::dismiss()` closes
+  Callers check `GLDialog::textEntryAvailable()` first (true on every native target). `GLDialog::dismiss()` closes
   without a callback — the harness's way out of a modal.
 - `KeybindsMenu` (`Classes/KeybindsMenu.{h,mm}`) — **added Phase N Stage 5.3; since U.4 (2026-10-12)
   the CONTENT of `SettingsMenu`'s Keys tab, not a screen.** Every rebindable action against its current key,
@@ -125,9 +130,7 @@ fit, a row taller than the view still shows; `rowOffset()`; content drags walk t
   Settings" · **Defaults**), the rail, the touch claim, the wheel and the drag/scrollbar gestures, and forwards
   row taps (`down()`/`up()`: pressed on the down edge, a capture armed on release, so a drag that starts on a
   button still scrolls). While a capture is armed the whole screen is inert and any tap cancels it; the
-  "Press a key" modal (`renderCapture`) is a second full-screen scrim. That nesting is load-bearing: web
-  `--wrap`s `SettingsMenu::update/render` to no-ops, so this cannot draw or take input on web, where the DOM
-  Keys tab is authoritative. `SettingsMenu::showKeybinds()` selects the tab; `keyRect(action, &r)` /
+  "Press a key" modal (`renderCapture`) is a second full-screen scrim. `SettingsMenu::showKeybinds()` selects the tab; `keyRect(action, &r)` /
   `defaultsRect()` are `--ui-selftest`'s handles. The paged standalone screen (its own Back, pager,
   `fit()`) is gone, and so is the `--shot` `-keybinds` image (it is `-settings-keys`).
   - **The data is not here.** Bindings live in the shared keybind model — see the KEYBINDS section
@@ -141,10 +144,9 @@ fit, a row taller than the view still shows; `rowOffset()`; content drags walk t
   declared at the bottom of `GLWidgets.h`: native implements them in
   `native/src/seam/Input_native.cpp` over `SDL_StartTextInput` (which raises the **system keyboard
   on iOS**) and `SDL_EVENT_TEXT_INPUT`, and **while a field has focus every key belongs to it** —
-  Escape cancels the edit instead of opening the pause menu, "w" does not walk. Web stubs them to
-  "unavailable" (`seam_link_stubs.mm`), because the DOM owns text entry until Stage 5.10. Three
-  things to know: **the caret is a glyph** (`"name|"`, rasterised with the text, because the raster
-  seam has no measure call and a drawn caret would drift); editing is append/backspace only,
+  Escape cancels the edit instead of opening the pause menu, "w" does not walk. Three
+  things to know: **the caret is a glyph** (`"name|"`, rasterised with the text — written before the
+  raster seam had `eden_text_raster_measure`, when a drawn caret would have drifted); editing is append/backspace only,
   UTF-8-aware and capped in **bytes**; and the platform ending input on its own (the iOS keyboard
   dismissed) is `EV_BLURRED`, distinct from Return (`EV_COMMIT`) and Escape (`EV_CANCEL`).
   `GLDialog::prompt()` is the dialog form of it. **Keyboard avoidance (T.B1, 2026-10-08):** the only
@@ -170,8 +172,8 @@ fit, a row taller than the view still shows; `rowOffset()`; content drags walk t
 > **MODIFIED FROM STOCK (2026-07-31) — the point space is no longer a device constant.**
 > `SCREEN_WIDTH`/`SCREEN_HEIGHT` are still the layout coordinate system every rect below is written
 > in, and every number in this file is still correct *at* 568×320. What changed is that 568×320 is
-> now one value among many: the web port derives the point space from the real window aspect and a
-> UI-scale setting (`web/src/seam/DisplayProfile_web.mm`, audit rows D1/D4), so the same rect
+> now one value among many: the port derives the point space from the real window aspect and a
+> UI-scale setting (`port/src/seam/DisplayProfile_web.mm`, audit rows D1/D4; first built for the web port), so the same rect
 > arithmetic runs at, say, 1024×640 on a desktop window. Three engine-side consequences:
 >
 > - **The rect math moved out of the constructors.** `Hud::layoutForScreen()` and
@@ -203,15 +205,15 @@ fit, a row taller than the view still shows; `rowOffset()`; content drags walk t
 >   ground tiles (three if widescreen) and two tree pairs. Same output at both stock widths; covers
 >   whatever `SCREEN_WIDTH` is.
 >
-> `tools/headless-display-profile-test.js` in the web port pins the stock 568×320 rects byte-exact
-> and the idempotence property. iOS behaviour is unchanged: that target is not built any more, and
-> at 568×320 every number here is what it always was.
+> native `--display-selftest` (W.2 c; was the web `headless-display-profile-test.js`) pins the stock 568×320 rects byte-exact
+> and the idempotence property. At 568×320 every number here is what it always was (the stock iOS
+> shell is not built; the native iOS target goes through the same display profile).
 
-## HUD (`Classes/Hud.mm`, 2246 lines)
+## HUD (`Classes/Hud.mm`, ~2,400 lines)
 
 State machine over `mode`:
 `MODE_CAMERA(0)`, `MODE_PICK_BLOCK(1)`, `MODE_BUILD(2)`, `MODE_MINE(3)`,
-`MODE_BURN(4)`, `MODE_PAINT(5)`, `MODE_PICK_COLOR(6)` (`Hud.h:22-29`).
+`MODE_BURN(4)`, `MODE_PAINT(5)`, `MODE_PICK_COLOR(6)` (the `MODE_*` defines in `Hud.h`).
 
 Responsibilities:
 - Mode buttons (build/mine/burn/paint/camera), jump button, joystick or lefty D-pad
@@ -223,15 +225,15 @@ Responsibilities:
   icons on the left of each button) and sets each `rt*` text rect equal to its button, so the
   stock touch-down claim (`inbox3`) and release (`handlePickMenu` → `inbox2`) paths are unchanged.
   Two new rects: `rresume` (closes the menu) and `rsettings` (opens the GL `SettingsMenu` as an
-  in-game modal; only where `eden_gl_settings_available()` — never on web, where `SettingsMenu`
-  is `--wrap`'d away and there would be no way out). The button gap is kept above 8pt because
+  in-game modal; only where `eden_gl_settings_available()`, which answers 1 on every live target —
+  the retired web build answered 0). The button gap is kept above 8pt because
   `inbox2`/`inbox3` add 4pt of slop and `handlePickMenu` runs every action whose rect matches.
   The panel no longer fades with `at1` (the kit snaps). **MODIFIED FROM STOCK** (2026-07-29): the
   `renderMenuScreen()` call in `Hud::render` is now additionally gated on
   `eden_hud_draw_menu_screen_hook` (`Hud.h`), a host hook whose default `NULL` means
-  "always draw" — so on iOS this is stock behaviour exactly. The web port installs a hook
-  that returns false unless the player opted into the legacy GL UI, because it draws its
-  own DOM in-game menu in this panel's place; see [web/docs/ui.md](../web/docs/ui.md).
+  "always draw". `Menu_web.mm` installs a hook (`legacy_ui`) that was false on the web build unless
+  the player chose the legacy GL UI (the DOM drew its own menu there); native calls
+  `eden_ui_force_legacy(1)` at startup, so it is always true and the panel always draws.
   Note that only the PANEL is suppressible — the corner open-menu icon always draws, since
   it is what opens the thing.
 - **Block picker** (`renderBlockScreen` / `handlePickBlock`): `NUM_DISPLAY_BLOCKS 35`
@@ -243,8 +245,7 @@ Responsibilities:
   guards every table read (`picker_bt()` for `hudBlocksMap`), they draw as captioned cells, and
   `Hud::pickerToolEnabled()` keeps a tool veiled (a tap is consumed, picks nothing) until its row
   turns it on. **SIGN is on since D.3c (2026-10-10) wherever GL text entry exists**
-  (`GLDialog::textEntryAvailable()` — native and iOS; web stays veiled until 5.9's web text-input
-  seam); **CMD since D.4b**, under the same rule. Both cells (and the HUD's current-block button
+  (`GLDialog::textEntryAvailable()` — every native target, iOS included); **CMD since D.4b**, under the same rule. Both cells (and the HUD's current-block button
   with a tool armed) are captioned in the **body** face without the chrome shadow: the display
   face at 12pt with its 1u white shadow smudged "SIGN" (the user, D.4b). Picking an enabled tool goes through `Hud::update`'s ordinary release
   path, so `mode` = `MODE_BUILD` and `blocktype` = the sentinel; `Player::processInput` hands a
@@ -282,9 +283,8 @@ Responsibilities:
   `blockBounds[]` are byte-identical. The window keeps page 1's size on both pages, grown over the
   strip; page dots sit between the arrows. `Hud::pickerPageStep(delta)` (wraps) is the one entry
   point: the arrows, native `[` `]` (`Input_native.cpp`, fixed keys, not keybind rows) and the
-  wheel (`eden_ui_take_wheel()` in `Hud::update`), web `[` `]` + wheel (`eden-input.js` →
-  `eden_picker_page_step`, which answers 0 when the picker is closed so the key/wheel keeps its
-  usual meaning). Reopening the picker lands on the current block's page. A page turn keeps a
+  wheel (`eden_ui_take_wheel()` in `Hud::update`). The keys go through `eden_picker_page_step`
+  (`Input_web.mm`), which answers 0 when the picker is closed so the key keeps its usual meaning. Reopening the picker lands on the current block's page. A page turn keeps a
   pending Block-TNT second pick; no page-2 cell has a BT variant, so all of page 2 is veiled during it.
 - **Color picker** (`renderColorPickScreen` / `handlePickColor`): the 54-color grid +
   "no color"; sets `block_paintcolor`.
@@ -298,7 +298,7 @@ Responsibilities:
   in lime and veils the rest grey instead of the `*_BORDER_ACTIVE` glow and a 50% fade. Ramps keep
   their triangle face. Both draw only while their mode is open (the kit snaps; `at2`/`at3` still
   count but no longer fade anything). Also generates `colorTable[256]`
-  (`genColorTable`, `Hud.mm:151`) — a **global** consumed by the mesher; the HUD owns
+  (`Hud::genColorTable`) — a **global** consumed by the mesher; the HUD owns
   the game's color palette, an inversion worth knowing about.
 - `MODE_CAMERA`: hides UI, screenshot capture (`take_screenshot` →
   glReadPixels → PNG in Documents + MD5 hash → `FileManager::setImageHash`).
@@ -321,7 +321,7 @@ them — the ordering in `World::update` is the arbitration.
   tap again to load. Create (with `VKeyboard` name entry; flat-vs-default via `a_genFlat`), delete
   (confirm via `Alert`), rename.
   **Stage 5.6 (2026-10-06, modified from stock): the screen is `GLWidgets`.** Under the logo (art,
-  kept) a WINDOW holds a titlebar (Settings · "Worlds" · New), the list as `GLW::ListRow`s in a
+  kept) a WINDOW holds a titlebar (Settings · "Worlds" · New — which since U.5 opens `NewWorldMenu`, below), the list as `GLW::ListRow`s in a
   row-snapped `GLW::ScrollView` (drag, scrollbar, wheel) and an action bar (Delete · Rename ·
   Play, Play in the positive tone); `sbar`'s message is drawn by the kit under the window (in-game
   chrome's light-on-dark), and `fnbar`'s job — naming the selection — is the selected row's.
@@ -329,7 +329,7 @@ them — the ordering in `World::update` is the arbitration.
   touchFloor())`, at least four, at most what fits, and the window shrink-wraps them. **The state
   and the actions are stock:** `selected_world`, tap-the-selected-row-to-play, the create branch,
   `loading`'s ladder in `render()`, `showAlertDeleteConfirm` → `a_deleteConfirm`, `showsettings`
-  — so web's `Menu_web.mm` accessors are unaffected. The stock rects (`rect_options`,
+  — so the `Menu_web.mm` seam accessors are unaffected. The stock rects (`rect_options`,
   `rect_create`, the arrows …) are still computed by `layoutForScreen()` and nothing reads them.
   **Share** (`kit_share`, beside Rename; **S.5, 2026-10-10**, native only — `WorldShare::offered`)
   opens `Classes/WorldShare.{h,mm}`'s GLDialog chain: **Export** / **Upload** / **Remove original**
@@ -340,30 +340,56 @@ them — the ordering in `World::update` is the arbitration.
   `rect_share`/ShareMenu flow stays unused. `WorldShare::startExport/startUpload/lastResult` skip
   the dialogs for `--browser-selftest`. **Get Worlds is,
   since Stage 5.9 (2026-10-07)**, wherever the host can fetch (`Menu::browserOffered()` =
-  `WorldBrowser::available()`; never on web): a titlebar button beside New (the "Worlds" title
+  `WorldBrowser::available()`, false only with the `NetNone` backend): a titlebar button beside New (the "Worlds" title
   yields when the two would collide) opening `WorldBrowser` — below. `controlRect(name)` (incl.
   `"getworlds"`)/`rowRect(i)` exist for the harness.
   **Native delete actually deletes since 5.6**: its `showAlertDeleteConfirm()` was a no-op ("not
   confirming is the safe default"), so the stock button did nothing at all; it is now a
-  `GLDialog` (Delete · Cancel). Web's stays a no-op (the DOM menu confirms and calls
-  `eden_menu_delete_at`).
+  `GLDialog` (Delete · Cancel).
   **Rename on the port (N.4.5, modified from stock):** a kit `Rename` button in the action bar
-  (`Menu::renameOffered()` — hidden on web, in delete/share mode and while loading) opens
+  (`Menu::renameOffered()` — hidden in delete/share mode and while loading) opens
   `GLDialog::prompt`; its commit is `Menu::renameSelected()`, which trims, rejects an empty name and
-  calls `FileManager::renameWorld()` — an in-place rewrite of `WorldFileHeader::name` (50 bytes,
-  nothing else moves; a never-played world has no file and needs no write).
+  calls `FileManager::renameWorld()` — a new `WORLD_HEADER` record for an `.emod` (an in-place
+  50-byte `WorldFileHeader::name` rewrite for a leftover `.eden`; a never-played world has no file
+  and needs no write).
   **An empty Documents folder means an empty list** — `selected_world` is `NULL` and every
   deref reachable from that state is guarded (`refreshfn`, `activate`, the layout block).
   Stock behaviour was to synthesise one placeholder `WorldNode` so the carousel was never
   empty; that was removed 2026-08-06 because a placeholder is indistinguishable from a saved
   world but has no file behind it, so tapping it lands in `loadWorld()`'s create-a-world branch
   and parks on the Flat/Normal question — which the player reads as "loading forever".
+- **`NewWorldMenu`** (`Classes/NewWorldMenu.{h,mm}`) — **Stage U.5 (2026-10-14), new; modified from
+  stock.** The main menu's **New** opens it (`Menu::openNewWorld()`, `shownewworld`, drawn and updated in
+  front of the menu like Settings and Get Worlds). Stock New added "World N" to the list at once and
+  asked Flat / Normal with a modal when it was first played; the port's native seam added a second modal
+  for the height (S.5e). The screen asks all three up front, on Settings' layout: the shared fixed
+  panel (`GLW::railFrame()`, lifted out of `SettingsMenu::layout` so the two cannot drift), Back · "New
+  *Type* World" · **▶ Play** (positive tone) in the titlebar, a `GLW::IconRail` of world types (Flat ·
+  Normal = `FileManager::genflat`; the first visit opens on Normal, later visits keep the last type and
+  height), and the options as `TwoLineRow`s in a variable-height `ScrollView`: **World name** (a
+  `GLW::TextField`, 48 bytes — `FileManager`'s header writer uses `getCString:maxLength:49`, which counts
+  the terminator; the placeholder is the "World N" a blank name becomes, peeked from
+  `SettingsMenu::world_counter` so Back burns no number) and **Height** (New Dawn 256 · Classic 64, a
+  pressed-is-selected pair, 256 first and default). The name field takes focus on open under a pointer,
+  never on touch (the system keyboard would cover the screen unasked); a tap on the field (on touch, on
+  its row) focuses it, any other release blurs it; Return in it is Play. **Play** trims the name (blank →
+  `getNewWorldName()`), parks type and height in the one-shot pending seam (`Menu_web.mm`'s
+  `eden_menu_set_pending_world_type/height`), and calls `Menu::startNewWorld(name)` — stock New's
+  create body plus `loading=1` — so the `loading` ladder's `showAlertWorldType()` and
+  `FileManager::probeWorldHeight()` take the parked answers and **no dialog shows**. **Back creates
+  nothing**; **Escape** is `eden_new_world_menu_back()` (`Menu_web.mm`, from `Input_native.cpp`'s menu
+  key) — while the field has focus the text seam gives Escape to the field, so the first one only leaves
+  it. The dialogs stay for a world made any other way (`eden_menu_create_world()`, a harness).
+  **Room for Stage H:** types and options are tables (`kTypes[]`, `kRows[]` with a per-type mask), so the
+  seeded generator's seed/caves/presets are rows and a third generator is a tile; a new row KIND (a
+  toggle, a stepper) is the only thing that owes code. Harness: `controlRect("back"|"play"|"name")`,
+  `typeRect(t)`, `choiceRect(key, option, &r)`, `choice(key)`, `text(key)`, `showType(t)`.
 - **`Menu_background`** — the animated menu backdrop.
 - **`SettingsMenu`** — the GL settings screen. `load()`/`save()`/`getNewWorldName()` and the
   5-slot `properties[]` array still own the engine-backed toggles (Health/Autojump/Creatures/
   Music/Sound) and their `NSUserDefaults` round-trip. **`render()`/`update()` were rewritten in
   Phase N Stage 2.5** into a generic paginated list over the shared settings table
-  (`web/src/seam/Settings_web.mm`'s `kSettings[]`, reached via `eden_settings_*` scalar
+  (`port/src/seam/Settings_web.mm`'s `kSettings[]`, reached via `eden_settings_*` scalar
   accessors; U.2 added `eden_settings_hint(i)` and `eden_settings_parent(i)` — the trailing `Setting::parent` key of
   a toggle that mutes the row while off, -1 if none; the schema JSON carries `parent`). U.2 gave every row a hint;
   **U.4 trimmed them** (the user, 2026-10-12: brief, and only where the label does not already say it) — a row
@@ -371,7 +397,8 @@ them — the ordering in `World::update` is the arbitration.
   Interface → Video is a screen-side mapping (U.3): the `group` strings and persistence keys are unchanged.
   **Stage U.3 (2026-10-12) rebuilt the screen on the reference layout** (`WORKING/ui-rework-plan-2026-10-11.md`
   §3) — what this paragraph describes after the history below is the current shape: a **fixed panel** (the
-  783×587u design frame less a 12u margin, centred, the same size on every tab); a titlebar of a shrink-wrapped
+  783×587u design frame less a 12u margin, centred, the same size on every tab; since U.5 computed by the
+  kit's `GLW::railFrame()`, shared with New World); a titlebar of a shrink-wrapped
   Back and "*Tab* Settings" centred on the window; a `GLW::IconRail` of **7 tabs** (Gameplay · Audio · Controls ·
   Keys · Video · Experiments · Saves; `kTabs[]` in the .mm, a tab with no native rows is a disabled tile); the
   tab's rows as `GLW::TwoLineRow`s (title + hint) on one CONTENT surface in a variable-height, row-snapped
@@ -401,10 +428,10 @@ them — the ordering in `World::update` is the arbitration.
   Settings button; `World::update/render` run it as a modal over the frozen world, like
   `GLDialog`), and `resetView()` makes every opening start on page 1 of Settings proper.
   Rows stay hidden and inert until
-  `eden_settings_loaded()`. (Until U.3, `pageCount()/showPage()` were the harness's entry points.) **On web this code does not run**: `Settings_web.mm` `--wrap`s
-  `SettingsMenu::update/render` to no-ops (the DOM panel owns settings there). Rows whose effect
-  is web-only (`dpr_cap`, `ui_scale`, `display_mode`, `display_layout`, `input_mode`,
-  `legacy_menu`) are hidden via `eden_settings_native_hidden()`. `render_scale` was on that list
+  `eden_settings_loaded()`. (Until U.3, `pageCount()/showPage()` were the harness's entry points.) Rows
+  whose effect was web-only (`dpr_cap`, `ui_scale`, `display_mode`, `display_layout`, `input_mode`,
+  `legacy_menu`) are hidden via `eden_settings_native_hidden()` (the retired web build `--wrap`ped this
+  screen away and drew a DOM panel). `render_scale` was on that list
   until N.4.11 (2026-10-04); native now renders the 3D pass at it (see rendering.md, "Scene-pass
   bracket"), so the Video page shows it. **Not on iOS since 2026-10-09 (N.4.12):** the row is hidden and
   `eden_get_render_scale_pct()` returns 100 there.
@@ -413,7 +440,7 @@ them — the ordering in `World::update` is the arbitration.
 - **`WorldBrowser`** (`Classes/WorldBrowser.{h,mm}`, **added Stage 5.9, 2026-10-07**) — "Get
   Worlds" on the kit, replacing `SharedList` on the port targets (where SharedList/ShareUtil are
   seam-excluded NSURLConnection code). One `TabRail` tab per SOURCE: **Archive** (the community's
-  `hagg3.github.io/edenarchive` manifest — the only source the web DOM browser can reach), **Current
+  `hagg3.github.io/edenarchive` manifest), **Current
   server** (`app2`/`files2.edengame.net`) and **Legacy server** (`app`/`files.edengame.net`). The
   servers keep stock's modes as a second rail — Featured (`popularlist.txt`) / Recent
   (`list2.php?start=N&sort=2`, paged by **More**) — plus server-side Search on Return; the archive
@@ -421,18 +448,19 @@ them — the ordering in `World::update` is the arbitration.
   selection downloads, as the menu plays); the detail pane shows the preview (`<id>.eden.png`,
   fetched 0.25 s after the selection settles), the date (an official id IS the upload's unix time),
   author / size / tags where the archive has them, and the download's progress. **Download** streams
-  through the net seam to `<saves>/.emod-download(.part)`, then **unpacks a few MB per frame** over
+  through the net seam to `<saves>/.emod-download(.part)` (preview: `.emod-preview.png`), then **unpacks a few MB per frame** over
   zlib — gzip (multi-member), a single-entry zip (central directory trusted over a streamed local
-  header) and the archive's zip-in-a-zip, up to four layers — and imports: the result must describe
-  itself (`WorldFileHeader::directory_offset` inside the file), lands as `<id>.eden` or `<id>-N.eden`
-  (never replacing a world the player already has), is named from its own header, added as a
-  `WorldNode` and selected, and the browser hands back to the menu. Ids that are not
+  header) and the archive's zip-in-a-zip, up to four layers — and converts as it unpacks (S.5:
+  `emod::ImportJob`, `DL_CONVERT`; no inflated `.eden` is written; an uncompressed payload must
+  describe itself, `WorldFileHeader::directory_offset` inside the file). The world lands as
+  `<id>.emod` or `<id>-N.emod` (never replacing a world the player already has; 64z worlds upgrade
+  per Settings › Saves `upgrade_256z`, no prompt), is named from its own header, added as a
+  `WorldNode` and selected, the download is deleted, and the browser hands back to the menu. Ids that are not
   `[A-Za-z0-9_-]` drop their entry (they become paths); names are UTF-8-cleaned before they become
   textures. Back cancels an in-flight download. Each source keeps its list, scroll, selection and
   query across tab switches and across closing the screen. **The HTTP stack is the host's** —
-  `eden_net_*` (declared in `WorldBrowser.h`): native `src/seam/Net_native.cpp` (NSURLSession /
-  libcurl / WinHTTP, `native/README.md`), web stubs reporting no network (a page cannot reach the
-  plain-HTTP, CORS-less Eden servers; the DOM screen stays the web's browser until 5.10).
+  `eden_net_*` (declared in `WorldBrowser.h`): `native/src/seam/Net_native.cpp` over AppleNet (NSURLSession) /
+  libcurl / WinHTTP, `native/README.md`), or `NetNone` (no network: Get Worlds is not offered).
   Harness: `--browser-selftest` (offline fixtures), `--net-live-selftest`, `--shot`'s `-browser*`.
 - **`ShareMenu`** — upload flow for the selected world.
 - **`SharedList`** (`Classes/SharedList.mm`, 881 lines) — the STOCK online world browser
@@ -446,16 +474,16 @@ them — the ordering in `World::update` is the arbitration.
   `statusbar::current()` (5.6) returns the live message for a screen that draws it in the kit.
 
 ## Dead/auxiliary UI code
-- `Classes/Toolbar.mm` — compiled but apparently unreferenced by World/Hud/Menu
-  (likely a pre-2.0 toolbar). Confidence: medium — grep found no live call sites.
-- `Classes/Gamepad.mm` — physical controller support scaffolding, referenced by Hud
-  includes; extent of use unverified.
+- `Classes/Toolbar.mm` and `Classes/Gamepad.mm` — compiled, but each file's body is one `/* … */`
+  comment (stock archaeology), so they contribute nothing. Port gamepad support is SDL's
+  (`SDL_Gamepad` in `native/src/seam/Input_native.cpp`).
 - `settings.xib`, `prototypeViewController.xib` — legacy nibs, not part of the GL UI.
 
 ## Common pitfalls
-- Layout constants are absolute pixels for specific devices; test all three of
-  iPhone / widescreen iPhone / iPad ("iPad" = also Retina iPhones, see the `IS_IPAD`
-  pitfall in [conventions-and-pitfalls.md](conventions-and-pitfalls.md)).
+- Layout constants are absolute points written for specific devices; the port derives the point
+  space at run time (the MODIFIED FROM STOCK note above), so test with `--shot`, `--display-selftest`
+  and `--touch-selftest --touch-profile` rather than per device (`IS_IPAD` still means "2× UI
+  scale", see [conventions-and-pitfalls.md](conventions-and-pitfalls.md)).
 - String textures leak easily; the code caches them in structs (`SharedListNode`) and
   frees on list rebuild — follow that pattern.
 - The HUD directly mutates gameplay globals (`blocktype`, `goldencubes`,
@@ -474,23 +502,19 @@ them — the ordering in `World::update` is the arbitration.
 
 ## The keybind model (Phase N Stage 5.2)
 
-**Where it lives:** `web/src/seam/Settings_web.mm`, in its own `KEYBINDS` section — a *shared* seam
-file, compiled into both the web and the native trees, so the browser's Keys tab and the engine's
-`KeybindsMenu` are two front-ends over one table. Read that section's header comment before
+**Where it lives:** `port/src/seam/Settings_web.mm`, in its own `KEYBINDS` section; `KeybindsMenu`
+(the Keys tab) is its one front end since the web build (and its DOM Keys tab) retired. Read that section's header comment before
 changing anything here; the summary:
 
 - **A binding is an integer: the key's USB HID usage ID.** SDL3's `SDL_Scancode` values *are* those
-  IDs, and the browser's `event.code` strings are a 1:1 renaming of the same table. That is what
-  retired the old "keybinds must live in JS because the C settings model stores floats only"
-  exception — an int below 512 is exactly representable in a float and persists as an `NSNumber`.
+  IDs (the retired browser's `event.code` strings were a 1:1 renaming of the same table). An int below 512 is exactly representable in a float and persists as an `NSNumber`.
   `native/src/seam/Input_native.cpp` carries `static_assert`s on the scancode/HID identity, so an
   SDL that renumbered would break the build rather than silently rebind every keyboard.
-- **`kKeyNames[]`** is the one place the browser spelling, the HID number and the display label are
-  related. `eden_keybind_code_table()` emits it as JSON for the page (nothing ever passes a string
-  *into* wasm — that would mean exporting `_malloc`/`_free`).
+- **`kKeyNames[]`** is the one place the key's spelling, the HID number and the display label are
+  related. (`eden_keybind_code_table()` still emits it as JSON — the retired web page's reader.)
 - **`kKeybinds[]`** is the action table: id, label, group, default primary, a fixed secondary, the
   continuous/momentary dispatch class, and which hosts implement it (`fullscreen` and `settings`
-  are web-only, and `eden_keybind_native_hidden()` is how the GL screen skips them — the same
+  are `KB_WEB`-only, so no live target has them; `eden_keybind_native_hidden()` is how the GL screen skips them — the same
   policy `eden_settings_native_hidden()` applies to settings rows).
 - **These are NOT `kSettings[]` rows.** The stage plan called for a `KIND_KEY` row type inside
   `Setting`; a keybind carries four fields a float row has no place for, and `min/max/step/def`
@@ -500,7 +524,7 @@ changing anything here; the summary:
   "clear the other binding" rule would fight the shipped configuration on the first rebind. The
   lookup is therefore an iterator (`eden_keybind_action_after(prev, code)`), and every caller must
   walk it rather than stop at the first hit.
-- **Gate:** `./build/eden_native --keybind-selftest` asserts both directions of a rebind — that the
+- **Gate:** `./build/eden_native --keybind-selftest` (manual; not in CI) asserts both directions of a rebind — that the
   new key works *and* that the old one has stopped — because a test of only the new key would pass
   against an input path that still had its hard-coded `switch (sc)` and merely also consulted the
   model. It measures "stopped" against an unbound control key rather than a fixed epsilon, since a

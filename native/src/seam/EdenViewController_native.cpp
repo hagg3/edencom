@@ -1,5 +1,5 @@
 // EdenViewController_native.cpp — see the header for the design rationale, and
-// web/src/seam/EdenViewController_web.cpp for the annotated original this mirrors. Kept
+// web-port-final:web/src/seam/EdenViewController_web.cpp for the annotated original this mirrors. Kept
 // deliberately line-comparable with that file so the two stay diffable; the comments there
 // explain WHY each step exists (audit rows A2/A3/A4/B7) and are not repeated in full here.
 #include "EdenViewController_native.h"
@@ -65,7 +65,7 @@ bool EdenViewController::drawFrame(bool renderThisFrame) {
     // every autoreleased object the frame creates accumulates into a root pool nothing drains.
     void *autoreleasePool = eden_autoreleasepool_push();
 
-    // The same three lines web/tools/headless-p1-gate.js greps for, emitted identically so the
+    // The same three lines web-port-final:web/tools/headless-p1-gate.js greps for, emitted identically so the
     // native gate can assert the same text (Stage 1 criterion 1).
 #ifdef EDEN_DIAGNOSTICS
     static int tickCount = 0;

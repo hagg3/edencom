@@ -1,5 +1,5 @@
 #include "EdenAppDelegate_native.h"
-#include "../../../web/src/seam/AppLifecycle_web.h"
+#include "../../../port/src/seam/AppLifecycle_web.h"
 
 namespace eden_native {
 

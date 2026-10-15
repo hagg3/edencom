@@ -5,7 +5,7 @@ The only networking in the game is the world-sharing service: upload a world + i
 preview screenshot, browse/search/download shared worlds, report abuse. Plus
 analytics (Flurry) and the long-dead TestFlight SDK.
 
-## Architecture
+## Architecture (stock client — not compiled on the port)
 
 ```mermaid
 sequenceDiagram
@@ -25,8 +25,9 @@ sequenceDiagram
 None of the files below is compiled by the live port targets (they are NSURLConnection + UIKit and
 seam-excluded). The port's browser is `Classes/WorldBrowser.{h,mm}` (docs/ui.md) over a tiny
 non-blocking seam, `eden_net_fetch/poll/body/error/release` — implemented natively in
-`native/src/seam/Net_native.cpp` (NSURLSession on Apple, libcurl on Linux, WinHTTP on Windows) and
-stubbed to "no network" on web. It speaks the stock protocol to BOTH official services and adds the
+`native/src/seam/Net_native.cpp` over a backend chosen at build time: `AppleNet_native.mm`
+(NSURLSession, macOS/iOS), `NetWinHttp_native.cpp` (Windows), `NetCurl_native.cpp` (libcurl, Linux),
+or `NetNone_native.cpp` ("no network" — a Linux build without libcurl; Get Worlds is then not offered). It speaks the stock protocol to BOTH official services and adds the
 community archive:
 
 | Source | List | World | Preview |
@@ -41,8 +42,8 @@ Featured 100 on 2026-10-07; `popularlist.txt` repeats an id under two names). Pa
 not by stride — a stray blank line would desync every later pair. `sort=2` is what the stock client
 sends for Recent; `sort=0` returns a different ordering whose meaning is unknown. Only the `files*`
 hosts answer HTTPS (CloudFront); `app*` refuse TLS, so the client stays plain HTTP and iOS needs an
-ATS exception (native/ios/Info.plist.in). Neither service sends CORS headers, which is why a browser
-page cannot use them. Worlds can be large: the current server's first Featured world inflated to 1.88 GB
+ATS exception for `edengame.net` (`NSAppTransportSecurity` in native/ios/Info.plist.in). Neither service
+sends CORS headers, which is why the retired web build could not use them. Worlds can be large: the current server's first Featured world inflated to 1.88 GB
 (2026-10-07). Report is not implemented on the port. **Upload is, since S.5c (2026-10-10)** — below.
 
 ### Upload: the pinned `upload2.php` contract (S.5c)
@@ -53,7 +54,7 @@ Pinned from stock 2.1.1 (`Classes/FileUpload.mm` + `zpipe.c`'s `compressFile`) a
 - `Content-Type: multipart/form-data; boundary=0xasdfasdfasdfasdfasdf`, a real `Content-Length` (no
   chunking, no `Expect: 100-continue`).
 - Part `uploaded`, `filename="file.bin"`: the world **gzipped** (`deflateInit2(…, 15+16, …)`,
-  `Z_DEFAULT_COMPRESSION`). Stock gzips too — `FileUpload.mm:118` calls `compressFile` before the
+  `Z_DEFAULT_COMPRESSION`). Stock gzips too — `FileUpload.mm` calls `compressFile` before the
   POST (the "uploads uncompressed" note under `FileArchive.mm` below is about that file only).
 - Part `uploaded2`, `filename="image.bin"`: the preview PNG. Neither part has a Content-Type.
 - The world's header `hash` (offset 96) carries the **MD5 hex of that PNG**, so the server can pair
@@ -69,17 +70,18 @@ bodyPath)` (`WorldBrowser.h`; native `Net_native.cpp` over the backend's `post_f
 upload-from-file, libcurl `READFUNCTION` + `POSTFIELDSIZE_LARGE`, WinHTTP `WinHttpWriteData`), and
 the temp is deleted. An upload needs `<world file>.png` (camera mode); without it the action says
 so. Fixture mode (`--net-fixtures`) answers a POST from `<root>/<host>/<path>` and saves the body
-beside it as `<path>.posted`, which is how `--browser-selftest` and `TESTERS/s5/upload_gate.py`
-check the bytes offline. **No live upload has been made by a harness**: one per host is the user's
-to do. Web has none (no CORS on either host).
+beside it as `<path>.posted`, which is how `--browser-selftest` and the `--upload-*` CLI
+(native/README.md) check the bytes offline. **No live upload has been made by a harness**: one per
+host is the user's to do. `--net-live-selftest` exercises the real servers' read side.
 
-**Get Worlds converts (S.5).** With the `.emod` switch on, a finished download is not unpacked to a
-`.eden`: `WorldBrowser`'s `DL_CONVERT` runs `emod::ImportJob` on it (layers unpacked still
-compressed, the innermost stream converted), lands `<id>.emod`, and deletes the download.
+**Get Worlds converts (S.5).** A finished download is never unpacked to a `.eden`: `WorldBrowser`'s `DL_CONVERT` runs `emod::ImportJob` on it (layers unpacked still
+compressed, the innermost stream converted), lands `<id>.emod` (or `<id>-N.emod`), and deletes the
+download (`<saves>/.emod-download`; previews go to `.emod-preview.png`). The S.5 pre-flight free-space
+check applies (docs/save-load.md "Converting, importing, pairing").
 
-## Client files
+## Client files (stock; seam-excluded on the port)
 - `Classes/ShareUtil.mm` — endpoint knowledge and orchestration. Current endpoints
-  (`ShareUtil.mm:48-53`; note this community fork repointed them, and the file
+  (the `static NSString*` URLs near the top; note this community fork repointed them, and the file
   preserves the historical endpoints in comments — a little archaeology of the
   service's hosting history):
   - `UPLOAD_URL  = http://app.edengame.net/upload2.php?uuid=<identifierForVendor>`
@@ -87,7 +89,7 @@ compressed, the innermost stream converted), lands `<id>.emod`, and deletes the 
   - `REPORT_URL  = http://app2.edengame.net/report.php?map=<file>&uuid=<...>`
   - `MAPS_URL    = http://files2.edengame.net/<file>` (worlds and `<file>.png` previews)
   - `POPULAR_URL = http://files2.edengame.net/popularlist.txt`
-  - "php" names notwithstanding, the live implementation in `edenweb/` is Java.
+  - "php" names notwithstanding, the server implementation upstream (`edenweb/`) is Java.
   - `gzipInflate` exists for gzip-compressed downloads.
 - `Classes/FileDownload.mm` — thin async NSURLConnection wrapper: streams to a file
   (`NSOutputStream`) or accumulates `result` NSData when `filePath` is nil;
@@ -96,51 +98,49 @@ compressed, the innermost stream converted), lands `<id>.emod`, and deletes the 
 - `Classes/FileUpload.mm` — multipart/form-data POST of the world file **and** its
   `.png` preview in one request; same delegate pattern.
 - `Classes/md5.c` — hashes the preview screenshot; the hash is stored in the world
-  header so the server can pair/verify world↔preview.
+  header so the server can pair/verify world↔preview. (Seam-excluded on the port; `port/src/shim/foundation/md5_web.mm` replaces it.)
 - `Classes/FileArchive.mm` — zlib world compression; **fully commented out** in this
   version. Uploads are still gzipped: `FileUpload.mm` calls `compressFile` itself (S.5c).
 
 ## Data formats
 - The world list response is a text blob parsed by `SharedList` into
-  `SharedListNode{value(downloads), name, file_name, date}` rows. (Exact separator
-  format: see `SharedList::parse*` — not fully traced here; confidence medium.)
-- Downloads land directly in Documents under the shared file name, then appear as
-  normal local worlds (this build then runs the usual version-upgrade path on load —
-  worlds from 2.2.7 load but are height-truncated, per the repo README).
-- **Port (native Get Worlds, `Classes/WorldBrowser.mm`):** the gzip/zip is unpacked into a
-  full `<id>.eden` in Documents. There is **no free-space check**, so a big 256z world (GBs
-  inflated) fails mid-write on a small device. Planned fix, Stage S (S.3 converter, S.5
-  wiring): convert to `.emod` while inflating, delete the download afterwards, peak temp
-  ~3× the download. See `WORKING/emod-format-implementation-plan-2026-10-03.md` §4
-  *Downloads and imports*.
-- Previews download to `Documents/temp`.
+  `SharedListNode{value(downloads), name, file_name, date}` rows. (The format is traced in
+  "The list format" above.)
+- Stock: downloads land directly in Documents under the shared file name, then appear as
+  normal local worlds (stock 2.1.1 reads only 64z, so later 256z worlds were height-truncated;
+  the port reads 256z).
+  Previews download to `Documents/temp`.
+- **Port (`Classes/WorldBrowser.mm`):** converts while inflating to `<id>.emod` (above);
+  the plan was `WORKING/emod-format-implementation-plan-2026-10-03.md` §4 *Downloads and imports*.
 
-## Server side (`edenweb/`, repo root — not part of the app build)
-Java servlet sources: `List2.java`, `UploadMap2.java`, `Report.java`,
-`Moderate.java` under `edenweb/src`, deployed on the bundled Jetty
-(`edenweb/newwebserver/jetty`, also `jetty9/` at repo root). `webroot/` holds the
-old website. Useful as the ground truth for request/response formats if you rebuild
+## Server side (not in this repo)
+The upstream source tree carries the Java servlets (`List2.java`, `UploadMap2.java`, `Report.java`,
+`Moderate.java` under `edenweb/src`, deployed on a bundled Jetty, plus `jetty9/` and the old
+website); this repo does not. Here only `tools/eden2/src/List2.java` and `UploadMap2.java` (with an
+`Archive.zip`) survive. Useful as the ground truth for request/response formats if you rebuild
 the service; the community keeps a compatible service alive (this fork's modified
 download path targets it).
 
 ## Identity & moderation
 No accounts. The device's `identifierForVendor` UUID accompanies uploads and reports
 (pre-iOS6 devices send a placeholder string). `report.php` + `Moderate.java` implement
-the flag-and-review loop; `report_flag.png` in the repo root is the client asset.
+the flag-and-review loop (upstream); `report_flag.png` in the repo root is the client asset. Report is not
+implemented on the port.
 
 ## Common pitfalls
-- All completion happens via selectors on the main run loop; the UI polls
+- (Stock client.) All completion happens via selectors on the main run loop; the UI polls
   `finished_*` BOOLs each frame rather than using callbacks end-to-end — set the
   flags *and* the data before returning from a done-selector.
-- `ShareUtil` reuses a single `dlmanager`; starting a new request cancels the old
+- (Stock client.) `ShareUtil` reuses a single `dlmanager`; starting a new request cancels the old
   one — don't fire two concurrent downloads.
-- Plain HTTP; modern iOS requires an ATS exception (this fork's Info.plist
-  presumably carries one — verify if network calls silently fail).
-- The upload sends both files even if the preview is missing; sharing without ever
-  entering camera mode uploads a stale/absent png.
+- Plain HTTP; modern iOS requires an ATS exception — `native/ios/Info.plist.in` carries one for
+  `edengame.net`.
+- Stock: the upload sends both files even if the preview is missing; sharing without ever
+  entering camera mode uploads a stale/absent png. The port's Upload refuses without a `.png`.
 
 ## Safe vs. risky to modify
 - **Safe:** endpoint URLs, list parsing, UI feedback.
-- **Caution:** the multipart body construction in `FileUpload` (server is picky),
+- **Caution:** the multipart body construction (`FileUpload`; on the port `emod::begin_upload_body`,
+  pinned above — the server is picky),
   the delegate/selector lifetimes (manual retain/release; over-releasing the
   manager after cancel is an easy crash).

@@ -2,15 +2,21 @@
 
 Eden: World Builder is a voxel building game for iOS (2010–2014 era), written in
 Objective-C++ against **OpenGL ES 1.1 (fixed-function)**. This repository is the 2.1.1
-source release, lightly patched by the community to build in modern Xcode
-(see `README.md`; fly-mode is enabled by default in this fork via `bool FLY_MODE=true;`
-in `Classes/Player.mm:32`).
+source release, ported as Emod to SDL3 + GL on macOS, Linux, Windows and iOS (`native/`, over the
+seam/shim layer in `port/`; see `../CLAUDE.md`). The engine still issues ES 1.1 calls; the port's
+translator (`port/src/shim/gl/`) runs them on ES3/GL. This file describes the engine; the stock iOS
+shell in the diagrams below (UIKit, `EAGLView`, CADisplayLink) is replaced on every port target.
 
 There is **no engine/game separation, no scene graph, and almost no abstraction layer**.
 The game is a set of singletons wired together through raw pointers and `extern` globals.
 Understanding the ownership graph below is 80% of understanding the codebase.
 
 ## Ownership graph
+
+Stock graph. On the port the UIKit subgraph is `native/src/seam/*_native` (an SDL window and loop), and
+the `ShareUtil`/`FileDownload`/`FileUpload`/`SharedList`/`ShareMenu` branch is replaced by
+`WorldBrowser`/`WorldShare` over the `eden_net_*` seam ([networking.md](networking.md)). The chunk
+table is `CHUNKS_PER_SIDE²·CHUNKS_PER_COLUMN` slots: 18×18×4 = 1296 at the default radius and 64z.
 
 ```mermaid
 graph TD
@@ -56,16 +62,17 @@ plus C-style globals for hot data: `blockarray` (block cache), `lightarray`,
 
 | System | Files | One-line purpose |
 |---|---|---|
-| App shell / main loop | `main.m`, `EdenAppDelegate`, `EdenViewController`, `EAGLView` | CADisplayLink loop, GL context, touch entry ([execution-flow.md](execution-flow.md)) |
+| App shell / main loop | stock: `main.m`, `EdenAppDelegate`, `EdenViewController`, `EAGLView`; port: `native/src/entry/eden_main_native.cpp`, `native/src/seam/` | Frame loop, GL context, input entry (stock: CADisplayLink + UIKit touches; port: SDL) ([execution-flow.md](execution-flow.md)) |
 | World hub | `World.mm` | Game-mode state machine, per-frame update/render dispatch |
 | Terrain | `Terrain.mm`, `TerrainChunk.mm` | Voxel storage, block edit ops, fire/TNT dynamics, chunk meshing, terrain rendering ([world-and-terrain.md](world-and-terrain.md), [rendering.md](rendering.md)) |
 | Terrain generation | `TerrainGenerator.mm`, `TerrainGen2.mm`, `FileManagerHelper.mm` | Flat-world runtime gen; offline generator for the shipped default world `Eden.eden` ([terrain-generation.md](terrain-generation.md)) |
-| Save/load | `FileManager.mm` | `.eden` world files, column streaming, format migration ([save-load.md](save-load.md), [eden-file-format.md](eden-file-format.md)) |
+| Save/load | `FileManager.mm`, `EdenWorldStore`, `EdenWorldSource`, `EdenWorldExport`, `WorldTrailer` | `.emod` world files (the only played format), column streaming, `.eden` import/convert/export ([save-load.md](save-load.md), [emod-file-format.md](emod-file-format.md), [eden-file-format.md](eden-file-format.md)) |
 | Player/physics | `Player.mm`, `Camera.mm`, `Input.mm`, `Util.mm` | Touch processing, SAT polyhedra collision, movement, block pick raycast ([player-input-camera.md](player-input-camera.md)) |
 | Creatures | `Model.mm` | Up to 300 animated creatures (PowerVR POD models), AI, save/restore ([entities-and-creatures.md](entities-and-creatures.md)) |
 | Dynamics | `Liquids.mm`, root `Lighting.mm`, `Portal.mm`, `Firework.mm`, `Fire.mm`, `BlockBreak.mm`, `SpecialEffects.mm` | Water/lava flow, colored point lights, portals, particles ([lighting-liquids-effects.md](lighting-liquids-effects.md)) |
 | UI | `Hud.mm`, `Menu.mm`, `SharedList.mm`, `ShareMenu.mm`, `SettingsMenu.mm`, `Joystick.mm`, `statusbar.mm`, `VKeyboard.mm`, `Alert.mm` | In-game HUD modes and the entire menu system, all custom GL rendering ([ui.md](ui.md)) |
-| Networking | `ShareUtil.mm`, `FileUpload.mm`, `FileDownload.mm`, `edenweb/` | World sharing over HTTP to edengame.net ([networking.md](networking.md)) |
+| Networking | stock: `ShareUtil.mm`, `FileUpload.mm`, `FileDownload.mm`; port: `WorldBrowser.mm`, `WorldShare.mm` | World sharing over HTTP to edengame.net ([networking.md](networking.md)) |
+| Added after the 2.1.1 import | `GLWidgets`, `GLDialog`, `KeybindsMenu`, `NewWorldMenu`, `MeshPool`, `Shadow`, `SignRenderer`, `SignTool`, `CmdScript`, `PassTimers.h`, `UIIcons.h`, `zstd/` (list: `cmake/EngineSources.cmake`) | The GL widget kit and screens, baked shadows, signs and command blocks, per-pass timers, the `.emod` codec ([ui.md](ui.md), [lighting-liquids-effects.md](lighting-liquids-effects.md), [eden-file-format.md](eden-file-format.md)) |
 | Assets/audio | `Resources.mm`, `Texture2D.mm`, CocosDenshion | Texture atlases, sounds, ambient audio ([resources-and-audio.md](resources-and-audio.md)) |
 | Third-party | `PVRT*`, `CC*`/`CD*`, `glu*`, `zpipe`, `md5`, `Appirater`, Flurry | See [third-party.md](third-party.md) |
 
@@ -73,7 +80,7 @@ plus C-style globals for hot data: `blockarray` (block cache), `lightarray`,
 
 ```mermaid
 sequenceDiagram
-    participant DL as CADisplayLink
+    participant DL as Loop (stock CADisplayLink / port SDL)
     participant W as World
     participant T as Terrain
     participant P as Player
@@ -107,13 +114,16 @@ sequenceDiagram
    A `.eden` file is `header | column data | creatures | directory`. New columns are
    appended where the creatures block sits, and creatures + directory are rewritten
    after them. Only the directory pointer in the header moves. See
-   [eden-file-format.md](eden-file-format.md).
+   [eden-file-format.md](eden-file-format.md). *(Port: worlds are `.emod` since S.8, an append-only log
+   of CRC'd zstd records where a save is one commit record; `.eden` is import/export only —
+   [emod-file-format.md](emod-file-format.md).)*
 
 3. **The shipped default world is itself a giant `.eden` file.**
    `TerrainGen2.mm` is an *offline* generator (run via the `JUST_TERRAIN_GEN` build
    flag) that produced the 2880×2880-block `Eden.eden` bundled with the app. At
    runtime, "generation" for the default world is mostly *streaming decompression*
-   from that bundle. See [terrain-generation.md](terrain-generation.md).
+   from that bundle. See [terrain-generation.md](terrain-generation.md). *(Port: the shipped bundle is
+   `Eden.emod`, baked from the repo-root `Eden.eden` by `port/tools/emod.py bake-default`.)*
 
 ## Engine vs. game code (summary)
 
@@ -122,6 +132,13 @@ CocosDenshion, Texture2D, a GLU port, hashmap, math/collision utilities). The
 game-specific core is ~15k lines concentrated in Terrain/TerrainChunk/FileManager/
 Player/Hud/Model/Menu. A concrete separation roadmap is in
 [engine-vs-game.md](engine-vs-game.md).
+
+## Tracing a block edit
+
+Touch (port: an SDL mouse/finger event turned into a synthetic touch) → `Hud::update` (consumes UI
+touches) → `Player::processInput` → `findWorldCoords` raycast → `Terrain::buildBlock`/`destroyBlock`/… →
+`updateChunks` (dirty lists) → next frame `prepareAndLoadGeometry` (mesh, `rebuild2`) →
+`updateAllImportantChunks` (VBO upload).
 
 ## Reading order for new contributors
 

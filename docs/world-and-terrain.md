@@ -21,10 +21,11 @@ top of the voxel grid.
 ## Runtime world height (2026-08-06)
 
 World height used to be hard-capped at 64 by a `#define`. It is now a **per-world runtime
-value**: 64 for every world this engine creates, 256 for a loaded `.eden` whose header
-`version` is 5 or 6 — the 256-block-tall "New Dawn" variant (see
-[eden-file-format.md](eden-file-format.md)). One binary opens both; **64z stays the default
-and costs exactly what it always cost**.
+value**: 64 or 256 — the 256-block-tall "New Dawn" variant (header `version` 5 or 6 in a `.eden`,
+16 bands in an `.emod`; see [eden-file-format.md](eden-file-format.md)). One binary opens both, and
+**a 64z world costs exactly what it always cost**. A new world gets the height the New World screen
+parked (its default choice is New Dawn 256, `NewWorldMenu.mm` `kHeights`, S.5e); conversion writes
+256z by default too (the `upgrade_256z` setting).
 
 `T_HEIGHT`, `T_BLOCKS`, `CHUNKS_PER_COLUMN` and `MAX_CREATURES_SAVED` are now macros over
 globals (`g_world_height`, `g_t_blocks`, `g_chunks_per_column`, `g_max_creatures_saved`), set
@@ -39,13 +40,12 @@ rules follow, and breaking any of them is silent:
 2. **The height must be set before `Terrain::allocateMemory()`**, which sizes `blockarray`,
    `lightarray` and the chunk table from it. `World::loadWorld` does that by probing the save
    file's header (`FileManager::probeWorldHeight`) before it allocates. A world that does not
-   exist yet answers 64, which is what makes "new worlds are 64z" true by construction.
+   exist yet answers 256 if the New World screen parked 256 for it, else 64.
 3. **The hot path pays for the stride, not the multiply.** `GBLOCKIDXCLEAN` uses a precomputed
    `g_xz_stride` (`T_SIZE*g_world_height`) rather than multiplying two globals per access.
-   Measured on the load+mesh path (`tools/headless-load-timing.js`, 9 runs per build,
-   2026-08-06): median first-load 67.0 ms with runtime height vs 67.0 ms with the old literal
-   constants, and the runtime build's `eden.wasm` is 540 B **smaller**. The cost is not
-   detectable.
+   Measured on the load+mesh path (on the retired web build, `web-port-final:web/tools/headless-load-timing.js`,
+   9 runs per build, 2026-08-06): median first-load 67.0 ms with runtime height vs 67.0 ms with the
+   old literal constants. The cost is not detectable. (Native equivalent: `--stage1 --mesh-bench=N`.)
 
 ## Runtime window radius (B.5b-2, 2026-10-12) — *modified from stock*
 
@@ -54,8 +54,8 @@ The resident window is runtime too, by the same mechanism as the height. `T_SIZE
 `eden_set_window_radius()` (`Globals.mm`; it also re-derives `g_xz_stride`, `g_t_blocks` and the
 toroidal offsets `g_offcx/z = T_SIZE*100`). `World::loadWorld` calls it right after
 `eden_set_world_height`, before `Terrain::allocateMemory`, with `eden_window_radius_for_world(height)`
-(`web/src/seam/Settings_web.mm`): the **Render distance** setting (9 / 10 / 12 / 16 chunks; iOS offers
-9 / 10), held to 12 for a 256z world on web (512 MB heap cap) and to 9 on a low-memory device;
+(`port/src/seam/Settings_web.mm`): the **Render distance** setting (9 / 10 / 12 / 16 chunks; iOS offers
+9 / 10), held to 9 when `eden_low_memory()` is set (no native host sets it today);
 `EDEN_WINDOW_RADIUS=N` overrides it (the native harness pins 9 for every scripted mode unless
 `--radius=N`). It applies at the next world entry, never to an open world. The height's three rules
 hold unchanged: fixed-size declarations use `CHUNKS_PER_SIDE_MAX` (32) / `T_SIZE_MAX` (512) —
@@ -80,31 +80,21 @@ hot path was measured first. Nothing on disk depends on it (§1.2 of the plan; `
   render, GL no-op'd): p50 0.042 ms at R9 256z, 0.154 ms at R16 256z; windowed `--preset-probe`
   view Auto 2.03 → 2.41 ms. Cheap enough not to cap the radius or rewrite them (decision 2).
 - **Memory** (Mac headless footprint, CPU side): 64z 36 / 43 / 48 / 73 MB and 256z 84 / 102 / 141 /
-  230 MB at R9 / 10 / 12 / 16. Web `build-st` linear memory after one load: R16 64z 185 MB, R12 256z
-  228 MB, R16 256z 342 MB of the 512 MB cap. The iPad's numbers are owed (ROADMAP Stage T).
-- Gates: the B.5b-1 walk/evict/light gates at R12 and R16, both heights; native = web checksums at
-  R16 64z and R12 256z; ASan clean at R4, R10, R12 and R16 (it found `rebuildList[13000]`, which a
+  230 MB at R9 / 10 / 12 / 16. The iPad's numbers are owed (ROADMAP Stage T.B16). (The retired web
+  build held 256z to R12: R16 256z measured 342 MB of its 512 MB linear-memory cap.)
+- Gates: the B.5b-1 walk/evict/light gates at R12 and R16, both heights (CI runs `--evict-selftest`,
+  `--ring-light-selftest` and `--shadow-selftest` at `--radius=16`); at the time, native matched the
+  web checksums at R16 64z and R12 256z; ASan clean at R4, R10, R12 and R16 (it found `rebuildList[13000]`, which a
   16,384-chunk window overran). `WORKING/render-distance-runtime-plan-2026-10-11.md` §4.1.
 
 ### Memory: what a tall world actually costs
 
-Measured in `build-st` (Debug) against a real 18×18-column 256z world whose terrain reaches
-y≈250, 2026-08-06:
-
-| | menu only | 64z world resident | 256z world resident |
-|---|---:|---:|---:|
-| wasm heap | 96 MB | 128 MB | **413 MB** |
-
-The per-world arrays account for ~95 MB of that (`blockarray` 5.4 → 21.5 MB, `lightarray`
-15.9 → 63.7 MB, 1296 → 5184 chunk objects at 8 KB each; **the light part is gone since Stage R /
-R.3, 2026-10-03**: the light field is a sparse brick store now, ~0.1–0.2 MB on a world with a few
-lightboxes, so a 256z world's arrays are ~66 MB, not ~130); the rest is **mesh** memory, which
-scales with how much solid terrain there actually is, not with the height alone — a tall world
-that is mostly air costs much less (the flat 256z specimen sits at 248 MB). `-sINITIAL_MEMORY`
-stays at 96 MB (audit row E1's conclusion is unchanged): growth is on, and over-reserving would
-only raise the floor for the menu-only session that every player starts in. **Practical
-consequence: 256z is a desktop feature on web.** iOS Safari's per-tab ceiling is well under
-400 MB — the same constraint that produced audit row A11.
+The per-world arrays scale 4× at 256z: `blockarray` 5.4 → 21.5 MB and 1296 → 5184 chunk objects at
+8 KB each at the default radius (the dense `lightarray`, 15.9 → 63.7 MB, is gone since Stage R / R.3:
+the light field is a sparse brick store, ~0.1–0.2 MB on a world with a few lightboxes). The rest is
+**mesh** memory, which scales with how much solid terrain there is, not with the height alone — a
+tall world that is mostly air costs much less. Native per-radius footprints are in the bullets above;
+the 2026-08-06 wasm-heap table (413 MB for a full 256z world) is at `web-port-final`.
 
 ## Block identity: type + color
 
@@ -114,7 +104,7 @@ Every voxel is two bytes:
   portals as 2-block-tall composites, `TYPE_BT*` = "block TNT" variants that explode
   into a 5×5 patch of their base material).
 - `color8` paint — index into the global `colorTable[256]`; 0 = unpainted.
-  The table is generated procedurally in `Hud::genColorTable()` (`Hud.mm:151`):
+  The table is generated procedurally in `Hud::genColorTable()`:
   entry 0 is white, then 54 entries = 9 hues × 6 shades via HSV (hue column 8 is the
   grayscale ramp). `NUM_COLORS` is 54.
 
@@ -142,12 +132,12 @@ second-block pick veils them), `blockTntMap` = 0 (only read for `IS_BLOCKTNT` ty
 `rebuild2()`'s `type>NUM_BLOCKS` repair turned every one of them into stone in the world and the
 next save kept it (D.2c); it now fires only for bytes 128–255 (negative as `block8`).
 `block8` is a signed char, so **127 is the last id**: no further block type can be appended, and
-these 16 can never get BT shadows. Regression: `eden_native --newblocks-selftest`.
+these 16 can never get BT shadows. Regression: `eden_native --newblocks-selftest` (manual; not a CI gate).
 
 ## The toroidal resident window
 
 The world is conceptually huge (chunk coordinates are packed into 15 bits each by
-`twoToOne` — `Util.mm:1053` — so the addressable world is 32,768 × 32,768 chunks;
+`twoToOne` (`Util.mm`) — so the addressable world is 32,768 × 32,768 chunks;
 the default world's centre sits at chunk (4096, 4096) ⇒ block ≈ 65,536).
 
 Only a **`T_SIZE`×`T_SIZE`×`T_HEIGHT` window around the player** (288 wide by default, up to 512 at Render distance 16 — B.5b-2; 64 tall normally, 256 for a v5/v6 world) is in memory, in two parallel
@@ -155,7 +145,7 @@ structures, both indexed *modulo the window size* so absolute world coordinates 
 used directly:
 
 1. **`block8* blockarray`** — flat type-only cache used by all hot-path reads
-   (meshing, collision, lighting). Access macros in `Terrain.h:33-37`:
+   (meshing, collision, lighting). Access macros in `Terrain.h`:
    ```c
    GBLOCKIDX(x,z,y) = ((x+g_offcx)%T_SIZE)*g_xz_stride
                     + ((z+g_offcz)%T_SIZE)*g_world_height + y
@@ -167,9 +157,9 @@ used directly:
    Note colors are *not* in this array; color reads go through the chunk objects.
 
 2. **`TerrainChunk** chunkTable`** — `CHUNKS_PER_SIDE`²×`CHUNKS_PER_COLUMN` = 1296 chunk objects at the default 18×18 (5184 at 256z; 16,384 at radius 16, 256z), allocated once per world in
-   `Terrain::allocateMemory()` (`Terrain.mm:241`) and **reused forever** (never
+   `Terrain::allocateMemory()` and **reused forever** (never
    freed/reallocated during play; `resetForReuse()`/`setBounds()` repurpose them).
-   Indexed by the `threeToOne(cx,cy,cz)` macro (`Util.h:120`), again modulo
+   Indexed by the `threeToOne(cx,cy,cz)` macro (`Terrain.h`), again modulo
    `CHUNKS_PER_SIDE`. A chunk knows its absolute bounds in `pbounds[6]` — comparing
    `pbounds` against the expected coordinates is how the code detects that a table
    slot still holds a stale, faraway chunk (see streaming below).
@@ -188,7 +178,7 @@ The colored point-light field (RGB byte per voxel, same toroidal indexing) was s
 `Vector8* lightarray`; since Stage R / R.3 (2026-10-03) it is `lightbricks`, one optional 12 KB
 brick per toroidal chunk slot, allocated only where a lightbox's light lands and never freed during
 play; see [lighting-liquids-effects.md](lighting-liquids-effects.md). Skipped entirely on
-`LOW_MEM_DEVICE`.
+`LOW_MEM_DEVICE` (set only by the stock iOS controller; no native target sets it).
 
 ### Memory budget
 blockarray ≈ 5.3 MB, chunk blocks+colors ≈ 10.6 MB, plus transient meshes (64z). Stock also had
@@ -207,8 +197,14 @@ Read APIs (world coordinates, `(x, z, y)` order — see
 
 Write path — always go through these, never poke arrays directly:
 - `Terrain::setLand(x,z,y,type,chunkToo)` — writes `blockarray` and (if `chunkToo`)
-  the owning chunk's `pblocks` + `modified` flag. Does **not** mark meshes dirty.
-- `Terrain::updateChunks(x,z,y,type)` (`Terrain.mm:1394`) — the standard "place a
+  the owning chunk's `pblocks` + `modified` flag. Does **not** mark meshes dirty — except, since
+  H.2 (*modified from stock*), `shadow_onSetLand` after the write keeps the column's shadow top
+  current, and with shadows on dirties the chunks a moved top re-shades (3×3 columns ×
+  `[lo−23, hi−1]`; docs/lighting-liquids-effects.md "Baked shadows"). Every runtime edit comes
+  through here; the landing paths (`readColumn`, `fmh_publishColumnFromDefault`, TerrainGenerator)
+  do not, and are covered by `addChunk`'s per-column flag and `shadow_syncLandedColumns()`, which
+  runs unconditionally right before the mesh pass.
+- `Terrain::updateChunks(x,z,y,type)` — the standard "place a
   block" primitive: clears color if erasing, calls `setLand`, then marks the chunk
   and all 6 face-neighbouring chunks dirty via `addToUpdateList2`. **Modified from stock
   (D.3c, 2026-10-10):** erasing (type 0) also calls `SignTool::anchorBecameAir`, which drops
@@ -234,33 +230,37 @@ chunks for VBO upload in `updateAllImportantChunks`.
 
 All in `Terrain.mm`:
 
-- **`buildBlock(x,z,y)`** (`:1042`) — places `hud->blocktype` with
+- **`buildBlock(x,z,y)`** — places `hud->blocktype` with
   `hud->block_paintcolor`. Ramp types auto-orient: `getRampType` inspects which of the
   4 side neighbours are solid; two adjacent solid sides ⇒ becomes a corner ("side")
   piece, otherwise faces the player's yaw quadrant. Doors/portals place two stacked
   blocks (`TYPE_*1+r` bottom encoding direction, `TYPE_*_TOP` top). Lightboxes call
   `addlight(…, +1)` and refresh chunks in `LIGHT_RADIUS`. Golden cubes decrement the
   `goldencubes` inventory.
-- **`destroyBlock` / `explodeBlock`** (`:742`, `:793`) — refuse bedrock/golden-cube
+- **`destroyBlock` / `explodeBlock`** — refuse bedrock/golden-cube
   (destroy) and bedrock/steel (explosion); remove liquid sources; spawn break/explode
   particles; remove paired door/portal halves; lightboxes subtract their light.
 - **`paintBlock(x,z,y,color)`** — recolors, handles lightbox re-light and painting
   both door/portal halves.
-- **`burnBlock(x,z,y,causedByExplosion)`** (`:866`) — adds a `BurnNode` to the global
+- **`burnBlock(x,z,y,causedByExplosion)`** — adds a `BurnNode` to the global
   singly-linked `burnList` if the type `IS_FLAMMABLE`. Life: 6 s normal blocks; 4 s
   TNT (0.5–0.8 s if chained from an explosion). Registers a looping fire sound and a
   fire particle emitter.
-- **Fire propagation** (`Terrain::update` `:1954`): 1 s after ignition
+- **Fire propagation** (`Terrain::update`): 1 s after ignition
   (`BURN_SPREAD_TIME`) a burning block ignites its 6 neighbours. On expiry: TNT →
   `explode` (sphere radius `EXPLOSION_RADIUS=5`; if the TNT was painted, the
   explosion *paints* instead of destroys — that's the paint-bomb feature), firework
   blocks launch, `TYPE_BT*` → `blocktntexplode` (builds a diamond of the base
   material, or ramps for the side variants). More than 300 simultaneous burns trips
   `endDynamics` which clears all fire/liquids/effects — the anti-meltdown valve.
+- **Fire melts ice / chars vines (H.8, Experiments, both off by default):** `FIRE_MELTS_ICE` /
+  `FIRE_CHARS_VINES` (`Terrain.mm`, set by `eden_set_fire_melts_ice/chars_vines`) add `IS_FLAMMABLE`
+  to the ice family (block, ramps, sides) / `TYPE_VINE` in `blockinfo` (now a non-const table). On
+  burn expiry ice becomes a water source and vines become `TYPE_DARK_STONE`; off, they never burn.
 - **Spread stops at the window edge** (modified from stock by B.5b-1b, 2026-10-12): `burnBlock`, the
   liquid spread in `Liquids.mm` and `explode`'s block loop first ask `isColumnResident(x,z)`
-  (`Terrain.h`: does the slot for that column hold it?). The toroidal arrays alias columns 288 blocks
-  apart, so stock fire or water reaching past the edge wrote into the opposite edge.
+  (`Terrain.h`: does the slot for that column hold it?). The toroidal arrays alias columns `T_SIZE`
+  blocks apart (288 at the default radius), so stock fire or water reaching past the edge wrote into the opposite edge.
 - **`warpToPoint` / `warpToHome`** — save the world with a warp position, then
   unload+reload terrain around the target. Warping is implemented as a save/load
   cycle, not a teleport.
@@ -327,7 +327,8 @@ item 3, because the bulk path still runs it for teleports. Plan and gates:
    reloads and ends identical (geometry + chunk-state hashes) to a fresh load at the end point, at
    64z and 256z, for ±x, ±z, diagonal, there-and-back and a square. Known costs: pacing across a
    chunk **centre** line shifts the window back and forth and re-reads 18 columns per shift (no
-   hysteresis yet). Light (B.5b-1c) costs ~0.1–0.35 ms per landed column on the Mac.
+   hysteresis yet). Light (B.5b-1c) costs ~0.1–0.35 ms per landed column on the Mac; since P.10
+   (2026-10-14) a slot already known to hold no lightbox is not rescanned, ≈ 0.01–0.02 ms with none.
 
    **The outer ring is data-only.** `columnMeshable` (was `columnMeshableDuringReload`, asked only
    mid-reload) is asked every frame, and a lateral outside the window counts as not resident, so
@@ -339,7 +340,11 @@ item 3, because the bulk path still runs it for teleports. Plan and gates:
    inner before the shift, or a worker publish) and re-dirties it. `dropGeometry` keeps the GL
    buffer names (M3(a)) and resets the flags `rebuild2()` leaves, so a dropped chunk hashes the same
    however it got there. The ring stays dirty while it is the ring, and `f3_frameEnd` ignores it.
-   Meshed radius: 120–136 blocks, past every fog end. `eden_debug_terrain_geometry()` reports
+   **With baked shadows on (H.2)** `columnMeshable` also waits for the 4 diagonal columns, because a
+   top face reads its 8 neighbours' shadow tops; all 8 neighbours of a meshable column are inside the
+   window, and a column that becomes meshable late is still dirty from its own landing. Off, it is
+   the 4-wait above. `--shadow-selftest --shadow-mutate=nodiag` is the gate that this matters.
+   Meshed radius: `(R−1)·16−8` blocks (120 at the default radius), past every fog end. `eden_debug_terrain_geometry()` reports
    `ring_cols` and `bulk_reloads` since launch.
 3. If `count > 140`: a two-frame hysteresis
    (`hit_load_counter`) shows the "Loading" status bar, then the steps below run. **Stock (before B.5b-1a): walking did
@@ -377,7 +382,7 @@ item 3, because the bulk path still runs it for teleports. Plan and gates:
      **Since Stage R / R.2b (2026-10-03) a landed column is charged its *occupied* chunks**
      (non-`typesEmpty` bands, at least 1), not `CHUNKS_PER_COLUMN`, and a frame reads at most the 64z
      column count (`BULK_RELOAD_CHUNK_BUDGET/4` = 24). Emptiness is only known after the read, so the
-     column that crosses the budget still lands. A worker-decoded column (threaded web) is charged
+     column that crosses the budget still lands. A worker-decoded column (`EDEN_THREADED` only; no current build) is charged
      `fmh_defaultBandCount()`, the bundled map's band count. 64z is unchanged (the cap is the old
      budget); a 256z column of 64z-shaped terrain now costs what the 64z column costs, so the reload
      reads ~24 columns a frame instead of 6. **What grows is bytes per frame at 256z** (`.eden` stores
@@ -408,14 +413,12 @@ item 3, because the bulk path still runs it for teleports. Plan and gates:
      premium) except on the first touch of new territory, which reads at ~40–70 MB/s cold against
      330–430 MB/s warm; that is the only cost a smaller on-disk format would remove. A Warp Home's worst
      frame (the synchronous 324-column `loadWorld`) is 289–397 ms at 64z and 438–542 ms at 256z.
-4. Drain dirty lists → `rebuild2()` each chunk → queue VBO uploads. **Since 2026-08-27 the chunks
-   dirtied by a bulk reload are meshed on worker threads instead** (`Classes/MeshPool.{h,mm}`) —
-   edits, explosions, fire and the initial load still mesh inline in this pass. The rule that
-   matters here: a column whose chunks have a mesh job in flight is **skipped by the column read
-   above**, because `readColumn()` re-homes the slot a worker is reading. Since the same date the
-   column **read** is split too: a column served from the bundled default map has its RLE decode
-   done on a worker (`FileManager::readColumnDeferred` → `fmh_decodeColumnBands`), and does not
-   count as resident until that decode publishes. See docs/rendering.md "Off-thread meshing". Two things modify this pass.
+4. Drain dirty lists → `rebuild2()` each chunk → queue VBO uploads. On every current build this is
+   all inline on the main thread. *(Under `EDEN_THREADED` — defined only by the retired web build's
+   threaded trees — the chunks dirtied by a bulk reload are meshed on `MeshPool` workers, a column
+   whose chunks have a job in flight is skipped by the column read above, and a bundled-map column's
+   decode runs on a worker via `FileManager::readColumnDeferred` → `fmh_decodeColumnBands`. See
+   rendering.md "Off-thread meshing".)* Two things modify this pass.
    A column is skipped, flags intact, unless it **and its four lateral neighbours** have all
    streamed in, because `rebuild2()` reads one block across each side face and meshing early just
    builds geometry for data about to be replaced. **Since B.5b-1a this test runs every frame**, with
@@ -452,7 +455,8 @@ item 3, because the bulk path still runs it for teleports. Plan and gates:
      `stale` (the bit says empty, the voxels disagree: dropped geometry) and must read 0.
    The neighbourhood test means each chunk is meshed exactly once per reload — 1296 rebuilds and
    107 ms of mesh CPU per burst, against 1949 and 144 ms for a test that asked only about the
-   column itself (`tools/headless-mesh-burst-probe.js`, same-session A/B).
+   column itself (measured on the retired web build, `web-port-final:web/tools/headless-mesh-burst-probe.js`, same-session A/B;
+   native: `--stage1 --pass-probe` / `--mesh-bench`).
 
    That neighbourhood test was written, reverted and restored: it is the only thing in the engine
    that draws a chunk which has not been meshed since it was allocated, and until 2026-08-27
@@ -460,11 +464,11 @@ item 3, because the bulk path still runs it for teleports. Plan and gates:
    `render()`'s `rtn_vertices==0` guard read garbage from a recycled heap and the index `memcpy`
    walked off `allIndices`. See [rendering.md](rendering.md) and
    `WORKING/chunk-streaming-redesign-prompt.md` §2. **Any future deferral that leaves a resident
-   chunk unmeshed — a worker-thread mesher, above all — depends on that initialisation.**
+   chunk unmeshed — a worker-thread mesher (`EDEN_THREADED`), above all — depends on that initialisation.**
 
 The old octree (`TreeNode troot`, `addToTree`, …) is vestigial: `renderTree()` says it
 plainly — "once upon a time this descended an oct-tree, profiling showed it was
-useless, now just iterates through chunk list" (`Terrain.mm:2430`).
+useless, now just iterates through chunk list" (`Terrain::renderTree`).
 
 ## Lifecycle
 - `Terrain()` constructed at app start; `allocateMemory()` only when entering a world;

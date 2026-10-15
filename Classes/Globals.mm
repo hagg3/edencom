@@ -96,7 +96,7 @@ void eden_set_save_journal_columns(int on){
     printf("save: dirty-column journalling %s\n",g_save_journal_columns?"ON":"OFF");
 }
 
-extern "C" const int blockinfo[NUM_BLOCKS+1]={
+extern "C" int blockinfo[NUM_BLOCKS+1]={
 	[TYPE_NONE]=IS_NOTSOLID,
 	[TYPE_BEDROCK]=0|IS_HARD,
 	[TYPE_SAND]=0,

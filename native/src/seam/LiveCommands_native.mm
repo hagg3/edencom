@@ -28,7 +28,7 @@
 // a lightbox, the addlight + refreshChunksInRadius buildBlock does first (DevConsole's setblock
 // skips that, so its lightboxes are dark until the next load re-derives lights).
 
-#import "../../../web/src/shim/foundation/uikit_stubs.h"
+#import "../../../port/src/shim/foundation/uikit_stubs.h"
 #include "../../../Classes/World.h"
 #include "../../../Classes/Constants.h"
 #include "../../../Classes/CmdScript.h"

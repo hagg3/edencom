@@ -222,12 +222,7 @@ void share_cb(int chosen) {
 namespace WorldShare {
 
 bool offered(WorldNode* node) {
-#if defined(__EMSCRIPTEN__)
-    (void)node;
-    return false;
-#else
     return node && !node->needs_convert && st().stage == S_IDLE;
-#endif
 }
 
 bool busy() { return st().stage != S_IDLE; }

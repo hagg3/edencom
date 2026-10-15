@@ -1,4 +1,4 @@
-// EdenViewController_native.h — native twin of web/src/seam/EdenViewController_web.h
+// EdenViewController_native.h — native twin of web-port-final:web/src/seam/EdenViewController_web.h
 // (Phase N Stage 1, WORKING/native-migration-plan-2026-09-04.md).
 //
 // Nothing outside Classes/EdenViewController.mm itself includes "EdenViewController.h"

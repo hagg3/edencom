@@ -4,7 +4,7 @@
 //
 //  The GL keybinds list (Phase N Stage 5.3, WORKING/phase-n-stage3plus-plan-2026-09-05.md): every
 //  rebindable action with its current key, drawn with the widget kit (Classes/GLWidgets.h) and
-//  reading the Stage 5.2 keybind model (the KEYBINDS section of web/src/seam/Settings_web.mm, a
+//  reading the Stage 5.2 keybind model (the KEYBINDS section of port/src/seam/Settings_web.mm, a
 //  SHARED seam file — so this list and the web build's Keys tab are two front-ends over one table).
 //
 //  U.4 (WORKING/ui-rework-plan-2026-10-11.md): it is no longer a screen. It is the CONTENT of
@@ -13,7 +13,7 @@
 //  rect and the touches that land on a row. What lives here is only what is keybind-shaped: the
 //  rows (group headings + TwoLineRows of action · "also X" · key button), the capture modal, and
 //  refreshing button text when a capture resolves. Web --wrap's SettingsMenu::update/render to
-//  no-ops (EDEN_LD_WRAP, Settings_web.mm), so this cannot draw or eat input on web.
+//  no-ops on the retired web build, so it never drew there.
 //
 //  CAPTURE. Tapping a row's key button arms the model's one capture slot
 //  (eden_keybind_capture_begin); the next key the platform input layer sees is fed to

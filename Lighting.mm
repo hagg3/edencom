@@ -30,6 +30,19 @@ static int lightscratch_total=0;
 static int* lit_col=NULL;               // 2 ints per column slot: wcx, wcz
 static unsigned char* rebuild_mask=NULL;   // per column slot: inside the 3x3 being rebuilt
 #define LIT_NONE INT_MIN
+// P.10: per column slot, "this slot's occupant was scanned and holds no lightbox" -- for the world
+// chunk column in lbfree_col (2 ints per slot, as lit_col). sweepLightingColumn skips the slot's
+// 256 strip memchrs while it holds. Only "none" is ever trusted (a slot with lightboxes is always
+// scanned), so the one way to go wrong is a lightbox appearing behind the flag's back; every way
+// one can is cleared here: an occupant change (checked on every use), Terrain::addChunk
+// (light_markLanded), Terrain::setLand of TYPE_LIGHTBOX (light_onSetLand), and the start of a full
+// sweep or a store clear (every load, warp and bulk reload).
+static unsigned char* lbfree=NULL;
+static int* lbfree_col=NULL;
+int g_light_cols_scanned=0,g_light_cols_skipped=0;
+static void light_lbfreeClearAll(){
+    if(lbfree)memset(lbfree,0,CHUNKS_PER_SIDE*CHUNKS_PER_SIDE);
+}
 int g_light_rebuilds=0;
 double g_light_rebuild_ms=0,g_light_rebuild_max_ms=0;   // F3 clock (0 without EDEN_F3_HOOKS)
 int g_light_test_mutation=0;
@@ -46,6 +59,8 @@ void light_storeAllocate(){
     lit_col=(int*)malloc(sizeof(int)*2*CHUNKS_PER_SIDE*CHUNKS_PER_SIDE);
     for(int i=0;i<2*CHUNKS_PER_SIDE*CHUNKS_PER_SIDE;i++)lit_col[i]=LIT_NONE;
     rebuild_mask=(unsigned char*)calloc(CHUNKS_PER_SIDE*CHUNKS_PER_SIDE,1);
+    lbfree=(unsigned char*)calloc(CHUNKS_PER_SIDE*CHUNKS_PER_SIDE,1);
+    lbfree_col=(int*)malloc(sizeof(int)*2*CHUNKS_PER_SIDE*CHUNKS_PER_SIDE);
     lightarray=g_light_selfcheck?(Vector8*)calloc((size_t)T_SIZE*T_SIZE*T_HEIGHT,sizeof(Vector8)):NULL;
 }
 void light_storeFree(){
@@ -64,6 +79,10 @@ void light_storeFree(){
     lit_col=NULL;
     free(rebuild_mask);
     rebuild_mask=NULL;
+    free(lbfree);
+    lbfree=NULL;
+    free(lbfree_col);
+    lbfree_col=NULL;
     free(lightarray);
     lightarray=NULL;
 }
@@ -78,6 +97,19 @@ void light_storeClear(){
         lightbrick_pool[lightbrick_npool++]=b;
     }
     if(lightarray)memset(lightarray,0,sizeof(Vector8)*T_SIZE*T_SIZE*T_HEIGHT);
+    light_lbfreeClearAll();   // P.10: Terrain::clearBlocks and every bulk reload come through here
+}
+void light_markLanded(int cx,int cz){
+    if(lbfree&&g_light_test_mutation!=4)lbfree[getColIndex(cx,cz)]=0;
+}
+void light_onSetLand(int x,int z,int type){
+    if(type==TYPE_LIGHTBOX&&lbfree&&g_light_test_mutation!=4)
+        lbfree[getColIndex(x/CHUNK_SIZE,z/CHUNK_SIZE)]=0;
+}
+BOOL light_columnKnownFree(int cx,int cz){
+    if(!lbfree)return FALSE;
+    const int s=getColIndex(cx,cz);
+    return lbfree[s]&&lbfree_col[s*2]==cx*CHUNK_SIZE&&lbfree_col[s*2+1]==cz*CHUNK_SIZE;
 }
 // A zeroed brick for the table, not yet published.
 static Vector8* light_takeBrick(){
@@ -217,9 +249,20 @@ static void sweepLightingHit(int x,int z,int y){
 // cy*CHUNK_SIZE, all sharing the column's x/z bounds. If any chunk breaks that (a deferred or
 // not-yet-published slot) the column takes the old per-chunk, per-voxel scan, which honours each
 // chunk's own pbounds exactly as before.
+//
+// P.10: a regular column found to hold no lightbox is remembered (lbfree, above) and skipped until
+// its slot's occupant changes or something could have put a lightbox in it. Walking with no
+// lightboxes, the 25 slots of every neighbourhood rebuild were all scan (0.5 / 1.0 ms per landed
+// column on the A8X at 64z / 256z); now only the newly landed column is.
 static int sweepLightingColumn(int cx,int cz,void (*hit)(int x,int z,int y)){
     int hits=0;
     TerrainChunk* first=chunkTablec[threeToOne(cx,0,cz)];
+    const int s=cx*CHUNKS_PER_SIDE+cz;
+    if(lbfree&&lbfree[s]&&first&&lbfree_col[s*2]==first->pbounds[0]&&lbfree_col[s*2+1]==first->pbounds[2]){
+        g_light_cols_skipped++;
+        return 0;
+    }
+    g_light_cols_scanned++;
     bool regular=(first!=NULL);
     for(int cy=0;regular&&cy<CHUNKS_PER_COLUMN;cy++){
         TerrainChunk* chunk=chunkTablec[threeToOne(cx,cy,cz)];
@@ -241,6 +284,11 @@ static int sweepLightingColumn(int cx,int cz,void (*hit)(int x,int z,int y)){
                     p=found+1;
                 }
             }
+        }
+        if(lbfree){
+            lbfree[s]=(hits==0);
+            lbfree_col[s*2]=first->pbounds[0];
+            lbfree_col[s*2+1]=first->pbounds[2];
         }
         return hits;
     }
@@ -364,6 +412,7 @@ static void light_slotOccupant(int cx,int cz,int* wcx,int* wcz){
 // light_syncLandedColumns re-lights its 3x3 once the sweep is done -- which also undoes whatever
 // the sweep wrote for that slot's departed occupant.
 static void light_markWindowLit(){
+    light_lbfreeClearAll();   // P.10: a full sweep trusts nothing remembered from before it
     if(!lit_col)return;
     for(int cx=0;cx<CHUNKS_PER_SIDE;cx++)
         for(int cz=0;cz<CHUNKS_PER_SIDE;cz++){

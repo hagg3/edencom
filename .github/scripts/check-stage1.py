@@ -2,7 +2,7 @@
 """check-stage1.py — assert Phase N Stage 3's success criterion 2.
 
 Criterion 2 is the whole portability claim in one number: `--headless --stage1` on Linux and on
-Windows must report the SAME geometry checksums the macOS leg and the web build already record.
+Windows must report the SAME geometry checksums the macOS leg already records.
 Not "similar", not "plausible" — the same 64-bit hashes, because the mesher is deterministic and
 every input to it is byte-defined by the save format.
 
@@ -15,7 +15,7 @@ criteria — not a number to update here.)
 Re-recorded ONCE, deliberately, by B.5b-1a (2026-10-11), which changed WHAT is meshed, not how: the
 window is centred on the nearest chunk corner and its outer ring of columns is never meshed
 (render-distance-runtime-plan-2026-10-11.md §3). The new values were taken on macOS native and
-matched by web build-st (`tools/headless-mesh-checksum.js`) before being written here. The values
+cross-checked against the (since retired, 2026-10-13) web build before being written here. The values
 before it were 64z c26fa4fd2a5b2660 / 49b71a4e16afb125, 256z b19d3e33a8717c60.
 
 Why a script rather than a `grep -q`: a grep for the expected hash passes silently when the line is
@@ -25,7 +25,15 @@ there because nothing ran". This parses the line, requires it to exist, and prin
 found next to what it wanted — which is the difference between a red build you can act on and one
 you have to reproduce first.
 
+H.2 (2026-10-14) adds a third leg, "geometry 64z shadows" (`--stage1 --shadows=classic`), and puts an
+explicit `--shadows=off` on the two above so they never depend on the setting's default. Shadows
+change vertex COLOURS only, so that leg's `geom` must still be the 64z value; its `full` is pinned
+below (recorded on macOS native; Linux, Windows and the iOS simulator must match it -- a mismatch is
+a stop, and fp contraction in the light path is the first suspect). A change to Classes/Shadow.h's
+SHADOW_REACH_* constants or the shade formula re-pins it, deliberately and in the same commit.
+
     usage: check-stage1.py <64z-log> [<256z-log>]
+           check-stage1.py --shadows <64z-shadows-log>
 """
 
 import json
@@ -34,6 +42,7 @@ import sys
 
 EXPECTED_64 = {"geom": "53d457fe6e6884e2", "full": "3b8e767dd12219ae"}
 EXPECTED_256_GEOM = "d53a88740f714762"
+EXPECTED_64_SHADOWS = {"geom": EXPECTED_64["geom"], "full": "4c95e204f1827850"}   # Classic
 
 # `[eden-stage1] world64.checksum {"chunks":1296,...,"geom":"...","full":"..."}`
 LINE = re.compile(r"\[eden-stage1\]\s+(\S+)\.checksum\s+(\{.*\})\s*$")
@@ -93,6 +102,12 @@ def main(argv):
     if len(argv) < 2:
         print(__doc__)
         return 2
+    if argv[1] == "--shadows":
+        if len(argv) < 3:
+            print(__doc__)
+            return 2
+        check(argv[2], EXPECTED_64_SHADOWS, "64z shadows (Classic)", phase_want="world64")
+        return 0
     check(argv[1], EXPECTED_64, "64z", phase_want="world64")
     if len(argv) > 2:
         check(argv[2], {"geom": EXPECTED_256_GEOM}, "256z", phase_want="world256")

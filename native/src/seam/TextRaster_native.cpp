@@ -1,11 +1,11 @@
 // TextRaster_native.cpp — native implementation of `eden_rasterize_text_rgba`, the one genuinely
-// platform-shaped function in web/src/seam/Texture2D_web.mm (Phase N Stage 1,
+// platform-shaped function in port/src/seam/Texture2D_web.mm (Phase N Stage 1,
 // WORKING/native-migration-plan-2026-09-04.md).
 //
 // Everything else in Texture2D_web.mm is shared verbatim between the two targets — the PNG decode
 // (stb_image), the POT rounding, the pixel-format selection, the initData contract. Only the
 // string-to-pixels step differed: web has a real DOM and rasterizes through a 2D canvas context,
-// and there is no canvas here. `stb_truetype.h` was already vendored at web/src/shim/vendor/ for
+// and there is no canvas here. `stb_truetype.h` was already vendored at port/src/shim/vendor/ for
 // exactly this eventuality (the plan names it as native's text-raster answer).
 //
 // THE CONTRACT THIS MUST HONOUR, copied from the web twin's header comment because getting either
@@ -36,7 +36,7 @@
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
 
-extern "C" const char* eden_platform_bundle_root(void);   // web/src/shim/foundation/platform_shims.cpp
+extern "C" const char* eden_platform_bundle_root(void);   // port/src/shim/foundation/platform_shims.cpp
 
 namespace {
 
@@ -164,7 +164,7 @@ struct Font {
     }
 };
 
-// The BODY face: Rubik Regular (SIL OFL, web/public/assets/fonts/), bundled beside Jersey. Tried
+// The BODY face: Rubik Regular (SIL OFL, media/fonts/), bundled beside Jersey. Tried
 // first; the system-font candidate list above is now only the fallback when the file is missing.
 struct BodyFont {
     std::vector<unsigned char> bytes;
@@ -194,8 +194,8 @@ Font& font() {
     return f;
 }
 
-// The design system's DISPLAY face (web/docs/design-system.md, "Type"): Jersey 10, SIL OFL, the
-// same file the web UI self-hosts (web/public/assets/fonts/), linked into the flat bundle by
+// The design system's DISPLAY face (web-port-final:web/docs/design-system.md, "Type"): Jersey 10, SIL OFL, the
+// same file the retired web UI self-hosted (now media/fonts/), linked into the flat bundle by
 // native/CMakeLists.txt. Only GL-kit chrome asks for it (eden_text_raster_set_face below); a
 // missing file falls back to the body face rather than to blank labels.
 struct DisplayFont {

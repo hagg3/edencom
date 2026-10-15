@@ -2,8 +2,8 @@
 
 > ## Stage S / S.8 (2026-10-11): `.eden` is no longer created, played or saved
 > **Every world is an `.emod`.** A `.eden` (or `.eden.gz` / `.gz` / `.zip`) is only ever a *source*: it is listed,
-> flagged, and converted to `<stem>.emod` when played (S.5d, now on **every** target including web); the
-> `.eden` is never opened for update. `.emod` → `.eden` / `.eden.gz` **export** stays (Storage tab, `--export`,
+> flagged, and converted to `<stem>.emod` when played (S.5d, on every target); the
+> `.eden` is never opened for update. `.emod` → `.eden` / `.eden.gz` **export** stays (Share › Export, `--export`,
 > and the upload path). Deleted with S.8: `g_world_format` and its Settings toggle, `--world-format=` (still
 > *accepted*, ignored), `EDEN_NO_CONVERT`, the `.eden` branch of `saveWorld`/`loadWorld`, `saveColumn`,
 > `saveCreatures`/`LoadCreatures`, the pre-v1 `convertFile`, the B5 rollback journal + whole-file scratch copy
@@ -12,22 +12,26 @@
 > behaviour that no longer exists in `Classes/` (`git show 35ecf78:Classes/FileManager.mm` has it). What stays
 > in `FileManager.mm` for `.eden` is read-only: `getName`/header peeks for the world list, `probeWorldHeight`,
 > the converter's source side, and the directory/`readColumn` machinery that `writeGenToDisk` (offline worldgen)
-> and the bundled-map reader still use. `convertWorldTo64` (Storage tab "Convert to 64z") routes an `.emod` to
+> and the bundled-map reader still use. `convertWorldTo64` routes an `.emod` to
 > `convertEmodTo64` (X.9, 2026-10-12): Legacy64z export to a scratch `.eden`, `ImportJob` with upgrade off, one atomic replace.
+> It has no native UI caller yet (the retired web Storage tab's "Convert to 64z" was the only one; a native
+> Storage page is ROADMAP W.6) — `--convert64-selftest` drives it.
 
 ## Purpose
 How world files are opened, streamed, saved and migrated at runtime. The on-disk
 format itself is specified in [eden-file-format.md](eden-file-format.md).
 
 ## Important files & types
-- `Classes/FileManager.mm/.h` — everything: `loadWorld`, `saveWorld`, `readColumn`,
-  `saveColumn`, directory management, legacy conversion, plus the offline
-  `saveGenColumn`/`writeGenToDisk` used by the world generator.
+- `Classes/FileManager.mm/.h` — everything: `loadWorld` (routes to `loadEmodWorld`), `saveWorld` /
+  `saveWorldKeepDynamics` (both end in `saveEmodWorld`), `readColumn` / `readColumnDeferred`,
+  `convertStep` (convert-on-play), `renameWorld`/`deleteWorld`, the read-only `.eden` directory
+  machinery, plus the offline `saveGenColumn`/`writeGenToDisk` used by the world generator.
+  (`saveColumn` and `convertFile` were deleted with S.8.)
 - `Classes/FileManagerHelper.mm` — read-only access to the **bundled** default world (its own
   state; the comment at the top warns the identically-named statics refer to the *default*
   world, not the active one). **Since S.6 (2026-10-10) the bundled map is `Eden.emod`**
   (repo root; 11.8 MB, 32,400 columns, 4 bands, zstd-19, baked from `Eden.eden` by
-  `web/tools/emod.py bake-default` and checked by `verify-default`). `fmh_init()` opens it with
+  `port/tools/emod.py bake-default` and checked by `verify-default`). `fmh_init()` opens it with
   `emod::EdenWorldStore` read-only, in place — on every target, iOS included — and falls back to the
   RLE `Eden.eden` handle/directory only when the bundle has no `Eden.emod`. The zstd decode runs in
   `fmh_readColumnRawFromDefault` (main thread: the store is single-owner) and hands the worker's
@@ -39,10 +43,14 @@ format itself is specified in [eden-file-format.md](eden-file-format.md).
 - `Classes/hashmap.mm` — int-keyed hashmap holding `ColumnIndex*` records.
 - File-scope statics in `FileManager.mm`: `saveFile` (NSFileHandle), `sfh` (in-memory
   header), `indexes` (directory hashmap), `cur_dir_offset`, `file_version`,
-  `imgHash`. **The FileManager is effectively a singleton with global mutable state**
+  `imgHash`, and since Stage S/D `emodStore` (the open `EdenWorldStore`), `emodHeader`, `worldTrailer`.
+  **The FileManager is effectively a singleton with global mutable state**
   — two worlds can never be open at once.
 
-## Load flow — `FileManager::loadWorld(name, fromArchive)` (`FileManager.mm:1346`)
+## Load flow — `FileManager::loadWorld(name, fromArchive)` (stock `.eden` flow — historical)
+
+> The live path: `loadWorld` sends an `.emod` to `loadEmodWorld` ("`.emod` worlds" below); a `.eden` is
+> converted first by `convertStep`. The chart is the stock 2.1.1 `.eden` flow, kept for reference.
 
 ```mermaid
 flowchart TD
@@ -71,7 +79,7 @@ Notes:
   types 0–8 (dirt/rivers/mountains/desert/ponies/beach/mix/flat) are the offline
   generator's biome recipes and are only reachable by editing the code. The menu's
   "flat world" option sets `genflat` → seed 0.
-- The 10 default spawn points (`spx/spz/spy/spyaw` arrays, `FileManager.mm:1425`) are
+- The 10 default spawn points (`spx/spz/spy/spyaw` arrays in `FileManager::loadWorld`) are
   hand-picked scenic locations; consecutive new worlds avoid repeating the last one.
 - `player->pos`/`yaw`, `home`, seed, golden cubes, region sky colors all come from the
   header. `chunkOffsetX/Z` (the render-origin/streaming anchor owned by FileManager)
@@ -79,24 +87,30 @@ Notes:
   same helper the streamer uses). Since B.5b-1a the streamer moves it on every window shift, not
   only on a bulk reload (docs/world-and-terrain.md "Streaming").
 
-## Column streaming — `readColumn(cx, cz, fileHandle)` (`FileManager.mm:802`)
+## Column streaming — `readColumn(cx, cz, fileHandle)`
 
 Resolution order for a requested column:
 1. **Directory hit** → seek `chunk_offset`, read 4 chunks of raw type+color bytes
    into the (reused) `TerrainChunk` objects, memcpy type strips into `blockarray`,
    `ter->addChunk(...)` marks the chunk + neighbours dirty for meshing.
 2. **Directory miss, seed == 333333** → `fmh_readColumnFromDefault`: same procedure
-   against the bundled `Eden.eden`, RLE-decoding and transposing each chunk. If even
+   against the bundled map (`Eden.emod` since S.6; stock RLE-decoded and transposed `Eden.eden`). If even
    the bundle lacks the column (outside the generated 2880×2880 area) →
    `generateEmptyColumn` (air).
 3. **Directory miss, other seed** → `TerrainGenerator::generateColumn` (flat-world
    layers; see [terrain-generation.md](terrain-generation.md)).
 
-Called from two places: initial load (18×18 loop in `loadWorld`) and the per-frame
+Called from two places: initial load (the window loop in `loadWorld`) and the per-frame
 streaming check in `Terrain::prepareAndLoadGeometry` (which opens a fresh read-only
-NSFileHandle each streaming event).
+NSFileHandle each streaming event). An `.emod` world reads from the store instead of a
+directory hit ("`.emod` worlds" below); the fall-through to bundle/generator is the same.
 
-## Save flow — `FileManager::saveWorld(warpPos)` (`FileManager.mm:366`)
+## Save flow — `FileManager::saveWorld(warpPos)`
+
+Step 1 is live. **Steps 2–7 are the stock/pre-S.8 `.eden` writer (historical):** today `saveWorld`
+calls `saveEmodWorld`, which rebuilds the header (from the loaded one) and commits one batch
+("`.emod` worlds" below); a non-`.emod` world is logged and not saved.
+
 
 1. `terrain->endDynamics(TRUE)` — extinguish fires, clear liquids/effects (dynamics
    are **not** persisted; a burning world saves as not-burning). **Modified from stock by B.5b-1b
@@ -131,7 +145,7 @@ NSFileHandle each streaming event).
    **header last**, because it is the only thing that says where the directory is, and on the
    in-place path below it is the nearest thing this format has to a commit record.
 
-### Two save strategies, chosen by file size (2026-08-25)
+### Two save strategies, chosen by file size (2026-08-25) — historical, deleted with S.8
 Steps 3–7 above run against a **scratch copy** of the world (`<file>.savetmp`), which one
 `rename()` swaps in at the very end — so any crash before that rename leaves the previous save
 byte-identical. That is still what happens for a file **below `g_save_inplace_threshold`**
@@ -139,7 +153,7 @@ byte-identical. That is still what happens for a file **below `g_save_inplace_th
 
 At or above the threshold the copy is the problem, not the protection: it is O(file size) in time
 *and* in peak memory, and a 256z world can be gigabytes. Measured on a real 279 MB 256z specimen
-with **nothing edited** (`web/tools/headless-save-io-probe.js`): 558 MB read + 558 MB written per
+with **nothing edited** (`headless-save-io-probe.js`, retired with the web build 2026-10-13; at tag `web-port-final`): 558 MB read + 558 MB written per
 save, against ~155 KB of genuinely-changed bytes. So above the threshold `saveWorld` writes
 straight into the world file and protects it with a **rollback journal** instead:
 
@@ -182,7 +196,7 @@ The journal has **two phases**, written in that order and both before the first 
   window dirty at once — and the typical case is the two numbers above. The in-place save path is
   fully atomic again.
 - Above the threshold the port also stops maintaining a **whole-file backup slot**
-  (`<file>.savetmp.bak` / `<file>.bak`, `web/src/shim/foundation/NSFileHandle.mm`) and deletes any
+  (`<file>.savetmp.bak` / `<file>.bak`, `port/src/shim/foundation/NSFileHandle.mm`) and deletes any
   stale one it finds: nothing above the threshold would ever refresh it, so it is a permanent
   second copy of the world that the load-failure dialog would offer as if it were the previous
   save. Durability above the threshold is the journal.
@@ -191,10 +205,10 @@ The journal has **two phases**, written in that order and both before the first 
   rather than finishing a save with neither protection, which is the one path that can leave a
   world unloadable.
 
-Regression cover: `web/tools/headless-save-inplace-test.js` (both paths, a real
-engine-written journal replayed against a deliberately half-written file, a deliberately torn
-dirty column repaired from its `EDNJCOL` pre-image — with the lever off as the control showing the
-identical damage surviving — and journal hygiene on world delete).
+Regression cover, while it existed: the web `headless-save-inplace-test.js` (tag `web-port-final`) —
+both paths, a real engine-written journal replayed against a half-written file, a torn dirty column
+repaired from its `EDNJCOL` pre-image, and journal hygiene on world delete. Native
+`--save-roundtrip` now covers the `.emod` save; `deleteWorld` still removes a stray `.savejrnl`.
 
 **Every one of those sizes is per-world runtime now** (2026-08-06): `SIZEOF_COLUMN` is 32,768 or
 131,072 and `MAX_CREATURES_SAVED` is whatever the file actually has room for. See
@@ -218,16 +232,19 @@ from the directory alone, with no extra I/O:
   expected); reading it at full stride would silently splice in 24,000 bytes of its neighbour.
 
 ### When saves happen
-- Streaming boundary crossings (before overwriting resident columns) — the frequent,
-  invisible autosave.
-- `warpToPoint`/`warpToHome` (portal travel, home warp) — save-with-warp then reload.
+- **Evict-save** (B.5b-1b): a modified column is saved as the streaming ring evicts it
+  (`saveWorldKeepDynamics`). Stock instead saved the whole window at every streaming boundary.
+- **Autosave** every `g_autosave_seconds` (default 60) while edits are pending — Settings › Saves ›
+  Autosave (Off / 1 / 2 / 5 min; `Terrain::update`). Off still saves on exit and warp.
+- `warpToPoint`/`warpToHome` (portal travel, home warp) — save-with-warp then reload; also the bulk
+  reload.
 - HUD save button, exit to menu, new-world creation.
-- **Stock iOS: NOT on app background/termination.** The 2010 target could get away with that;
-  neither of this fork's live targets can — a browser tab is discarded under memory pressure with
-  no further callback, and iOS 12 kills a backgrounded app the same way.
+- App background / termination and closing the window (port addition, below). **Stock iOS did NOT
+  save there**; the 2010 target could get away with that, but a modern iOS kills a backgrounded app
+  with no further callback.
 
 #### Save-on-background — the ports' addition (Phase N Stage 4.2, 2026-09-06)
-`eden_app_will_background()` (`web/src/seam/AppLifecycle_web.mm`, a portable seam file the native
+`eden_app_will_background()` (`port/src/seam/AppLifecycle_web.mm`, a portable seam file the native
 build compiles unchanged) is the one entry point every host calls when the app is going away. It
 owns the "is it safe?" policy, so no host re-implements it:
 
@@ -240,25 +257,21 @@ owns the "is it safe?" policy, so no host re-implements it:
 
 Two things about this that are easy to get wrong:
 - **`World::target_game_mode` is never initialised by `World::World()`** — its only assignments are
-  in `World::update`'s `doneLoading==2` branch and `World::exitToMenu` (`World.mm:427-428,475-476`).
+  in `World::update`'s `doneLoading==2` branch and `World::exitToMenu`.
   It is indeterminate until the first world has been loaded or exited, so nothing may read it
   before `game_mode == GAME_MODE_PLAY` has already been established.
 - **A background save clears dynamics.** `saveWorld()` opens with `terrain->endDynamics(TRUE)`
   (liquids, burn list, all particle effects), so backgrounding stops flowing water and puts fires
-  out — exactly as the in-game Save button already does (`Hud.mm:1019`). Accepted, not overlooked.
+  out — exactly as the in-game Save button already does (the HUD Save handler in `Hud.mm`). Accepted, not overlooked.
 
-Host wiring: **web** — `public/eden-storage.js`'s `flushNow()` calls it first thing on
-`visibilitychange`/`pagehide`, *before* mirroring MEMFS to OPFS/IndexedDB (that order is the whole
-point; the mirror can only persist bytes the engine has already written). **native** —
-`EdenAppDelegate::onPageHide()`, driven both by `SDL_EVENT_QUIT` from the poll loop (which until
+Host wiring (native): `EdenAppDelegate::onPageHide()`, driven both by `SDL_EVENT_QUIT` from the poll loop (which until
 Stage 4.2 meant closing the window threw away everything since the last streaming boundary) and by
 `SDL_EVENT_WILL_ENTER_BACKGROUND`/`SDL_EVENT_TERMINATING` from an `SDL_AddEventWatch()` callback.
 The watch is not a stylistic choice: `SDL_events.h` requires it for those events, because on
 iOS/Android they are delivered synchronously from inside the OS's background callback and the main
 loop may never reach `SDL_PollEvent` again. `SDL_EVENT_WINDOW_FOCUS_LOST` deliberately does **not**
-save on native — a desktop window that lost focus is not going anywhere, unlike a hidden browser
-tab. Regression gates: `web/tools/headless-save-on-background-test.js` (the policy) and
-`eden_native --background-selftest` (the SDL wiring).
+save — a desktop window that lost focus is not going anywhere (it only pauses the loop,
+`onVisibilityHidden`). Regression gates: `eden_native --background-selftest` (policy and SDL wiring; the web policy test is retired).
 
 ## `.emod` worlds (Stage S / S.4, 2026-10-09) — modified from stock
 The port's second world container: an append-only log of per-column zstd records
@@ -316,8 +329,8 @@ every sign later cannot resurrect them. Refused edits (over 1 MiB, an opaque tra
   same cut written out as a `.eden`.
 - **Converting, importing, pairing (S.5 / S.5d, 2026-10-10).** One job does every `.eden`/archive →
   `.emod` conversion: `emod::ImportJob` (`Classes/EdenWorldSource.{h,cpp}`) — convert-on-play
-  (`FileManager::convertStep`), Get Worlds (`WorldBrowser`'s `DL_CONVERT`) and web's Storage-tab
-  import (`eden_storage_import_*`). It sniffs the bytes, not the name (a zip called `.eden` is an
+  (`FileManager::convertStep`), Get Worlds (`WorldBrowser`'s `DL_CONVERT`) and the `--import=` harness
+  (the retired web build's Storage-tab import was a third caller). It sniffs the bytes, not the name (a zip called `.eden` is an
   archive), unpacks nested gzip/zip layers to `<out>.layerN` temps while still compressed, and
   streams the innermost `.eden` into the converter, so **no inflated `.eden` is ever written**. The
   pre-flight wants `need = 6 × archive bytes` (or `2 × columns × 900 B` for a plain `.eden`)
@@ -331,13 +344,13 @@ every sign later cannot resurrect them. Refused edits (over 1 MiB, an opaque tra
 - **The height a conversion writes (S.5e, 2026-10-10).** Every `.emod` is 256z by default: Settings
   › Saves › "Upgrade 64z worlds to 256z when converting" (`upgrade_256z`, on; read through
   `eden_get_upgrade_256z()`, which `EDEN_UPGRADE_256Z=0|1` overrides) is passed to `ImportJob::begin`
-  by all three callers. Convert-on-play also asks first: `World::loadWorld` calls
+  by every caller. Convert-on-play also asks first: `World::loadWorld` calls
   `FileManager::convertHeightGate(name)` before the first `convertStep`, which — toggle on, source not
   already 256z (a plain `.eden` is probed; an archive cannot be, so it asks "if it is a Classic
   64-tall world"), `EDEN_CONVERT_PROMPT` not 0 — raises **"Convert world"** (`showAlertConvertHeight`:
   Upgrade to 256 · Keep 64 · Cancel) and holds the load until `answerConvertHeight()`; Cancel backs
   out to the menu with nothing written. The answer is consumed by that one conversion. Get Worlds and
-  the web import follow the toggle only. Exports are unchanged: an upgraded world's own-format export
+  `--import` follow the toggle only. Exports are unchanged: an upgraded world's own-format export
   is a canonical 256z v5 `.eden`; Legacy64z is the way back (byte-identical to the source's own
   Legacy64z export for a v4 source). Native harness modes pin the toggle to 0 unless
   `--upgrade-256z=1` (gates measure the source's height). Cost: +46 MB per open world on the iPad Air
@@ -346,9 +359,7 @@ every sign later cannot resurrect them. Refused edits (over 1 MiB, an opaque tra
   `source_size` = its size; archives by name + mtime) is hidden, and the `.emod`'s row says
   **"(+X MB original kept)"** (`WorldNode::original_bytes`). Share > **Remove original** deletes it
   (`FileManager::removeOriginal`). A `.eden` re-imported under the same stem with other bytes does
-  not pair, so it lists on its own as "(needs conversion)". Web's `eden_storage_list_worlds` rows
-  carry `format` (`"eden"`/`"emod"`) and `originalBytes`, and every index-based Storage export skips
-  a kept original the same way.
+  not pair, so it lists on its own as "(needs conversion)".
 - **Export (S.5 + S.5b).** `emod::EdenExporter` (`Classes/EdenWorldExport.{h,cpp}`) turns an `.emod`
   or a `.eden` back into a `.eden` as a pulled byte stream — a pre-flight `begin()` that knows the
   exact output size and every loss before any byte, then `read()` a column at a time. Four targets:
@@ -360,38 +371,38 @@ every sign later cannot resurrect them. Refused edits (over 1 MiB, an opaque tra
   the report); own/NewFormat can prune trailer records outside the world's columns. **`.eden.gz` is
   the default export on every target**: native writes `Documents/Exports/<name>.eden.gz` through a
   time-sliced `ExportFileJob` (`.exporting` temp, fsync, rename; free space checked up front and every
-  64 MB), web streams 1 MB chunks out of wasm into a Blob (`eden_storage_export_*`; 266 MB W256 with
-  1.1 MB of live wasm allocation). Test CLI: `eden_native --export=… [--export-target= --export-gz
+  64 MB). (The retired web build streamed 1 MB chunks into a Blob.) Test CLI: `eden_native --export=… [--export-target= --export-gz
   --export-dry]`, `--import=…` (native/README.md).
-- Measured (S.4): a 100-column web world is 61 KB as `.emod` vs 3.29 MB as `.eden`; a one-column
-  save mirrors 1,104 B vs 91,584 B in place; a no-edit save 664 B vs 26,024 B.
-  `web/tools/headless-opfs-mirror-test.js --world-format=emod` asserts every save mirrors exactly
-  the bytes it appended.
+- Measured (S.4, on the retired web build): a 100-column world is 61 KB as `.emod` vs 3.29 MB as
+  `.eden`; a one-column save appends 1,104 B vs 91,584 B written in place; a no-edit save 664 B vs
+  26,024 B.
 
-## Legacy conversion (`convertFile`, `FileManager.mm:1302`)
+## Legacy conversion (`convertFile`) — historical, deleted with S.8
 1.x files (version field is garbage) are rewritten: each old column
 (4 chunks × 4096 type bytes, no colors) is mapped through `convertType[31]` /
 `convertColor[31]` — old baked-color block types (colored crystals/leaves/"blank"
 blocks) become modern type+paint pairs — into a temp file which replaces the
-original. Shows "Converting World…" in the UI via `convertingWorld`.
+original. Shows "Converting World…" in the UI via `convertingWorld`. (Nothing sets `convertingWorld` any
+more; convert-on-play reports progress through `convertStep`'s percent. A 1.x file is not converted.)
 
 ## Renaming, hashes, deletion
 - `setName(file,display)` is stock's header-name rewrite (its only caller is the share flow) and
   does not work — see the last bullet. **`renameWorld(file,display)` (N.4.5, 2026-10-04) is the
-  one the port's menu rename uses**: `"r+b"`, reads the header first and refuses a short file,
-  then writes ONLY the 50 bytes at `offsetof(WorldFileHeader,name)`. No scratch copy and no
-  journal, because no other byte moves (`--ui-selftest` diffs the file and asserts exactly that).
+  one the port's menu rename uses**. On an `.emod` it appends a new `WORLD_HEADER` record
+  (`emodSetHeaderName`); on a leftover `.eden` it opens `"r+b"`, reads the header first and refuses a
+  short file, then writes ONLY the 50 bytes at `offsetof(WorldFileHeader,name)`
+  (`--ui-selftest` diffs the file and asserts exactly that).
   A world that was created but never played has no file; it returns TRUE without writing and the
   first save takes the name from `Menu::selected_world`.
 - `setImageHash(md5)` rewrites the header when a new preview screenshot is taken
   (`md5.c` computes it; sharing uses it to pair world+png server-side).
-- `deleteWorld` removes the file, its `.png`, and its `.savejrnl` — a journal must never outlive
-  the world it belongs to, or a new world created under the same file name gets "recovered" into
-  that stale tail on its first load.
+- `deleteWorld` removes the file, its `.png`, and (for an `.emod`, after closing the store) its
+  `.converting`/`.spill`/`.creating`/`.compact` temps. It still removes a stray `.savejrnl` from the
+  pre-S.8 journal: a journal must never outlive the world it belongs to.
 - World *files* in Documents are the identity; the display name lives only in the
   header. `Menu::loadWorlds` lists Documents and reads each header for the name.
-- **The header is zeroed before it is filled** (`memset` at the top of `saveWorld` and
-  `writeGenToDisk`). Before Phase N Stage 3 it was not, and the untouched bytes — the tails of
+- **The header is zeroed before it is filled** (`memset` in `writeGenToDisk`, and in `saveEmodWorld`
+  when there is no loaded header to start from). Before Phase N Stage 3 it was not, and the untouched bytes — the tails of
   `name[]`/`hash[]`, all of `reserved[]`, the struct padding — went to disk as uninitialised
   heap. Full reasoning and its consequences for `reserved[]` are in
   [eden-file-format.md](eden-file-format.md#header--worldfileheader-filemanagerh20-35).
@@ -400,7 +411,7 @@ original. Shows "Converting World…" in the UI via `convertingWorld`.
   directory when the menu builds its world list, and the MS CRT's text mode translates CRLF to LF
   and treats an embedded 0x1A as end-of-file — so on Windows a text-mode `fread` of the 192-byte
   `WorldFileHeader` comes up short and every world lists as `error~`. POSIX ignores the flag, so
-  this is portability only; nothing on macOS/Linux/web changed.
+  this is portability only; nothing on macOS/Linux changed.
 - **`setName` has never worked, on any platform.** Its mode string is `"rw"`, which C parses as
   plain `"r"` (the `w` is not a mode character, it is a *modifier* position), so the `fwrite` that
   follows is a silent no-op on a read-only stream. Found while auditing the above; deliberately not
@@ -412,14 +423,13 @@ original. Shows "Converting World…" in the UI via `convertingWorld`.
 
 ## Where "Documents" is, and the two port hooks (Phase N Stage 2, 2026-09-05)
 `FileManager`'s constructor and `saveWorld` each grew one NULL-by-default hook, declared in
-`Classes/FileManager.h`. With both NULL — the stock path, and the web build's — behaviour is
-byte-for-byte what it was.
+`Classes/FileManager.h`. With both NULL — the stock path — behaviour is byte-for-byte what it was.
+The native entry point installs both (`eden_main_native.cpp`).
 
 - **`eden_documents_root_hook`** returns the save directory. NULL keeps the original
   `NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)` +
-  `objectAtIndex:0` lookup, which is what the web build uses (its Foundation shim already answers
-  that call with the port's own root, and hands back a string it owns forever). The native build
-  installs it and points it at `~/Library/Application Support/Emod` on macOS, `%APPDATA%\Emod\
+  `objectAtIndex:0` lookup (the retired web build used that branch: its Foundation shim answered the
+  call with the port's own root). The native build installs it and points it at `~/Library/Application Support/Emod` on macOS, `%APPDATA%\Emod\
   Documents` on Windows, `$XDG_DATA_HOME/emod/Documents` on Linux (**Emod, not Eden** — this is a
   community fork and must not share a directory with the shipped game; it did until 2026-09-06,
   and on the development machine another application was writing in the same folder. The rule and
@@ -431,22 +441,23 @@ byte-for-byte what it was.
   reach (`UIFileSharingEnabled` + `LSSupportsOpeningDocumentsInPlace` in `native/ios/
   Info.plist.in`), i.e. the only way a `.eden` world gets off the device — and unlike
   `Library/Caches` it is backed up and never purged.
-  **Do not "simplify" the else branch away.** Replacing the whole thing with
-  `[[NSString stringWithUTF8String:hook()] retain]` was tried and broke six web headless suites:
-  `documents` was freed under the engine and the first `readDirectory()` afterwards died as a bare
-  wasm "function signature mismatch" with nothing naming NSString.
-- **`eden_save_backup_hook`** is called at the top of `saveWorld(Vector)` with the world file's
-  path, before anything writes to it, so a host can copy the last-known-good bytes to
-  `<path>.bak`. NULL on web, because the Foundation shim guards every file open instead and that
-  is strictly better placed (it also covers the C3 rollback journal). Native installs it, because
+  The else branch is kept as the stock path; why it was once load-bearing for the web build's
+  Foundation shim is in the comment above it in `FileManager.mm`.
+- **`eden_save_backup_hook`** — *dormant since S.8 (2026-10-11):* native still installs it, but its
+  only call site was the deleted `.eden` branch of `saveWorld(Vector)`, so nothing calls it and an
+  `.emod` save makes no `.bak` (the append-only commit is the protection). As built: it ran at the top
+  of the `.eden` save with the world file's path, before anything wrote to it, so a host could copy
+  the last-known-good bytes to `<path>.bak`. The web build guarded file opens in its Foundation shim
+  instead. Native installed it, because
   Apple's real `NSFileHandle` is a class cluster with `-writeData:` on a private subclass — there
   is no honest place to hang the shim's deferred-until-first-write guard. Both call the same
-  implementation, `web/src/shim/foundation/save_backup.cpp`, which is where the rules now live
+  implementation, `port/src/shim/foundation/save_backup.cpp`, which is where the rules live
   (skip a missing/zero-length source, skip at or above `g_save_inplace_threshold`, delete a
-  partial `.bak`, and — since a player-facing toggle was added — skip if the "save_backup" row in
-  `kSettings[]` (`Settings_web.mm`) is off. Default ON: it is what
-  `eden_load_restore_backup()`/`LoadFailure_web.mm`'s corrupted-load recovery prompt offers to
-  restore, so turning it off is an explicit trade of that safety net for fewer/smaller writes.
+  partial `.bak`, skip if Settings › Saves › "Keep a save backup" (`save_backup` in `kSettings[]`,
+  `Settings_web.mm`) is off). The Linux/Windows Foundation shim's `NSFileHandle` writer still calls
+  those rules, but the `.emod` store writes through `FILE*`, not `NSFileHandle`, so the toggle has no
+  effect on a world save today. The `.bak` was what `eden_load_restore_backup()` (web recovery
+  dialog) restored.
 
 Why the native default is not `~/Documents`: macOS will not let an unsigned command-line tool
 write there and **redirects the writes into `~/Library/Containers/<UUID>/Data/Documents` with no
@@ -455,14 +466,15 @@ discard, while the process cheerfully printed `~/Documents` as its destination. 
 point migrates those in once (`migrate_legacy_saves`, `native/src/entry/eden_main_native.cpp`).
 
 ## Common pitfalls
-- **Global statics**: `sfh` sometimes points into an autoreleased NSData
-  (`loadWorld`: `[[saveFile readDataOfLength:...] bytes]`) and sometimes into a
-  malloc'd block (`saveWorld`). Lifetime bugs lurk if you reorder operations.
-- `saveWorld` must run **before** streaming overwrites chunk contents — the call
-  order in `prepareAndLoadGeometry` is deliberate.
-- The directory hashmap and the file can diverge between `readDirectory()` calls;
-  the code defensively re-reads it at the start of every save.
-- Appended columns place themselves relative to the creature block, whose size is now derived
+- **Global statics**: stock `sfh` sometimes pointed into an autoreleased NSData and sometimes into a
+  malloc'd block; today an `.emod` world's header is `emodHeader`, the store is `emodStore`, and
+  both are owned by the load pthread during a load and the main thread after — never both.
+  Lifetime bugs lurk if you reorder operations.
+- A modified column must be saved **before** streaming overwrites it — the evict-save in the ring
+  streamer and the call order in `prepareAndLoadGeometry` are deliberate.
+- (`.eden`, historical) The directory hashmap and the file could diverge between `readDirectory()`
+  calls; the stock save re-read it at the start of every save.
+- (`.eden` layout) Appended columns place themselves relative to the creature block, whose size is now derived
   per file (above). `EntityData`'s 60-byte layout is still frozen — changing it breaks every
   existing file.
 - `twoToOne` returns 0 for out-of-range chunk coords and 0 is treated as
@@ -470,19 +482,21 @@ point migrates those in once (`migrate_legacy_saves`, `native/src/entry/eden_mai
 - ~~Column writes are not atomic; a crash mid-save can corrupt a world (there is no
   journaling; the community's corrupted-world lore is real).~~ **No longer true as of this fork**
   — stock 2.1.1 wrote the world file in place with no protection at all, which is where the
-  community's corrupted-world lore comes from. A save is now either a scratch copy committed by
-  one rename (below the threshold) or an in-place write behind a two-phase rollback journal
-  (above it, see "Two save strategies" above), and both are all-or-nothing.
+  community's corrupted-world lore comes from. Since S.8 every save is one `.emod` commit record
+  (append, `fsync`; a reader ignores an uncommitted or torn tail and the next writer truncates it), so it is all-or-nothing. (Between
+  2026-08-25 and S.8 the `.eden` save used a scratch copy or a rollback journal — "Two save
+  strategies" above.)
 - **`FileManager::loadWorld()` bailing out early (a corrupt/truncated header) does
   NOT, by itself, stop `World::loadWorld()`'s caller from proceeding as if the load
   had succeeded.** `loadWorldThread`/`World::loadWorld` (`World.mm`) unconditionally
   advance `doneLoading` 1→2 and flip `game_mode` to `GAME_MODE_PLAY` once the loader
-  thread returns, whether or not it actually populated `Terrain` — a caller that wants
-  to detect "the load silently failed" (the web port's `eden_report_load_failure`,
-  polled via `eden_load_failed()`) has to check that signal itself at the
-  `doneLoading==2` transition and refuse to advance if it's set, or the engine renders
-  a `Terrain` that was cleared-but-never-repopulated (reproducibly crashes within a
-  frame or two — confirmed both headless and live-browser before this was fixed).
+  thread returns, whether or not it actually populated `Terrain`. The port's fix: `FileManager`
+  reports a refused load through `eden_report_load_failure` (`port/src/seam/LoadFailure_web.mm`),
+  and `World::update` checks `eden_load_failed()` at the `doneLoading==2` transition and stays on
+  the menu, or the engine would render a `Terrain` that was cleared-but-never-repopulated
+  (reproducibly crashed within a frame or two). On native the refusal is silent: the recovery
+  dialog that showed the reason and offered `eden_load_restore_backup()` was the web build's JS, and
+  nothing native reads `eden_load_failed_world()` yet.
 
 ## Safe vs. risky to modify
 - **Safe:** adding data to the `reserved` header bytes (that's what it's for —
@@ -491,6 +505,9 @@ point migrates those in once (`migrate_legacy_saves`, `native/src/entry/eden_mai
 - **Caution:** anything that changes `SIZEOF_COLUMN`, the 192-byte header size, the
   append arithmetic, or the `modified`-flag protocol; touching the static file-handle
   state; calling save/load from any thread but the ones that already do.
+- **Caution (`.emod`):** record types and the commit protocol are a normative spec
+  ([emod-file-format.md](emod-file-format.md)) with a cross-target byte gate (`--emod-selftest`
+  against `port/tools/fixtures/emod/`); clear `modified` only after the commit is durable.
 
 ## Unbounded-world scan (X.6, 2026-10-11)
 `loadWorld`/`loadEmodWorld` set `FileManager::worldUnbounded` (derived, never persisted): TRUE if the header

@@ -1,4 +1,4 @@
-// SDLView_native.mm — native twin of web/src/seam/EAGLView_web.mm (Phase N Stage 1,
+// SDLView_native.mm — native twin of web-port-final:web/src/seam/EAGLView_web.mm (Phase N Stage 1,
 // WORKING/native-migration-plan-2026-09-04.md).
 //
 // Same structural constraint as the web seam, for the same reason: Classes/EAGLView.h is

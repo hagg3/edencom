@@ -14,10 +14,10 @@
 # IT IS THE OBJECTIVE-C RUNTIME. *** Read the ObjC block below before touching either arm:
 #
 #   APPLE      real libobjc + real Foundation. FORCED, not chosen (clang cannot lower any GNU
-#              ObjC ABI to Mach-O). 3 files from web/src/shim/foundation/, no objc_runtime.cpp,
+#              ObjC ABI to Mach-O). 3 files from port/src/shim/foundation/, no objc_runtime.cpp,
 #              EDEN_USE_SYSTEM_FOUNDATION=1, Apple frameworks for audio.
 #   NON-APPLE  this port's OWN runtime and Foundation shim, unmodified: objc_runtime.cpp plus all
-#              19 web/src/shim/foundation/*.mm, `-fobjc-runtime=gnustep-1.9
+#              19 port/src/shim/foundation/*.mm, `-fobjc-runtime=gnustep-1.9
 #              -fconstant-string-class=NSConstantString`, and a portable audio backend.
 #              ELF and PE/COFF both have COMDATs, which is the whole difference (measured, Stage
 #              3's plan doc SS1). So Linux and Windows are the leg that reuses the web port's
@@ -27,12 +27,15 @@
 # non-Apple targets (native/src/shim/gl/gl_loader_native.h explains why Windows cannot do without
 # one), the heap probe's three implementations, and the filesystem root.
 #
-# HOW THIS RELATES TO web/CMakeLists.txt — read this before adding a source here:
+# HOW THIS RELATES TO THE RETIRED web-port-final:web/CMakeLists.txt — read this before adding a source here.
+# (The Emscripten build was retired on 2026-10-13; web-port-final:web/CMakeLists.txt, cited throughout this file as
+# the origin of a list or a flag, is readable at tag web-port-final. The shared seam/shim code it
+# compiled now lives in port/src/ — see port/CLAUDE.md.)
 #   * The ENGINE source list comes from the SAME cmake/EngineSources.cmake function web uses
 #     (Stage 0.1 extracted it for exactly this), with this target's own exclude list.
-#   * MOST OF THE PORT'S SEAM AND SHIM CODE IS SHARED, not copied. web/src/shim/foundation/*,
-#     web/src/shim/objc/objc_runtime.cpp, web/src/shim/gl/gl_fixed_function.cpp and eleven
-#     web/src/seam/*.mm files compile into this target unmodified. That is the finding the whole
+#   * MOST OF THE PORT'S SEAM AND SHIM CODE IS SHARED, not copied. port/src/shim/foundation/*,
+#     port/src/shim/objc/objc_runtime.cpp, port/src/shim/gl/gl_fixed_function.cpp and eleven
+#     port/src/seam/*.mm files compile into this target unmodified. That is the finding the whole
 #     plan rests on (the investigation measured under ~120 lines of real Emscripten API in
 #     ~11.5 kLOC of seam+shim), and it is why native gets B3/B5/B6/C3/M3a/M6 for free.
 #   * Files under native/ exist ONLY where the platform genuinely differs. There are nine of them.
@@ -52,7 +55,7 @@
 #   actually sends a message.)
 #
 # That kills, on macOS specifically, the otherwise-attractive option of reusing
-# web/src/shim/objc/objc_runtime.cpp plus the whole Foundation shim. So this target does what the
+# port/src/shim/objc/objc_runtime.cpp plus the whole Foundation shim. So this target does what the
 # plan doc said from the start: **Apple's real libobjc and real Foundation**. The plan's stated
 # reason for doing macOS first — "it tests SDL3 + desktop GL with the ObjC question already
 # answered" — is, with hindsight, backwards: macOS is the leg with the LARGEST Foundation change,
@@ -60,13 +63,13 @@
 # is exactly what objc_runtime.cpp implements). Worth knowing when Stage 1's Linux leg is planned.
 #
 # WHAT THAT COSTS, AND WHAT IT DOES NOT:
-#   * NOT reused here: web/src/shim/objc/* and 17 of the 18 web/src/shim/foundation/*.mm files.
+#   * NOT reused here: port/src/shim/objc/* and 17 of the 18 port/src/shim/foundation/*.mm files.
 #     Their HEADERS are still the include path the seam files use — each now defers to
 #     <Foundation/Foundation.h> under EDEN_USE_SYSTEM_FOUNDATION (they are #imported by relative
 #     path from the seam files, so an -I redirect could not have done it).
 #   * STILL OURS ON EVERY TARGET, deliberately: the UIKit stub layer AND the CGImage layer in
-#     web/src/shim/foundation/uikit_stubs.h. macOS has no UIKit at all, and the CGImage layer is
-#     what web/src/seam/Texture2D_web.mm and Classes/Resources.mm's recolour pipeline are written
+#     port/src/shim/foundation/uikit_stubs.h. macOS has no UIKit at all, and the CGImage layer is
+#     what port/src/seam/Texture2D_web.mm and Classes/Resources.mm's recolour pipeline are written
 #     against — one tightly-packed straight-alpha RGBA8 buffer, which CoreGraphics has no
 #     non-premultiplied bitmap context to reproduce. Keeping it ours is what lets Texture2D_web.mm
 #     compile here UNCHANGED. It works only because nothing pulls in <CoreGraphics/CGImage.h>:
@@ -109,14 +112,14 @@ endif()
 
 set(EDEN_PARENT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/..")
 set(EDEN_CLASSES_DIR "${EDEN_PARENT_DIR}/Classes")
-set(EDEN_WEB_DIR "${EDEN_PARENT_DIR}/web")
+set(EDEN_PORT_DIR "${EDEN_PARENT_DIR}/port")
 
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 set(CMAKE_CXX_STANDARD 17)
 
-# Same default and same meaning as web/CMakeLists.txt: the scripted-drive probes
+# Same default and same meaning as web-port-final:web/CMakeLists.txt: the scripted-drive probes
 # (eden_debug_*, the [eden-p1] prints, DevConsole) are ON for Debug, OFF otherwise. Stage 1's
 # whole deliverable comes out of those probes, so a Stage 1 measurement tree wants
 # -DEDEN_DIAGNOSTICS=ON explicitly on top of Release — the same `build-relwdiag` combination the
@@ -163,7 +166,7 @@ endif()
 include("${EDEN_PARENT_DIR}/cmake/EngineSources.cmake")
 
 # Files to EXCLUDE from the authoritative 81 and replace with a native seam. This list is
-# web/CMakeLists.txt's EDEN_SEAM_EXCLUDE with TWO additions, and it is a per-target list on
+# web-port-final:web/CMakeLists.txt's EDEN_SEAM_EXCLUDE with TWO additions, and it is a per-target list on
 # purpose — Stage 0.1 generalised the mechanism precisely so EDEN_IOS_SEAM_EXCLUDE could differ.
 # IT DOES NOT: Stage 4.1 measured the guess this comment used to carry ("iOS should NOT exclude
 # Classes/EAGLView.mm") and rejected it. See the EDEN_IOS_SEAM_EXCLUDE block below the list for
@@ -180,7 +183,7 @@ set(EDEN_NATIVE_SEAM_EXCLUDE
   "main.m"
 
   # --- Raster: decodes via UIImage/CoreGraphics and rasterises strings via UIFont. Replaced by
-  # web/src/seam/Texture2D_web.mm, which this target compiles UNCHANGED (stb_image for PNGs); only
+  # port/src/seam/Texture2D_web.mm, which this target compiles UNCHANGED (stb_image for PNGs); only
   # its one string-rasterisation call is per-platform, and native/src/seam/TextRaster_native.cpp
   # supplies that half with stb_truetype.
   "Classes/Texture2D.mm"
@@ -207,7 +210,7 @@ set(EDEN_NATIVE_SEAM_EXCLUDE
   # is itself excluded above).
   "Classes/Appirater.mm"
 
-  # --- CF file hashing: replaced by web/src/shim/foundation/md5_web.mm, compiled here too.
+  # --- CF file hashing: replaced by port/src/shim/foundation/md5_web.mm, compiled here too.
   "Classes/md5.c"
 
   # --- Native text entry for world renaming. Stage 2 (SDL_StartTextInput + the engine's GL UI).
@@ -233,7 +236,7 @@ set(EDEN_NATIVE_SEAM_EXCLUDE
 #
 # The measurement that decided it: Classes/EdenViewController.mm:28 creates
 # kEAGLRenderingAPIOpenGLES1 — a real ES 1.1 context. This port's renderer has not been ES 1.1
-# since the web build; it is the ES1 -> ES3/GL translator in web/src/shim/gl/gl_fixed_function.cpp
+# since the web build; it is the ES1 -> ES3/GL translator in port/src/shim/gl/gl_fixed_function.cpp
 # (~1,900 LOC). Un-excluding EAGLView.mm would therefore not save work — it would FORK the
 # renderer, give iOS the project's only ES-1.1 path, and forfeit the byte-identical-geometry
 # guarantee every other target is held to. So SDL3 supplies UIApplicationMain, the CAEAGLLayer,
@@ -252,15 +255,15 @@ endif()
 
 eden_collect_engine_sources(
   OUT_VAR EDEN_ENGINE_SOURCES
-  SOURCES_FILE "${EDEN_WEB_DIR}/tools/engine-sources.txt"
+  SOURCES_FILE "${EDEN_PARENT_DIR}/port/tools/engine-sources.txt"
   BASE_DIR "${EDEN_PARENT_DIR}"
   EXCLUDE_LIST ${EDEN_TARGET_SEAM_EXCLUDE}
 )
 
 # ---------------------------------------------------------------------------------------------
-# Shared port sources (compiled from web/, NOT copied — see the header comment)
+# Shared port sources (compiled from port/src/, NOT copied — see the header comment)
 # ---------------------------------------------------------------------------------------------
-# Foundation is Apple's here (see the header). What remains from web/src/shim/foundation/ is the
+# Foundation is Apple's here (see the header). What remains from port/src/shim/foundation/ is the
 # part that is NOT Foundation:
 #   uikit_stubs.mm  — UITouch/UIEvent/UIView/UIImage/UIFont/UIColor/UIScreen/UIApplication/
 #                     EAGLContext plus THIS PORT'S CGImage. None of it exists on macOS.
@@ -306,7 +309,7 @@ if(NOT APPLE)
     CoreFoundation.mm
   )
 endif()
-list(TRANSFORM EDEN_SHARED_FOUNDATION PREPEND "${EDEN_WEB_DIR}/src/shim/foundation/")
+list(TRANSFORM EDEN_SHARED_FOUNDATION PREPEND "${EDEN_PORT_DIR}/src/shim/foundation/")
 
 # Seam files shared verbatim with the web build. Each is here because it was AUDITED as portable
 # in Stage 0.4 or in this stage, not because it happened to compile:
@@ -347,12 +350,12 @@ set(EDEN_SHARED_SEAM
   Storage_web.mm
   Input_web.mm
 )
-list(TRANSFORM EDEN_SHARED_SEAM PREPEND "${EDEN_WEB_DIR}/src/seam/")
+list(TRANSFORM EDEN_SHARED_SEAM PREPEND "${EDEN_PORT_DIR}/src/seam/")
 
 set(EDEN_SHARED_OTHER
-  "${EDEN_WEB_DIR}/src/shim/audio/audiotoolbox_stub.cpp"  # failing AudioToolbox stubs, as on web
-  "${EDEN_WEB_DIR}/src/shim/foundation/platform_shims.cpp" # arc4random + the portable clock + FS roots
-  "${EDEN_WEB_DIR}/src/shim/gl/gl_fixed_function.cpp"      # the ES1 -> GL translator, Stage 0.2's split
+  "${EDEN_PORT_DIR}/src/shim/audio/audiotoolbox_stub.cpp"  # failing AudioToolbox stubs, as on web
+  "${EDEN_PORT_DIR}/src/shim/foundation/platform_shims.cpp" # arc4random + the portable clock + FS roots
+  "${EDEN_PORT_DIR}/src/shim/gl/gl_fixed_function.cpp"      # the ES1 -> GL translator, Stage 0.2's split
 )
 if(APPLE)
   # NO objc_runtime.cpp: Apple's libobjc is the runtime here (see this file's header).
@@ -362,7 +365,7 @@ else()
   # sizeof(void*) hides a real difference — and __objc_exec_class() now checks the compiler's own
   # sizeof against the header's on the first module, so a future target whose layout differs again
   # aborts at startup with a message instead of corrupting the heap.
-  list(APPEND EDEN_SHARED_OTHER "${EDEN_WEB_DIR}/src/shim/objc/objc_runtime.cpp")
+  list(APPEND EDEN_SHARED_OTHER "${EDEN_PORT_DIR}/src/shim/objc/objc_runtime.cpp")
 endif()
 
 # ---------------------------------------------------------------------------------------------
@@ -416,18 +419,18 @@ endif()
 
 if(EDEN_DIAGNOSTICS)
   list(APPEND EDEN_SHARED_SEAM
-    "${EDEN_WEB_DIR}/src/seam/DebugState_web.mm"
-    "${EDEN_WEB_DIR}/src/seam/DevConsole_web.mm")
+    "${EDEN_PORT_DIR}/src/seam/DebugState_web.mm"
+    "${EDEN_PORT_DIR}/src/seam/DevConsole_web.mm")
   # --live-cmds=<file>: DevConsole's commands for an interactive native session, fed from a file.
   list(APPEND EDEN_NATIVE_SOURCES src/seam/LiveCommands_native.mm)
   if(APPLE)
-    # NOT objc_selftest.mm: it exists to exercise web/src/shim/objc/objc_runtime.cpp's dispatch,
+    # NOT objc_selftest.mm: it exists to exercise port/src/shim/objc/objc_runtime.cpp's dispatch,
     # ivar layout, super and category merging. Apple's runtime needs no such proof from us.
   else()
     # These targets DO run that runtime, and they are the first to run it at 64-bit widths, so the
     # proof is exactly what is wanted — Stage 3.3 grew the file the empty-base ivar-bias and
     # @"literal" cases that only fail off wasm32.
-    list(APPEND EDEN_SHARED_SEAM "${EDEN_WEB_DIR}/src/shim/objc/objc_selftest.mm")
+    list(APPEND EDEN_SHARED_SEAM "${EDEN_PORT_DIR}/src/shim/objc/objc_selftest.mm")
   endif()
 endif()
 
@@ -436,7 +439,7 @@ endif()
 # ---------------------------------------------------------------------------------------------
 # src/seam/AppleAudio_native.mm is the ONE file that must see the REAL <AudioToolbox/...> and
 # <AVFoundation/...>. It cannot be part of the main target, because that target puts
-# web/src/shim/foundation/framework/ on the include path, and that directory deliberately SHADOWS
+# port/src/shim/foundation/framework/ on the include path, and that directory deliberately SHADOWS
 # both frameworks with this port's own type-only stubs — for a measured reason (CoreServices'
 # CarbonCore/AIFF.h defines `ChunkHeader`, which the engine also does; see that AudioToolbox.h's
 # header comment). Unshadowing them globally to reach two APIs would pull CoreServices into ~80
@@ -476,7 +479,7 @@ endif()
 # So the asset step further down needs no iOS special case beyond copying instead of symlinking.
 # That is not a coincidence: Xcode's Copy-Bundle-Resources phase flattened media/ in 2010, the
 # desktop legs reproduce it with symlinks beside the executable, and web reproduces it in software
-# (web/src/shim/foundation/NSBundle.mm). Four targets, one layout.
+# (port/src/shim/foundation/NSBundle.mm). Four targets, one layout.
 if(IOS)
   set(EDEN_EXE_KIND MACOSX_BUNDLE)
 else()
@@ -555,18 +558,18 @@ target_include_directories(eden_native PRIVATE
   "${EDEN_CLASSES_DIR}/zstd"                        # <zstd.h>: the PINNED 1.5.7, never Homebrew's/the SDK's
   src/shim/gl/framework
   src/shim                                          # CDXMacOSXSupport.h — see that file
-  "${EDEN_WEB_DIR}/src/shim/foundation/framework"   # <Foundation/...>, <UIKit/...>, <Availability.h>
-  "${EDEN_WEB_DIR}/src/shim/gl/framework"           # <OpenGLES/ES1/...>, <EGL/egl.h>
-  "${EDEN_WEB_DIR}/src/shim/foundation"
-  "${EDEN_WEB_DIR}/src/shim/gl"
-  "${EDEN_WEB_DIR}/src/shim/vendor"                 # stb_image.h / stb_truetype.h
-  "${EDEN_WEB_DIR}/src/seam"                        # DisplayProfile_web.h, LoadFailure_web.h
+  "${EDEN_PORT_DIR}/src/shim/foundation/framework"   # <Foundation/...>, <UIKit/...>, <Availability.h>
+  "${EDEN_PORT_DIR}/src/shim/gl/framework"           # <OpenGLES/ES1/...>, <EGL/egl.h>
+  "${EDEN_PORT_DIR}/src/shim/foundation"
+  "${EDEN_PORT_DIR}/src/shim/gl"
+  "${EDEN_PORT_DIR}/src/shim/vendor"                 # stb_image.h / stb_truetype.h
+  "${EDEN_PORT_DIR}/src/seam"                        # DisplayProfile_web.h, LoadFailure_web.h
   "${EDEN_CLASSES_DIR}"
   "${EDEN_PARENT_DIR}"                              # a few Classes/*.mm quote root-level headers
 )
 
 # ---------------------------------------------------------------------------------------------
-# Case-mismatched #import shims — identical to web/CMakeLists.txt's block
+# Case-mismatched #import shims — identical to web-port-final:web/CMakeLists.txt's block
 # ---------------------------------------------------------------------------------------------
 # macOS's default filesystem is case-INsensitive, so these already resolve here; the links are
 # created anyway so a case-sensitive volume (or Linux) behaves the same. Never edit Classes/*.h to
@@ -594,7 +597,7 @@ endforeach()
 # `-x objective-c++` clang compiles the file as plain C++, `__OBJC__` is never defined, and
 # Eden_Prefix.pch's `#ifdef __OBJC__` block silently gives the engine no Foundation at all. That
 # cost the web port ~900 errors once; it is written down in both files now.
-# NOTE the `.cpp` files in here, which is not an oversight and is what web/CMakeLists.txt does
+# NOTE the `.cpp` files in here, which is not an oversight and is what web-port-final:web/CMakeLists.txt does
 # too: a plain-C++ seam file that transitively reaches a Foundation header still needs the ObjC
 # FRONTEND to parse it, even though it contains no ObjC of its own. src/seam/
 # EdenViewController_native.cpp is the live case (it includes Classes/World.h and the autorelease
@@ -635,7 +638,7 @@ set_source_files_properties(${EDEN_MM_SOURCES} PROPERTIES LANGUAGE CXX)
 # `-fno-objc-arc` is CLAUDE.md convention #6: this engine is manual retain/release throughout and
 # predates ARC; do not enable it.
 #
-# WHAT IS ABSENT AND WHY, since web/CMakeLists.txt has two more flags here:
+# WHAT IS ABSENT AND WHY, since web-port-final:web/CMakeLists.txt has two more flags here:
 #   -fobjc-runtime=gnustep-1.9        cannot be lowered to Mach-O at all (this file's header).
 #                                     The default on Darwin is the Apple runtime, which is what
 #                                     libobjc implements, so no flag is needed.
@@ -650,14 +653,14 @@ set(EDEN_OBJCXX_FLAGS
 )
 if(NOT APPLE)
   # The two flags the paragraph above explains are absent on Apple. Here they are REQUIRED and
-  # they are exactly web/CMakeLists.txt's, because this is the same runtime.
+  # they are exactly web-port-final:web/CMakeLists.txt's, because this is the same runtime.
   #
   #   -fobjc-runtime=gnustep-1.9  the newest GNU ABI clang can actually lower (gnustep-2.0 fails
-  #                               at compile time, measured; see web/CMakeLists.txt). Stage 3
+  #                               at compile time, measured; see web-port-final:web/CMakeLists.txt). Stage 3
   #                               measured it lowering cleanly to both ELF and PE/COFF.
   #   -fconstant-string-class=NSConstantString
   #                               the engine's ~740 @"literal"s become instances of the shim's
-  #                               three-word NSConstantString (web/src/shim/foundation/NSString.h).
+  #                               three-word NSConstantString (port/src/shim/foundation/NSString.h).
   #                               Stage 3.3 re-verified that class's ivar offsets at LP64/LLP64 —
   #                               it is the highest-consequence instance of the empty-base bias.
   #   -fobjc-legacy-dispatch      *** THE FLAG WITHOUT WHICH NEITHER NEW PLATFORM LINKS, AND THE
@@ -670,7 +673,7 @@ if(NOT APPLE)
   #                               because forwarding an arbitrary signature is not expressible in
   #                               C++. `Legacy` emits `objc_msg_lookup_sender` +
   #                               `objc_slot_lookup_super`, which are exactly the two entry points
-  #                               web/src/shim/objc/objc_runtime.cpp implements, and are exactly
+  #                               port/src/shim/objc/objc_runtime.cpp implements, and are exactly
   #                               what wasm32 has been emitting all along.
   #
   #                               So the shim was never wasm-specific — the DEFAULT was. Verified
@@ -718,9 +721,9 @@ set_source_files_properties(${EDEN_ENGINE_MM_SOURCES} PROPERTIES
 # `#ifdef` would still be true — the kind of accident that fails differently on two machines).
 #
 # EDEN_LD_WRAP is deliberately NOT defined: Apple's ld64 has no --wrap. See the guard comment in
-# web/src/seam/Settings_web.mm.
+# port/src/seam/Settings_web.mm.
 target_compile_definitions(eden_native PRIVATE
-  # NOTE THE ABSENCE OF `TARGET_OS_IPHONE`, which web/CMakeLists.txt does define. It must NOT be
+  # NOTE THE ABSENCE OF `TARGET_OS_IPHONE`, which web-port-final:web/CMakeLists.txt does define. It must NOT be
   # forced here: real Foundation pulls in <TargetConditionals.h>, which defines it (to 0), and
   # overriding that would tell every Apple system header it is building for iOS. The PVRT headers
   # test `#ifdef TARGET_OS_IPHONE`, not its VALUE — so the SDK's own 0 already selects the
@@ -740,12 +743,12 @@ if(IOS)
   #   EDEN_PLATFORM_IOS    the one this project owns. It guards the GL flavour
   #                        (native/src/shim/gl/framework/GLES/gl.h -> <OpenGLES/ES3/gl.h>, and
   #                        gl_context_native.cpp's ES-profile request), the ten UIKit class
-  #                        renames in web/src/shim/foundation/uikit_stubs.h, the SDL_main
+  #                        renames in port/src/shim/foundation/uikit_stubs.h, the SDL_main
   #                        include, the Documents save root, and the system-font scan.
   #                        NOT `TARGET_OS_IPHONE`: that one is Apple's, it is already 1 here from
   #                        <TargetConditionals.h>, and the PVRT headers read it — writing our own
   #                        meaning into a name the SDK owns is how a build stops being explicable.
-  #   EDEN_GL_ES_DIALECT   the shader preamble in web/src/shim/gl/gl_fixed_function.cpp. Set here
+  #   EDEN_GL_ES_DIALECT   the shader preamble in port/src/shim/gl/gl_fixed_function.cpp. Set here
   #                        because it is a property of the CONTEXT (ES 3.0) and not of the
   #                        compiler; Emscripten sets it for itself in that file.
   #   EDEN_BUILD_HAS_THREADS is NOT set here — it comes from platform_shims.h, which already gets
@@ -754,7 +757,7 @@ if(IOS)
 endif()
 
 if(APPLE)
-  # Switches every web/src/shim/foundation/*.h from "declare this port's class" to "defer to
+  # Switches every port/src/shim/foundation/*.h from "declare this port's class" to "defer to
   # <Foundation/Foundation.h>", and the framework/ trampolines from shadowing the SDK to
   # #include_next-ing it. Defined ONLY on this arm; neither the web build nor the non-Apple
   # native ones ever see it, because they HAVE no system Foundation to defer to.
@@ -814,7 +817,7 @@ target_compile_options(eden_native PRIVATE
   $<$<COMPILE_LANGUAGE:CXX>:-Wno-register>
   -Wno-macro-redefined
   # 2010-era C/C++ that has been getting away with type punning since -O0 never exploited it —
-  # the same call web/CMakeLists.txt makes for its Release build, made unconditionally here
+  # the same call web-port-final:web/CMakeLists.txt makes for its Release build, made unconditionally here
   # because native has no -O0 tree that would hide it.
   -fno-strict-aliasing
 )
@@ -869,8 +872,8 @@ if(APPLE)
   target_link_libraries(eden_native PRIVATE ${AUDIOTOOLBOX_FRAMEWORK} ${AVFOUNDATION_FRAMEWORK})
 else()
   # NO RUNTIME AND NO FOUNDATION TO LINK. That is the finding, not an omission: on these targets
-  # the ObjC runtime is web/src/shim/objc/objc_runtime.cpp and Foundation is
-  # web/src/shim/foundation/*.mm, both compiled into the executable, and the audio decoders are
+  # the ObjC runtime is port/src/shim/objc/objc_runtime.cpp and Foundation is
+  # port/src/shim/foundation/*.mm, both compiled into the executable, and the audio decoders are
   # vendored single headers. Beyond SDL3 + OpenGL + zlib + pthreads there is exactly one library:
   if(WIN32)
     # psapi, for GetProcessMemoryInfo in src/seam/HeapProbe_native.cpp. (On Windows 7+ it is
@@ -909,7 +912,7 @@ target_link_libraries(eden_native PRIVATE ZLIB::ZLIB)
 find_package(Threads REQUIRED)
 target_link_libraries(eden_native PRIVATE Threads::Threads)
 
-# NOTE, because it is the quiet upside of this whole target: web/src/seam/pthread_sync_web.c is
+# NOTE, because it is the quiet upside of this whole target: web-port-final:web/src/seam/pthread_sync_web.c is
 # NOT built here. That file exists because Emscripten's non-pthread build has a stub
 # pthread_create that never runs the routine, so World.mm's async world load would hang forever.
 # Native has real pthreads, so Classes/World.mm's load thread and Classes/MeshPool.mm's worker
@@ -924,11 +927,11 @@ target_link_libraries(eden_native PRIVATE Threads::Threads)
 # Xcode's Copy-Bundle-Resources phase FLATTENS the whole media/ tree, which is why
 # Classes/World.mm's LoadModels() can do `[[NSBundle mainBundle] resourcePath] + "/"` and have
 # CPVRTResourceFile fopen `<that>/Moof.pod` (docs/resources-and-audio.md). Web reproduces the same
-# flat lookup in software (web/src/shim/foundation/NSBundle.mm indexes every basename once);
+# flat lookup in software (port/src/shim/foundation/NSBundle.mm indexes every basename once);
 # native gets it from the filesystem instead.
 #
 # Symlinks, not copies: the assets are ~7 MB of art the repo already has, and a copy would go
-# stale the moment anyone edits one. The set mirrors web/CMakeLists.txt's --preload-file rules
+# stale the moment anyone edits one. The set mirrors web-port-final:web/CMakeLists.txt's --preload-file rules
 # exactly — the same six media/ subdirectories, the same loose PNGs, report_flag.png from the repo
 # ROOT (it is not under media/ and was missing from the web build for months for that reason), the
 # seven .pod models, and Eden.emod. The .psd/.DS_Store/AtlasTool exclusions web applies are
@@ -954,11 +957,12 @@ file(GLOB _f "${EDEN_PARENT_DIR}/media/sound/*.caf" "${EDEN_PARENT_DIR}/media/so
              "${EDEN_PARENT_DIR}/media/new_sound/*.mp3"
              "${EDEN_PARENT_DIR}/media/music/*.mp3")
 list(APPEND EDEN_ASSET_GLOBS ${_f} "${EDEN_PARENT_DIR}/report_flag.png")
-# The design system's display face (Jersey 10, SIL OFL — OFL.txt beside it), the same file the web
-# UI self-hosts. TextRaster_native.cpp loads it by bare name from the bundle root for GL-kit chrome.
-list(APPEND EDEN_ASSET_GLOBS "${EDEN_PARENT_DIR}/web/public/assets/fonts/Jersey10-Regular.ttf")
+# The design system's display face (Jersey 10, SIL OFL — OFL.txt beside it; the web UI self-hosted
+# the same file until the web build was retired). TextRaster_native.cpp loads it by bare name from
+# the bundle root for GL-kit chrome.
+list(APPEND EDEN_ASSET_GLOBS "${EDEN_PARENT_DIR}/media/fonts/Jersey10-Regular.ttf")
 # Rubik Regular (SIL OFL, OFL-Rubik.txt beside it): the body face for all non-Jersey text.
-list(APPEND EDEN_ASSET_GLOBS "${EDEN_PARENT_DIR}/web/public/assets/fonts/Rubik-Regular.ttf")
+list(APPEND EDEN_ASSET_GLOBS "${EDEN_PARENT_DIR}/media/fonts/Rubik-Regular.ttf")
 
 # S.6: the bundled default map ships as Eden.emod (11.8 MB, zstd-19, baked by `emod.py bake-default`
 # from the repo-root Eden.eden, which stays as the source and is NOT bundled). It is read in place, so

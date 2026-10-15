@@ -22,7 +22,7 @@ Vector pos;
 
 // Web port audit row 17/G1 (touch-draggable controls card): while true, Joystick::update below
 // no-ops entirely — no movement input, no joystick_pos tracking — so the web port's "move
-// controls" mode (web/src/seam/Input_web.mm) can freely rewrite padbounds.origin from a drag
+// controls" mode (port/src/seam/Input_web.mm) can freely rewrite padbounds.origin from a drag
 // gesture without fighting this frame's own touch handling, and without the player's character
 // drifting from a stray touch while they are repositioning the pad rather than playing. render()
 // below is unaffected, so the pad (and joystick_pos, wherever it was left) stays visible while

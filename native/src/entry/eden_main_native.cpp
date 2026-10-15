@@ -1,5 +1,5 @@
 // eden_main_native.cpp — the native `int main()` (Phase N Stage 1,
-// WORKING/native-migration-plan-2026-09-04.md). Twin of web/src/entry/eden_main.cpp; that file
+// WORKING/native-migration-plan-2026-09-04.md). Twin of web-port-final:web/src/entry/eden_main.cpp; that file
 // registers an emscripten_set_main_loop callback and returns, this one owns a real while-loop.
 //
 // It also carries Stage 1's HARNESS, because Stage 1's deliverable is "two numbers and one diff,
@@ -13,7 +13,7 @@
 //                        as `node eden.js` does. Geometry, memory and save round-trips are all
 //                        taken this way, so Stage 1 needs no display.
 //   --p1-gate            criterion 1: boot, three ticks, print the same three `[eden-p1]` lines
-//                        web/tools/headless-p1-gate.js asserts on, exit.
+//                        web-port-final:web/tools/headless-p1-gate.js asserts on, exit.
 //   --stage1             criteria 2+3: menu phase, then create-or-load a world, teleport to a
 //                        fixed origin, settle, and print geometry + mesh checksum + memory per
 //                        phase as `[eden-stage1] <phase> {json}` lines.
@@ -78,7 +78,7 @@
 //                        outside a browser.
 //   --gamepad-selftest   Stage 2: attaches an SDL VIRTUAL gamepad, drives its sticks/buttons, and
 //                        asserts the engine moved — so it needs no physical controller and runs
-//                        headless. Native counterpart of web/tools/headless-gamepad-test.js.
+//                        headless. Native counterpart of web-port-final:web/tools/headless-gamepad-test.js.
 //   --background-selftest Stage 4.2: pushes SDL_EVENT_WILL_ENTER_BACKGROUND and asserts the event
 //                        WATCH (not the poll loop -- see eden_lifecycle_event_watch) reaches
 //                        eden_app_will_background() and a real world file lands on disk.
@@ -87,7 +87,7 @@
 //                        bytes can be diffed against a web-written save.
 //   --leak-probe[=N]     Stage 3 verification: N (default 8) load->quit cycles of one world in one
 //                        process, asserting the allocator's live-bytes figure is FLAT. The native
-//                        counterpart of web/tools/headless-alloc-leak-probe.js and of
+//                        counterpart of web-port-final:web/tools/headless-alloc-leak-probe.js and of
 //                        headless-heap-ceiling-probe.js --torture=same64, which cannot run here
 //                        because they drive `eden.js` through node. It matters on the non-Apple
 //                        legs specifically: the shim Foundation runs outside Emscripten there for
@@ -154,7 +154,17 @@
 //                        --light-lattice), then a +x and a +z 160-block walk; the walked window's light
 //                        hash and mesh checksum must equal what a full re-sweep + re-mesh of the same
 //                        window gives, the walk must stream (no bulk reload) and rebuild per column.
-//                        --light-mutate=nosync|nomark must FAIL it.
+//                        Then (P.10) a lightbox built in a column remembered as lightbox-free, and
+//                        one more chunk of walking that rebuilds that column's light, vs a re-sweep.
+//                        --light-mutate=nosync|nomark|nolbmark must FAIL it.
+//   --shadow-selftest    H.2: baked top-face shadows (Classes/Shadow.h; shadows-plan.md §8.2). Tops vs a
+//                        fresh scan after every landing and edit, a canopy one chunk up re-shading the
+//                        floor below (the edit hook's dirtying), mining it back to the floor's exact
+//                        mesh, a lightbox at night, a walk vs a re-scan + re-mesh, Off -> Classic ->
+//                        Smooth -> Off. Classic unless --shadows= says otherwise.
+//                        --shadow-mutate=nohook|nodirty|nolanding|nodiag must each FAIL it.
+//   --shadows=off|classic|smooth  H.2: override the Shadows setting for this run, NOT stored (native
+//                        prefs are global, not per --docs). CI's geometry pair passes --shadows=off.
 //   --light-selfcheck    R.3: also keep the stock dense light array, written by the stock code,
 //                        and report voxels where it and the brick store disagree (`.light`'s
 //                        `mismatch`, must be 0). --light-selftest asserts it when present.
@@ -166,7 +176,7 @@
 //                        read + decode, once from the RLE `Eden.eden` and once from its bake `Eden.emod`
 //                        (--bundled-eden=PATH --bundled-emod=PATH; default: beside the executable). 0 differ.
 //   --emod-selftest      Stage S / S.3: EdenWorldStore + the streaming converter's gates (Classes/
-//                        EdenWorldStoreSelftest.cpp). --emod-fixtures=DIR (web/tools/fixtures/emod: the
+//                        EdenWorldStoreSelftest.cpp). --emod-fixtures=DIR (port/tools/fixtures/emod: the
 //                        emod.py byte comparison + the cross-target gate), --emod-work=DIR (scratch,
 //                        default ./emod-work), --emod-quick. With --emod-file=W.eden[.gz] [--emod-ref=R.emod]
 //                        it instead stream-converts one real world and compares it with emod.py's output.
@@ -193,9 +203,10 @@
 //                        (WORKING/b5b1/ring-light-gate.sh): lightboxes every STEP blocks over --at
 //                        +-320 (alternately high in the air and on the surface, varied paint),
 //                        placed from 9 teleport stops through buildBlock, then saves and quits.
-//   --light-mutate=nosync|nomark|wrap  B.5b-1c's bug-put-back legs (Lighting.h
+//   --light-mutate=nosync|nomark|wrap|nolbmark  B.5b-1c's bug-put-back legs (Lighting.h
 //                        g_light_test_mutation): never rebuild a landed column's light / rebuild it
-//                        but re-mesh nothing / let light wrap past the window edge. Each must FAIL
+//                        but re-mesh nothing / let light wrap past the window edge / (P.10) never
+//                        forget a "no lightbox" column on a landing or a lightbox edit. Each must FAIL
 //                        the ring-light gate (wrap: --light-selftest's window-edge step).
 //   --docs=DIR           the save directory. WORKS AS OF STAGE 2 — through Stage 1 it was inert,
 //                        because Classes/FileManager.mm asked real Foundation for
@@ -216,7 +227,7 @@
 #include "../seam/EdenAppDelegate_native.h"
 #include "../seam/Input_native.h"
 #include "../seam/SimpleAudioEngine_native.h"
-#include "save_backup.h"                 // web/src/shim/foundation — the shared backup rules
+#include "save_backup.h"                 // port/src/shim/foundation — the shared backup rules
 #include "../../../Classes/FileManager.h"  // eden_save_backup_hook
 #include "../../../Classes/EdenWorldStore.h" // --background-selftest's `.emod` leg
 #include "../../../Classes/SimpleAudioEngine.h"
@@ -234,9 +245,11 @@
 #include "../../../Classes/CmdScript.h"      // --cmds-selftest (D.4c)
 #include "../../../Classes/Model.h"          // --cmds-selftest: CountActiveCreatures
 #include "../../../Classes/PassTimers.h"     // --pass-probe / --pass-timers (P.1b)
+#include "../../../Classes/Shadow.h"         // --shadows= / --shadow-selftest (H.2)
 extern Vector colorTable[256];               // --cmds-selftest: the night sky (palette 54)
 extern int g_ring_columns_landed, g_bulk_reloads, g_ring_evict_saves, g_ring_dynamics_dropped, g_autosaves; // Terrain.mm, --evict-selftest
 extern int g_light_test_mutation;            // Lighting.mm (B.5b-1c), --light-mutate
+BOOL light_columnKnownFree(int cx, int cz);  // Lighting.mm (P.10), --ring-light-selftest's last leg
 extern int g_offcx, g_offcz;                 // Terrain.mm: the toroidal offset (--light-selftest's edge step)
 Vector8 lightAtToroidal(int tx, int tz, int y);   // Terrain.mm
 extern int regionSkyColors[4][4];            // FileManager.mm: the saved per-region sky (--light-lattice)
@@ -287,7 +300,7 @@ extern block8* blockarray;                   // Terrain.mm: --mesh-bench's raw w
 #include <unistd.h>
 #include <zlib.h>                  // --browser-selftest builds its gzip/zip fixtures
 
-// Shared seam exports (web/src/seam/*, compiled into this target too).
+// Shared seam exports (port/src/seam/*, compiled into this target too).
 extern "C" {
 int   eden_get_fps_cap(void);
 void  eden_settings_init(void);
@@ -317,7 +330,7 @@ int   eden_menu_create_world(void);
 void  eden_menu_set_pending_world_type(int flat);
 void  eden_menu_set_pending_world_height(int height);
 
-// Phase N Stage 4.2 (web/src/seam/AppLifecycle_web.mm, cmake-shared into this target).
+// Phase N Stage 4.2 (port/src/seam/AppLifecycle_web.mm, cmake-shared into this target).
 int   eden_app_will_background(void);
 int   eden_app_background_save_count(void);
 int   eden_app_background_last_status(void);
@@ -343,6 +356,9 @@ SDL_Window* eden_native_gl_window(void);
 const char* eden_debug_mesh_checksum(void);
 const char* eden_debug_chunk_state(void);
 const char* eden_debug_light_state(void);
+const char* eden_debug_shadow_state(void);                    // H.2
+const char* eden_debug_top_shade(int x, int z, int y);        // H.2
+const char* eden_debug_chunk_mesh_hash(int x, int z, int y);  // H.2
 int   eden_debug_light_edit(int op, int x, int z, int y, int color);
 void  eden_set_save_inplace_threshold(unsigned long long);   // N.8
 void  eden_debug_set_light_selfcheck(int on);
@@ -555,6 +571,7 @@ void report(const char* phase) {
     std::printf("[eden-stage1] %s.checksum %s\n", phase, eden_debug_mesh_checksum());
     std::printf("[eden-stage1] %s.chunkstate %s\n", phase, eden_debug_chunk_state());
     std::printf("[eden-stage1] %s.light %s\n", phase, eden_debug_light_state());
+    std::printf("[eden-stage1] %s.shadow %s\n", phase, eden_debug_shadow_state());
     std::printf("[eden-stage1] %s.format %s\n", phase, eden_debug_world_format());
     std::fflush(stdout);
 }
@@ -615,7 +632,7 @@ bool quit_to_menu() {
 }
 
 int run_p1_gate() {
-    // Exactly what web/tools/headless-p1-gate.js asserts: the headless-no-context line, then three
+    // Exactly what web-port-final:web/tools/headless-p1-gate.js asserts: the headless-no-context line, then three
     // "[eden-p1] tick N: World::update returned" lines. Both come from code shared with, or
     // line-for-line mirrored from, the web build — see EdenViewController_native.cpp.
     tick(3);
@@ -1174,6 +1191,31 @@ int run_shot() {
         }
         b->close();
         m->showbrowser = FALSE;
+        tick(4);
+    }
+
+    // U.5: the New World screen, one shot per world type (-newworld is the first visit's type,
+    // Normal; -newworld-<type> for the others). The field is blurred so the shot shows the
+    // placeholder rather than a caret.
+    if (World::getWorld && World::getWorld->menu) {
+        Menu* m = World::getWorld->menu;
+        NewWorldMenu* nw = m->newworld;
+        m->openNewWorld();
+        nw->blurFields();
+        tick(4);
+        const int first = nw->type();
+        capture("newworld");
+        for (int t = 0; t < nw->typeCount(); ++t) {
+            if (t == first) continue;
+            nw->showType(t);
+            tick(4);
+            char label[48];
+            std::snprintf(label, sizeof(label), "newworld-%s", nw->typeShot(t));
+            capture(label);
+        }
+        nw->showType(first);
+        nw->back();
+        m->shownewworld = FALSE;
         tick(4);
     }
 
@@ -3259,6 +3301,33 @@ int run_ring_light_selftest() {
     };
     walk(160, 0);
     walk(0, 160);
+    // P.10: a lightbox built in a column remembered as lightbox-free must make it be scanned again.
+    // The column is the last resident one in +x, so the next chunk of +x walking lands the column
+    // beside it and re-lights its 3x3 (which holds this one) from scratch; a column still trusted as
+    // free would lose the new lightbox's light there, and the sweep below would not.
+    settle();
+    {
+        const int ex = windowOriginChunk(wx) + CHUNKS_PER_SIDE - 1, pcz = (int)wz / CHUNK_SIZE;
+        int lcz = INT_MIN;
+        for (int dz = 0; dz <= CHUNKS_PER_SIDE / 2 && lcz == INT_MIN; ++dz)
+            for (int cz : {pcz + dz, pcz - dz})
+                if (lcz == INT_MIN && light_columnKnownFree(ex, cz)) lcz = cz;
+        char d2[160];
+        bool built = false, forgot = false;
+        if (lcz != INT_MIN) {
+            const int x = ex * CHUNK_SIZE + 8, z = lcz * CHUNK_SIZE + 8, H = g_world_height;
+            int y = H - 1;
+            while (y >= 0 && getLandc(x, z, y) == TYPE_NONE) --y;
+            y = std::min(y + 1, H - 2);
+            eden_debug_light_edit(0, x, z, y, 20);
+            built = getLandc(x, z, y) == TYPE_LIGHTBOX;
+            forgot = !light_columnKnownFree(ex, lcz);
+            std::snprintf(d2, sizeof(d2), "column (%d,%d), lightbox at (%d,%d,%d) %s, still trusted free %d",
+                          ex, lcz, x, z, y, built ? "built" : "NOT built", (int)!forgot);
+        } else std::snprintf(d2, sizeof(d2), "no remembered-free column in chunk x %d", ex);
+        check(built && forgot, "a lightbox built in a remembered-free column un-forgets it (P.10)", d2);
+    }
+    walk(32, 0);
     settle();
     const std::string lw = eden_debug_light_state(), cw = eden_debug_mesh_checksum();
     const long long reb1 = field(lw.c_str(), "\"rebuilds\":");
@@ -3290,6 +3359,244 @@ int run_ring_light_selftest() {
 
     std::printf("[eden-ring-light] %s (%d failure(s))\n",
                 g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
+    return g_selftestFailures ? 1 : 0;
+}
+
+// ---------------------------------------------------------------------------------------------
+// --shadow-selftest  (H.2: baked top-face shadows)
+// ---------------------------------------------------------------------------------------------
+// shadows-plan.md §8.2, in one process. The shadow-top table must match a fresh scan after every
+// landing and every edit (`stale` 0), a canopy in the NEXT chunk up must re-shade the floor chunk
+// (only the edit hook's dirtying can do that: updateChunks alone would not re-mesh it), mining it
+// must give back the floor's exact pre-canopy mesh, a lightbox still lights a shaded floor at night,
+// a walk's meshes must equal a re-scan + re-mesh of the same window, and Off must mesh exactly as
+// before. Classic unless --shadows= says otherwise. --shadow-mutate=nohook|nodirty|nolanding|nodiag
+// put the bug back; each must FAIL (shadows-plan.md §8.2 names the step).
+int run_shadow_selftest() {
+    g_selftestTag = "eden-shadow";
+    const char* name = g_opt.world.empty() ? "shadow-selftest" : g_opt.world.c_str();
+    if (g_shadow_mode == SHADOW_OFF) shadow_setOverride(SHADOW_CLASSIC);
+    if (!open_world(name, g_opt.height)) return 1;
+    if (!g_opt.haveAt) { g_opt.at[0] = 65536.5f; g_opt.at[1] = 60.0f; g_opt.at[2] = 65536.5f; }
+    const float X0 = g_opt.at[0], Y0 = g_opt.at[1], Z0 = g_opt.at[2];
+    eden_console_teleport(X0, Y0, Z0);
+    tick(g_opt.frames);
+
+    auto field = [](const char* js, const char* key) -> long long {
+        const char* k = std::strstr(js, key);
+        return k ? atoll(k + std::strlen(key)) : -1;
+    };
+    auto str = [](const char* js, const char* key) {
+        const char* k = std::strstr(js, key);
+        if (!k) return std::string();
+        k += std::strlen(key);
+        const char* e = std::strchr(k, '"');
+        return e ? std::string(k, e - k) : std::string();
+    };
+    auto settle = [&] {
+        for (int i = 0; i < 1200 && field(eden_debug_shadow_state(), "\"pending\":") != 0; i++) tick(1);
+        tick(120);
+    };
+    struct Shade { int classic = -1, corner[4] = {-1, -1, -1, -1}; float light[3] = {0}, lt[3] = {0}; };
+    auto shade = [&](int x, int z, int y) {
+        Shade s;
+        const char* js = eden_debug_top_shade(x, z, y);
+        s.classic = (int)field(js, "\"classic\":");
+        std::sscanf(std::strstr(js, "\"corners\":[") ? std::strstr(js, "\"corners\":[") + 11 : "", "%d,%d,%d,%d",
+                    &s.corner[0], &s.corner[1], &s.corner[2], &s.corner[3]);
+        const char* l = std::strstr(js, "\"light\":[");
+        if (l) std::sscanf(l + 9, "%f,%f,%f", &s.light[0], &s.light[1], &s.light[2]);
+        const char* t = std::strstr(js, "\"light_top\":[");
+        if (t) std::sscanf(t + 13, "%f,%f,%f", &s.lt[0], &s.lt[1], &s.lt[2]);
+        return s;
+    };
+    int step = 0;
+    auto state = [&](const char* what) {
+        const std::string js = eden_debug_shadow_state();
+        std::printf("[eden-shadow] step %d %-14s %s\n", step, what, js.c_str());
+        std::fflush(stdout);
+        return js;
+    };
+    char d[320];
+    auto checkStale = [&](const std::string& js, const char* what) {
+        std::snprintf(d, sizeof(d), "stale %lld, pending %lld", field(js.c_str(), "\"stale\":"),
+                      field(js.c_str(), "\"pending\":"));
+        check(field(js.c_str(), "\"stale\":") == 0 && field(js.c_str(), "\"pending\":") == 0, what, d);
+    };
+
+    // 0 baseline: the landing scan covers the whole window.
+    settle();
+    checkStale(state("baseline"), "step 0: every landed column's shadow top matches a fresh scan");
+
+    // 1 site: a 5x5 floor on the top layer of its chunk, the 7x7 round it cleared to the sky, so the
+    // only casters any floor face sees are the ones this test builds. Off the player's column.
+    ++step;
+    const PlayerState ps = player_state();
+    const int H = g_world_height;
+    const int x0 = (int)ps.x + 8, z0 = (int)ps.z + 8;
+    int gy = ((H - 10) / CHUNK_SIZE) * CHUNK_SIZE - 1;   // gy%16==15, gy+8 < H
+    for (int x = x0 - 3; x <= x0 + 3; ++x)
+        for (int z = z0 - 3; z <= z0 + 3; ++z) {
+            for (int y = H - 1; y > gy; --y)
+                if (getLandc(x, z, y) != TYPE_NONE) eden_console_setblock(x, z, y, TYPE_NONE);
+            if (std::abs(x - x0) <= 2 && std::abs(z - z0) <= 2) eden_console_setblock(x, z, gy, TYPE_STONE);
+        }
+    tick(10);
+    const std::string H0 = str(eden_debug_chunk_mesh_hash(x0, z0, gy), "\"full\":\"");
+    {
+        const Shade c = shade(x0, z0, gy);
+        std::snprintf(d, sizeof(d), "site (%d,%d,%d), centre shade %d, floor chunk full %s", x0, z0, gy, c.classic, H0.c_str());
+        check(c.classic == 255 && !H0.empty(), "step 1: the cleared floor is unshaded", d);
+        checkStale(state("site"), "step 1: stale == 0 after the clearing edits");
+    }
+
+    // 2 canopy: a 3x3 slab 4 above the floor -- in the next chunk up, and not its bottom layer.
+    ++step;
+    const int cy = gy + 4;
+    for (int x = x0 - 1; x <= x0 + 1; ++x)
+        for (int z = z0 - 1; z <= z0 + 1; ++z) eden_console_setblock(x, z, cy, TYPE_STONE);
+    tick(10);
+    {
+        // §3.2's value, from the geometry rather than from Shadow.h: a 3x3 kernel column is covered
+        // (gap 4: full weight) iff it is under the slab.
+        auto want = [&](int x, int z) {
+            int covered = 0;
+            for (int dx = -1; dx <= 1; ++dx)
+                for (int dz = -1; dz <= 1; ++dz)
+                    if (std::abs(x + dx - x0) <= 1 && std::abs(z + dz - z0) <= 1) covered++;
+            return 255 - (100 * covered * 16) / 144;
+        };
+        const int pts[4][2] = {{x0, z0}, {x0 + 2, z0}, {x0 + 2, z0 + 2}, {x0 + 3, z0}};
+        bool ok = true;
+        int n = 0;
+        n += std::snprintf(d + n, sizeof(d) - n, "shade got/want:");
+        for (auto& p : pts) {
+            const int got = shade(p[0], p[1], gy).classic, w = want(p[0], p[1]);
+            ok = ok && got == w;
+            n += std::snprintf(d + n, sizeof(d) - n, " %d/%d", got, w);
+        }
+        check(ok, "step 2: centre, edge, corner and outside shades are the plan's values", d);
+        const std::string h2 = str(eden_debug_chunk_mesh_hash(x0, z0, gy), "\"full\":\"");
+        std::snprintf(d, sizeof(d), "floor chunk full %s -> %s", H0.c_str(), h2.c_str());
+        check(!h2.empty() && h2 != H0, "step 2: the canopy re-meshed the floor chunk (the edit hook's dirtying)", d);
+        checkStale(state("canopy"), "step 2: stale == 0");
+    }
+
+    // 3 mine it out through the destroy path: the floor's mesh must be exactly what it was.
+    ++step;
+    for (int x = x0 - 1; x <= x0 + 1; ++x)
+        for (int z = z0 - 1; z <= z0 + 1; ++z) eden_debug_light_edit(1, x, z, cy, 0);
+    tick(10);
+    {
+        const std::string h3 = str(eden_debug_chunk_mesh_hash(x0, z0, gy), "\"full\":\"");
+        std::snprintf(d, sizeof(d), "floor chunk full %s, before the canopy %s", h3.c_str(), H0.c_str());
+        check(h3 == H0, "step 3: mining the canopy gives back the floor's exact mesh", d);
+        checkStale(state("mine"), "step 3: stale == 0");
+    }
+
+    // 4 light: the canopy back, a lightbox 2 west of its edge. Day: never above 1.0. Night: the
+    // box still lights the shaded floor beside it, and a shade never brightens a face.
+    ++step;
+    for (int x = x0 - 1; x <= x0 + 1; ++x)
+        for (int z = z0 - 1; z <= z0 + 1; ++z) eden_console_setblock(x, z, cy, TYPE_STONE);
+    eden_debug_light_edit(0, x0 - 3, z0, gy + 1, 0);
+    for (int i = 0; i < 600 && field(eden_debug_light_state(), "\"pending\":") != 0; i++) tick(1);
+    tick(10);
+    {
+        const Shade nd = shade(x0 - 1, z0, gy);
+        std::snprintf(d, sizeof(d), "day light_top %.4f,%.4f,%.4f (shade %d)", nd.lt[0], nd.lt[1], nd.lt[2], nd.classic);
+        check(nd.classic < 255 && nd.lt[0] <= 1.0f && nd.lt[1] <= 1.0f && nd.lt[2] <= 1.0f,
+              "step 4: by day a shaded face beside a lightbox stays <= 1.0", d);
+    }
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 4; ++j) regionSkyColors[i][j] = 54;
+    paintSky(54);
+    memset(chunksToUpdate, TRUE, sizeof(BOOL) * CHUNKS_PER_SIDE * CHUNKS_PER_SIDE * CHUNKS_PER_COLUMN);
+    memset(columnsToUpdate, TRUE, sizeof(BOOL) * CHUNKS_PER_SIDE * CHUNKS_PER_SIDE);
+    tick(30);
+    {
+        const Shade near = shade(x0 - 1, z0, gy), far = shade(x0 + 1, z0, gy);
+        std::snprintf(d, sizeof(d), "near shade %d lt %.4f light %.4f; far shade %d lt %.4f light %.4f",
+                      near.classic, near.lt[0], near.light[0], far.classic, far.lt[0], far.light[0]);
+        bool le = true;
+        for (int c = 0; c < 3; ++c) le = le && near.lt[c] <= near.light[c] && far.lt[c] <= far.light[c];
+        check(near.light[0] < 1.0f && near.classic < 255 && far.classic < 255 && near.lt[0] > far.lt[0] && le,
+              "step 4: at night a lightbox lights a shaded face, and shading never brightens one", d);
+        const std::string lOn = str(eden_debug_light_state(), "\"hash\":\"");
+        const int mode = g_shadow_mode;
+        shadow_setOverride(SHADOW_OFF);
+        tick(10);
+        const std::string lOff = str(eden_debug_light_state(), "\"hash\":\"");
+        shadow_setOverride(mode);
+        tick(10);
+        std::snprintf(d, sizeof(d), "light hash on %s, off %s", lOn.c_str(), lOff.c_str());
+        check(!lOn.empty() && lOn == lOff, "step 4: shadows do not touch the light store", d);
+        checkStale(state("light"), "step 4: stale == 0");
+    }
+
+    // 5 walk: +x 160 then +z 160 at the F3 driver's 0.25 a frame (ring landings), against the
+    // reference: every column re-scanned and every chunk re-meshed, the same window.
+    ++step;
+    const int bulk0 = g_bulk_reloads, ring0 = g_ring_columns_landed;
+    float wx = X0, wz = Z0;
+    auto walk = [&](float dx, float dz) {
+        const int steps = (int)std::ceil(std::sqrt(dx * dx + dz * dz) / 0.25f);
+        for (int k = 1; k <= steps; ++k) {
+            const float f = (float)k / (float)steps;
+            eden_console_teleport(wx + dx * f, Y0, wz + dz * f);
+            tick(1);
+        }
+        wx += dx; wz += dz;
+    };
+    walk(160, 0);
+    walk(0, 160);
+    settle();
+    const std::string sw = state("walked"), cw = eden_debug_mesh_checksum();
+    std::printf("[eden-shadow] walked  mesh  %s\n", cw.c_str());
+    std::snprintf(d, sizeof(d), "ring columns +%d, bulk reloads %d -> %d", g_ring_columns_landed - ring0, bulk0, g_bulk_reloads);
+    check(g_ring_columns_landed > ring0 && g_bulk_reloads == bulk0, "step 5: the walk streams by the ring", d);
+    checkStale(sw, "step 5: stale == 0 after the walk");
+    shadow_markAllStale();
+    memset(chunksToUpdate, TRUE, sizeof(BOOL) * CHUNKS_PER_SIDE * CHUNKS_PER_SIDE * CHUNKS_PER_COLUMN);
+    memset(columnsToUpdate, TRUE, sizeof(BOOL) * CHUNKS_PER_SIDE * CHUNKS_PER_SIDE);
+    settle();
+    const std::string sr = state("reference"), cr = eden_debug_mesh_checksum();
+    std::printf("[eden-shadow] reference mesh %s\n", cr.c_str());
+    std::snprintf(d, sizeof(d), "shadow hash walked %s, reference %s", str(sw.c_str(), "\"hash\":\"").c_str(),
+                  str(sr.c_str(), "\"hash\":\"").c_str());
+    check(str(sw.c_str(), "\"hash\":\"") == str(sr.c_str(), "\"hash\":\""), "step 5: the walked tops equal a fresh scan", d);
+    std::snprintf(d, sizeof(d), "walked geom %s full %s, reference geom %s full %s",
+                  str(cw.c_str(), "\"geom\":\"").c_str(), str(cw.c_str(), "\"full\":\"").c_str(),
+                  str(cr.c_str(), "\"geom\":\"").c_str(), str(cr.c_str(), "\"full\":\"").c_str());
+    check(!str(cw.c_str(), "\"full\":\"").empty() && str(cw.c_str(), "\"geom\":\"") == str(cr.c_str(), "\"geom\":\"") &&
+          str(cw.c_str(), "\"full\":\"") == str(cr.c_str(), "\"full\":\""),
+          "step 5: the walked meshes equal a re-scan + re-mesh of the same window", d);
+
+    // 6 toggle: Off -> Classic -> Smooth -> Off. Shadows never move geometry; Off is Off.
+    ++step;
+    {
+        const int mode = g_shadow_mode;
+        std::string geom[4], full[4];
+        const int seq[4] = {SHADOW_OFF, SHADOW_CLASSIC, SHADOW_SMOOTH, SHADOW_OFF};
+        for (int i = 0; i < 4; ++i) {
+            shadow_setOverride(seq[i]);
+            tick(10);
+            const std::string c = eden_debug_mesh_checksum();
+            geom[i] = str(c.c_str(), "\"geom\":\"");
+            full[i] = str(c.c_str(), "\"full\":\"");
+            std::printf("[eden-shadow] step %d mode %d mesh %s\n", step, seq[i], c.c_str());
+        }
+        shadow_setOverride(mode);
+        std::snprintf(d, sizeof(d), "geom %s %s %s %s; full off %s classic %s smooth %s off %s",
+                      geom[0].c_str(), geom[1].c_str(), geom[2].c_str(), geom[3].c_str(),
+                      full[0].c_str(), full[1].c_str(), full[2].c_str(), full[3].c_str());
+        check(!geom[0].empty() && geom[0] == geom[1] && geom[1] == geom[2] && geom[2] == geom[3],
+              "step 6: geometry is the same in every mode", d);
+        check(full[0] == full[3] && full[1] != full[0] && full[2] != full[1],
+              "step 6: Off after == Off before, Classic and Smooth each differ", d);
+    }
+
+    std::printf("[eden-shadow] %s (%d failure(s))\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
     return g_selftestFailures ? 1 : 0;
 }
 
@@ -3708,6 +4015,14 @@ int run_touch_selftest() {
         check(jw > 0.0f && jh > 0.0f, "the engine reports an on-screen joystick pad", detail);
 
         if (jw > 0.0f && jh > 0.0f) {
+            // Fixed 1/60 s etime for EVERYTHING from here to the walk checks (X.11). The coast
+            // check below flaked on loaded machines (Linux CI, 4/4 locally under load) because it
+            // ran on wall-clock etime: Player::update integrates pos += vel*etime AND substeps
+            // (re-applying its per-call damping) when a frame's displacement exceeds 0.1, so one
+            // 20-tick window that caught a slow frame covered more ground than the first. The
+            // touch joystick does not go through Movement_web.mm's wall-clock EMA on native (only
+            // the keyboard path does), so engine etime is the only clock this block reads.
+            g_app->viewController.setFixedEtime(1.0f / 60.0f);
             teleport_for_movement();   // the map CENTRE — see its own comment for why --at's is not
             tick(120);
             rise_until_clear(1800);    // and clear of terrain, so "did not move" means the input
@@ -3765,7 +4080,8 @@ int run_touch_selftest() {
             std::snprintf(detail, sizeof(detail),
                           "coasting down: %.3f -> %.3f blocks per 20 ticks, peak %.3f "
                           "(fly-mode 0.995 damping)", first, last, peak);
-            // (1.02 lost to 1.175 vs 1.151 on Windows CI: substep jitter, as above.)
+            // (1.02 lost to 1.175 vs 1.151 on Windows CI; that "substep jitter" was wall-clock etime,
+            // fixed at the top of this block in X.11 — the 1.05 margin is now headroom, not noise.)
             check(peak <= first * 1.05f && last < first * 0.9f,
                   "lifting the finger stops driving the player", detail);
 
@@ -3778,8 +4094,7 @@ int run_touch_selftest() {
             // on its tick rate (per-tick ground friction), so a wall-clock run would assert on
             // whatever rate this machine's vsync happens to give the harness. The tick rate the
             // REAL loop feeds the engine is the interactive loop's pacing, not this gate's.
-            eden_set_fly_mode(0);
-            g_app->viewController.setFixedEtime(1.0f / 60.0f);
+            eden_set_fly_mode(0);   // (still on the fixed step set at the top of this block)
             const int ry = g_opt.height - 14;
             const float wx = (float)(4096 * CHUNK_SIZE) + 0.5f, wz = (float)(4096 * CHUNK_SIZE) + 0.5f;
             eden_console_teleport(wx, (float)ry + 3.0f, wz);
@@ -3813,15 +4128,434 @@ int run_touch_selftest() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// W.2: native gates for the retired web checks that had no replacement (docs/web-port-archive.md)
+// ---------------------------------------------------------------------------------------------
+// Number readers for the eden_debug_* JSON probes. Each probe writes a fixed key set, so a strstr
+// on `"key":` is exact; a missing key reads as -9999 (no real field has that value).
+int probe_int(const char* json, const char* key) {
+    char k[64];
+    std::snprintf(k, sizeof(k), "\"%s\":", key);
+    const char* p = json ? std::strstr(json, k) : nullptr;
+    if (!p) return -9999;
+    p += std::strlen(k);
+    if (!std::strncmp(p, "true", 4)) return 1;
+    if (!std::strncmp(p, "false", 5)) return 0;
+    return atoi(p);
+}
+double probe_num(const char* json, const char* key) {
+    char k[64];
+    std::snprintf(k, sizeof(k), "\"%s\":", key);
+    const char* p = json ? std::strstr(json, k) : nullptr;
+    return p ? atof(p + std::strlen(k)) : -9999.0;
+}
+struct ProbeRect { float v[4]; };
+ProbeRect probe_rect(const char* json, const char* key) {
+    ProbeRect r = {{-1, -1, -1, -1}};
+    char k[64];
+    std::snprintf(k, sizeof(k), "\"%s\":[", key);
+    const char* p = json ? std::strstr(json, k) : nullptr;
+    if (p) std::sscanf(p + std::strlen(k), "%f,%f,%f,%f", &r.v[0], &r.v[1], &r.v[2], &r.v[3]);
+    return r;
+}
+bool same_rect(const ProbeRect& a, const ProbeRect& b) {
+    for (int i = 0; i < 4; ++i) if (std::fabs(a.v[i] - b.v[i]) >= 0.01f) return false;
+    return true;
+}
+std::string rect_str(const ProbeRect& r) {
+    char b[96];
+    std::snprintf(b, sizeof(b), "[%g,%g,%g,%g]", r.v[0], r.v[1], r.v[2], r.v[3]);
+    return b;
+}
+
+// --gl-selftest  (W.2 (a); was the GL half of web-port-final:web/tools/headless-shim-selftest.js)
+// The shim's no-context bookkeeping: every headless gate boots through it (World::World() ->
+// Graphics::initGraphics() issues glGenBuffers with no context), and the engine trusts the fake names
+// to be nonzero and distinct (TerrainChunk.mm treats 0 as "no buffer yet"). The proof is
+// eden_gl_selftest_run() in port/src/shim/gl/gl_fixed_function.cpp; this mode is headless so the
+// guarded path is the one engaged. Diagnostics builds only, like the function.
+#if defined(EDEN_DIAGNOSTICS)
+extern "C" int eden_gl_selftest_run(void);
+#endif
+int run_gl_selftest() {
+    g_selftestTag = "eden-gl";
+#if defined(EDEN_DIAGNOSTICS)
+    tick(3);
+    check(eden_gl_have_context() == 0, "headless: no GL context is current", "");
+    const int ok = eden_gl_selftest_run();
+    check(ok == 1, "guarded glGen* names are nonzero and distinct", "see [eden-gl-selftest] above");
+#else
+    check(false, "this build has EDEN_DIAGNOSTICS", "eden_gl_selftest_run() is compiled out");
+#endif
+    std::printf("[eden-gl] %s (%d failure(s))\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
+    return g_selftestFailures ? 1 : 0;
+}
+
+// --recolor-selftest  (W.2 (b); was web-port-final:web/tools/headless-recolor-test.js, audit row 11 / A5)
+// The paint / door / creature-skin recolour pipeline. Its failure is invisible: a Texture2D whose
+// GL name stayed 0 draws as nothing and reports no error. eden_debug_recolor_state(color)
+// (port/src/seam/DebugState_web.mm) reports the stored source images, the recoloured textures'
+// names and the positional skin/mask tables Resources fills while loading. Headless, the names are
+// the shim's fake ones -- nonzero is still exactly the "something was uploaded" signal.
+extern "C" const char* eden_debug_recolor_state(int color);
+int run_recolor_selftest() {
+    g_selftestTag = "eden-recolor";
+    tick(3);
+    std::printf("[eden-recolor] metrics IS_IPAD=%d SUPPORTS_RETINA=%d SCALE=%gx%g SCREEN=%gx%g\n", (int)IS_IPAD,
+                (int)SUPPORTS_RETINA, SCALE_WIDTH, SCALE_HEIGHT, SCREEN_WIDTH, SCREEN_HEIGHT);
+    char d[600];
+    std::string s1 = eden_debug_recolor_state(1);
+    std::snprintf(d, sizeof(d), "%s", s1.c_str());
+    check(probe_int(s1.c_str(), "stored_paint") != -9999, "Resources exists and the probe answers", d);
+    std::printf("[eden-recolor] colour 1: %s\n", s1.c_str());
+    const char* s = s1.c_str();
+    check(probe_int(s, "stored_paint") == 1, "storedPaint was captured during texture load", "");
+    check(probe_int(s, "stored_paint_mask") == 1, "storedPaintMask was captured during texture load", "");
+    check(probe_int(s, "stored_door") == 1, "storedDoor was captured during texture load", "");
+    check(probe_int(s, "stored_door_mask") == 1, "storedDoorMask was captured during texture load", "");
+    const int pw = probe_int(s, "paint_w"), ph = probe_int(s, "paint_h");
+    const int mw = probe_int(s, "mask_w"), mh = probe_int(s, "mask_h");
+    std::snprintf(d, sizeof(d), "paint %dx%d, mask %dx%d", pw, ph, mw, mh);
+    check(pw > 0 && ph > 0, "paint image decoded to real pixels", d);
+    check(mw > 0 && mh > 0, "paint mask decoded to real pixels", d);
+    check(pw == mw && ph == mh, "paint image and mask agree on size", d);
+    check(pw == 90 && mw == 90, "the ipad~ (2x) paint art loaded, as on a device", d);
+    check(probe_int(s, "paint_tex") > 0, "getPaintTex(1) produced a texture (name != 0)", "");
+    check(probe_int(s, "door_tex") > 0, "getDoorTex(1) produced a texture (name != 0)", "");
+
+    // paint_cache is ONE slot keyed on colour (a second colour must rebuild it); door_cache is
+    // per colour, so two colours are two live names at once.
+    const std::string a = eden_debug_recolor_state(2);
+    const std::string b = eden_debug_recolor_state(7);
+    const int da = probe_int(a.c_str(), "door_tex"), db = probe_int(b.c_str(), "door_tex");
+    std::snprintf(d, sizeof(d), "door 2 -> %d, door 7 -> %d", da, db);
+    check(probe_int(b.c_str(), "paint_tex") > 0, "a second paint colour also produces a texture", "");
+    check(da > 0 && db > 0 && da != db, "door textures for two colours are distinct names", d);
+
+    // The creature half: Resources fills storedSkins/storedMasks POSITIONALLY (the Nth texture load
+    // after loadResources zeroes the counters), so a reordered load silently swaps creatures' skins.
+    // 5 models x 2 states; 15 skin PNGs load and every third (the Rage variant) is not stored.
+    std::snprintf(d, sizeof(d), "skins %d, masks %d, counters %d/%d", probe_int(s, "skins_filled"),
+                  probe_int(s, "masks_filled"), probe_int(s, "skin_counter"), probe_int(s, "mask_counter"));
+    check(probe_int(s, "skins_filled") == 10, "all 10 creature skins captured", d);
+    check(probe_int(s, "masks_filled") == 10, "all 10 creature masks captured", d);
+    check(probe_int(s, "skin_counter") == 10, "skin counter stopped at 10 (every 3rd skipped)", d);
+    check(probe_int(s, "mask_counter") == 10, "mask counter stopped at 10", d);
+
+    const std::string a2 = eden_debug_recolor_state(2);
+    std::snprintf(d, sizeof(d), "%d then %d", da, probe_int(a2.c_str(), "door_tex"));
+    check(probe_int(a2.c_str(), "door_tex") == da, "the door cache returns a stable name per colour", d);
+
+    std::printf("[eden-recolor] %s (%d failure(s))\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
+    return g_selftestFailures ? 1 : 0;
+}
+
+// --display-selftest  (W.2 (c); was web-port-final:web/tools/headless-display-profile-test.js, audit D1 + D4)
+// The derived point space (port/src/seam/DisplayProfile_web.mm) and the re-layout it drives
+// (Hud::layoutForScreen, Menu::layoutForScreen, Input::screenMetricsChanged). A rect that does not
+// follow a metrics change is drawn in one place and hit-tested in another, silently. Pins: (1) the
+// stock 568x320 HUD rects, byte-exact; (2) the derivation; (3) idempotent, reversible re-layout;
+// (4) the profiles' chrome and the classic-width floor; (5) the aspect clamps. --touch-selftest
+// covers the touch half at a real window; this one is headless and drives the viewport itself
+// (eden_display_set_viewport is exactly what DisplayMode_native.cpp calls on a window resize).
+extern "C" void eden_display_set_viewport(int css_w, int css_h);
+extern "C" void eden_display_refresh(void);
+int run_display_selftest() {
+    g_selftestTag = "eden-display";
+    if (!tick_until([] { return probe_int(eden_debug_display_state(), "hud") == 1; }, 600, "the Hud")) {
+        check(false, "World + Hud came up", eden_debug_display_state());
+        std::printf("[eden-display] FAILURES (%d failure(s))\n", g_selftestFailures);
+        return 1;
+    }
+    char d[300];
+    std::string st;
+    auto state = [&]() -> const char* { st = eden_debug_display_state(); return st.c_str(); };
+    // Option indexes: ui_scale 0 Auto, 1 100%, 2 125%, 3 150%, 4 200%; display_layout 0 Auto,
+    // 1 Classic, 2 Adaptive; input_mode 0 Auto, 1 Touch, 2 Keyboard+Mouse.
+    auto set = [](const char* key, float v) {
+        if (!set_setting_by_key(key, v)) std::fprintf(stderr, "[eden-display] no setting %s\n", key);
+        tick(2);
+    };
+    auto pickViewport = [&](const char* label, const char* s) {
+        // Util.mm's findWorldCoords unprojects a point-space tap scaled by SCALE_* (2) against
+        // GL_VIEWPORT, so GL_VIEWPORT must answer the point space x2, never the real drawable.
+        ProbeRect pv = probe_rect(s, "pick_viewport");   // two numbers; the other two stay -1
+        const double w = probe_num(s, "SCREEN_WIDTH"), h = probe_num(s, "SCREEN_HEIGHT");
+        std::snprintf(d, sizeof(d), "%s: [%g,%g] vs %gx%g x2", label, pv.v[0], pv.v[1], w, h);
+        check(pv.v[0] == (float)(w * 2) && pv.v[1] == (float)(h * 2), "GL_VIEWPORT is the point space x2", d);
+    };
+    auto gridInCard = [&](const char* label, const char* s) {
+        const ProbeRect c = probe_rect(s, "rpaintframe");
+        bool ok = true;
+        for (const char* k : {"block0", "color0"}) {
+            const ProbeRect r = probe_rect(s, k);
+            ok = ok && r.v[0] >= c.v[0] && r.v[1] >= c.v[1] && r.v[0] + r.v[2] <= c.v[0] + c.v[2] &&
+                 r.v[1] + r.v[3] <= c.v[1] + c.v[3];
+        }
+        std::snprintf(d, sizeof(d), "%s: card %s block0 %s color0 %s", label, rect_str(c).c_str(),
+                      rect_str(probe_rect(s, "block0")).c_str(), rect_str(probe_rect(s, "color0")).c_str());
+        check(ok, "the picker grid sits inside the picker card", d);
+    };
+    auto dims = [&](const char* s) {
+        std::snprintf(d, sizeof(d), "%gx%g (aspect %.4f)", probe_num(s, "SCREEN_WIDTH"), probe_num(s, "SCREEN_HEIGHT"),
+                      probe_num(s, "P_ASPECT_RATIO"));
+        return (const char*)d;
+    };
+
+    // ---- 1. The classic profile is byte-exact ----------------------------------------------------
+    set("input_mode", 2);
+    set("display_layout", 1);
+    set("ui_scale", 4);
+    const std::string classic = state();
+    const char* c = classic.c_str();
+    check(probe_num(c, "SCREEN_WIDTH") == 568 && probe_num(c, "SCREEN_HEIGHT") == 320, "classic: 568x320 points", dims(c));
+    check(std::fabs(probe_num(c, "P_ASPECT_RATIO") - 1.775) < 0.001, "classic: P_ASPECT_RATIO is 1.775", dims(c));
+    check(probe_int(c, "IS_WIDESCREEN") == 1, "classic: IS_WIDESCREEN", "");
+    const ProbeRect scr = probe_rect(c, "scr");
+    std::snprintf(d, sizeof(d), "Input [%g,%g]", scr.v[0], scr.v[1]);
+    check(scr.v[0] == 568 && scr.v[1] == 320, "classic: Input's point space matches the engine", d);
+    // The stock rects, by hand from Classes/Hud.mm's constants at 568x320:
+    //   HUDR_X = 568-45-13 = 510; rmine.y = 4*320/5-45-3 = 208; rjumphit.x = 510-17-1 = 492, w = 76;
+    //   rmenu.y = 320-45 = 275; blockBounds[0] = (7+15+4+57, -3+320-10-15-38) = (83, 254);
+    //   rburn.y = 320-45-3 = 272; rpaint.y = 2*320/5-45-3+5 = 85; rpaintframe = (4+57, 10+10) 402x282.
+    const struct { const char* key; ProbeRect want; } kStock[] = {
+        {"rmine",       {{510, 208, 45, 45}}},
+        {"rjumphit",    {{492, 0, 76, 68}}},
+        {"rmenu",       {{0, 275, 45, 45}}},
+        {"block0",      {{83, 254, 38, 38}}},
+        {"rburn",       {{510, 272, 45, 45}}},
+        {"rpaint",      {{510, 85, 45, 45}}},
+        {"rpaintframe", {{61, 20, 402, 282}}},
+    };
+    for (const auto& k : kStock) {
+        const ProbeRect got = probe_rect(c, k.key);
+        char what[64];
+        std::snprintf(what, sizeof(what), "classic: %s is the stock rect", k.key);
+        std::snprintf(d, sizeof(d), "%s, want %s", rect_str(got).c_str(), rect_str(k.want).c_str());
+        check(same_rect(got, k.want), what, d);
+    }
+    pickViewport("classic", c);
+
+    // ---- 2. The derivation ----------------------------------------------------------------------
+    set("display_layout", 2);
+    set("ui_scale", 1);
+    eden_display_set_viewport(1600, 1000);
+    tick(2);
+    const std::string wide = state();
+    const char* w = wide.c_str();
+    check(probe_num(w, "SCREEN_HEIGHT") == 640, "adaptive/100%: point height is 640", dims(w));
+    check(probe_num(w, "SCREEN_WIDTH") == 1024, "adaptive/100%: point width follows the 1.6 aspect", dims(w));
+    check(std::fabs(probe_num(w, "P_ASPECT_RATIO") - probe_num(w, "SCREEN_WIDTH") / probe_num(w, "SCREEN_HEIGHT")) < 0.0005,
+          "adaptive: P_ASPECT_RATIO is always width/height", dims(w));
+    check(std::abs(probe_int(w, "aspect_x1000") - 1600) <= 2, "adaptive: the aspect getter agrees", dims(w));
+    const ProbeRect wscr = probe_rect(w, "scr");
+    std::snprintf(d, sizeof(d), "Input [%g,%g]", wscr.v[0], wscr.v[1]);
+    check(wscr.v[0] == 1024 && wscr.v[1] == 640, "adaptive: Input's point space followed", d);
+    check(std::fabs(probe_rect(w, "rmine").v[0] - (1024 - 45 - 13)) < 0.01, "adaptive: the right-anchored column followed",
+          rect_str(probe_rect(w, "rmine")).c_str());
+    check(std::fabs(probe_rect(w, "rmenu").v[1] - (640 - 45)) < 0.01, "adaptive: the top-anchored icon followed",
+          rect_str(probe_rect(w, "rmenu")).c_str());
+    pickViewport("adaptive/100%", w);
+    gridInCard("adaptive/100%", w);
+    {
+        const float burnY = probe_rect(w, "rburn").v[1], paintY = probe_rect(w, "rpaint").v[1];
+        std::snprintf(d, sizeof(d), "rburn.y %g, rpaint.y %g", burnY, paintY);
+        // rpaint carries a stock +5 nudge on top of its three 64-point steps.
+        check(std::fabs((burnY - paintY + 5) - 64 * 3) < 0.01, "adaptive: the mode column keeps its 64-point pitch", d);
+        check(std::fabs(burnY - (640 - 45 - 3)) < 0.01, "adaptive: the mode column stays top-anchored", d);
+    }
+    const ProbeRect mf = probe_rect(w, "rmenuframe");
+    check(std::fabs(mf.v[2] - 268) < 0.01 && std::fabs(mf.v[3] - 240) < 0.01, "adaptive: the menu card keeps 268x240",
+          rect_str(mf).c_str());
+    set("ui_scale", 2);
+    const std::string dense = state();
+    check(probe_num(dense.c_str(), "SCREEN_HEIGHT") == 512, "ui_scale 125%: point height is 512", dims(dense.c_str()));
+    check(std::fabs(probe_num(dense.c_str(), "P_ASPECT_RATIO") - probe_num(w, "P_ASPECT_RATIO")) < 0.005,
+          "ui_scale 125%: the aspect is unchanged", dims(dense.c_str()));
+    pickViewport("ui_scale 125%", dense.c_str());
+    gridInCard("ui_scale 125%", dense.c_str());
+
+    // ---- 3. Re-layout is idempotent and reversible -----------------------------------------------
+    set("ui_scale", 1);
+    const std::string again = state();
+    std::snprintf(d, sizeof(d), "block0 %s vs %s", rect_str(probe_rect(again.c_str(), "block0")).c_str(),
+                  rect_str(probe_rect(w, "block0")).c_str());
+    check(same_rect(probe_rect(again.c_str(), "rmine"), probe_rect(w, "rmine")) &&
+          same_rect(probe_rect(again.c_str(), "block0"), probe_rect(w, "block0")) &&
+          same_rect(probe_rect(again.c_str(), "color0"), probe_rect(w, "color0")),
+          "idempotent: returning to a size reproduces its rects", d);
+    // block0.x carries marginLeft2, which the layout body MUTATES: a pass that did not reset it
+    // would drift right on every refresh.
+    eden_display_refresh();
+    eden_display_refresh();
+    tick(2);
+    std::snprintf(d, sizeof(d), "block0 %s", rect_str(probe_rect(state(), "block0")).c_str());
+    check(same_rect(probe_rect(st.c_str(), "block0"), probe_rect(w, "block0")), "idempotent: extra refreshes do not drift", d);
+
+    // ---- 4. Back to classic: the stock numbers again ---------------------------------------------
+    set("display_layout", 1);
+    set("ui_scale", 4);
+    const std::string back = state();
+    bool same = true;
+    for (const char* k : {"rmine", "rjumphit", "rmenu", "block0", "color0", "rpaintframe"})
+        same = same && same_rect(probe_rect(back.c_str(), k), probe_rect(c, k));
+    std::snprintf(d, sizeof(d), "block0 %s", rect_str(probe_rect(back.c_str(), "block0")).c_str());
+    check(same, "round trip: classic rects identical after adaptive", d);
+
+    // ---- 5. The profiles ---------------------------------------------------------------------------
+    set("input_mode", 1);
+    const std::string touch = state();
+    check(std::strstr(touch.c_str(), "\"profile\":\"touch\"") != nullptr, "forcing Touch selects the touch profile", "");
+    check(probe_int(touch.c_str(), "touch_chrome") == 1 && probe_int(touch.c_str(), "use_joystick") == 1,
+          "the touch profile turns the on-screen chrome on", "");
+    set("input_mode", 2);
+    const std::string desk = state();
+    check(std::strstr(desk.c_str(), "\"profile\":\"desktop\"") != nullptr, "forcing Keyboard+Mouse selects desktop", "");
+    check(probe_int(desk.c_str(), "touch_chrome") == 0 && probe_int(desk.c_str(), "use_joystick") == 0,
+          "the desktop profile turns the on-screen chrome off", "");
+    // Auto + the touch profile on a 16:9 screen is the shipped layout, rect for rect.
+    set("ui_scale", 0);
+    set("display_layout", 0);
+    set("input_mode", 1);
+    eden_display_set_viewport(1136, 640);
+    tick(2);
+    const std::string at = state();
+    check(probe_num(at.c_str(), "SCREEN_WIDTH") == 568 && probe_num(at.c_str(), "SCREEN_HEIGHT") == 320,
+          "Auto + touch on 16:9 is still 568x320", dims(at.c_str()));
+    check(same_rect(probe_rect(at.c_str(), "rmine"), probe_rect(c, "rmine")) &&
+          same_rect(probe_rect(at.c_str(), "block0"), probe_rect(c, "block0")),
+          "Auto + touch reproduces the stock HUD rects", rect_str(probe_rect(at.c_str(), "block0")).c_str());
+    // On 4:3 it fills the screen, and the classic-width floor keeps the space >= 568 wide.
+    eden_display_set_viewport(1024, 768);
+    tick(2);
+    const std::string ipad = state();
+    check(std::abs(probe_int(ipad.c_str(), "aspect_x1000") - 1333) <= 5, "Auto + touch on 4:3 fills it", dims(ipad.c_str()));
+    check(probe_num(ipad.c_str(), "SCREEN_WIDTH") >= 568, "the classic-width floor keeps >= 568 points", dims(ipad.c_str()));
+    eden_display_set_viewport(800, 1200);
+    tick(2);
+    check(probe_num(state(), "SCREEN_WIDTH") >= 568, "the floor holds at the aspect clamp", dims(st.c_str()));
+    eden_display_set_viewport(568, 320);
+    tick(2);
+    check(probe_num(state(), "SCREEN_WIDTH") == 568 && probe_num(st.c_str(), "SCREEN_HEIGHT") == 320,
+          "an iPhone-5-sized viewport resolves to 568x320", dims(st.c_str()));
+
+    // ---- 6. The clamps ----------------------------------------------------------------------------
+    set("input_mode", 2);
+    eden_display_set_viewport(400, 900);
+    tick(2);
+    check(std::abs(probe_int(state(), "aspect_x1000") - 1200) <= 10, "a portrait viewport clamps to aspect 1.20", dims(st.c_str()));
+    eden_display_set_viewport(3840, 1080);
+    tick(2);
+    check(std::abs(probe_int(state(), "aspect_x1000") - 2400) <= 10, "a 32:9 viewport clamps to aspect 2.40", dims(st.c_str()));
+
+    std::printf("[eden-display] %s (%d failure(s))\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
+    return g_selftestFailures ? 1 : 0;
+}
+
+// --convert64-selftest  (W.2 (e); was web-port-final:web/tools/headless-256z-convert-crosscheck.js)
+// FileManager::convertWorldTo64 is a from-scratch C++ restatement of port/tools/eden-convert.js's
+// `--to-64`; the two are kept in step by hand. This authors a 256z world with known content above
+// y=63 (a 6x6 lattice of brick pillars at four heights, 20 apart so each lands in its own column,
+// and three door pairs straddling the cut: DOOR1 at 63 kept, DOOR_TOP at 64 cut = one orphan each),
+// saves it, exports the `.emod` to a NewDawn256z `.eden`, then converts with the engine twice --
+// the `.emod` (what the Storage tab runs on a live world) and a copy of the `.eden` (an import
+// source) -- and prints each report. port/tools/convert64-crosscheck.js runs this mode, converts the
+// kept reference copy (<docs>/convert64-ref/src256.eden) with eden-convert.js and asserts all
+// three agree. The in-process checks below are only the floor: the content really landed above 63.
+void mkdirs(const std::string& path);   // defined with main()
+int run_convert64_selftest() {
+    g_selftestTag = "eden-convert64";
+    const char* name = g_opt.world.empty() ? "convert64-xcheck" : g_opt.world.c_str();
+    if (!open_world(name, 256)) return 1;
+    tick(g_opt.frames / 2);
+    char d[600];
+    check(g_world_height == 256, "the world opened at height 256", eden_debug_world_format());
+
+    const PlayerState ps = player_state();
+    const int bx = (int)std::lround(ps.x), bz = (int)std::lround(ps.z);
+    const int kHighY[] = {64, 90, 150, 220};
+    int placed = 0;
+    for (int gx = 0; gx < 6; ++gx)
+        for (int gz = 0; gz < 6; ++gz)
+            for (int y : kHighY) { eden_console_setblock(bx + (gx - 3) * 20, bz + (gz - 3) * 20, y, 13 /* TYPE_BRICK */); placed++; }
+    // Off the lattice (its offsets are multiples of 20 in -60..40), so no door top overwrites a brick.
+    const int kDoors[3][2] = {{bx + 60, bz}, {bx, bz + 60}, {bx - 50, bz - 50}};
+    for (const auto& c : kDoors) {
+        eden_console_setblock(c[0], c[1], 63, 66 /* TYPE_DOOR1 */);
+        eden_console_setblock(c[0], c[1], 64, 70 /* TYPE_DOOR_TOP */);
+    }
+    // Creatures above the cut, for the dropped/relocated counters: a 5x5 brick deck at y=150, off the
+    // lattice (x and z offsets 8..12), and three creatures stood on it just before the save.
+    for (int x = bx + 8; x <= bx + 12; ++x)
+        for (int z = bz + 8; z <= bz + 12; ++z) { eden_console_setblock(x, z, 150, 13 /* TYPE_BRICK */); placed++; }
+    std::snprintf(d, sizeof(d), "getblock(%d,%d,220) = %d", bx, bz, eden_console_getblock(bx, bz, 220));
+    check(eden_console_getblock(bx, bz, 220) == 13, "a high-band block reads back before saving", d);
+    std::snprintf(d, sizeof(d), "door at 63/64: %d/%d", eden_console_getblock(kDoors[0][0], kDoors[0][1], 63),
+                  eden_console_getblock(kDoors[0][0], kDoors[0][1], 64));
+    check(eden_console_getblock(kDoors[0][0], kDoors[0][1], 63) == 66 &&
+          eden_console_getblock(kDoors[0][0], kDoors[0][1], 64) == 70, "a door pair straddles the cut", d);
+    tick(30);
+    int spawned = 0;
+    for (int i = 0; i < 3; ++i) spawned += SpawnCreatureAt(i, Vector{bx + 9.5f + i, 151.5f, bz + 10.5f}) ? 1 : 0;
+    std::snprintf(d, sizeof(d), "%d of 3", spawned);
+    check(spawned == 3, "three creatures spawn on the deck above the cut", d);
+    save_world();
+    if (!quit_to_menu()) return 1;
+    tick(10);
+
+    int idx = -1;
+    for (int i = 0; i < eden_menu_world_count(); ++i) if (!std::strcmp(eden_menu_world_name(i), name)) idx = i;
+    check(idx >= 0, "the world is listed after the save", name);
+    if (idx < 0) return 1;
+    const std::string docs = eden_platform_documents_root();
+    const std::string file = eden_menu_world_file(idx);
+    const std::string refDir = docs + "/convert64-ref";
+    mkdirs(refDir);
+    const std::string ref = refDir + "/src256.eden", engEden = "convert64-xcheck-src.eden";
+    emod::ExportOptions xo;
+    xo.target = emod::X_NEWDAWN256Z;
+    std::string err;
+    const bool exA = emod::export_world_file(docs + "/" + file, ref, xo, false, nullptr, &err);
+    const bool exB = exA && emod::export_world_file(docs + "/" + file, docs + "/" + engEden, xo, false, nullptr, &err);
+    std::snprintf(d, sizeof(d), "%s -> %s: %s", file.c_str(), ref.c_str(), err.empty() ? "ok" : err.c_str());
+    check(exA && exB, "the 256z world exports to a NewDawn256z .eden (twice)", d);
+    if (!exA || !exB) return 1;
+    std::printf("[eden-convert64] ref %s\n", ref.c_str());
+    std::printf("[eden-convert64] placed %d\n", placed + 3);
+
+    auto report = [&](const char* leg, NSString* target) {
+        const ConvertTo64Report r = World::getWorld->fm->convertWorldTo64(target);
+        std::printf("[eden-convert64] engine-%s {\"ok\":%s,\"columns\":%d,\"blocksDiscarded\":%d,\"columnsAffected\":%d,"
+                    "\"doorsOrphaned\":%d,\"creaturesDropped\":%d,\"creaturesRelocated\":%d,\"creaturesOverflow\":%d}\n",
+                    leg, r.ok ? "true" : "false", r.columns, r.blocksDiscarded, r.columnsAffected, r.doorsOrphaned,
+                    r.creaturesDropped, r.creaturesRelocated, r.creaturesOverflow);
+        std::snprintf(d, sizeof(d), "%s: ok %d \"%s\", discarded %d, orphaned doors %d", leg, r.ok ? 1 : 0, r.error,
+                      r.blocksDiscarded, r.doorsOrphaned);
+        check(r.ok, "convertWorldTo64 succeeds", d);
+        check(r.blocksDiscarded >= placed + 3, "it discards at least the bricks and door tops placed", d);
+        check(r.doorsOrphaned == 3, "it clears exactly the three orphaned doors", d);
+        std::snprintf(d, sizeof(d), "%s: dropped %d, relocated %d, overflow %d", leg, r.creaturesDropped,
+                      r.creaturesRelocated, r.creaturesOverflow);
+        check(r.creaturesDropped >= 1, "it drops the creatures above the cut", d);
+    };
+    @autoreleasepool {
+        report("emod", [NSString stringWithUTF8String:file.c_str()]);
+        report("eden", [NSString stringWithUTF8String:engEden.c_str()]);
+    }
+
+    std::printf("[eden-convert64] %s (%d failure(s))\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
+    return g_selftestFailures ? 1 : 0;
+}
+
+// ---------------------------------------------------------------------------------------------
 // --objc-selftest  (Phase N Stage 3.3)
 // ---------------------------------------------------------------------------------------------
 // A mode that exists only on the targets that USE this port's own Objective-C runtime — i.e. not
 // macOS, which uses Apple's libobjc and needs no proof from us. On Linux and Windows it is the
-// single most load-bearing check in the stage: web/src/shim/objc/objc_runtime.cpp is 800 lines of
+// single most load-bearing check in the stage: port/src/shim/objc/objc_runtime.cpp is 800 lines of
 // hand-written ABI, it had only ever run on wasm32, and every failure mode it has is silent
 // (a wrong ivar offset reads the wrong memory; a wrong dispatch reaches the wrong method).
 //
-// The proof itself is web/src/shim/objc/objc_selftest.mm, shared with the web build's
+// The proof itself is port/src/shim/objc/objc_selftest.mm, shared with the web build's
 // headless-shim-selftest suite, so a regression shows up on both targets from one source.
 //
 // It runs BEFORE any world is touched — a broken runtime would otherwise present as a corrupt
@@ -3834,7 +4568,7 @@ extern "C" int eden_objc_selftest_run(void);
 int run_objc_selftest() {
 #if defined(__APPLE__)
     std::fprintf(stderr, "[eden-objc] this target uses Apple's libobjc, not "
-                         "web/src/shim/objc/objc_runtime.cpp — nothing to self-test.\n");
+                         "port/src/shim/objc/objc_runtime.cpp — nothing to self-test.\n");
     return 0;
 #elif !defined(EDEN_DIAGNOSTICS)
     std::fprintf(stderr, "[eden-objc] built without -DEDEN_DIAGNOSTICS=ON; the self-test is not "
@@ -3992,7 +4726,7 @@ int run_audio_selftest() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// --leak-probe — the native counterpart of web/tools/headless-alloc-leak-probe.js and of
+// --leak-probe — the native counterpart of web-port-final:web/tools/headless-alloc-leak-probe.js and of
 // headless-heap-ceiling-probe.js --torture=same64 (Phase N Stage 3 verification).
 // ---------------------------------------------------------------------------------------------
 // WHY THIS IS A NATIVE MODE AND NOT A REUSE OF THOSE TOOLS: both of them are node scripts that
@@ -4090,7 +4824,7 @@ int run_leak_probe() {
 // on every world carrying DEFAULT_LEVEL_SEED — which is every world these selftests create. GSIZE
 // is T_SIZE*10 = 2880 and 4096*CHUNK_SIZE is 65536, so the playable square is [64096, 66976] on
 // both axes, and this file's default `--at=1440,40,1440` (shared, verbatim, with
-// web/tools/headless-mesh-checksum.js) is OUTSIDE it on both axes. The engine clamps it to exactly
+// web-port-final:web/tools/headless-mesh-checksum.js) is OUTSIDE it on both axes. The engine clamps it to exactly
 // the south-west corner, 64096,64096 — which is where every scripted run has been standing.
 //
 // THAT CLAMP, NOT THE INPUT PATH AND NOT TERRAIN, IS THE "moved 0.00 blocks" FLAKE. A player on
@@ -4187,7 +4921,7 @@ void rise_until_clear(int maxFrames) {
 // Drives a REAL SDL virtual gamepad rather than calling the translator's internals, so the state
 // travels the same path a physical controller's does — SDL's own joystick layer, the gamepad
 // mapping database, SDL_GetGamepadAxis/Button — and then asserts the ENGINE moved. Same contract
-// as --input-selftest, and the native counterpart of web/tools/headless-gamepad-test.js.
+// as --input-selftest, and the native counterpart of web-port-final:web/tools/headless-gamepad-test.js.
 //
 // SDL_AttachVirtualJoystick + the SDL_GAMEPAD_* masks is what makes SDL treat it as a mapped
 // gamepad; without the masks it arrives as a bare joystick and SDL_IsGamepad() is false, which is
@@ -4334,7 +5068,7 @@ int run_gamepad_selftest() {
 // --keybind-selftest  (Phase N Stage 5.2/5.3)
 // ---------------------------------------------------------------------------------------------
 // Stage 5.2 moved the keybind map out of `public/eden-keybinds.js` and into the shared C model
-// (web/src/seam/Settings_web.mm). The thing that has to be true afterwards is not "the setter
+// (port/src/seam/Settings_web.mm). The thing that has to be true afterwards is not "the setter
 // stored a number" — it is that the INPUT PATH reads the model, i.e. that rebinding moves the
 // behaviour off the old key and onto the new one. So this asserts BOTH directions: the new key
 // works AND the old one has stopped. A test that only checked the new key would pass against an
@@ -4431,18 +5165,33 @@ int run_menu_selftest() {
     tick(5);
     const int n0 = eden_menu_world_count();
 
-    // New: one more world, selected, scrolled into view.
+    // U.5: New opens the New World screen and adds nothing; Back closes it, still nothing.
     ui_tap_rect(m->controlRect("new"));
+    tick(3);
+    NewWorldMenu* nw = m->newworld;
+    std::snprintf(detail, sizeof(detail), "shown %d open %d count %d -> %d", m->shownewworld ? 1 : 0,
+                  nw->isOpen() ? 1 : 0, n0, eden_menu_world_count());
+    check(m->shownewworld && nw->isOpen() && eden_menu_world_count() == n0, "New opens the New World screen", detail);
+    check(nw->focused("name") && eden_text_input_active() == 1, "the name field has focus on a desktop", "");
+    ui_tap_rect(nw->controlRect("back"));
+    tick(3);
+    std::snprintf(detail, sizeof(detail), "shown %d count %d (was %d) text input %d", m->shownewworld ? 1 : 0,
+                  eden_menu_world_count(), n0, eden_text_input_active());
+    check(!m->shownewworld && eden_menu_world_count() == n0 && eden_text_input_active() == 0,
+          "Back closes it and creates nothing", detail);
+
+    // A world created through the seam: one more, selected, scrolled into view.
+    eden_menu_create_world();
     tick(3);
     int sel = eden_menu_selected_index();
     CGRect rr;
     std::snprintf(detail, sizeof(detail), "count %d -> %d, selected %d, first %d of %d visible",
                   n0, eden_menu_world_count(), sel, m->firstVisibleRow(), m->visibleRows());
     check(eden_menu_world_count() == n0 + 1 && sel == n0 && m->rowRect(sel, &rr),
-          "New adds a world, selects it, and scrolls it into view", detail);
+          "a new world is selected and scrolled into view", detail);
     // Enough worlds that the list must scroll.
     for (int guard = 0; eden_menu_world_count() < m->visibleRows() + 3 && guard < 40; ++guard) {
-        ui_tap_rect(m->controlRect("new"));
+        eden_menu_create_world();
         tick(3);
     }
     const int total = eden_menu_world_count();
@@ -4559,6 +5308,77 @@ int run_menu_selftest() {
         const bool gone = !read_file(file, &bytes);
         std::snprintf(detail, sizeof(detail), "%s: before %d after %d", file.c_str(), had ? 1 : 0, gone ? 0 : 1);
         check(had && gone, "deleting a played world removes its file", detail);
+    }
+
+    // U.5 (and W.2 (d)): the New World screen end to end, through its real controls — a typed name
+    // (a two-byte character included), the Flat tile, Classic 64, Play -> a flat 64z world, no
+    // dialog, whose file header carries the typed name. Then Escape: it closes the screen.
+    {
+        NewWorldMenu* nw = m->newworld;
+        const int before = eden_menu_world_count();
+        ui_tap_rect(m->controlRect("new"));
+        tick(3);
+        const char* typed = "Selftest V\xC3\xADlag";   // "Selftest Vílag"
+        push_text(typed);
+        tick(2);
+        int flatTile = -1;
+        for (int t = 0; t < nw->typeCount(); ++t) if (nw->typeFlat(t)) flatTile = t;
+        ui_tap_rect(nw->typeRect(flatTile));
+        tick(2);
+        CGRect b;
+        if (nw->choiceRect("height", 1, &b)) ui_tap_rect(b);     // Classic 64
+        tick(2);
+        std::snprintf(detail, sizeof(detail), "type %d (flat tile %d) height %d name \"%s\" focused %d",
+                      nw->type(), flatTile, nw->choice("height"), nw->text("name"), nw->focused("name") ? 1 : 0);
+        check(nw->type() == flatTile && nw->choice("height") == 64 && std::strcmp(nw->text("name"), typed) == 0 &&
+              !nw->focused("name"), "the rail picks Flat, the pair picks Classic 64, the name is typed (and a tap elsewhere blurs it)", detail);
+        ui_tap_rect(nw->controlRect("play"));
+        tick(2);
+        bool dialog = false;
+        const bool played = tick_until([&dialog] { dialog |= GLDialog::active(); return game_mode() == 1; }, 60000,
+                                       "game_mode == PLAY");
+        std::snprintf(detail, sizeof(detail), "played %d dialog %d count %d (was %d) height %d genflat %d",
+                      played ? 1 : 0, dialog ? 1 : 0, eden_menu_world_count(), before, g_world_height,
+                      World::getWorld->fm->genflat ? 1 : 0);
+        check(played && !dialog && eden_menu_world_count() == before + 1 && g_world_height == 64 &&
+              World::getWorld->fm->genflat, "Play makes and loads a flat Classic 64 world without asking again", detail);
+        if (!played) return 1;
+        tick(60);
+        if (!quit_to_menu()) return 1;
+        tick(30);
+        int at = -1;
+        for (int i = 0; i < eden_menu_world_count(); ++i) if (std::strcmp(eden_menu_world_name(i), typed) == 0) at = i;
+        std::string onDisk;
+        if (at >= 0) {
+            NSString* fn = [NSString stringWithUTF8String:eden_menu_world_file(at)];
+            onDisk = cpstring(World::getWorld->fm->getName(fn));
+        }
+        std::snprintf(detail, sizeof(detail), "listed at %d, header name \"%s\"", at, onDisk.c_str());
+        check(at >= 0 && onDisk == typed, "the world's file header carries the typed name", detail);
+
+        // Escape over the screen is its Back. The field has focus (desktop), so the first Escape
+        // only leaves the field; the second closes the screen.
+        const int count = eden_menu_world_count();
+        ui_tap_rect(m->controlRect("new"));
+        tick(3);
+        push_tap_key(SDL_SCANCODE_ESCAPE);
+        tick(3);
+        const bool fieldLeft = !nw->focused("name") && m->shownewworld;
+        push_tap_key(SDL_SCANCODE_ESCAPE);
+        tick(3);
+        std::snprintf(detail, sizeof(detail), "after one: field left %d; after two: shown %d count %d (was %d)",
+                      fieldLeft ? 1 : 0, m->shownewworld ? 1 : 0, eden_menu_world_count(), count);
+        check(fieldLeft && !m->shownewworld && eden_menu_world_count() == count,
+              "Escape leaves the name field, then closes the screen", detail);
+
+        if (at >= 0) {
+            eden_menu_select(at);
+            tick(2);
+            ui_tap_rect(m->controlRect("delete"));
+            tick(3);
+            if (GLDialog::buttonRect(0, &b)) ui_tap_rect(b);
+            tick(3);
+        }
     }
     return 0;
 }
@@ -6592,10 +7412,22 @@ static int parse_one_arg(const char* a) {
         else if (!std::strcmp(a, "--ring-light-selftest")) { g_opt.mode = "ring-light-selftest"; g_opt.headless = true; }
         else if (starts_with(a, "--evict-mutate="))  g_opt.evictMutate = a + 15;
         else if (starts_with(a, "--light-lattice=")) g_opt.lightLattice = atoi(a + 16);
+        else if (!std::strcmp(a, "--shadow-selftest")) { g_opt.mode = "shadow-selftest"; g_opt.headless = true; }
+        else if (starts_with(a, "--shadows=")) {
+            const char* m = a + 10;
+            const int v = !std::strcmp(m, "off") ? 0 : !std::strcmp(m, "classic") ? 1 : !std::strcmp(m, "smooth") ? 2 : -2;
+            if (v < 0) { std::fprintf(stderr, "[eden] --shadows= takes off|classic|smooth\n"); return 2; }
+            shadow_setOverride(v);
+        }
+        else if (starts_with(a, "--shadow-mutate=")) {
+            const char* m = a + 16;
+            g_shadow_test_mutation = !std::strcmp(m, "nohook") ? 1 : !std::strcmp(m, "nodirty") ? 2
+                                   : !std::strcmp(m, "nolanding") ? 3 : !std::strcmp(m, "nodiag") ? 4 : 0;
+        }
         else if (starts_with(a, "--light-mutate=")) {
             const char* m = a + 15;
             g_light_test_mutation = !std::strcmp(m, "nosync") ? 1 : !std::strcmp(m, "nomark") ? 2
-                                  : !std::strcmp(m, "wrap") ? 3 : 0;
+                                  : !std::strcmp(m, "wrap") ? 3 : !std::strcmp(m, "nolbmark") ? 4 : 0;
         }
         else if (!std::strcmp(a, "--keybind-selftest")) { g_opt.mode = "keybind-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--ui-selftest"))   { g_opt.mode = "ui-selftest"; g_opt.headless = true; }
@@ -6606,6 +7438,10 @@ static int parse_one_arg(const char* a) {
         else if (!std::strcmp(a, "--net-live-selftest")) { g_opt.mode = "net-live-selftest"; g_opt.headless = true; }
         else if (starts_with(a, "--net-fixtures="))  eden_net_set_fixture_root(a + 15);
         else if (!std::strcmp(a, "--objc-selftest")) { g_opt.mode = "objc-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--gl-selftest"))   { g_opt.mode = "gl-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--recolor-selftest")) { g_opt.mode = "recolor-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--display-selftest")) { g_opt.mode = "display-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--convert64-selftest")) { g_opt.mode = "convert64-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--save-roundtrip")) g_opt.mode = "save-roundtrip";
         else if (!std::strcmp(a, "--save-inplace")) { /* S.8: ignored -- there is no in-place .eden save any more */ }
         else if (!std::strcmp(a, "--background-selftest")) { g_opt.mode = "background-selftest"; g_opt.headless = true; }
@@ -6743,7 +7579,7 @@ static int eden_main_after_args(int argc, char** argv) {
     // NSFileHandle, and this target links Apple's real Foundation, whose NSFileHandle is a class
     // cluster with `-writeData:` on a private subclass — so there is no honest place to swizzle
     // it. The engine grew a hook at the top of FileManager::saveWorld instead, and both targets
-    // run the identical rules (web/src/shim/foundation/save_backup.cpp). Installed here rather
+    // run the identical rules (port/src/shim/foundation/save_backup.cpp). Installed here rather
     // than inside the seam file so the file that OWNS the decision is the one that shows it.
     //
     // Narrower than web's, and knowingly so: the shim guards every file open, including the C3
@@ -6804,6 +7640,13 @@ static int eden_main_after_args(int argc, char** argv) {
     // ADDS an offscreen framebuffer (N.4.11) rather than shrinking the drawable. Revisit only on a
     // device that measures over criterion 3 (300 MB) with the fix in; the predicate would then be
     // SDL_GetSystemRAM(). Never LOW_MEM_DEVICE: that turns coloured lighting off.
+    // W.2 (b): a window's boot applies the display profile BEFORE World::World() loads textures
+    // (SDLView_native.mm -> DisplayMode_native.cpp), so IS_IPAD is set and the ipad~ assets load --
+    // the only paint mask that ships is ipad~paint_mask.png. Headless has no window and applies it
+    // only once the settings load, after the textures, so a headless boot holds the 1x set and no
+    // paint mask. --recolor-selftest asserts the pipeline a device runs, so it boots in that order.
+    // Every other mode keeps the headless order its pinned checksums were taken under.
+    if (g_opt.mode && !std::strcmp(g_opt.mode, "recolor-selftest")) eden_display_refresh();
     eden_native::eden_seam_main();
     g_app = eden_native::eden_seam_get_app_delegate();
     eden_mem_trace("world-constructed");
@@ -6907,6 +7750,7 @@ static int eden_main_after_args(int argc, char** argv) {
         else if (!std::strcmp(g_opt.mode, "light-selftest")) rc = run_light_selftest();
         else if (!std::strcmp(g_opt.mode, "evict-selftest")) rc = run_evict_selftest();
         else if (!std::strcmp(g_opt.mode, "ring-light-selftest")) rc = run_ring_light_selftest();
+        else if (!std::strcmp(g_opt.mode, "shadow-selftest")) rc = run_shadow_selftest();
         else if (!std::strcmp(g_opt.mode, "codec-bench"))   rc = eden_codec_bench(g_opt.codecFile.c_str(), g_opt.height, 500);
 #if defined(EDEN_DIAGNOSTICS)
         else if (!std::strcmp(g_opt.mode, "emod-selftest"))
@@ -6914,6 +7758,10 @@ static int eden_main_after_args(int argc, char** argv) {
                                         g_opt.emodFile.c_str(), g_opt.emodRef.c_str());
 #endif
         else if (!std::strcmp(g_opt.mode, "objc-selftest")) rc = run_objc_selftest();
+        else if (!std::strcmp(g_opt.mode, "gl-selftest"))   rc = run_gl_selftest();
+        else if (!std::strcmp(g_opt.mode, "recolor-selftest")) rc = run_recolor_selftest();
+        else if (!std::strcmp(g_opt.mode, "display-selftest")) rc = run_display_selftest();
+        else if (!std::strcmp(g_opt.mode, "convert64-selftest")) rc = run_convert64_selftest();
         else if (!std::strcmp(g_opt.mode, "save-roundtrip")) rc = run_save_roundtrip();
         else if (!std::strcmp(g_opt.mode, "background-selftest")) rc = run_background_selftest();
         else if (!std::strcmp(g_opt.mode, "shot"))          rc = run_shot();

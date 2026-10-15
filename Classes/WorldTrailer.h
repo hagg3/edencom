@@ -16,7 +16,7 @@
 //  hands back the bytes it was loaded from), and a touched one rebuilds only the sections that
 //  were edited -- every other byte comes out as it went in. A trailer this class cannot read
 //  (a row not tagged `ff ff ff ff`, a known magic whose sizes do not add up, a second SGN1 ...)
-//  is OPAQUE: kept verbatim, every edit refused. web/tools/emod.py's `trailer` command restates
+//  is OPAQUE: kept verbatim, every edit refused. port/tools/emod.py's `trailer` command restates
 //  the same rules and shares no code with this file.
 //
 //  Coordinates: a record holds the ANCHOR block in absolute world block coordinates, file order

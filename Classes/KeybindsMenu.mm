@@ -16,7 +16,7 @@
 extern float SCREEN_WIDTH;
 extern float SCREEN_HEIGHT;
 
-// The Stage 5.2 model, in the shared seam file web/src/seam/Settings_web.mm.
+// The Stage 5.2 model, in the shared seam file port/src/seam/Settings_web.mm.
 extern "C" {
 int  eden_keybind_count(void);
 const char* eden_keybind_label(int i);

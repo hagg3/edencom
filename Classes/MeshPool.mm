@@ -8,8 +8,8 @@
 //  below; what is left is a bounded slot pool, a queue, and two threads.
 //
 //  NOTE ON THE BUILD: this file is an engine file added AFTER the 2.1.1 import, so it is not in
-//  Eden.xcodeproj and web/tools/gen-source-list.sh (which reads that project file) cannot know
-//  about it. web/CMakeLists.txt therefore appends it to EDEN_ENGINE_SOURCES explicitly rather than
+//  Eden.xcodeproj and port/tools/gen-source-list.sh (which reads that project file) cannot know
+//  about it. web-port-final:web/CMakeLists.txt therefore appends it to EDEN_ENGINE_SOURCES explicitly rather than
 //  it going in tools/engine-sources.txt, where regenerating the list would silently drop it. The
 //  legacy iOS target does not build this file and does not build Terrain.mm's calls into it.
 //
@@ -17,6 +17,7 @@
 #import "Terrain.h"
 #import "World.h"
 #import "FileManagerHelper.h"
+#import "Shadow.h"   // H.2: the shadow tops a job meshes with
 
 #include <string.h>
 #include <time.h>
@@ -81,6 +82,10 @@ typedef struct _mesh_job{
     MeshSideEffect sink[MP_SINK_MAX];
     int sink_count;
     int result;
+    // H.2: the shadow tops round the chunk and the mode, gathered at dispatch -- shadowTop is
+    // main-thread state, and a snapshot makes the mesh a function of the dispatch-time window.
+    unsigned char shade[SHADOW_GATHER_N];
+    int shadeMode;
 }MeshJob;
 
 // "Nothing in this chunk is burning." rebuild2() must be given a mask rather than NULL on a
@@ -234,6 +239,7 @@ static void* mp_worker(void* arg){
         // worker's rebuild2() -- the main thread meshing inline at the same moment still reads
         // the chunk's own pblocks/pcolors and still walks burnList, exactly as it always did.
         tc_meshSetSource(j->blocks,j->colors,g_no_burn,j->sink,MP_SINK_MAX,&j->sink_count);
+        tc_meshSetShade(j->shade,j->shadeMode);
         j->result=j->chunk->rebuild2();
         tc_meshClearSource();
 
@@ -347,6 +353,8 @@ BOOL mp_dispatch(TerrainChunk* chunk,int idxn){
     double t0=mp_now();
     memcpy(j->blocks,chunk->pblocks,sizeof(j->blocks));
     memcpy(j->colors,chunk->pcolors,sizeof(j->colors));
+    j->shadeMode=g_shadow_mode;
+    if(j->shadeMode!=SHADOW_OFF)shadow_gather(chunk->pbounds[0],chunk->pbounds[2],j->shade);
     g_snapshotMs+=mp_now()-t0;
 
     chunk->meshJobStale=FALSE;

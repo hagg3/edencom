@@ -1,4 +1,4 @@
-// EdenAppDelegate_native.h — native twin of web/src/seam/EdenAppDelegate_web.h (Phase N Stage 1).
+// EdenAppDelegate_native.h — native twin of web-port-final:web/src/seam/EdenAppDelegate_web.h (Phase N Stage 1).
 //
 // Nothing outside Classes/EdenAppDelegate.mm includes "EdenAppDelegate.h", so this is free to be
 // plain C++. Reproduces the lifecycle shape of Classes/EdenAppDelegate.mm's UIApplicationDelegate

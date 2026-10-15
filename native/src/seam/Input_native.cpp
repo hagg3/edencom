@@ -5,7 +5,7 @@
 // eden_set_move_input / eden_apply_look_delta / eden_click_begin exports. `public/eden-input.js`
 // is the reference for the mapping, `eden-keybinds.js` for the defaults." That is exactly what
 // this file is — a translator, not a second input model. **Every behavioural decision below is
-// already made in web/src/seam/Input_web.mm**, which this target compiles unchanged; nothing here
+// already made in port/src/seam/Input_web.mm**, which this target compiles unchanged; nothing here
 // reimplements a rule, it only decides which SDL event means which existing call.
 //
 // THE PLAN ALSO SAYS: "Split Input_web.mm (783 lines) into a shared core + a thin SDL translator
@@ -53,7 +53,7 @@
 #include <cstring>
 #include <string>
 
-// The engine-side input surface. All of it is web/src/seam/Input_web.mm, compiled into this target
+// The engine-side input surface. All of it is port/src/seam/Input_web.mm, compiled into this target
 // unchanged — see this file's header.
 extern "C" {
 void eden_input_pointer_event(int phase, int identity, float x, float y);
@@ -71,6 +71,7 @@ void eden_tap_hud_button_begin(int which);
 int  eden_picker_page_step(int delta);   // Input_web.mm (D.2p)
 void eden_tap_hud_button_end(int which);
 int  eden_settings_menu_back(void);      // Settings_web.mm (U.3): Escape over the settings screen
+int  eden_new_world_menu_back(void);     // Menu_web.mm (U.5): Escape over the New World screen
 void eden_ui_tick(void);
 int  eden_get_hold_to_act(void);
 double eden_platform_now_ms(void);
@@ -87,7 +88,7 @@ int  eden_get_block_preview(void);
 void eden_gl_context_get_drawable_size(int* width, int* height);
 void eden_native_gl_get_letterbox(int* x, int* y, int* w, int* h);
 
-// The keybind model (Stage 5.2), in web/src/seam/Settings_web.mm — a SHARED seam file, so this
+// The keybind model (Stage 5.2), in port/src/seam/Settings_web.mm — a SHARED seam file, so this
 // is the same table the web build reads. Its codes are USB HID usage IDs, which is exactly what
 // SDL_Scancode values are; see the static_asserts below, which are this file's half of that claim.
 int  eden_keybind_count(void);
@@ -102,7 +103,7 @@ int  eden_keybind_capture_feed(int code);
 extern float SCREEN_WIDTH;
 extern float SCREEN_HEIGHT;
 
-// The three gamepad rows from web/src/seam/Settings_web.mm's kSettings[], mirrored into C there
+// The three gamepad rows from port/src/seam/Settings_web.mm's kSettings[], mirrored into C there
 // precisely so this file can read them (row #24). Live values — the player can change them
 // mid-session — so they are read per tick, never cached.
 extern float eden_gamepad_enabled;
@@ -814,8 +815,8 @@ void eden_native_input_handle_event(const SDL_Event& e) {
                 // behaviour change for free. Indices are Input_web.mm's: 0=menu, 1=blocks,
                 // 2=colours, 7=fire/burn.
                 // U.3: over the settings screen the menu key is its Back, not a HUD tap (which
-                // the screen claimed as a touch of its own and dropped).
-                if      (mi == g_miMenu)         { if (!eden_settings_menu_back()) hud_tap(0); }
+                // the screen claimed as a touch of its own and dropped). U.5: likewise New World.
+                if      (mi == g_miMenu)         { if (!eden_settings_menu_back() && !eden_new_world_menu_back()) hud_tap(0); }
                 else if (mi == g_miBlockPicker)  hud_tap(1);
                 else if (mi == g_miColorPicker)  hud_tap(2);
                 else if (mi == g_miFireTool)     hud_tap(7);
@@ -905,7 +906,7 @@ void eden_native_input_handle_event(const SDL_Event& e) {
         }
 
         // TOUCH. Four events, one line of real work each, because the touch HALF of this port's
-        // input is already shared and already exercised: web/src/seam/Input_web.mm builds the
+        // input is already shared and already exercised: port/src/seam/Input_web.mm builds the
         // UITouch objects and hands them to Input::touchesBegan/Moved/Ended exactly as EAGLView.mm
         // did in 2010, and `public/eden-input.js` drives it from DOM touch events. This is the
         // same call from SDL. So the iOS control scheme is not new code — it is the original one,

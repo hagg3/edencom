@@ -113,7 +113,7 @@ private:
 #define VO_EXCITED 8
 #define VO_ANGRY 0
 
-#define NUM_SOUNDS 73
+#define NUM_SOUNDS 79
 
 enum SOUND_TYPES{
     S_LADDER=0,
@@ -202,6 +202,15 @@ enum SOUND_TYPES{
     S_JUMP_BUTTON_RELEASE=71,
     // Played once, randomly, when a new world is successfully created (Hud::handlePickMenu).
     S_MODE_SELECTION=72,
+    // H.6/H.9: the player's jump, the four material TNT blasts (picked by the blast's majority
+    // material, Terrain::explode) and the respawn fade-in (played after the warp's load, see
+    // Terrain::update's pendingRespawnSound).
+    S_JUMP=73,
+    S_TNT_DIRT=74,
+    S_TNT_STONE=75,
+    S_TNT_MIX=76,
+    S_TNT_MIX_GLASS=77,
+    S_RESPAWN=78,
 };
 enum MENU_TYPES{
 	MENU_AUTOJUMP=0,

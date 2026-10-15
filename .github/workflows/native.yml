@@ -6,11 +6,11 @@
 # that reason — a CI runner has no GL context, so every windowed, visual or gamepad check on
 # Windows and Linux is owed to a human and is NOT claimed here.
 #
-# It also, for the first time, makes "web stays green" machine-enforced rather than a rule someone
-# remembers: the `web` job below runs the same 12 headless suites the project's own gate does.
+# Until 2026-10-13 a `web` job also built the Emscripten target and ran its headless suites; the
+# web build was retired that day (tag web-port-final) and the job with it.
 #
 # THE JOB ORDER IS THE SAVE-INTERCHANGE TEST, not scheduling. `linux` runs first and publishes a
-# world it wrote; `windows`, `macos` and `web` each LOAD that file and must report the same
+# world it wrote; `windows`, `macos` and `ios` each LOAD that file and must report the same
 # geometry checksum. That is a stronger statement than comparing bytes — it says the other
 # platform can read it, which is the thing that matters to a player who moves a save between
 # machines — and `interchange` then does the byte comparison on top, in one place.
@@ -24,9 +24,7 @@ on:
       - "Lighting.mm"
       - "cmake/**"
       - "native/**"
-      - "web/src/**"
-      - "web/CMakeLists.txt"
-      - "web/tools/**"
+      - "port/**"
       - ".github/workflows/native.yml"
       - ".github/scripts/**"
   pull_request:
@@ -47,14 +45,15 @@ env:
   SDL_VIDEO_DRIVER: dummy
   SDL_AUDIO_DRIVER: dummy
   # The figures Stage 1's criteria are stated in come out of the eden_debug_* probes, which are
-  # OFF in Release unless asked for — the same build-relwdiag combination the web side uses.
+  # OFF in Release unless asked for — Release codegen with the probes still compiled in.
   EDEN_CMAKE_FLAGS: "-DCMAKE_BUILD_TYPE=Release -DEDEN_DIAGNOSTICS=ON"
 
 jobs:
   # =============================================================================================
-  # Linux — the ELF control. First leg, deliberately: it reuses the web port's ObjC runtime and
-  # Foundation shim UNMODIFIED, so it changes exactly one variable against the proven web build
-  # (pointer width) before Windows changes three (object format, CRT, `long` width).
+  # Linux — the ELF control. First leg, deliberately: it reuses the port's own ObjC runtime and
+  # Foundation shim (port/src/shim/) UNMODIFIED, so it changes exactly one variable against the
+  # proven web build of the time (pointer width) before Windows changes three (object format, CRT,
+  # `long` width).
   # =============================================================================================
   linux:
     runs-on: ubuntu-latest
@@ -122,11 +121,15 @@ jobs:
           # name, so a 64z save left by the previous command is silently reused by the 256z one and
           # reported under the phase name "world256" with 64z geometry. Reproduced on the dev Mac
           # while writing this workflow; check-stage1.py names it as the first thing to rule out.
-          rm -rf docs64 docs256 && mkdir -p docs64 docs256
-          run_gate "geometry 64z"  $B --headless --stage1 --docs="$PWD/docs64"
-          run_gate "geometry 256z" $B --headless --stage1 --height=256 --docs="$PWD/docs256"
+          # H.2: --shadows=off pins the pair to Off whatever the setting's default becomes; the
+          # shadows leg asserts geom is unchanged (shadows only move colours) and a pinned `full`.
+          rm -rf docs64 docs256 docs64s && mkdir -p docs64 docs256 docs64s
+          run_gate "geometry 64z"  $B --headless --stage1 --shadows=off --docs="$PWD/docs64"
+          run_gate "geometry 256z" $B --headless --stage1 --shadows=off --height=256 --docs="$PWD/docs256"
           python3 ../.github/scripts/check-stage1.py \
             gate-geometry-64z.log gate-geometry-256z.log
+          run_gate "geometry 64z shadows" $B --headless --stage1 --shadows=classic --docs="$PWD/docs64s"
+          python3 ../.github/scripts/check-stage1.py --shadows gate-geometry-64z-shadows.log
 
           run_gate "input selftest"   $B --input-selftest
           run_gate "gamepad selftest" $B --gamepad-selftest
@@ -134,6 +137,16 @@ jobs:
           # the translator is shared, so every platform gets to prove it still routes.
           run_gate "touch selftest"   $B --touch-selftest
           run_gate "audio selftest"   $B --audio-selftest
+          # W.2: the retired web checks' native gates (docs/web-port-archive.md) -- the GL shim's
+          # no-context bookkeeping, the paint/door/skin recolour, the stock 568x320 HUD rects and the
+          # derived point space, and FileManager::convertWorldTo64 against eden-convert.js --to-64.
+          # Plus --ui-selftest (GL settings widgets, New World), Mac-only until W.2.
+          rm -rf w2-docs && mkdir -p w2-docs/recolor w2-docs/display w2-docs/ui
+          run_gate "gl selftest"      $B --gl-selftest
+          run_gate "recolor selftest" $B --recolor-selftest --docs="$PWD/w2-docs/recolor"
+          run_gate "display selftest" $B --display-selftest --docs="$PWD/w2-docs/display"
+          run_gate "ui selftest"      $B --ui-selftest --docs="$PWD/w2-docs/ui"
+          node ../port/tools/convert64-crosscheck.js $B "$PWD/w2-docs/convert64"
           run_gate "background selftest" $B --background-selftest --world=bg --docs="$PWD/bg-docs"
           # ROADMAP 5.9: Get Worlds end to end over OFFLINE fixtures it writes itself (a runner must
           # not depend on edengame.net being up) — tabs, both list parsers, gzip / zip / zip-in-zip
@@ -141,17 +154,19 @@ jobs:
           run_gate "browser selftest" $B --browser-selftest --docs="$PWD/browser-docs"
           # Stage S / S.3: the .emod store + streaming converter. --emod-fixtures is the checked-in
           # pack emod.py wrote; every target must reproduce its SHA-256s byte for byte, which is
-          # the cross-target .emod gate (macOS, Linux, Windows here; wasm in the `web` job).
-          run_gate "emod selftest" $B --emod-selftest --emod-fixtures=../web/tools/fixtures/emod --emod-work="$PWD/emod-work"
+          # the cross-target .emod gate (macOS, Linux, Windows here).
+          run_gate "emod selftest" $B --emod-selftest --emod-fixtures=../port/tools/fixtures/emod --emod-work="$PWD/emod-work"
           # Stage S / S.6: the bundled map. Every column of Eden.emod through the engine's own read +
           # decode, against the RLE Eden.eden it was baked from (0 may differ).
           run_gate "bundled map" $B --bundled-map-selftest --bundled-eden=../Eden.eden --bundled-emod=../Eden.emod
+          # The offline .eden 64z <-> 256z converter (port/tools/eden-convert.js, pure byte surgery,
+          # no engine). Ran in the `web` job until the web build was retired (2026-10-13).
+          node ../port/tools/eden-convert-test.js
 
           # The stage's leak obligation. The shim Foundation runs outside Emscripten on this leg
           # for the first time and this runtime's object_dispose() has no .cxx_destruct, so a shim
-          # class holding a C++ ivar leaks silently unless it wrote a -dealloc. The web side proves
-          # this with headless-alloc-leak-probe / --torture=same64, neither of which can drive a
-          # native binary; --leak-probe is the same measurement in the same statistic.
+          # class holding a C++ ivar leaks silently unless it wrote a -dealloc. --leak-probe is the
+          # native form of the retired web build's headless-alloc-leak-probe / --torture=same64.
           rm -rf leak-docs && mkdir -p leak-docs
           run_gate "leak probe (torture, same 64z)" $B --leak-probe --docs="$PWD/leak-docs"
 
@@ -169,6 +184,11 @@ jobs:
           rm -rf evict16-docs ringlight16-docs && mkdir -p evict16-docs ringlight16-docs
           run_gate "evict selftest r16" $B --evict-selftest --radius=16 --docs="$PWD/evict16-docs"
           run_gate "ring light selftest r16" $B --ring-light-selftest --radius=16 --docs="$PWD/ringlight16-docs"
+          # H.2: baked shadows -- tops after every landing and edit, the edit hook's re-shading, a
+          # walk vs a re-scan + re-mesh, Off unchanged; and at the largest window (T_SIZE-sized table).
+          rm -rf shadow-docs shadow16-docs && mkdir -p shadow-docs shadow16-docs
+          run_gate "shadow selftest" $B --shadow-selftest --docs="$PWD/shadow-docs"
+          run_gate "shadow selftest r16" $B --shadow-selftest --radius=16 --docs="$PWD/shadow16-docs"
 
           # THE WORLD FILE IS NOT NAMED AFTER THE WORLD. This engine gives every world a random
           # 40-character filename and keeps the display name inside the header — so the artifact
@@ -210,6 +230,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: world-linux
+          retention-days: 1
           # Both files: the world, and the geometry checksum Linux gets from loading it. The other
           # three jobs assert against that number.
           path: native/publish/world-linux.*
@@ -293,11 +314,15 @@ jobs:
           # lowered to COFF, dispatching real message sends with LLP64 struct layouts.
           run_gate "ObjC runtime self-test" $B --objc-selftest
 
-          rm -rf docs64 docs256 && mkdir -p docs64 docs256
-          run_gate "geometry 64z"  $B --headless --stage1 --docs="$PWD/docs64"
-          run_gate "geometry 256z" $B --headless --stage1 --height=256 --docs="$PWD/docs256"
+          # H.2: --shadows=off pins the pair to Off whatever the setting's default becomes; the
+          # shadows leg asserts geom is unchanged (shadows only move colours) and a pinned `full`.
+          rm -rf docs64 docs256 docs64s && mkdir -p docs64 docs256 docs64s
+          run_gate "geometry 64z"  $B --headless --stage1 --shadows=off --docs="$PWD/docs64"
+          run_gate "geometry 256z" $B --headless --stage1 --shadows=off --height=256 --docs="$PWD/docs256"
           python ../.github/scripts/check-stage1.py \
             gate-geometry-64z.log gate-geometry-256z.log
+          run_gate "geometry 64z shadows" $B --headless --stage1 --shadows=classic --docs="$PWD/docs64s"
+          python ../.github/scripts/check-stage1.py --shadows gate-geometry-64z-shadows.log
 
           run_gate "input selftest"   $B --input-selftest
           run_gate "gamepad selftest" $B --gamepad-selftest
@@ -305,6 +330,17 @@ jobs:
           # the translator is shared, so every platform gets to prove it still routes.
           run_gate "touch selftest"   $B --touch-selftest
           run_gate "audio selftest"   $B --audio-selftest
+          # W.2: the retired web checks' native gates (docs/web-port-archive.md) -- the GL shim's
+          # no-context bookkeeping, the paint/door/skin recolour, the stock 568x320 HUD rects and the
+          # derived point space, and FileManager::convertWorldTo64 against eden-convert.js --to-64.
+          # Plus --ui-selftest (GL settings widgets, New World), Mac-only until W.2.
+          rm -rf w2-docs && mkdir -p w2-docs/recolor w2-docs/display w2-docs/ui
+          run_gate "gl selftest"      $B --gl-selftest
+          run_gate "recolor selftest" $B --recolor-selftest --docs="$PWD/w2-docs/recolor"
+          run_gate "display selftest" $B --display-selftest --docs="$PWD/w2-docs/display"
+          run_gate "ui selftest"      $B --ui-selftest --docs="$PWD/w2-docs/ui"
+          mkdir -p w2-docs/convert64
+          run_gate "convert64 selftest" $B --convert64-selftest --docs="$PWD/w2-docs/convert64"
           run_gate "background selftest" $B --background-selftest --world=bg --docs="$PWD/bg-docs"
           # ROADMAP 5.9: Get Worlds end to end over OFFLINE fixtures it writes itself (a runner must
           # not depend on edengame.net being up) — tabs, both list parsers, gzip / zip / zip-in-zip
@@ -312,8 +348,8 @@ jobs:
           run_gate "browser selftest" $B --browser-selftest --docs="$PWD/browser-docs"
           # Stage S / S.3: the .emod store + streaming converter. --emod-fixtures is the checked-in
           # pack emod.py wrote; every target must reproduce its SHA-256s byte for byte, which is
-          # the cross-target .emod gate (macOS, Linux, Windows here; wasm in the `web` job).
-          run_gate "emod selftest" $B --emod-selftest --emod-fixtures=../web/tools/fixtures/emod --emod-work="$PWD/emod-work"
+          # the cross-target .emod gate (macOS, Linux, Windows here).
+          run_gate "emod selftest" $B --emod-selftest --emod-fixtures=../port/tools/fixtures/emod --emod-work="$PWD/emod-work"
           rm -rf evict-docs && mkdir -p evict-docs
           run_gate "evict selftest" $B --evict-selftest --docs="$PWD/evict-docs"
           # B.5b-1c: light per landed column (walked light + meshes = a full re-sweep + re-mesh, at
@@ -325,6 +361,11 @@ jobs:
           rm -rf evict16-docs ringlight16-docs && mkdir -p evict16-docs ringlight16-docs
           run_gate "evict selftest r16" $B --evict-selftest --radius=16 --docs="$PWD/evict16-docs"
           run_gate "ring light selftest r16" $B --ring-light-selftest --radius=16 --docs="$PWD/ringlight16-docs"
+          # H.2: baked shadows -- tops after every landing and edit, the edit hook's re-shading, a
+          # walk vs a re-scan + re-mesh, Off unchanged; and at the largest window (T_SIZE-sized table).
+          rm -rf shadow-docs shadow16-docs && mkdir -p shadow-docs shadow16-docs
+          run_gate "shadow selftest" $B --shadow-selftest --docs="$PWD/shadow-docs"
+          run_gate "shadow selftest r16" $B --shadow-selftest --radius=16 --docs="$PWD/shadow16-docs"
 
           # See the Linux job for why the leak probe is a stage obligation. Windows has the one
           # honest gap in the statistic — the mingw CRT publishes no live-bytes figure, so
@@ -382,6 +423,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: world-windows
+          retention-days: 1
           path: native/publish/world-windows.*
           if-no-files-found: error
 
@@ -454,6 +496,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: eden-windows-x64-portable
+          retention-days: 7
           path: native/dist
           if-no-files-found: error
 
@@ -482,17 +525,27 @@ jobs:
         working-directory: native
         run: |
           ./build/eden_native --p1-gate
-          rm -rf docs64 docs256 && mkdir -p docs64 docs256
-          ./build/eden_native --headless --stage1 --docs="$PWD/docs64"                2>&1 | tee stage1-64.log
-          ./build/eden_native --headless --stage1 --height=256 --docs="$PWD/docs256"  2>&1 | tee stage1-256.log
+          rm -rf docs64 docs256 docs64s && mkdir -p docs64 docs256 docs64s
+          ./build/eden_native --headless --stage1 --shadows=off --docs="$PWD/docs64"                2>&1 | tee stage1-64.log
+          ./build/eden_native --headless --stage1 --shadows=off --height=256 --docs="$PWD/docs256"  2>&1 | tee stage1-256.log
           python3 ../.github/scripts/check-stage1.py stage1-64.log stage1-256.log
+          ./build/eden_native --headless --stage1 --shadows=classic --docs="$PWD/docs64s"           2>&1 | tee stage1-64s.log
+          python3 ../.github/scripts/check-stage1.py --shadows stage1-64s.log
           ./build/eden_native --input-selftest
           ./build/eden_native --gamepad-selftest
           ./build/eden_native --touch-selftest
           ./build/eden_native --audio-selftest
+          # W.2 (see the linux job). The convert64 cross-check matters most here: Apple's Foundation is
+          # where convertWorldTo64's `.eden` leg failed (fileHandleForWritingAtPath: on a missing file).
+          rm -rf w2-docs && mkdir -p w2-docs/recolor w2-docs/display w2-docs/ui
+          ./build/eden_native --gl-selftest
+          ./build/eden_native --recolor-selftest --docs="$PWD/w2-docs/recolor"
+          ./build/eden_native --display-selftest --docs="$PWD/w2-docs/display"
+          ./build/eden_native --ui-selftest --docs="$PWD/w2-docs/ui"
+          node ../port/tools/convert64-crosscheck.js ./build/eden_native "$PWD/w2-docs/convert64"
           ./build/eden_native --background-selftest --world=bg --docs="$PWD/bg-docs"
           ./build/eden_native --browser-selftest --docs="$PWD/browser-docs"
-          ./build/eden_native --emod-selftest --emod-fixtures=../web/tools/fixtures/emod --emod-work="$PWD/emod-work"
+          ./build/eden_native --emod-selftest --emod-fixtures=../port/tools/fixtures/emod --emod-work="$PWD/emod-work"
           rm -rf evict-docs && mkdir -p evict-docs
           ./build/eden_native --evict-selftest --docs="$PWD/evict-docs"
           rm -rf ringlight-docs light-docs && mkdir -p ringlight-docs light-docs
@@ -501,6 +554,9 @@ jobs:
           rm -rf evict16-docs ringlight16-docs && mkdir -p evict16-docs ringlight16-docs
           ./build/eden_native --evict-selftest --radius=16 --docs="$PWD/evict16-docs"
           ./build/eden_native --ring-light-selftest --radius=16 --docs="$PWD/ringlight16-docs"
+          rm -rf shadow-docs shadow16-docs && mkdir -p shadow-docs shadow16-docs
+          ./build/eden_native --shadow-selftest --docs="$PWD/shadow-docs"
+          ./build/eden_native --shadow-selftest --radius=16 --docs="$PWD/shadow16-docs"
           rm -rf leak-docs && mkdir -p leak-docs
           ./build/eden_native --leak-probe --docs="$PWD/leak-docs"
 
@@ -547,6 +603,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: world-macos
+          retention-days: 1
           path: native/publish/world-macos.*
           if-no-files-found: error
 
@@ -706,6 +763,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: Emod-ios-unsigned-ipa
+          retention-days: 7
           path: native/Emod-unsigned.ipa
           if-no-files-found: error
 
@@ -775,8 +833,12 @@ jobs:
             echo "::error::the app produced $ticks engine ticks in the simulator"
             cat p1.log 2>/dev/null; exit 1; }
 
-          launch stage1-64.log --headless --stage1 --world=ios64
+          launch stage1-64.log --headless --stage1 --shadows=off --world=ios64
           python3 .github/scripts/check-stage1.py stage1-64.log
+          # H.2: the shadows `full` is integer shade + the light path's float maths; ARM64 iOS must
+          # agree with the desktop legs (fp contraction is the first suspect if it does not).
+          launch stage1-64s.log --headless --stage1 --shadows=classic --world=ios64s
+          python3 .github/scripts/check-stage1.py --shadows stage1-64s.log
 
           # (the touch gate moved below — it needs a real window, so it cannot use `launch`,
           #  which sets the dummy video driver)
@@ -906,67 +968,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: eden-ios-device-app
+          retention-days: 7
           path: native/build-ios-device/Emod.app
           if-no-files-found: error
-
-  # =============================================================================================
-  # Web — the constraint that binds every stage of Phase N ("web stays green and unmoved"),
-  # enforced by a machine for the first time. Same suites, same order, no test changes.
-  # =============================================================================================
-  web:
-    runs-on: ubuntu-latest
-    needs: linux
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: mymindstorm/setup-emsdk@v14
-        with:
-          version: 3.1.74
-          actions-cache-folder: emsdk-cache
-
-      - name: Configure and build
-        working-directory: web
-        run: |
-          emcmake cmake -B build-st -DCMAKE_BUILD_TYPE=Debug
-          emcmake cmake -B build-rel -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-st  -j"$(nproc)"
-          cmake --build build-rel -j"$(nproc)"
-
-      - name: The gate
-        working-directory: web
-        run: |
-          set -e
-          node tools/headless-p1-gate.js build-st
-          for t in headless-menu-flow-test headless-lazy-world-test \
-                   headless-recolor-test headless-display-profile-test headless-shim-selftest \
-                   headless-256z-authoring-test \
-                   headless-opfs-mirror-test headless-emod-store-test; do
-            echo "--- $t"
-            node "tools/$t.js" build-st/eden.js
-          done
-          node tools/eden-convert-test.js
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: world-linux
-          path: web/from-linux
-
-      - name: Gate — read the world Linux wrote
-        working-directory: web
-        # The other half of Stage 1's interchange claim, on a platform that has never run this
-        # engine's file writer: a world written by the ELF build, meshed by the wasm build. Unlike
-        # the two native crossloads, this one always did open the imported file — the tool finds it
-        # by FILE name — but it printed its checksum without comparing it to anything. Now it must
-        # equal the number Linux published for the same bytes.
-        run: |
-          set -e
-          node tools/headless-mesh-checksum.js build-st/eden.js \
-            --import=from-linux/world-linux.emod 2>&1 | tee crossload.log
-          want=$(cat from-linux/world-linux.geom)
-          got=$(sed -n 's/.*"geom":"\([0-9a-f]*\)".*/\1/p' crossload.log | head -1)
-          echo "linux wrote it as $want; web read it as $got"
-          [ -n "$got" ] && [ "$want" = "$got" ] || {
-            echo "::error::web read Linux's world as '$got', linux reads it as '$want'"; exit 1; }
 
   # =============================================================================================
   # Byte comparison, on top of the three cross-loads above. Kept separate and non-fatal-by-design

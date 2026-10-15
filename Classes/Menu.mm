@@ -42,11 +42,11 @@ static float fade_out=0;
 // corners (options, create, delete, share, get worlds) and two statusbar lines; a world was picked
 // by tapping its block, and played by tapping it again. What changes is the drawing and the
 // hit-testing; the STATE and the ACTIONS are the stock ones — world_list / selected_world, the
-// `loading` ladder in render(), the create branch (now createWorld()), showAlertDeleteConfirm ->
+// `loading` ladder in render(), the create branch (since U.5 startNewWorld(), reached through the New World screen), showAlertDeleteConfirm ->
 // a_deleteConfirm, showsettings, sbar for status. So web's Menu_web.mm accessors, which drive the
 // same state, are unaffected, and "tap the selected world again to play" still works.
 //
-// The shape is the DOM's Load World screen (web/public/eden-menu.js) under the painted title art
+// The shape is the DOM's Load World screen (web-port-final:web/public/eden-menu.js) under the painted title art
 // (design-system.md, "Iconography": the logo and the parallax layers stay art): a WINDOW with a
 // titlebar, a CONTENT list of ListRows with a scrollbar, and an action bar. Share is not offered
 // (inert stubs on both hosts: ShareUtil/SharedList in seam_link_stubs*.mm). Get Worlds is, since
@@ -371,6 +371,8 @@ Menu::Menu(){
     shared_list=new SharedList();
     browser=new WorldBrowser();
     showbrowser=FALSE;
+    newworld=new NewWorldMenu();
+    shownewworld=FALSE;
 	
     
    /*  WorldNode* new_world;
@@ -634,11 +636,7 @@ bool Menu::renameOffered(){
 // Stage S / S.5: Share sits beside Rename on the hosts that have it (native; WorldShare::offered
 // also wants a playable world selected and nothing running). Drawn disabled while it cannot act.
 bool Menu::shareShown(){
-#if defined(__EMSCRIPTEN__)
-    return false;
-#else
     return selected_world!=NULL&&!delete_mode&&!share_mode;
-#endif
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -713,6 +711,11 @@ void Menu::update(float etime){
 	}
 	if(showsettings){
 		settings->update(etime);
+		return;
+	}
+	if(shownewworld){
+		newworld->update(etime);
+		if(!newworld->isOpen()) shownewworld=FALSE;   // Back, or Play (which set loading)
 		return;
 	}
 	if(showbrowser){
@@ -818,18 +821,8 @@ void Menu::update(float etime){
 				return;
 			}
 			if(createHit){
-				WorldNode* new_world;
-				new_world=(WorldNode*)malloc(sizeof(WorldNode));
-				memset(new_world,0,sizeof(WorldNode));
-				new_world->display_name=settings->getNewWorldName();
-				new_world->file_name=FileManager::newWorldFileName();   // always .emod (S.8)
-				[new_world->file_name retain];
-				[new_world->display_name retain];
-				addWorld(new_world);
-				selected_world=new_world;
-				sbar->setStatus([NSString stringWithFormat:@"%@ created",new_world->display_name]
-							   ,2);
-				fnbar->setStatus(selected_world->display_name ,9999);
+				openNewWorld();   // U.5: the entry is made by the screen's Play, not here
+				return;
 			}
 		}
 	}
@@ -993,6 +986,11 @@ void Menu::render(){
 		
 		return;
 	}
+	if(shownewworld){
+		newworld->render();
+        Graphics::endMenu();
+		return;
+	}
 	if(showbrowser){
 		browser->render();
         Graphics::endMenu();
@@ -1111,6 +1109,30 @@ void Menu::render(){
 	glDisable(GL_BLEND);
     Graphics::endMenu();
     
+}
+
+void Menu::openNewWorld(){
+    if(loading) return;
+    newworld->open();
+    shownewworld=TRUE;
+}
+
+// U.5: the body of stock New's rect_create branch (which made "World N" here), plus Play's
+// loading=1, so the world is created and started in one step.
+void Menu::startNewWorld(NSString* name){
+    if(loading) return;
+    WorldNode* new_world;
+    new_world=(WorldNode*)malloc(sizeof(WorldNode));
+    memset(new_world,0,sizeof(WorldNode));
+    new_world->display_name=name;
+    new_world->file_name=FileManager::newWorldFileName();   // always .emod (S.8)
+    [new_world->file_name retain];
+    [new_world->display_name retain];
+    addWorld(new_world);
+    selected_world=new_world;
+    fnbar->setStatus(selected_world->display_name ,9999);
+    loading=1;
+    sbar->setStatus(@"Loading " ,9999);
 }
 
 void Menu::a_genFlat(BOOL b){

@@ -2,11 +2,11 @@
 //  EdenWorldStoreSelftest.cpp
 //  Eden — Stage S / S.3's gates for EdenWorldStore + EdenEmodConverter, compiled into both builds:
 //    native: `eden_native --emod-selftest [--emod-fixtures=DIR] [--emod-file=W.eden[.gz] --emod-ref=R.emod]`
-//    web:    web/tools/headless-emod-store-test.js (calls eden_emod_selftest_run under node)
+//    web:    web-port-final:web/tools/headless-emod-store-test.js (calls eden_emod_selftest_run under node)
 //  EDEN_DIAGNOSTICS-only, like the other self-tests, so a shipped build carries none of it.
 //
 //  What each section is for (WORKING/ROADMAP.md S.3; the plan's §7 S.3 row numbers the gates):
-//    fixtures      gate 1 + 6 + 4: the checked-in pack (web/tools/fixtures/emod/, written by
+//    fixtures      gate 1 + 6 + 4: the checked-in pack (port/tools/fixtures/emod/, written by
 //                  `emod.py fixtures-pack`) holds emod.py's fixtures as .eden.gz with the SHA-256 of
 //                  emod.py's own conversion and its state digest. Every target must stream-convert
 //                  each to the SAME bytes and read emod.py's multi-batch / zlib / raw `.emod` files
@@ -48,12 +48,7 @@
 #  include <sys/stat.h>
 #  include <sys/resource.h>
 #endif
-#if defined(__EMSCRIPTEN__)
-#  include <emscripten.h>
-#  define EMOD_EXPORT EMSCRIPTEN_KEEPALIVE
-#else
-#  define EMOD_EXPORT
-#endif
+#define EMOD_EXPORT
 
 using namespace emod;
 
@@ -1090,7 +1085,7 @@ void section_opentime() {
 }
 
 long peak_rss_kb() {
-#if defined(_WIN32) || defined(__EMSCRIPTEN__)
+#if defined(_WIN32)
     return -1;
 #else
     struct rusage u;
@@ -1161,7 +1156,7 @@ extern "C" EMOD_EXPORT int eden_emod_selftest_run(const char* fixtureDir, const 
     return g_fails == 0 && g_checks > 0 ? 0 : 1;
 }
 
-// web/tools/headless-emod-store-test.js: the build exports no string helpers, so the paths are
+// web-port-final:web/tools/headless-emod-store-test.js: the build exports no string helpers, so the paths are
 // fixed — the test copies the pack into MEMFS /emod-fixtures first.
 extern "C" EMOD_EXPORT int eden_emod_selftest_web(int flags) {
     return eden_emod_selftest_run("/emod-fixtures", "/emod-work", flags, "", "");

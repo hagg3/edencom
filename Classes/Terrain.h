@@ -111,6 +111,7 @@ public:
     
     
 private:
+    int tntSoundForBlast(int x,int z,int y);
     void explode(int x,int z,int y);
     void reloadIfNeeded();
 };

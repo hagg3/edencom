@@ -1,6 +1,6 @@
 // SimpleAudioEngine_native.mm — Phase N Stage 2's audio row. Replaces the inert stub that lived
 // in seam_link_stubs_native.mm (that section is deleted; keeping it would be a duplicate symbol),
-// and is the native twin of web/src/seam/SimpleAudioEngine_web.mm. Read that file first: the
+// and is the native twin of web-port-final:web/src/seam/SimpleAudioEngine_web.mm. Read that file first: the
 // SHAPE here is deliberately identical to it, because the engine's audio contract is the same on
 // both and any divergence would be a second behaviour model rather than a second backend.
 //

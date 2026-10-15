@@ -18,6 +18,8 @@
 #import "OpenGL_Internal.h"
 class World;
 
+// Player::takeDamage cause, picks the death sound (H.6).
+enum DEATH_CAUSES{DEATH_NONE=0,DEATH_LAVA=1,DEATH_CREATURE=2,DEATH_TNT=3};
 class Player {
 public:
 	float boxbase;
@@ -55,7 +57,7 @@ public:
     BOOL test(int x,int y,int z,float r);
     BOOL canFit(float testHeight);
     void move(float etime);
-    void takeDamage(float damage);
+    void takeDamage(float damage,int cause=DEATH_NONE);
     void render();
     void setSpeed(Vector svel,float speed);
     BOOL checkCollision();

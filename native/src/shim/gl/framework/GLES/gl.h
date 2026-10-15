@@ -1,7 +1,7 @@
 // <GLES/gl.h> for the NATIVE target — Phase N Stage 1
 // (WORKING/native-migration-plan-2026-09-04.md).
 //
-// web/src/shim/gl/gl_es1_shim.h includes <GLES/gl.h> to get the GL *types* and the ES 1.1 *enum*
+// port/src/shim/gl/gl_es1_shim.h includes <GLES/gl.h> to get the GL *types* and the ES 1.1 *enum*
 // surface; under Emscripten that resolves to emsdk's real Khronos ES1 header. There is no such
 // header on a desktop toolchain, so this directory is put on the native target's include path
 // (BEFORE any system GL header) and supplies the same two things over desktop GL instead:
@@ -34,7 +34,7 @@
 // dialect (see eden_gl_preamble()).
 //
 // FRAMEWORK LOOKUP, and why this resolves to Apple's header rather than looping back here: the
-// port shadows <OpenGLES/ES1/gl.h> and <OpenGLES/ES1/glext.h> (web/src/shim/gl/framework/) so
+// port shadows <OpenGLES/ES1/gl.h> and <OpenGLES/ES1/glext.h> (port/src/shim/gl/framework/) so
 // the ENGINE's ES1 includes reach the shim, and it shadows nothing under ES3/ — so this include
 // falls through the -I directories and is answered by the real OpenGLES.framework.
 //

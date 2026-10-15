@@ -22,7 +22,7 @@
 #include <unordered_map>
 #include <vector>
 
-// The text-raster seam (web/src/seam/Texture2D_web.mm, native/src/seam/TextRaster_native.cpp).
+// The text-raster seam (port/src/seam/Texture2D_web.mm, native/src/seam/TextRaster_native.cpp).
 // Contract: `out` is width*height*4, pre-zeroed; white RGB, coverage in A; row 0 is the top row.
 extern "C" void eden_rasterize_text_rgba(const char* text, int width, int height, float fontPx,
                                          int align, unsigned char* out);
