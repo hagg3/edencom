@@ -86,6 +86,15 @@ which is why this is recorded here rather than as a tidy-up:
 
 Nothing reads those bytes, so zeroing them changes how no existing world loads.
 
+**H.4's generator mirror (2026-10-15)** is the first thing to read `reserved[]` (offset 152, 40
+bytes). An Emod export of a world with a `GENERATOR` record ([emod-file-format.md](emod-file-format.md))
+writes 36 bytes at 152..187: `"EMG1"`, the 28-byte record, and a CRC-32 (zlib's) of those 32 bytes,
+little-endian; 188..191 stay 0. The magic plus the CRC is what makes it safe against the heap
+garbage above: a load honours it only if both check and the record decodes
+(`classic_decode_mirror`), and then the imported world writes it as its own `GENERATOR` at its first
+save. A 256z → 64z export of a world whose scale is not 1× omits it. Other readers (the original app,
+the 2026 game) ignore `reserved[]`, so the mirror changes nothing for them.
+
 ## Block data — column records
 
 One record per 16×16 **column** = `CHUNKS_PER_COLUMN` (4) chunks stacked bottom-up:

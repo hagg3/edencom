@@ -13,7 +13,12 @@
 //  one-shot pending seam (port/src/seam/Menu_web.mm) that showAlertWorldType() and
 //  FileManager::probeWorldHeight() consume, and starts the load; Back creates nothing.
 //
-//  ROOM FOR STAGE H. The options are a table (kRows in the .mm) whose rows say which world types
+//  STAGE H / H.4 filled it: a third tile, Classic (the seeded 1.x generator, Classes/
+//  TerrainGenerator.h), with its own rows -- a Seed field with a Random button, Scale (a detented
+//  slider, 256 only), Hilliness / Caves / Trees / Size choices, Flowers / Clouds toggles and a live
+//  top-down Preview -- whose values Play parks as a GENERATOR record in the pending seam.
+//
+//  ROOM FOR STAGE H (as U.5 left it). The options are a table (kRows in the .mm) whose rows say which world types
 //  they apply to, and the types are a table too (kTypes). H.3/H.4's seeded generator adds rows
 //  (a seed, caves, presets) and, if it becomes a third type, a tile — the rail scrolls and the
 //  content scrolls, so neither needs a layout change. A new row KIND (a toggle, a stepper) is the
@@ -25,7 +30,10 @@
 #import "GLWidgets.h"
 
 #define NW_MAX_ROWS 16
-#define NW_MAX_OPTS 4
+#define NW_MAX_OPTS 5
+
+class Texture2D;
+struct ClassicGen;
 
 class NewWorldMenu {
 public:
@@ -55,6 +63,16 @@ public:
     const char* text(const char* key) const;   // a NW_TEXT row's field, "" if none
     bool   focused(const char* key) const;
     void   blurFields();                       // --shot: the placeholder, not a caret
+    // H.4: "dice" is a controlRect key too (the Seed row's Random button). rowVisible: the row is
+    // in this type's list (Scale is not at 64). toggleRect/sliderRect: a NW_TOGGLE/NW_SLIDER row's
+    // control (scrolled into view). seed(): the number Play would use (the field, or the rolled one).
+    bool   rowVisible(const char* key) const;
+    bool   toggleRect(const char* key, CGRect* r);
+    bool   toggle(const char* key) const;
+    bool   sliderRect(const char* key, CGRect* r);
+    int    seed() const;
+    void   classicSettings(ClassicGen* g) const;   // what Play would park (Classic tab)
+    static int seedFromText(const char* utf8);     // digits as the number, else FNV-1a; [1, 2^24) minus 333333
 
 private:
     NewWorldMenu(const NewWorldMenu&);
@@ -67,6 +85,9 @@ private:
     bool rowShown(int k) const;          // k = visible-row slot, inside the scroll window
     int  rowOf(const char* key) const;   // kRows index, or -1
     void play();
+    void rollSeed();
+    void updatePreview();                // H.4: rebuild the Classic preview when its inputs change
+    const char* hintFor(int r);          // kRows[r].hint, or a live one (Scale's level, the seed)
 
     bool m_open;
     int  m_type;                         // kTypes index
@@ -84,7 +105,17 @@ private:
     GLW::ScrollView m_scroll;
     GLW::TwoLineRow m_row[NW_MAX_ROWS];
     GLW::Button     m_opt[NW_MAX_ROWS][NW_MAX_OPTS];
-    GLW::TextField  m_field[NW_MAX_ROWS];   // per kRows index, NW_TEXT rows only
+    GLW::TextField  m_field[NW_MAX_ROWS];   // per kRows index, NW_TEXT and NW_SEED rows
+    GLW::Toggle     m_toggle[NW_MAX_ROWS];  // per kRows index, NW_TOGGLE rows
+    GLW::Slider     m_slider[NW_MAX_ROWS];  // per kRows index, NW_SLIDER rows
+    GLW::Button     m_dice;                 // the Seed row's Random
+    std::string     m_hint[NW_MAX_ROWS];
+    int  m_sliderRow, m_sliderTouch;     // a slider under a held touch
+    bool m_diceHeld;
+    int  m_randomSeed;                   // what a blank Seed becomes (rolled per visit and by Random)
+    Texture2D* m_preview;                // H.4: the Classic preview (128x128 RGBA)
+    int  m_previewKey[4];                // seed, scale x4, hilliness, height it was built for
+    CGRect m_previewRect;
     std::string     m_autoName;          // the name row's placeholder: what a blank name becomes
     CGRect m_panel, m_content;
     float  m_titleY;

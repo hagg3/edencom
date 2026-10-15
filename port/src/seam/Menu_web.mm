@@ -27,6 +27,7 @@
 //     "C owns the memory, JS fills it" trick, no allocator involved.
 #import "../../../Classes/World.h"
 #import "../../../Classes/Menu.h"
+#import "../../../Classes/WorldPropertiesMenu.h"   // H.15: eden_world_props_menu_back
 #import "../../../Classes/FileManager.h"
 #import "../../../Classes/Hud.h"       // eden_hud_draw_menu_screen_hook
 #import "../../../Classes/Terrain.h"   // eden_menu_load_percent reads terrain->counter
@@ -298,6 +299,16 @@ int eden_new_world_menu_back(void) {
     return 1;
 }
 
+// H.15: the same for the World Properties screen (Back discards, as its button does).
+EDEN_EXPORT
+int eden_world_props_menu_back(void) {
+    Menu* m = menu_ptr();
+    if (!m || !m->showprops || !m->props) return 0;
+    m->props->back();
+    m->showprops = FALSE;
+    return 1;
+}
+
 // -----------------------------------------------------------------------------------------------
 // World type (Flat / Normal)
 // -----------------------------------------------------------------------------------------------
@@ -351,6 +362,31 @@ int eden_menu_take_pending_world_height(void) {
     int v = g_pending_world_height;
     g_pending_world_height = -1;
     return v;
+}
+
+// -----------------------------------------------------------------------------------------------
+// Classic generator settings (Stage H / H.4)
+// -----------------------------------------------------------------------------------------------
+// The New World screen's Classic tab parks the world's GENERATOR record here (the 28 bytes of
+// classic_encode_record(), Classes/TerrainGenerator.h); FileManager::loadWorld's new-world branch
+// takes it, uses its seed as the world's level_seed and writes it in the world's first save.
+// Same one-shot "take" semantics as the type and height above.
+static int g_pending_generator_set = 0;
+static unsigned char g_pending_generator[28];
+
+EDEN_EXPORT
+void eden_menu_set_pending_generator(const unsigned char* rec28) {
+    g_pending_generator_set = rec28 ? 1 : 0;
+    if (rec28) memcpy(g_pending_generator, rec28, sizeof g_pending_generator);
+}
+
+/** 1 and the record in `out` when one is pending (and clears it), else 0. */
+EDEN_EXPORT
+int eden_menu_take_pending_generator(unsigned char* out28) {
+    if (!g_pending_generator_set) return 0;
+    g_pending_generator_set = 0;
+    memcpy(out28, g_pending_generator, sizeof g_pending_generator);
+    return 1;
 }
 
 /** Open the engine's settings screen (which the DOM settings panel mirrors via

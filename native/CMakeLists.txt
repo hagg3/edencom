@@ -705,6 +705,13 @@ endforeach()
 set_source_files_properties(${EDEN_ENGINE_MM_SOURCES} PROPERTIES
   COMPILE_OPTIONS "${EDEN_OBJCXX_FLAGS};-include;${EDEN_PARENT_DIR}/Eden_Prefix.pch"
 )
+# Stage H / H.4: the Classic generator's float noise must give the same bits on every target, so
+# no fused multiply-add in its translation unit (clang's default contracts on arm64; x86-64 SSE2
+# has no FMA to fuse into). With contraction off, IEEE + - * / and roundf/floorf are exact
+# everywhere; --classic-selftest's hashes, pinned identically on every leg, are the proof.
+# A mismatch there is a stop, and a flag lost here is the first suspect.
+set_property(SOURCE "${EDEN_PARENT_DIR}/Classes/TerrainGenerator.mm" APPEND PROPERTY
+  COMPILE_OPTIONS "-ffp-contract=off;-fno-fast-math")
 
 # ---------------------------------------------------------------------------------------------
 # Definitions

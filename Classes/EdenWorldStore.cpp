@@ -657,7 +657,7 @@ void EdenWorldStore::evaluate() {
     if (commits.empty()) errors_.push_back("no committed batch");
     for (const Rec& r : recs_) {
         if (!r.padOk && r.off < end) damage_.push_back(fmt("non-zero padding after record @%llu", (unsigned long long)r.off));
-        if ((r.type < 1 || r.type > 8) && r.off < truncateAt_)
+        if ((r.type < 1 || r.type > T_GENERATOR) && r.off < truncateAt_)
             warnings_.push_back(fmt("record @%llu has reserved type %u", (unsigned long long)r.off, r.type));
     }
 }
@@ -858,9 +858,10 @@ bool EdenWorldStore::putRecord(int type, const void* data, size_t len) {
     if (type == T_WORLD_HEADER && len != EDEN_HEADER) return fail("WORLD_HEADER must be 192 bytes");
     if (type == T_CREATURES && (len % EDEN_ENT || len / EDEN_ENT > EDEN_MAX_SLOTS)) return fail("CREATURES must be 0-400 x 60 bytes");
     if (type == T_SIGN_TRAILER && (len % EDEN_DIR_ROW || len > TRAILER_MAX)) return fail("SIGN_TRAILER must be a multiple of 16, <= 1 MiB");
+    if (type == T_GENERATOR && len != GENERATOR_LEN) return fail("GENERATOR must be 28 bytes");
     uint8_t codec;
     std::vector<uint8_t>& enc = scratch_;
-    if (!codecs_.encode(codec_, (const uint8_t*)data, len, type != T_WORLD_HEADER, &codec, enc)) return fail("encode failed");
+    if (!codecs_.encode(codec_, (const uint8_t*)data, len, type != T_WORLD_HEADER && type != T_GENERATOR, &codec, enc)) return fail("encode failed");
     if (enc.size() > MAX_PAYLOAD) return fail("record payload exceeds 16 MiB");
     addRecord((uint8_t)type, codec, 0, 0, 0, (uint32_t)len, enc.data(), enc.size());
     return true;
@@ -1001,13 +1002,15 @@ bool EdenWorldStore::compact() {
         flush(false);
         return ok;
     };
-    static const int order[] = {T_WORLD_HEADER, T_CREATURES, T_SIGN_TRAILER, T_PROVENANCE};
+    // H.4: GENERATOR last of the singletons, so a fresh conversion (which never has one) still
+    // compacts to itself byte for byte.
+    static const int order[] = {T_WORLD_HEADER, T_CREATURES, T_SIGN_TRAILER, T_PROVENANCE, T_GENERATOR};
     for (int t : order) {
         if (!ok) break;
         int32_t i = latestT_[t];
         if (i < 0) continue;
         if (t == T_SIGN_TRAILER && entries_[i].aux == 0) continue;    // an empty trailer = none
-        ok = copy(entries_[i], t == T_WORLD_HEADER);
+        ok = copy(entries_[i], t == T_WORLD_HEADER || t == T_GENERATOR);
     }
     std::vector<std::pair<uint32_t, int32_t> > cols;
     cols.reserve(colIndex_.size());
@@ -1078,7 +1081,10 @@ std::vector<std::string> EdenWorldStore::verify() {
     int32_t st = latestT_[T_SIGN_TRAILER];
     if (st >= 0 && (entries_[st].aux % EDEN_DIR_ROW || entries_[st].aux > TRAILER_MAX))
         errs.push_back(fmt("SIGN_TRAILER raw length %u is not a multiple of 16 up to 1 MiB", entries_[st].aux));
-    static const int single[] = {T_CREATURES, T_SIGN_TRAILER, T_PROVENANCE, T_SUMMARY};
+    int32_t gr = latestT_[T_GENERATOR];
+    if (gr >= 0 && entries_[gr].aux != GENERATOR_LEN)
+        errs.push_back(fmt("GENERATOR raw length %u is not %u", entries_[gr].aux, (unsigned)GENERATOR_LEN));
+    static const int single[] = {T_CREATURES, T_SIGN_TRAILER, T_PROVENANCE, T_SUMMARY, T_GENERATOR};
     for (int t : single) {
         int32_t i = latestT_[t];
         if (i < 0) continue;

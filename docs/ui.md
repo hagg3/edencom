@@ -301,7 +301,10 @@ Responsibilities:
   (`Hud::genColorTable`) — a **global** consumed by the mesher; the HUD owns
   the game's color palette, an inversion worth knowing about.
 - `MODE_CAMERA`: hides UI, screenshot capture (`take_screenshot` →
-  glReadPixels → PNG in Documents + MD5 hash → `FileManager::setImageHash`).
+  glReadPixels → PNG in Documents + MD5 hash → `FileManager::setImageHash`). Port (H.16): `takeScreenshot()` in
+  `Classes/Util.mm` reads the GL viewport, centre-crops to 3:2, box-downsizes to a long side ≤ 1440 and
+  writes `<world>.png` with its own zlib PNG encoder (`photoEncodePNG`; the stock body is under `#if 0`
+  because the shim's `UIImagePNGRepresentation` is a nil stub). Gate: `--photo-selftest`.
 - Golden-cube counter, health/damage flash (`flash`, `flashcolor`), underwater tint
   (`underLiquid`), FPS counter, fade-in on load (`fade_out`, `justLoaded`).
 - `worldLoaded()` resets per-world UI state.
@@ -322,8 +325,8 @@ them — the ordering in `World::update` is the arbitration.
   (confirm via `Alert`), rename.
   **Stage 5.6 (2026-10-06, modified from stock): the screen is `GLWidgets`.** Under the logo (art,
   kept) a WINDOW holds a titlebar (Settings · "Worlds" · New — which since U.5 opens `NewWorldMenu`, below), the list as `GLW::ListRow`s in a
-  row-snapped `GLW::ScrollView` (drag, scrollbar, wheel) and an action bar (Delete · Rename ·
-  Play, Play in the positive tone); `sbar`'s message is drawn by the kit under the window (in-game
+  row-snapped `GLW::ScrollView` (drag, scrollbar, wheel) and an action bar (Delete · Rename (Properties
+  since H.15) · Play, Play in the positive tone); `sbar`'s message is drawn by the kit under the window (in-game
   chrome's light-on-dark), and `fnbar`'s job — naming the selection — is the selected row's.
   `layoutKit()` runs per frame from `SCREEN_*` and the list length: rows at `max(30u,
   touchFloor())`, at least four, at most what fits, and the window shrink-wraps them. **The state
@@ -352,6 +355,12 @@ them — the ordering in `World::update` is the arbitration.
   calls `FileManager::renameWorld()` — a new `WORLD_HEADER` record for an `.emod` (an in-place
   50-byte `WorldFileHeader::name` rewrite for a leftover `.eden`; a never-played world has no file
   and needs no write).
+  **Since H.15 (2026-10-15) the button is Properties** (same slot, `rect_rename`,
+  `controlRect("properties")` = `"rename"`, `Menu::propertiesOffered()` — no text-entry requirement)
+  and opens `WorldPropertiesMenu` (below); the name is that screen's first field. `beginRename()` /
+  `renameSelected()` remain (the harness, an `.eden`'s name path) but nothing in the list reaches the
+  prompt. `FileManager::renameWorld()` now **refuses** a dropped-in `.eden.gz` / `.zip`: its header is
+  inside the deflate stream, and the in-place write used to land 50 raw bytes in it.
   **An empty Documents folder means an empty list** — `selected_world` is `NULL` and every
   deref reachable from that state is guarded (`refreshfn`, `activate`, the layout block).
   Stock behaviour was to synthesise one placeholder `WorldNode` so the carousel was never
@@ -369,8 +378,8 @@ them — the ordering in `World::update` is the arbitration.
   height), and the options as `TwoLineRow`s in a variable-height `ScrollView`: **World name** (a
   `GLW::TextField`, 48 bytes — `FileManager`'s header writer uses `getCString:maxLength:49`, which counts
   the terminator; the placeholder is the "World N" a blank name becomes, peeked from
-  `SettingsMenu::world_counter` so Back burns no number) and **Height** (New Dawn 256 · Classic 64, a
-  pressed-is-selected pair, 256 first and default). The name field takes focus on open under a pointer,
+  `SettingsMenu::world_counter` so Back burns no number) and **Height** (New Dawn 256 · Original 64 —
+  "Classic 64" until H.4 took the word for the generator — a pressed-is-selected pair, 256 first and default). The name field takes focus on open under a pointer,
   never on touch (the system keyboard would cover the screen unasked); a tap on the field (on touch, on
   its row) focuses it, any other release blurs it; Return in it is Play. **Play** trims the name (blank →
   `getNewWorldName()`), parks type and height in the one-shot pending seam (`Menu_web.mm`'s
@@ -384,6 +393,47 @@ them — the ordering in `World::update` is the arbitration.
   seeded generator's seed/caves/presets are rows and a third generator is a tile; a new row KIND (a
   toggle, a stepper) is the only thing that owes code. Harness: `controlRect("back"|"play"|"name")`,
   `typeRect(t)`, `choiceRect(key, option, &r)`, `choice(key)`, `text(key)`, `showType(t)`.
+  **H.4 (2026-10-15) filled that room:** a third tile, **Classic** (`UIICON_TREES`), and four row kinds
+  — `NW_SEED` (a `TextField` + a shrink-wrapped **Random** button; the rolled seed is the placeholder,
+  re-rolled per visit and by Random; `seedFromText()`: digits are the number, other text is FNV-1a,
+  both reduced into [1, 2^24) and never 333333), `NW_SLIDER` (**Scale**, a detented `GLW::Slider` over
+  1×/1.5×/2×/3×/4×, its hint naming the level; **hidden, not greyed, at Original 64** — a height tap
+  rebuilds the row list), `NW_TOGGLE` (Flowers, Clouds) and `NW_PREVIEW` (a 128×128 RGBA `Texture2D`
+  of `classic_height()` hillshaded, one sample every 4·s blocks around chunk 4096, a white cross at
+  spawn; rebuilt only when seed/scale/hilliness/height change, ~10 ms). Hilliness, Caves (Off · 2011 ·
+  Deep), Trees and Size are `NW_CHOICE` rows with a per-row default (`NWRow::def`); `NW_MAX_OPTS` is 5.
+  Play on Classic encodes the tab (`classicSettings()` → `classic_encode_record()`) and parks it with
+  `eden_menu_set_pending_generator()` beside the type ("normal") and height; any other type parks NULL.
+  Harness additions: `controlRect("dice"|"seed"|"preview")`, `rowVisible(key)`, `toggleRect`/`toggle`,
+  `sliderRect`, `seed()`, `classicSettings()`; shots `newworld-classic`, `newworld-classic-64`.
+- **`WorldPropertiesMenu`** (`Classes/WorldPropertiesMenu.{h,mm}`, `Classes/WorldProps.h`) — **Stage H /
+  H.15 (2026-10-15), new.** The world list's **Properties** (Rename's slot) opens it for the selected world
+  (`Menu::openProperties()`, `showprops`, drawn and updated in front of the menu like New World; Escape is
+  Back through `eden_world_props_menu_back()`). New World's frame (`GLW::railFrame`): titlebar **Back ·
+  "‹name› Properties" · Save** (positive tone, disabled until something differs), rail tiles **World**
+  (`UIICON_INFO`) and **Terrain** (`UIICON_MOUNTAIN`), `TwoLineRow`s in a variable-height `ScrollView`.
+  Its own `usage_id` 14. Rows are built per world at `open()` (`buildRows()`), not from a static table:
+  - *World*: first a photo row (`WPK_PHOTO`, no `TwoLineRow`) — the world's last in-game photo,
+    `Documents/<world file>.png` (camera mode, H.16), aspect-fit in a 3:2 sunken frame, loaded once with
+    `Texture2D(path)` and sized from its IHDR as Get Worlds' preview is; none → a grey frame, *"No picture
+    yet. Take one in camera mode."* Beside it the name, height, type (Flat / Normal / Classic / Classic
+    (1.x) / Classic (newer Emod)) and file size. Then the name field (48 bytes, New World's rule; blank
+    keeps the name; read-only inside an archive), and read-only `WPK_VALUE` rows (right-hand text): Seed
+    (Classic), Height, Saved land (columns), Signs, Golden cubes held, Created / Last saved (the `.emod`
+    file header's `created_unix` / the file's mtime), Converted from (`PROVENANCE`), Original kept (S.5).
+  - *Terrain*: a Classic world gets a lead row (what a change does) and New World's Classic rows over
+    the same option tables (`Classes/ClassicOptions.h`, shared since H.15): Hilliness, Caves (a detected
+    legacy value says so in its hint), Trees, Flowers, Clouds, Size, and Scale — a slider on a new 256z
+    world, a read-only value on a 1.x one, hidden at 64. Flat / Normal / a record from a newer Emod show
+    one type row; an unconverted `.eden` says to play it once first. Seed and height are never editable.
+  **Saving:** a name-only change saves at once; a terrain change raises a `GLDialog` (**Change terrain** /
+  Cancel) first. Both go through `FileManager::applyWorldProperties()` (save-load.md), then the list entry
+  is renamed in place, the status line says *Saved* and the screen closes; a failure is a one-button
+  dialog and the screen stays. **Back discards** without asking. Harness surface: `controlRect`
+  (`back`/`save`/`name`/`photo`), `tabRect`, `choiceRect`, `toggleRect`, `sliderRect`, `value()`,
+  `rowVisible()`/`rowEditable()`, `lastResult()`; gates `--props-selftest` and the Properties cases of
+  `--ui-selftest`; `--shot` writes `props-world-nophoto`, `props-world` and `props-terrain`.
+  Plan: `WORKING/feature-archaeology-2026-10-13/world-properties-plan.md`.
 - **`Menu_background`** — the animated menu backdrop.
 - **`SettingsMenu`** — the GL settings screen. `load()`/`save()`/`getNewWorldName()` and the
   5-slot `properties[]` array still own the engine-backed toggles (Health/Autojump/Creatures/

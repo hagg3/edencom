@@ -189,6 +189,26 @@ jobs:
           rm -rf shadow-docs shadow16-docs && mkdir -p shadow-docs shadow16-docs
           run_gate "shadow selftest" $B --shadow-selftest --docs="$PWD/shadow-docs"
           run_gate "shadow selftest r16" $B --shadow-selftest --radius=16 --docs="$PWD/shadow16-docs"
+          # H.4: the seeded Classic generator. 1.x columns byte-equal to the checked-in fixture, and
+          # four pinned per-profile hashes -- THE CROSS-TARGET PIN: the hashes in the binary are the
+          # macOS arm64 ones, so this leg failing on one target alone is float drift (fp contraction
+          # first: TerrainGenerator.mm is built -ffp-contract=off). Each mutation must FAIL it.
+          rm -rf classic-docs && mkdir -p classic-docs
+          run_gate "classic selftest" $B --classic-selftest --docs="$PWD/classic-docs"
+          for m in tables trunc noborder; do
+            rm -rf classic-docs-$m && mkdir -p classic-docs-$m
+            if $B --classic-selftest --classic-mutate=$m --docs="$PWD/classic-docs-$m" > gate-classic-mutate-$m.log 2>&1; then
+              echo "::error::--classic-selftest --classic-mutate=$m PASSED: the gate cannot see that mutation"; exit 1
+            fi
+          done
+          # H.15: World Properties (world-properties-plan.md §6): the screen's save path on worlds in
+          # --docs -- a terrain change regenerates untouched land and keeps edits, Cancel writes
+          # nothing, a 1.x world's record, the lifted home. The mutation (no GENERATOR) must FAIL it.
+          rm -rf props-docs props-docs-nogen && mkdir -p props-docs props-docs-nogen
+          run_gate "props selftest" $B --props-selftest --docs="$PWD/props-docs"
+          if $B --props-selftest --props-mutate=nogen --docs="$PWD/props-docs-nogen" > gate-props-mutate-nogen.log 2>&1; then
+            echo "::error::--props-selftest --props-mutate=nogen PASSED: the gate cannot see that mutation"; exit 1
+          fi
 
           # THE WORLD FILE IS NOT NAMED AFTER THE WORLD. This engine gives every world a random
           # 40-character filename and keeps the display name inside the header — so the artifact
@@ -366,6 +386,26 @@ jobs:
           rm -rf shadow-docs shadow16-docs && mkdir -p shadow-docs shadow16-docs
           run_gate "shadow selftest" $B --shadow-selftest --docs="$PWD/shadow-docs"
           run_gate "shadow selftest r16" $B --shadow-selftest --radius=16 --docs="$PWD/shadow16-docs"
+          # H.4: the seeded Classic generator. 1.x columns byte-equal to the checked-in fixture, and
+          # four pinned per-profile hashes -- THE CROSS-TARGET PIN: the hashes in the binary are the
+          # macOS arm64 ones, so this leg failing on one target alone is float drift (fp contraction
+          # first: TerrainGenerator.mm is built -ffp-contract=off). Each mutation must FAIL it.
+          rm -rf classic-docs && mkdir -p classic-docs
+          run_gate "classic selftest" $B --classic-selftest --docs="$PWD/classic-docs"
+          for m in tables trunc noborder; do
+            rm -rf classic-docs-$m && mkdir -p classic-docs-$m
+            if $B --classic-selftest --classic-mutate=$m --docs="$PWD/classic-docs-$m" > gate-classic-mutate-$m.log 2>&1; then
+              echo "::error::--classic-selftest --classic-mutate=$m PASSED: the gate cannot see that mutation"; exit 1
+            fi
+          done
+          # H.15: World Properties (world-properties-plan.md §6): the screen's save path on worlds in
+          # --docs -- a terrain change regenerates untouched land and keeps edits, Cancel writes
+          # nothing, a 1.x world's record, the lifted home. The mutation (no GENERATOR) must FAIL it.
+          rm -rf props-docs props-docs-nogen && mkdir -p props-docs props-docs-nogen
+          run_gate "props selftest" $B --props-selftest --docs="$PWD/props-docs"
+          if $B --props-selftest --props-mutate=nogen --docs="$PWD/props-docs-nogen" > gate-props-mutate-nogen.log 2>&1; then
+            echo "::error::--props-selftest --props-mutate=nogen PASSED: the gate cannot see that mutation"; exit 1
+          fi
 
           # See the Linux job for why the leak probe is a stage obligation. Windows has the one
           # honest gap in the statistic — the mingw CRT publishes no live-bytes figure, so
@@ -557,6 +597,21 @@ jobs:
           rm -rf shadow-docs shadow16-docs && mkdir -p shadow-docs shadow16-docs
           ./build/eden_native --shadow-selftest --docs="$PWD/shadow-docs"
           ./build/eden_native --shadow-selftest --radius=16 --docs="$PWD/shadow16-docs"
+          # H.4 (see the linux job): the macOS leg is where the pinned hashes came from.
+          rm -rf classic-docs && mkdir -p classic-docs
+          ./build/eden_native --classic-selftest --docs="$PWD/classic-docs"
+          for m in tables trunc noborder; do
+            rm -rf classic-docs-$m && mkdir -p classic-docs-$m
+            if ./build/eden_native --classic-selftest --classic-mutate=$m --docs="$PWD/classic-docs-$m" > classic-mutate-$m.log 2>&1; then
+              echo "::error::--classic-selftest --classic-mutate=$m PASSED"; exit 1
+            fi
+          done
+          # H.15 (see the linux job).
+          rm -rf props-docs props-docs-nogen && mkdir -p props-docs props-docs-nogen
+          ./build/eden_native --props-selftest --docs="$PWD/props-docs"
+          if ./build/eden_native --props-selftest --props-mutate=nogen --docs="$PWD/props-docs-nogen" > props-mutate-nogen.log 2>&1; then
+            echo "::error::--props-selftest --props-mutate=nogen PASSED"; exit 1
+          fi
           rm -rf leak-docs && mkdir -p leak-docs
           ./build/eden_native --leak-probe --docs="$PWD/leak-docs"
 
@@ -839,6 +894,12 @@ jobs:
           # agree with the desktop legs (fp contraction is the first suspect if it does not).
           launch stage1-64s.log --headless --stage1 --shadows=classic --world=ios64s
           python3 .github/scripts/check-stage1.py --shadows stage1-64s.log
+          # H.4: the Classic generator's fixture + pinned hashes on ARM64 iOS (the fixture is copied
+          # into the container; the app reads it by host path, as it writes EDEN_LOG).
+          cp port/tools/fixtures/classic/legacy-1315365413.bin.gz "$DATA/classic-fixture.bin.gz"
+          launch classic.log --classic-selftest --classic-fixture="$DATA/classic-fixture.bin.gz"
+          grep -q 'eden-classic. ALL PASS' classic.log || {
+            echo "::error::--classic-selftest did not pass in the simulator"; cat classic.log; exit 1; }
 
           # (the touch gate moved below — it needs a real window, so it cannot use `launch`,
           #  which sets the dummy video driver)

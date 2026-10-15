@@ -104,7 +104,8 @@ the version S.2 vendors. Offline artefacts (the bundled map) may use level 19.
 | 6 | `SUMMARY` | singleton | 16 bytes (below) | **0** | |
 | 7 | `COMMIT` | — | 24 bytes (below) | **0** | ends a batch |
 | 8 | `INDEX` | — | reserved | — | **not written in v1** (decided by S.3: a full scan opens Quarry's 30,299-column log in 15 ms on the Mac, ~45 ms by the ×3 A8X proxy, under the 100 ms threshold). A v1 reader ignores it. |
-| 9–255 | reserved | — | — | — | a reader treats one as a member of its batch and otherwise ignores it; `verify` reports it |
+| 9 | `GENERATOR` | singleton | 28 bytes (below) | **0** | H.4 (2026-10-15): which runtime generator fills the world's unsaved columns; World Properties (H.15) may append a newer one. Taken from the reserved range, so a reader that predates it ignores it, as this table always required. |
+| 10–255 | reserved | — | — | — | a reader treats one as a member of its batch and otherwise ignores it; `verify` reports it |
 
 ### COLUMN
 
@@ -182,6 +183,42 @@ The fields are packed with no padding. All offsets after `name` vary with the na
 
 Pairing a `.emod` with its source `.eden` (S.5) compares `source_size` and the SHA-256.
 
+### GENERATOR (28 bytes, H.4)
+
+Written by the engine's save: in the first save of a new Classic world, or of a 1.x
+random-seed world the first time this build loads it (the legacy profile, with the cave detection's
+result). Never by conversion. **Since H.15 (2026-10-15) it may be superseded:** the world list's World
+Properties appends a newer `GENERATOR` (same seed and profile, changed settings) in one batch with a
+`WORLD_HEADER`; like every singleton, the newest committed version is the one that counts, so this
+needed no format change. The save itself still writes it at most once (only while the file has none). Codec 0, like `WORLD_HEADER`.
+Its absence means: seed 0 → flat, seed 333333 → the bundled map, any other seed → the legacy
+profile, decided again at every load (`FileManager.mm` `fm_setupGenerator`).
+
+| offset | type | field |
+|---|---|---|
+| 0 | u16 | generator: 1 = Classic |
+| 2 | u16 | revision: 1 |
+| 4 | u32 | seed (= the header's `level_seed`) |
+| 8 | u8 | scale ×4: 4, 6, 8, 12, 16 (1×–4×; anything but 4 only in a 256z world) |
+| 9 | u8 | hilliness 0–4 (Plains, Rolling, Classic, Rugged, Wild) |
+| 10 | u8 | caves 0 off, 1 2011, 2 deep |
+| 11 | u8 | trees 0–3 (none, sparse, classic, dense) |
+| 12 | u8 | flowers 0/1 |
+| 13 | u8 | clouds 0/1 |
+| 14 | u8 | size 0 extended, 1 the 2880 square (with the bundled map's wall) |
+| 15 | u8 | profile 0 new, 1 legacy |
+| 16 | u8 | flags: bit 0 = caves were auto-detected (legacy) |
+| 17 | `u8[11]` | 0 |
+
+A generator, revision or field value this build does not know (`classic_decode_record` → 0) makes
+the engine fill unsaved columns with **void** and say so in a toast, never guess: the saved columns
+stay intact, and a newer build fills the rest correctly later. Compaction copies `GENERATOR` raw,
+last of the singletons (after `PROVENANCE`), so a fresh conversion — which never has one — still
+compacts to itself byte for byte. *Caveat:* a pre-H.4 engine compacting a Classic world drops the
+record (reserved types are dropped), and the world then loads as the legacy profile.
+`emod.py dump` prints it decoded; `verify` checks its length and decodes it. Export writes it into
+the `.eden` header's `reserved[]` as the `EMG1` mirror ([eden-file-format.md](eden-file-format.md)).
+
 ## Batches and commits — writing
 
 A **batch** is one save: records that share one `seq`, followed by a `COMMIT` carrying that `seq`.
@@ -199,7 +236,8 @@ A world's first batch contains at least `WORLD_HEADER`, `CREATURES` and `SUMMARY
 batch (seq 1) of the live records, then `fsync`s and renames over the old one. Ords are kept as
 they are, so they may be sparse.
 - `EdenWorldStore` writes them in conversion's order (`WORLD_HEADER`, `CREATURES`, a non-empty
-  `SIGN_TRAILER`, `PROVENANCE`, `COLUMN`s by ord, `SUMMARY`, `COMMIT`); reserved types are dropped.
+  `SIGN_TRAILER`, `PROVENANCE`, then H.4's `GENERATOR`, `COLUMN`s by ord, `SUMMARY`, `COMMIT`);
+  reserved types are dropped.
   zstd payloads are copied verbatim after they decode, anything else is re-encoded at zstd-3. So
   compacting a fresh conversion reproduces it byte for byte (an S.3 gate).
 - Compaction is refused while the session's *damaged* flag is set.
@@ -356,6 +394,9 @@ directory region over 256 MiB, and an optional temp-bytes cap (S.5's 500 MB).
 5. **Directory:** one row per live column. Rows come in `PROVENANCE`'s source row order (keys still
    live), then any other columns in ord order. Each row is `{i32 x, i32 z, u64 offset}`.
 6. **Trailer:** `SIGN_TRAILER`.
+7. **Generator (H.4):** when the world has a `GENERATOR`, the header's bytes 152..187 are its 36-byte
+   `EMG1` mirror (eden-file-format.md, "Header"), except for a 256z → 64z export of a world whose scale
+   is not 1× (that terrain cannot continue at 64z, so the cut world takes the legacy fallback).
 
 The output goes to `<name>.eden.exporting`, is `fsync`ed and renamed. **When `PROVENANCE.flags` = 0
 and the world has not been saved since conversion, the export is byte-identical to the source.**

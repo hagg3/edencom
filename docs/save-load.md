@@ -322,7 +322,8 @@ that magic adopts them (dirty), and the save that writes them in renames them `*
 every sign later cannot resurrect them. Refused edits (over 1 MiB, an opaque trailer) toast through
 `fm->reportTrailerRefusal()`. Gate: `eden_native --trailer-selftest` (native/README.md).
 - **Rename / image hash / share-name** (`renameWorld`, `setImageHash`, `setName`): a new
-  `WORLD_HEADER` record in its own batch. **Delete** closes the store first (Windows) and removes the
+  `WORLD_HEADER` record in its own batch. **World Properties** (H.15, `applyWorldProperties`, below) is the
+  same idea with a `GENERATOR` beside it. **Delete** closes the store first (Windows) and removes the
   converter's temp names. **`convertWorldTo64`** on an `.emod` (X.9) exports Legacy64z to `<world>.64zsrc`,
   re-converts it with the 256z upgrade off to `<world>.64zconv`, then `replace_file`s it over the world (temps removed
   on failure; refuses the open world and an already-64z one). The Share > Export Legacy64z target (below) is the
@@ -386,6 +387,27 @@ original. Shows "Converting World…" in the UI via `convertingWorld`. (Nothing 
 more; convert-on-play reports progress through `convertStep`'s percent. A 1.x file is not converted.)
 
 ## Renaming, hashes, deletion
+- **World Properties (H.15, 2026-10-15)** — `FileManager::readWorldProperties(file, WorldProps*)` and
+  `applyWorldProperties(file, const WorldProps&)` (`Classes/WorldProps.h`), the world list's Properties
+  screen (ui.md). Both work on a CLOSED world (the screen is list-only) but share the open store when the
+  path matches, as `emodSetHeaderName` does. *Read* opens the store read-only once (`WORLD_HEADER`,
+  `GENERATOR`, `PROVENANCE`, `SIGN_TRAILER` parsed through a local `WorldTrailer` for the sign count,
+  `columnCount`, `created_unix`; the original's size via `originalOf`) and resolves a Classic world's
+  settings with `fm_resolveGenerator()` — the function the load itself now uses, so the screen shows what
+  the next load generates (a legacy world's caves are detected there too, ≤ 64 columns). `.eden`: the raw
+  header and `probeWorldHeight`; archives: `peekArchiveHeader`. Cost (gate 4): one store scan, 25 ms on the
+  M2 for 72,301 columns. *Apply* re-reads, diffs, and writes only what differs, in **one committed
+  batch**: a newer `WORLD_HEADER` (the name; `home`/`pos` lifted) and, for a Classic world, a newer
+  `GENERATOR` — always with the header's own seed and the record's profile, the scale kept on a 1.x or
+  64z world, the detected-caves flag dropped when Caves changed. A legacy/mirror world gets its record on
+  any save (what its next load would write anyway). The newest committed singleton wins, so this is no
+  format change. **The lift (plan §3.4):** when the terrain changed, `home` and `pos` whose column the
+  store does not hold are moved to the new surface — the column is generated with the new settings and
+  the feet go in the first two air cells above its top dirt (a cave mouth drops to its floor first); `pos`
+  is one block above `home`, as the new-world branch sets them. Saved land is not touched; x/z never
+  change; creatures are not moved. Returns `WP_WROTE_*`/`WP_LIFTED_*` bits, 0 (nothing differed) or -1
+  (nothing written). `.eden`: the name only, through `renameWorld`; an archive: nothing. Gate:
+  `--props-selftest` (native/README.md).
 - `setName(file,display)` is stock's header-name rewrite (its only caller is the share flow) and
   does not work — see the last bullet. **`renameWorld(file,display)` (N.4.5, 2026-10-04) is the
   one the port's menu rename uses**. On an `.emod` it appends a new `WORLD_HEADER` record

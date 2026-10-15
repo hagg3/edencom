@@ -175,6 +175,8 @@ nothing (direct copy); `render` applies pitch/yaw rotations then translates by
 `[4096*CHUNK_SIZE-GSIZE/2, +GSIZE]` on x and z. It is skipped when `FileManager::worldUnbounded` (world data outside
 that square, set at load; see save-load.md). Fresh worlds are unchanged (checksum modes depend on the clamp).
 Beyond the map unsaved columns are void; walking off falls to the respawn.
+H.4: a Classic world made with Size "2880 square" (`classic.size == 1`) gets the same clamp, and its
+generator leaves columns outside the square void, so it ends where the bundled map does.
 
 ## Safe vs. risky to modify
 - **Safe:** speed/jump/gravity constants, fly mode, damage values, adding new

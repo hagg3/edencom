@@ -37,6 +37,8 @@
 //                        -settings.bmp (+ -settings-pN.bmp per page) /
 //                        -keybinds.bmp / -hud.bmp / -pausemenu.bmp / -dialog.bmp /
 //                        -menu-world.bmp / -rename.bmp (default prefix eden-shot), -hud-sign.bmp / -sign-prompt.bmp
+//                        (H.15: -props-world-nophoto.bmp / -props-world.bmp / -props-terrain.bmp, World
+//                        Properties after an H.16 photo; --classic=SEED makes the Terrain tab the Classic rows)
 //                        (D.3c, where GL text entry exists), and since 5.9
 //                        -browser.bmp / -browser-current.bmp (Get Worlds; live network unless
 //                        --net-fixtures is given).
@@ -116,6 +118,8 @@
 //                        empty bit follows both transitions and the block really meshes.
 //   --newblocks-selftest D.2a: builds each of ids 112-127 (the 2026 blocks) through buildBlock,
 //                        asserts each meshes, then saves, reloads and reads every id back.
+//   --photo-selftest     H.16: the in-game photo's PNG encoder (Util.mm photoEncodePNG): signature, IHDR
+//                        size/type, IDAT inflates to the exact filtered rows, chunk CRCs. Headless.
 //   --trailer-selftest   D.3a: the sign/command-block trailer model (Classes/WorldTrailer.h). Always
 //                        the synthetic legs (ordering, opaque, the 1 MiB refusal, sidecars, the index);
 //                        each --trailer-file=W.eden|W.emod must parse and re-serialise byte-identical;
@@ -163,6 +167,20 @@
 //                        mesh, a lightbox at night, a walk vs a re-scan + re-mesh, Off -> Classic ->
 //                        Smooth -> Off. Classic unless --shadows= says otherwise.
 //                        --shadow-mutate=nohook|nodirty|nolanding|nodiag must each FAIL it.
+//   --classic-selftest   H.4: the seeded "Classic" generator (generator-plan.md §7 gates 1-3, 6). 1.x
+//                        columns regenerate byte for byte (--classic-fixture=PATH, default the checked-in
+//                        port/tools/fixtures/classic/ cut), pinned per-profile hashes, a 64x64 window vs
+//                        its 16 columns, the GENERATOR record + `.eden` mirror, then worlds in --docs:
+//                        legacy load/detect/record-once, export mirror, mirror import, unknown => void.
+//                        --classic-mutate=tables|trunc|noborder must each FAIL it.
+//   --props-selftest     H.15: World Properties (world-properties-plan.md §6 gates 1-5) on worlds in --docs,
+//                        through the real screen: Caves Off -> Deep (Cancel first) regenerates untouched
+//                        land and keeps the edited column, setting it back restores it; a 1.x world's
+//                        detected caves and its one record; home lifted to the new surface; the Terrain
+//                        tab's shapes (Scale read-only on 1.x, Flat's type row). --props-world=FILE times
+//                        one more read (gate 4). --props-mutate=nogen must FAIL it.
+//   --classic=SEED[,SCALE4]  H.4: a world --stage1 & co. CREATE is a Classic one (new profile, the New
+//                        World tab's defaults; SCALE4 4/6/8/12/16 at --height=256), e.g. for the ring walk.
 //   --shadows=off|classic|smooth  H.2: override the Shadows setting for this run, NOT stored (native
 //                        prefs are global, not per --docs). CI's geometry pair passes --shadows=off.
 //   --light-selfcheck    R.3: also keep the stock dense light array, written by the stock code,
@@ -235,6 +253,7 @@
 #include "../../../Classes/Constants.h"    // CHUNK_SIZE / T_SIZE, for the map-border arithmetic below
 #include "../../../Classes/TerrainGen2.h"  // GSIZE — same, and it is macros only
 #include "../../../Classes/Menu.h"         // Menu::settings, for --shot's keybinds capture
+#include "../../../Classes/WorldPropertiesMenu.h"   // H.15: --props-selftest, --ui-selftest, --shot
 #include "../../../Classes/SettingsMenu.h" // SettingsMenu::showKeybinds()
 #include "../../../Classes/GLDialog.h"    // --ui-selftest drives GLDialog::prompt
 #include "../../../Classes/WorldShare.h"  // --browser-selftest's Share legs (S.5 / S.5c)
@@ -246,6 +265,9 @@
 #include "../../../Classes/Model.h"          // --cmds-selftest: CountActiveCreatures
 #include "../../../Classes/PassTimers.h"     // --pass-probe / --pass-timers (P.1b)
 #include "../../../Classes/Shadow.h"         // --shadows= / --shadow-selftest (H.2)
+#include "../../../Classes/TerrainGenerator.h"   // --classic-selftest (H.4)
+extern int g_classic_cave_votes_cells, g_classic_cave_votes_air;   // FileManager.mm (H.4), --classic-selftest
+extern bool g_wp_test_skip_generator;   // FileManager.mm (H.15), --props-mutate=nogen
 extern Vector colorTable[256];               // --cmds-selftest: the night sky (palette 54)
 extern int g_ring_columns_landed, g_bulk_reloads, g_ring_evict_saves, g_ring_dynamics_dropped, g_autosaves; // Terrain.mm, --evict-selftest
 extern int g_light_test_mutation;            // Lighting.mm (B.5b-1c), --light-mutate
@@ -284,6 +306,9 @@ extern block8* blockarray;                   // Terrain.mm: --mesh-bench's raw w
 #endif
 
 #include <cstddef>
+#include <vector>
+#include <zlib.h>
+bool photoEncodePNG(const unsigned char* rgb, int w, int h, std::vector<unsigned char>& out);   // Classes/Util.mm (H.16)
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -329,6 +354,7 @@ char* eden_menu_name_buffer(void);
 int   eden_menu_create_world(void);
 void  eden_menu_set_pending_world_type(int flat);
 void  eden_menu_set_pending_world_height(int height);
+void  eden_menu_set_pending_generator(const unsigned char* rec28);   // H.4: NULL = none
 
 // Phase N Stage 4.2 (port/src/seam/AppLifecycle_web.mm, cmake-shared into this target).
 int   eden_app_will_background(void);
@@ -448,6 +474,11 @@ struct Options {
     bool passFinish = false;             // --pass-finish: glFinish at every pass boundary (upper bound per pass)
     bool passVsync = false;              // --pass-vsync: keep vsync on (the player's frame; present then holds the vsync wait)
     std::string convertAnswer;           // --convert-answer=upgrade|keep|cancel: --convert-prompt-selftest
+    std::string classicFixture = "../port/tools/fixtures/classic/legacy-1315365413.bin.gz";   // --classic-fixture=
+    std::string classicMutate;           // --classic-mutate=tables|trunc|noborder: --classic-selftest's mutation legs
+    std::string propsMutate;             // --props-mutate=nogen: --props-selftest's mutation leg (H.15)
+    std::string propsWorld;              // --props-world=FILE: --props-selftest times reading this world (gate 4)
+    std::string classicNew;              // --classic=SEED[,SCALE4]: a world open_world() CREATES is Classic (ring-walk gate)
 };
 
 Options g_opt;
@@ -592,6 +623,19 @@ bool open_world(const char* displayName, int height) {
     // equal for the trivial reason that it is empty.
     eden_menu_set_pending_world_type(0);
     eden_menu_set_pending_world_height(height);
+    // H.4: --classic=SEED[,SCALE4] makes a world this call creates a Classic one (new profile,
+    // the New World tab's defaults), as the tab's Play would; an existing world keeps its own.
+    unsigned char rec[CLASSIC_RECORD_BYTES];
+    const bool classic = idx < 0 && !g_opt.classicNew.empty();
+    if (classic) {
+        ClassicGen g;
+        int seed = 0, scale4 = 4;
+        std::sscanf(g_opt.classicNew.c_str(), "%d,%d", &seed, &scale4);
+        classic_default_params(&g, seed);
+        if (height == 256) g.scale4 = (unsigned char)scale4;
+        classic_encode_record(g, rec);
+    }
+    eden_menu_set_pending_generator(classic ? rec : nullptr);
     if (idx < 0) {
         char* buf = eden_menu_name_buffer();
         std::snprintf(buf, 128, "%s", displayName);
@@ -1163,6 +1207,8 @@ void render_kit_page() {
     glPopMatrix();
 }
 
+void ui_tap_rect(CGRect r);   // --ui-selftest's, defined below (the Classic -64 shot taps the height pair)
+
 int run_shot() {
     const char* name = g_opt.world.empty() ? "shot" : g_opt.world.c_str();
     // No vsync: a capture needs drawn frames, not paced ones, and a vsync-blocked swap never
@@ -1212,6 +1258,15 @@ int run_shot() {
             char label[48];
             std::snprintf(label, sizeof(label), "newworld-%s", nw->typeShot(t));
             capture(label);
+            // H.4: the Classic tab at Original 64 (Scale hidden), then back to the default height.
+            CGRect hb;
+            if (!std::strcmp(nw->typeShot(t), "classic") && nw->choice("height") == 256 && nw->choiceRect("height", 1, &hb)) {
+                ui_tap_rect(hb);
+                tick(4);
+                capture("newworld-classic-64");
+                if (nw->choiceRect("height", 0, &hb)) ui_tap_rect(hb);
+                tick(4);
+            }
         }
         nw->showType(first);
         nw->back();
@@ -1343,16 +1398,55 @@ int run_shot() {
     tick(20);
     capture("dialog");
 
-    // N.4.5: the main menu with a world selected (its Rename button) and the rename prompt.
+    // N.4.5: the main menu with a world selected (its Properties button, Rename's slot since H.15)
+    // and the rename prompt (no longer reached from the list, kept as an artefact of the dialog).
+    // H.15: World Properties -- the World tab without a photo, then with camera mode's photo
+    // (taken here, in game, by the H.16 path), and the Terrain tab.
     GLDialog::dismiss();
     tick(2);
+    {
+        const std::string png = std::string(eden_platform_documents_root()) + "/" +
+                                cpstring(World::getWorld->terrain->world_name) + ".png";
+        std::remove(png.c_str());
+    }
     if (quit_to_menu()) {
         tick(60);
         capture("menu-world");
-        if (World::getWorld && World::getWorld->menu && World::getWorld->menu->renameOffered()) {
-            World::getWorld->menu->beginRename();
+        Menu* m = World::getWorld ? World::getWorld->menu : NULL;
+        if (m && m->renameOffered()) {
+            m->beginRename();
             tick(10);
             capture("rename");
+            GLDialog::dismiss();
+            tick(2);
+        }
+        if (m && m->propertiesOffered()) {
+            m->openProperties();
+            tick(10);
+            capture("props-world-nophoto");
+            m->props->back();
+            m->showprops = FALSE;
+            tick(2);
+        }
+        // Back in for the photo: H.16's takeScreenshot() writes <world file>.png from the frame.
+        const int sel = m ? eden_menu_selected_index() : -1;
+        if (sel >= 0 && eden_menu_play() == 1 && tick_until([] { return game_mode() == 1; }, 60000, "game_mode == PLAY")) {
+            tick(60);
+            takeScreenshot();
+            if (quit_to_menu()) {
+                tick(30);
+                if (m->propertiesOffered()) {
+                    m->openProperties();
+                    tick(10);
+                    capture("props-world");
+                    m->props->showTab(WorldPropertiesMenu::TAB_TERRAIN);
+                    tick(5);
+                    capture("props-terrain");
+                    m->props->back();
+                    m->showprops = FALSE;
+                    tick(2);
+                }
+            }
         }
     }
     return 0;
@@ -1906,6 +2000,46 @@ void synthetic() {
 
 }  // namespace trailer_test
 
+// --photo-selftest (H.16): round-trips a gradient through Util.mm's PNG encoder and a zlib decode.
+int run_photo_selftest() {
+    const int w = 301, h = 200;
+    std::vector<unsigned char> rgb((size_t)w * h * 3);
+    for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) {
+        unsigned char* p = &rgb[((size_t)y * w + x) * 3];
+        p[0] = (unsigned char)x; p[1] = (unsigned char)y; p[2] = (unsigned char)(x ^ y);
+    }
+    std::vector<unsigned char> png;
+    int bad = 0;
+    auto chk = [&](bool ok, const char* what) { std::printf("[eden-photo] %s: %s\n", ok ? "PASS" : "FAIL", what); if (!ok) bad++; };
+    chk(photoEncodePNG(rgb.data(), w, h, png), "encode");
+    auto be32 = [&](size_t o) { return ((unsigned)png[o] << 24) | (png[o+1] << 16) | (png[o+2] << 8) | png[o+3]; };
+    static const unsigned char sig[8] = {0x89,'P','N','G',0x0d,0x0a,0x1a,0x0a};
+    chk(png.size() > 33 && !std::memcmp(png.data(), sig, 8), "signature");
+    chk(png.size() > 33 && be32(16) == (unsigned)w && be32(20) == (unsigned)h && png[24] == 8 && png[25] == 2, "IHDR 301x200 8-bit RGB");
+    // Walk the chunks: check each CRC, gather IDAT.
+    std::vector<unsigned char> idat; bool crcOk = true, iend = false;
+    for (size_t o = 8; o + 12 <= png.size();) {
+        unsigned n = be32(o);
+        if (o + 12 + n > png.size()) { crcOk = false; break; }
+        uLong c = crc32(crc32(0L, Z_NULL, 0), &png[o + 4], 4 + n);
+        if ((unsigned)c != be32(o + 8 + n)) crcOk = false;
+        if (!std::memcmp(&png[o + 4], "IDAT", 4)) idat.insert(idat.end(), &png[o + 8], &png[o + 8] + n);
+        if (!std::memcmp(&png[o + 4], "IEND", 4)) iend = true;
+        o += 12 + n;
+    }
+    chk(crcOk && iend, "chunk CRCs and IEND");
+    std::vector<unsigned char> raw((size_t)(w * 3 + 1) * h);
+    uLongf rn = (uLongf)raw.size();
+    bool inf = uncompress(raw.data(), &rn, idat.data(), (uLong)idat.size()) == Z_OK && rn == raw.size();
+    chk(inf, "IDAT inflates to h*(1+3w) bytes");
+    bool same = inf;
+    for (int y = 0; same && y < h; y++)
+        same = raw[(size_t)y * (w * 3 + 1)] == 0 && !std::memcmp(&raw[(size_t)y * (w * 3 + 1) + 1], &rgb[(size_t)y * w * 3], (size_t)w * 3);
+    chk(same, "pixels round-trip, not one flat colour");
+    std::printf("[eden-photo] %s\n", bad ? "FAILED" : "ALL PASS");
+    return bad ? 1 : 0;
+}
+
 int run_trailer_selftest() {
     using namespace trailer_test;
     g_selftestTag = "eden-trailer";
@@ -2006,6 +2140,776 @@ int run_trailer_selftest() {
         }
     }
     std::printf("[eden-trailer] %s (%d failure(s))\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
+    return g_selftestFailures ? 1 : 0;
+}
+
+// ---------------------------------------------------------------------------------------------
+// --classic-selftest  (Stage H / H.4, the seeded "Classic" generator)
+// ---------------------------------------------------------------------------------------------
+// generator-plan.md §7, gates 1, 2, 3 and 6. Pure-function legs first, then the engine's load
+// and save path in --docs:
+//   1. 1.x exactness: every column of --classic-fixture (the 159 unmodified columns of a Sept 2011
+//      world, port/tools/fixtures/classic/) regenerates byte for byte. Trees, leaves, flowers and
+//      clouds over predicted air, and the grass kinds, are wildcards (h3-tools/cmp.py's rule).
+//      --classic-mutate=tables|trunc must FAIL it (an earlier random() caller; truncation).
+//   2. Cross-target hashes: SHA-256 (first 16 hex) over 256 decorated columns per profile, pinned below and
+//      identical on every target. A mismatch is a stop; fp contraction is the first suspect.
+//   3. Seams: one 64x64 window equals the 16 columns it covers generated one at a time (the new
+//      profile's cross-border trees; the 2x/4x lattice). --classic-mutate=noborder must FAIL it.
+//   4. The GENERATOR record and its `.eden` mirror: round trip; unknown revisions refused.
+//   5. Engine: a 1.x world loads legacy (caves detected off), its unsaved columns are the pure
+//      function's, and it writes GENERATOR once; an exported `.eden` carries the mirror; a mirror
+//      in the header is honoured; an unknown record loads void and saves nothing.
+namespace classic_test {
+
+// Recorded on macOS arm64 (2026-10-15). Every target must print the same: these are the bits of
+// the baked tables, the 1.x float order and -ffp-contract=off. Re-pin only for a deliberate
+// generator change (a new revision), in the same commit.
+const char* const kPins[][2] = {
+    {"legacy",       "b822c5c1cece9f0b"},
+    {"new1x",        "63ba029b591b0787"},
+    {"4x-2011",      "b189472315ffee9d"},
+    {"2x-deep-wild", "b43e84546435f737"},
+};
+
+struct Fixture { int seed = 0, height = 0; std::vector<std::pair<int, int> > keys; std::vector<uint8_t> types; };
+
+bool load_fixture(const std::string& path, Fixture& fx, std::string& err) {
+    gzFile f = gzopen(path.c_str(), "rb");
+    if (!f) { err = "cannot open " + path; return false; }
+    std::vector<uint8_t> b;
+    uint8_t buf[65536];
+    int n;
+    while ((n = gzread(f, buf, sizeof buf)) > 0) b.insert(b.end(), buf, buf + n);
+    gzclose(f);
+    if (b.size() < 20 || std::memcmp(&b[0], "EMCLFX1", 8) != 0) { err = "not a classic fixture"; return false; }
+    int32_t h[3];
+    std::memcpy(h, &b[8], 12);
+    fx.seed = h[0]; fx.height = h[1];
+    const size_t col = 256u * (size_t)fx.height;
+    if (fx.height != 64 || b.size() != 20 + (size_t)h[2] * (8 + col)) { err = "fixture size mismatch"; return false; }
+    for (int i = 0; i < h[2]; ++i) {
+        const uint8_t* p = &b[20 + (size_t)i * (8 + col)];
+        int32_t k[2];
+        std::memcpy(k, p, 8);
+        fx.keys.push_back(std::make_pair(k[0], k[1]));
+        fx.types.insert(fx.types.end(), p + 8, p + 8 + col);
+    }
+    return true;
+}
+
+std::string hex16(emod::Sha256& h) {
+    uint8_t d[32];
+    h.final(d);
+    char s[17];
+    for (int i = 0; i < 8; ++i) std::snprintf(s + 2 * i, 3, "%02x", d[i]);
+    return s;
+}
+
+struct Profile { const char* name; ClassicGen g; int height; };
+std::vector<Profile> profiles() {
+    std::vector<Profile> v;
+    Profile p;
+    p.name = "legacy"; classic_legacy_params(&p.g, 80866); p.height = 64; v.push_back(p);
+    p.name = "new1x"; classic_default_params(&p.g, 1234567); p.g.caves = CLASSIC_CAVES_2011; p.g.trees = 3;
+    p.height = 64; v.push_back(p);
+    p.name = "4x-2011"; classic_default_params(&p.g, 777); p.g.scale4 = 16; p.g.caves = CLASSIC_CAVES_2011;
+    p.height = 256; v.push_back(p);
+    p.name = "2x-deep-wild"; classic_default_params(&p.g, 4242); p.g.scale4 = 8; p.g.hilliness = 4;
+    p.g.caves = CLASSIC_CAVES_DEEP; p.g.trees = 1; p.height = 256; v.push_back(p);
+    return v;
+}
+
+// Walks an .emod's framed records (docs/emod-file-format.md: 64-byte file header, then 32-byte
+// record headers "EmR1", type @4, payload length @20, payloads padded to 8) and counts one type.
+int count_records(const std::string& path, int type) {
+    FILE* f = emod::io::fopen_utf8(path.c_str(), "rb");
+    if (!f) return -1;
+    std::vector<uint8_t> b;
+    uint8_t buf[65536];
+    size_t n;
+    while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) b.insert(b.end(), buf, buf + n);
+    std::fclose(f);
+    int count = 0;
+    for (size_t off = emod::FILE_HEADER; off + emod::REC_HEADER <= b.size();) {
+        if (std::memcmp(&b[off], "EmR1", 4) != 0) return -2;
+        uint32_t plen;
+        std::memcpy(&plen, &b[off + 20], 4);
+        count += b[off + 4] == type;
+        off += emod::REC_HEADER + ((plen + 7) & ~7u);
+    }
+    return count;
+}
+
+// A world file in --docs: header (seed, home/pos at block x,z), 200 empty creature slots, the given
+// columns (64z, types (x*16+z)*64+y, paint 0) and optionally a GENERATOR record.
+bool write_world(const std::string& path, const char* name, int seed, int hx, int hz,
+                 const Fixture* fx, const uint8_t* genRecord, const uint8_t* mirror, std::string& err) {
+    emod::io::remove_file(path);
+    emod::EdenWorldStore st;
+    if (!st.create(path.c_str(), 4, 0)) { err = st.error(); return false; }
+    st.beginBatch();
+    WorldFileHeader h;
+    std::memset(&h, 0, sizeof h);
+    h.level_seed = seed;
+    h.pos.x = h.home.x = (float)hx; h.pos.z = h.home.z = (float)hz; h.pos.y = h.home.y = 60;
+    std::snprintf(h.name, sizeof h.name, "%s", name);
+    h.version = 4;
+    h.goldencubes = 10;
+    for (int i = 0; i < 16; ++i) h.skycolors[i] = COLOR_NORMAL_BLUE;
+    if (mirror) std::memcpy(h.reserved, mirror, 36);
+    std::vector<uint8_t> cr(200 * sizeof(EntityData), 0);
+    for (size_t o = 0; o < cr.size(); o += sizeof(EntityData)) { int32_t t = -1; std::memcpy(&cr[o + 28], &t, 4); }
+    st.putRecord(emod::T_WORLD_HEADER, &h, sizeof h);
+    st.putRecord(emod::T_CREATURES, &cr[0], cr.size());
+    if (genRecord && !st.putRecord(emod::T_GENERATOR, genRecord, CLASSIC_RECORD_BYTES)) { err = st.error(); return false; }
+    if (fx) {
+        std::vector<uint8_t> col(4 * emod::BAND, 0);
+        for (size_t i = 0; i < fx->keys.size(); ++i) {
+            std::fill(col.begin(), col.end(), 0);
+            const uint8_t* t = &fx->types[i * 256 * 64];
+            for (int xz = 0; xz < 256; ++xz)
+                for (int y = 0; y < 64; ++y) col[(size_t)(y / 16) * emod::BAND + xz * 16 + y % 16] = t[xz * 64 + y];
+            if (!st.putColumn(fx->keys[i].first, fx->keys[i].second, &col[0])) { err = st.error(); return false; }
+        }
+    }
+    if (!st.commitBatch()) { err = st.error(); return false; }
+    st.close();
+    return true;
+}
+
+bool play_file(const char* file) {
+    World::getWorld->menu->loadWorlds();
+    int idx = -1;
+    for (int i = 0; i < eden_menu_world_count(); ++i)
+        if (std::strcmp(eden_menu_world_file(i), file) == 0) idx = i;
+    if (idx < 0) { std::fprintf(stderr, "[eden-classic] %s is not listed\n", file); return false; }
+    eden_menu_select(idx);
+    if (eden_menu_play() != 1) { std::fprintf(stderr, "[eden-classic] menu_play refused %s\n", file); return false; }
+    return tick_until([] { return game_mode() == 1; }, 60000, "game_mode == PLAY");
+}
+
+// Every cell of resident column (cx,cz) against the pure function; returns mismatches (-1: not resident).
+int column_vs_pure(const ClassicGen& g, int cx, int cz, int height) {
+    if (!isColumnResident(cx * 16, cz * 16)) return -1;
+    std::vector<block8> t((size_t)256 * height);
+    std::vector<color8> c((size_t)256 * height);
+    classic_generate_window(g, cx * 16, cz * 16, 16, 16, height, &t[0], &c[0], true);
+    int bad = 0;
+    for (int x = 0; x < 16; ++x)
+        for (int z = 0; z < 16; ++z)
+            for (int y = 0; y < height; ++y)
+                bad += getLandc(cx * 16 + x, cz * 16 + z, y) != t[(size_t)(x * 16 + z) * height + y];
+    return bad;
+}
+
+}  // namespace classic_test
+
+int run_classic_selftest() {
+    using namespace classic_test;
+    g_selftestTag = "eden-classic";
+    char d[512];
+    const std::string& mut = g_opt.classicMutate;
+    classic_set_mutation(mut == "tables" ? 1 : mut == "trunc" ? 2 : mut == "noborder" ? 3 : 0);
+
+    // ---- 1. 1.x exactness
+    Fixture fx;
+    std::string err;
+    const bool haveFx = load_fixture(g_opt.classicFixture, fx, err);
+    check(haveFx, "the 1.x fixture loads", haveFx ? g_opt.classicFixture.c_str() : err.c_str());
+    if (haveFx) {
+        std::vector<block8> t(256 * 64);
+        std::vector<color8> c(256 * 64);
+        ClassicGen g;
+        classic_legacy_params(&g, fx.seed);
+        int exact = 0;
+        long cells = 0, wrong = 0;
+        for (size_t i = 0; i < fx.keys.size(); ++i) {
+            classic_generate_window(g, fx.keys[i].first * 16, fx.keys[i].second * 16, 16, 16, 64, &t[0], &c[0], false);
+            const uint8_t* a = &fx.types[i * 256 * 64];
+            long w = 0;
+            for (int k = 0; k < 256 * 64; ++k) {
+                int av = (int8_t)a[k], ev = t[k];
+                if (av == 8 || av == 11 || av == 12) av = 3;
+                if (ev == 0 && (av == 0 || av == 5 || av == 6 || av == 19 || av == 73)) continue;
+                ++cells;
+                w += av != ev;
+            }
+            wrong += w;
+            exact += w == 0;
+        }
+        std::snprintf(d, sizeof d, "seed %d: %d of %zu columns exact, %ld of %ld cells differ",
+                      fx.seed, exact, fx.keys.size(), wrong, cells);
+        check(exact == (int)fx.keys.size() && cells > 0, "1.x columns regenerate byte for byte", d);
+    }
+
+    // ---- 2. hashes
+    std::vector<Profile> ps = profiles();
+    for (size_t pi = 0; pi < ps.size(); ++pi) {
+        const Profile& p = ps[pi];
+        std::vector<block8> t((size_t)256 * p.height);
+        std::vector<color8> c((size_t)256 * p.height);
+        emod::Sha256 h;
+        Uint64 ns = 0;
+        for (int cx = 4088; cx < 4104; ++cx)
+            for (int cz = 4088; cz < 4104; ++cz) {
+                const Uint64 t0 = SDL_GetTicksNS();
+                classic_generate_window(p.g, cx * 16, cz * 16, 16, 16, p.height, &t[0], &c[0], true);
+                ns += SDL_GetTicksNS() - t0;
+                h.update(&t[0], t.size());
+                h.update(&c[0], c.size());
+            }
+        const double ms = ns / 1e6 / 256;
+        const std::string got = hex16(h);
+        std::printf("[eden-classic] hash %s %s (%.3f ms/column)\n", p.name, got.c_str(), ms);
+        std::snprintf(d, sizeof d, "%s: got %s, pinned %s", p.name, got.c_str(), kPins[pi][1]);
+        check(got == kPins[pi][1], "profile hash matches its pin", d);
+    }
+
+    // ---- 3. seams
+    for (size_t pi = 1; pi < ps.size(); ++pi) {
+        const Profile& p = ps[pi];
+        const int H = p.height, X0 = 4096 * 16, Z0 = 4097 * 16;
+        std::vector<block8> wt((size_t)64 * 64 * H), t((size_t)256 * H);
+        std::vector<color8> wc((size_t)64 * 64 * H), c((size_t)256 * H);
+        classic_generate_window(p.g, X0, Z0, 64, 64, H, &wt[0], &wc[0], true);
+        long bad = 0, trees = 0;
+        for (int i = 0; i < 4; ++i)
+            for (int j = 0; j < 4; ++j) {
+                classic_generate_window(p.g, X0 + i * 16, Z0 + j * 16, 16, 16, H, &t[0], &c[0], true);
+                for (int x = 0; x < 16; ++x)
+                    for (int z = 0; z < 16; ++z)
+                        for (int y = 0; y < H; ++y) {
+                            const size_t a = ((size_t)(i * 16 + x) * 64 + (j * 16 + z)) * H + y, b = ((size_t)x * 16 + z) * H + y;
+                            bad += wt[a] != t[b] || wc[a] != c[b];
+                            trees += t[b] == TYPE_TREE;
+                        }
+            }
+        std::snprintf(d, sizeof d, "%s: %ld cells differ (%ld trunk cells)", p.name, bad, trees);
+        check(bad == 0 && trees > 0, "a 64x64 window equals its 16 columns", d);
+    }
+    if (!mut.empty()) {
+        std::printf("[eden-classic] %s (%d failure(s)) [mutation %s]\n", g_selftestFailures ? "FAILURES" : "ALL PASS",
+                    g_selftestFailures, mut.c_str());
+        return g_selftestFailures ? 1 : 0;
+    }
+
+    // ---- 4. the record
+    {
+        ClassicGen a = ps[2].g, b;
+        a.flags = 1;
+        uint8_t r[CLASSIC_RECORD_BYTES], m[36];
+        classic_encode_record(a, r);
+        bool ok = classic_decode_record(r, sizeof r, &b) && std::memcmp(&a, &b, sizeof a) == 0;
+        classic_encode_mirror(a, m);
+        ClassicGen mb;
+        ok = ok && classic_decode_mirror(m, &mb) && std::memcmp(&a, &mb, sizeof a) == 0;
+        check(ok, "GENERATOR record and mirror round-trip", "");
+        uint8_t r2[CLASSIC_RECORD_BYTES];
+        std::memcpy(r2, r, sizeof r); r2[2] = 2;
+        bool refused = !classic_decode_record(r2, sizeof r2, &b);
+        std::memcpy(r2, r, sizeof r); r2[27] = 1;
+        refused = refused && !classic_decode_record(r2, sizeof r2, &b);
+        std::memcpy(r2, r, sizeof r); r2[8] = 5;
+        refused = refused && !classic_decode_record(r2, sizeof r2, &b) && !classic_decode_record(r, 27, &b);
+        m[20] ^= 1;
+        refused = refused && !classic_decode_mirror(m, &b);
+        check(refused, "unknown revisions, bad fields and a bad mirror CRC are refused", "");
+    }
+
+    // ---- 5. engine: load, generate, save
+    if (haveFx) {
+        const std::string docs = eden_platform_documents_root();
+        TerrainGenerator* tg = World::getWorld->terrain->tgen;
+        const int hx = fx.keys[0].first * 16 + 8, hz = fx.keys[0].second * 16 + 8;
+        // (a) a 1.x world
+        const std::string lp = docs + "/classic-legacy.emod";
+        bool ok = write_world(lp, "classic legacy", fx.seed, hx, hz, &fx, NULL, NULL, err) && play_file("classic-legacy.emod");
+        check(ok, "a 1.x world (fixture columns, no record) plays", err.c_str());
+        if (ok) {
+            tick(30);
+            const ClassicGen& g = tg->classic;
+            std::snprintf(d, sizeof d, "state %d profile %d caves %d flags %d, votes %d/%d", tg->classicState, g.profile,
+                          g.caves, g.flags, g_classic_cave_votes_air, g_classic_cave_votes_cells);
+            check(tg->classicState == TerrainGenerator::CLASSIC_STATE_SET && g.profile == CLASSIC_PROFILE_LEGACY &&
+                  g.caves == CLASSIC_CAVES_OFF && g.flags == 1 && g_classic_cave_votes_cells >= 2000,
+                  "it loads the legacy profile, caves detected off", d);
+            std::set<std::pair<int, int> > saved(fx.keys.begin(), fx.keys.end());
+            int tested = 0, bad = 0;
+            for (int dx = -4; dx <= 4 && tested < 6; ++dx)
+                for (int dz = -4; dz <= 4 && tested < 6; ++dz) {
+                    const int cx = fx.keys[0].first + dx, cz = fx.keys[0].second + dz;
+                    if (saved.count(std::make_pair(cx, cz))) continue;
+                    const int b = column_vs_pure(g, cx, cz, g_world_height);
+                    if (b < 0) continue;
+                    ++tested; bad += b;
+                }
+            std::snprintf(d, sizeof d, "%d unsaved columns, %d cells differ", tested, bad);
+            check(tested == 6 && bad == 0, "its unsaved columns are the pure function's", d);
+            save_world();
+            save_world();
+            const int n9 = count_records(lp, emod::T_GENERATOR);
+            std::snprintf(d, sizeof d, "%d GENERATOR record(s) after two saves", n9);
+            check(n9 == 1, "a legacy world writes GENERATOR exactly once", d);
+            quit_to_menu();
+            // the exported `.eden` carries the mirror
+            const std::string ep = docs + "/classic-legacy-export.eden";
+            emod::ExportOptions eo;
+            std::string xerr;
+            bool exported = emod::export_world_file(lp, ep, eo, false, NULL, &xerr);
+            ClassicGen mg;
+            bool mirrored = false;
+            if (exported) {
+                FILE* f = emod::io::fopen_utf8(ep.c_str(), "rb");
+                WorldFileHeader eh;
+                mirrored = f && std::fread(&eh, 1, sizeof eh, f) == sizeof eh &&
+                           classic_decode_mirror((const unsigned char*)eh.reserved, &mg) &&
+                           mg.seed == fx.seed && mg.profile == CLASSIC_PROFILE_LEGACY && mg.flags == 1;
+                if (f) std::fclose(f);
+                emod::io::remove_file(ep);
+            }
+            check(exported && mirrored, "the exported .eden carries the GENERATOR mirror", xerr.c_str());
+        }
+        // (b) a mirror in the header (an imported Classic `.eden`) is honoured and recorded
+        ClassicGen mg;
+        classic_default_params(&mg, 31337);
+        mg.trees = 3; mg.hilliness = 3; mg.caves = CLASSIC_CAVES_DEEP;
+        uint8_t mirror[36];
+        classic_encode_mirror(mg, mirror);
+        const std::string mp = docs + "/classic-mirror.emod";
+        ok = write_world(mp, "classic mirror", 31337, 4096 * 16 + 8, 4096 * 16 + 8, NULL, NULL, mirror, err) &&
+             play_file("classic-mirror.emod");
+        check(ok, "a world whose header holds a mirror plays", err.c_str());
+        if (ok) {
+            tick(30);
+            const bool same = tg->classicState == TerrainGenerator::CLASSIC_STATE_SET &&
+                              std::memcmp(&tg->classic, &mg, sizeof mg) == 0;
+            const int b = column_vs_pure(mg, 4096, 4096, g_world_height);
+            std::snprintf(d, sizeof d, "state %d, trees %d caves %d, spawn column %d cells differ", tg->classicState,
+                          tg->classic.trees, tg->classic.caves, b);
+            check(same && b == 0, "the mirror's settings generate the world", d);
+            save_world();
+            const int n9 = count_records(mp, emod::T_GENERATOR);
+            emod::EdenWorldStore st;
+            std::vector<uint8_t> rec;
+            ClassicGen back;
+            const bool rd = st.open(mp.c_str(), false) && st.readRecord(emod::T_GENERATOR, rec) == emod::EdenWorldStore::READ_OK &&
+                            classic_decode_record(&rec[0], rec.size(), &back) && std::memcmp(&back, &mg, sizeof mg) == 0;
+            st.close();
+            std::snprintf(d, sizeof d, "%d record(s), decodes to the mirror: %d", n9, rd ? 1 : 0);
+            check(n9 == 1 && rd, "the next save records it", d);
+            quit_to_menu();
+        }
+        // (c) a GENERATOR from a newer Emod: void, nothing saved
+        uint8_t future[CLASSIC_RECORD_BYTES];
+        classic_encode_record(mg, future);
+        future[2] = 2;   // revision 2
+        const std::string vp = docs + "/classic-void.emod";
+        ok = write_world(vp, "classic void", 31337, 4096 * 16 + 8, 4096 * 16 + 8, NULL, future, NULL, err) &&
+             play_file("classic-void.emod");
+        check(ok, "a world with an unknown GENERATOR plays", err.c_str());
+        if (ok) {
+            tick(10);
+            int solid = 0;
+            for (int x = 0; x < 16; ++x)
+                for (int z = 0; z < 16; ++z)
+                    for (int y = 0; y < g_world_height; ++y) solid += getLandc(4096 * 16 + x, 4096 * 16 + z, y) != 0;
+            std::snprintf(d, sizeof d, "state %d, %d solid cells at spawn", tg->classicState, solid);
+            check(tg->classicState == TerrainGenerator::CLASSIC_STATE_VOID && solid == 0, "it loads void", d);
+            save_world();
+            emod::EdenWorldStore st;
+            const bool opened = st.open(vp.c_str(), false);
+            std::snprintf(d, sizeof d, "%zu columns, %d GENERATOR record(s)", opened ? st.columnCount() : (size_t)0,
+                          count_records(vp, emod::T_GENERATOR));
+            check(opened && st.columnCount() == 0 && count_records(vp, emod::T_GENERATOR) == 1,
+                  "saving it stores no columns and keeps the record", d);
+            st.close();
+            quit_to_menu();
+        }
+    }
+
+    std::printf("[eden-classic] %s (%d failure(s))\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
+    return g_selftestFailures ? 1 : 0;
+}
+
+// ---------------------------------------------------------------------------------------------
+// --props-selftest  (Stage H / H.15, World Properties)
+// ---------------------------------------------------------------------------------------------
+// world-properties-plan.md §6, gates 1-5, on worlds written into --docs and driven through the
+// real screen (taps on Properties, the Terrain tab, Save, the confirm's buttons):
+//   1. Round trip: a Classic world with one edited column; Caves Off -> Deep through the screen
+//      (Cancel on the confirm first: nothing written); reopened, untouched columns are the new
+//      settings' pure function and differ from the old, the edited column is byte-equal; setting
+//      Caves back restores the untouched land. --props-mutate=nogen (skip the GENERATOR append)
+//      must FAIL it.
+//   2. Legacy: the H.4 1.x fixture, no record: detected caves shown; a name-only save raises no
+//      dialog and writes exactly one GENERATOR (profile 1, detected flag kept).
+//   3. Lift: home in an unsaved column lands on the new surface (solid under, two air above);
+//      pos in a saved column keeps its y.
+//   4. Cost: every open's time is printed; --props-world=FILE (a world in --docs) times one more.
+//   5. UI: Scale read-only on a 256z 1.x world and a slider on a new one; Flat shows its type only.
+void ui_tap(float x, float yUp);
+void ui_tap_rect(CGRect r);
+void push_text(const char* utf8);
+void push_tap_key(SDL_Scancode sc);
+namespace props_test {
+
+// classic_test::write_world at either height: header, empty creature slots, an optional record.
+bool write_bare(const std::string& path, const char* name, int seed, int bands, int hx, int hz,
+                const uint8_t* genRecord, std::string& err) {
+    emod::io::remove_file(path);
+    emod::EdenWorldStore st;
+    if (!st.create(path.c_str(), bands, 0)) { err = st.error(); return false; }
+    st.beginBatch();
+    WorldFileHeader h;
+    std::memset(&h, 0, sizeof h);
+    h.level_seed = seed;
+    h.pos.x = h.home.x = (float)hx; h.pos.z = h.home.z = (float)hz; h.pos.y = h.home.y = 60;
+    std::snprintf(h.name, sizeof h.name, "%s", name);
+    h.version = bands == 16 ? 5 : 4;
+    h.goldencubes = 10;
+    for (int i = 0; i < 16; ++i) h.skycolors[i] = COLOR_NORMAL_BLUE;
+    const int slots = bands == 16 ? 400 : 200;
+    std::vector<uint8_t> cr(slots * sizeof(EntityData), 0);
+    for (size_t o = 0; o < cr.size(); o += sizeof(EntityData)) { int32_t t = -1; std::memcpy(&cr[o + 28], &t, 4); }
+    st.putRecord(emod::T_WORLD_HEADER, &h, sizeof h);
+    st.putRecord(emod::T_CREATURES, &cr[0], cr.size());
+    if (genRecord && !st.putRecord(emod::T_GENERATOR, genRecord, CLASSIC_RECORD_BYTES)) { err = st.error(); return false; }
+    if (!st.commitBatch()) { err = st.error(); return false; }
+    st.close();
+    return true;
+}
+
+Menu* menu() { return World::getWorld->menu; }
+
+// Selects `file` in the list and taps Properties.
+bool open_props(const char* file) {
+    menu()->loadWorlds();
+    int idx = -1;
+    for (int i = 0; i < eden_menu_world_count(); ++i)
+        if (std::strcmp(eden_menu_world_file(i), file) == 0) idx = i;
+    if (idx < 0) { std::fprintf(stderr, "[eden-props] %s is not listed\n", file); return false; }
+    eden_menu_select(idx);
+    tick(2);
+    ui_tap_rect(menu()->controlRect("properties"));
+    tick(3);
+    WorldPropertiesMenu* wp = menu()->props;
+    if (menu()->showprops && wp->isOpen())
+        std::printf("[eden-props] open %s: %.1f ms (%d columns)\n", file, wp->props().openMs, wp->props().columns);
+    return menu()->showprops && wp->isOpen();
+}
+void close_props() {
+    if (menu()->showprops) { menu()->props->back(); menu()->showprops = FALSE; }
+    tick(2);
+}
+void tap_choice(const char* key, int option) {
+    CGRect r;
+    if (menu()->props->choiceRect(key, option, &r)) ui_tap_rect(r);
+    tick(2);
+}
+void tap_dialog(int j) {
+    CGRect r;
+    if (GLDialog::buttonRect(j, &r)) ui_tap_rect(r);
+    tick(3);
+}
+long long file_size(const std::string& p) {
+    FILE* f = emod::io::fopen_utf8(p.c_str(), "rb");
+    if (!f) return -1;
+    std::fseek(f, 0, SEEK_END);
+    const long long n = std::ftell(f);
+    std::fclose(f);
+    return n;
+}
+bool read_header(const std::string& p, WorldFileHeader* h) {
+    emod::EdenWorldStore st;
+    std::vector<uint8_t> raw;
+    if (!st.open(p.c_str(), false) || st.readRecord(emod::T_WORLD_HEADER, raw) != emod::EdenWorldStore::READ_OK ||
+        raw.size() != sizeof *h) return false;
+    std::memcpy(h, &raw[0], sizeof *h);
+    return true;
+}
+bool read_gen(const std::string& p, ClassicGen* g) {
+    emod::EdenWorldStore st;
+    std::vector<uint8_t> rec;
+    return st.open(p.c_str(), false) && st.readRecord(emod::T_GENERATOR, rec) == emod::EdenWorldStore::READ_OK &&
+           classic_decode_record(&rec[0], rec.size(), g);
+}
+// Resident cells of column (cx,cz) against an `.emod` column's type bytes (band-major, y fastest).
+int column_vs_bytes(int cx, int cz, const std::vector<uint8_t>& col, int height) {
+    if (!isColumnResident(cx * 16, cz * 16)) return -1;
+    int bad = 0;
+    for (int x = 0; x < 16; ++x)
+        for (int z = 0; z < 16; ++z)
+            for (int y = 0; y < height; ++y)
+                bad += getLandc(cx * 16 + x, cz * 16 + z, y) != (block8)col[(size_t)(y / 16) * emod::BAND + (x * 16 + z) * 16 + y % 16];
+    return bad;
+}
+
+}  // namespace props_test
+
+int run_props_selftest() {
+    using namespace props_test;
+    using classic_test::column_vs_pure;
+    using classic_test::count_records;
+    using classic_test::play_file;
+    g_selftestTag = "eden-props";
+    g_tickInput = true;            // the name field is typed into (headless pump_events drains SDL's queue only with this)
+    char d[512];
+    std::string err;
+    const std::string docs = eden_platform_documents_root();
+    FileManager* fm = World::getWorld->fm;
+    const bool mut = g_opt.propsMutate == "nogen";
+    g_wp_test_skip_generator = mut;
+    const int S = 4096 * 16 + 8;
+
+    // ---- 1. round trip through the screen
+    ClassicGen g0;
+    classic_default_params(&g0, 4242);
+    uint8_t rec[CLASSIC_RECORD_BYTES];
+    classic_encode_record(g0, rec);
+    const std::string rp = docs + "/props-round.emod";
+    bool ok = write_bare(rp, "props round", 4242, 4, S, S, rec, err) && play_file("props-round.emod");
+    check(ok, "a Classic world plays", err.c_str());
+    if (!ok) return 1;
+    tick(30);
+    const int ecx = 4098, ecz = 4096;                      // the edited column
+    std::vector<std::pair<int, int> > untouched;           // resident, never edited
+    for (int dx = -1; dx <= 1; ++dx)
+        for (int dz = -2; dz <= 0; ++dz) untouched.push_back(std::make_pair(4096 + dx, 4096 + dz));
+    int bad = 0, tested = 0;
+    for (size_t i = 0; i < untouched.size(); ++i) {
+        const int b = column_vs_pure(g0, untouched[i].first, untouched[i].second, 64);
+        if (b >= 0) { ++tested; bad += b; }
+    }
+    std::snprintf(d, sizeof d, "%d columns, %d cells differ", tested, bad);
+    check(tested == (int)untouched.size() && bad == 0, "its columns are the record's pure function", d);
+    Terrain* ter = World::getWorld->terrain;
+    for (int y = 1; y < 63; ++y) ter->updateChunks(ecx * 16 + 5, ecz * 16 + 5, y, TYPE_WOOD);
+    tick(5);
+    save_world();
+    quit_to_menu();
+    tick(10);
+    std::vector<uint8_t> edited(4 * emod::BAND);
+    {
+        emod::EdenWorldStore st;
+        ok = st.open(rp.c_str(), false) && st.hasColumn(ecx, ecz) &&
+             st.readColumn(ecx, ecz, &edited[0]) == emod::EdenWorldStore::READ_OK;
+        check(ok, "the edited column is saved", "");
+    }
+
+    ok = open_props("props-round.emod");
+    WorldPropertiesMenu* wp = menu()->props;
+    std::snprintf(d, sizeof d, "type %d source %d seed \"%s\" photo %d", wp->props().type, wp->props().genSource,
+                  wp->value("seed"), wp->rowVisible("photo") ? 1 : 0);
+    check(ok && wp->props().type == WP_TYPE_CLASSIC && wp->props().genSource == WP_GEN_RECORD &&
+          std::strcmp(wp->value("seed"), "4242") == 0 && !wp->rowEditable("seed"),
+          "Properties opens on a Classic world, the seed read-only", d);
+    ui_tap_rect(wp->tabRect(WorldPropertiesMenu::TAB_TERRAIN));
+    tick(2);
+    const bool rows = wp->rowEditable("hills") && wp->rowEditable("caves") && wp->rowEditable("trees") &&
+                      wp->rowEditable("flowers") && wp->rowEditable("clouds") && wp->rowEditable("size") &&
+                      !wp->rowVisible("scale") && !wp->rowVisible("seed");
+    check(wp->tab() == WorldPropertiesMenu::TAB_TERRAIN && rows, "the Terrain tab has the Classic rows (no Scale at 64)", "");
+    tap_choice("caves", 2);
+    std::snprintf(d, sizeof d, "caves %d changed %d save %d", wp->choice("caves"), wp->terrainChanged() ? 1 : 0,
+                  wp->saveEnabled() ? 1 : 0);
+    check(wp->choice("caves") == CLASSIC_CAVES_DEEP && wp->terrainChanged() && wp->saveEnabled(), "Caves -> Deep enables Save", d);
+    const long long size0 = file_size(rp);
+    ui_tap_rect(wp->controlRect("save"));
+    tick(3);
+    check(GLDialog::active() && wp->isOpen(), "a terrain save raises the confirm", "");
+    tap_dialog(1);   // Cancel
+    std::snprintf(d, sizeof d, "dialog %d open %d bytes %lld -> %lld", GLDialog::active() ? 1 : 0, wp->isOpen() ? 1 : 0,
+                  size0, file_size(rp));
+    check(!GLDialog::active() && wp->isOpen() && file_size(rp) == size0, "Cancel writes nothing and stays on the screen", d);
+    ui_tap_rect(wp->controlRect("save"));
+    tick(3);
+    tap_dialog(0);   // Change terrain
+    const int n9 = count_records(rp, emod::T_GENERATOR);
+    std::snprintf(d, sizeof d, "open %d result %d, %d GENERATOR record(s)", wp->isOpen() ? 1 : 0, wp->lastResult(), n9);
+    check(!wp->isOpen() && !menu()->showprops && wp->lastResult() >= 0 && (wp->lastResult() & WP_WROTE_GENERATOR) && n9 == 2,
+          "Change terrain appends a newer GENERATOR and closes", d);
+
+    ClassicGen g1 = g0;
+    g1.caves = CLASSIC_CAVES_DEEP;
+    ok = play_file("props-round.emod");
+    check(ok, "it reopens", "");
+    if (ok) {
+        tick(30);
+        TerrainGenerator* tg = World::getWorld->terrain->tgen;
+        int newBad = 0, oldDiff = 0;
+        tested = 0;
+        for (size_t i = 0; i < untouched.size(); ++i) {
+            const int b = column_vs_pure(g1, untouched[i].first, untouched[i].second, 64);
+            if (b < 0) continue;
+            ++tested; newBad += b;
+            oldDiff += column_vs_pure(g0, untouched[i].first, untouched[i].second, 64);
+        }
+        std::snprintf(d, sizeof d, "caves %d; %d columns: %d cells off the new settings, %d differ from the old",
+                      tg->classic.caves, tested, newBad, oldDiff);
+        check(tg->classic.caves == CLASSIC_CAVES_DEEP && tested == (int)untouched.size() && newBad == 0 && oldDiff > 0,
+              "untouched land is regenerated with the new settings", d);
+        const int eb = column_vs_bytes(ecx, ecz, edited, 64);
+        std::snprintf(d, sizeof d, "%d cells differ from the saved column", eb);
+        check(eb == 0, "the edited column is byte-equal", d);
+        quit_to_menu();
+        tick(10);
+    }
+    if (mut) {
+        std::printf("[eden-props] %s (%d failure(s)) [mutation nogen]\n", g_selftestFailures ? "FAILURES" : "ALL PASS",
+                    g_selftestFailures);
+        return g_selftestFailures ? 1 : 0;
+    }
+    {
+        WorldProps p;
+        ok = fm->readWorldProperties(@"props-round.emod", &p);
+        p.gen.caves = CLASSIC_CAVES_OFF;
+        const int r = ok ? fm->applyWorldProperties(@"props-round.emod", p) : -1;
+        ok = r >= 0 && (r & WP_WROTE_GENERATOR) && play_file("props-round.emod");
+        int back = 0;
+        tested = 0;
+        if (ok) {
+            tick(30);
+            for (size_t i = 0; i < untouched.size(); ++i) {
+                const int b = column_vs_pure(g0, untouched[i].first, untouched[i].second, 64);
+                if (b >= 0) { ++tested; back += b; }
+            }
+            quit_to_menu();
+            tick(10);
+        }
+        std::snprintf(d, sizeof d, "result %d, %d columns, %d cells differ from the original", r, tested, back);
+        check(ok && tested == (int)untouched.size() && back == 0, "setting Caves back brings the original land back", d);
+        emod::EdenWorldStore st;
+        check(st.open(rp.c_str(), false) && !st.damaged() && count_records(rp, emod::T_GENERATOR) == 3,
+              "the file reads undamaged, three GENERATOR versions", st.error().c_str());
+    }
+
+    // ---- 3. lift: home in an unsaved column, pos in the saved (edited) one
+    {
+        emod::EdenWorldStore st;
+        std::vector<uint8_t> raw;
+        WorldFileHeader h;
+        ok = st.open(rp.c_str(), true) && st.readRecord(emod::T_WORLD_HEADER, raw) == emod::EdenWorldStore::READ_OK;
+        if (ok) {
+            std::memcpy(&h, &raw[0], sizeof h);
+            h.home.x = 4100 * 16 + 3; h.home.z = 4100 * 16 + 3; h.home.y = 50;
+            h.pos.x = ecx * 16 + 5.5f; h.pos.z = ecz * 16 + 5.5f; h.pos.y = 63;
+            st.beginBatch();
+            st.putRecord(emod::T_WORLD_HEADER, &h, sizeof h);
+            ok = st.commitBatch();
+        }
+        st.close();
+        WorldProps p;
+        ok = ok && fm->readWorldProperties(@"props-round.emod", &p);
+        p.gen.hilliness = 4;   // Wild: a different surface
+        const int r = ok ? fm->applyWorldProperties(@"props-round.emod", p) : -1;
+        WorldFileHeader h2;
+        ok = r >= 0 && read_header(rp, &h2);
+        ClassicGen g2 = g0;
+        g2.hilliness = 4;
+        int under = -1, at = -1, above = -1;
+        if (ok) {
+            static block8 t[256 * 64];
+            static color8 c[256 * 64];
+            const int hx = (int)h2.home.x, hz = (int)h2.home.z, hy = (int)h2.home.y;
+            classic_generate_window(g2, hx & ~15, hz & ~15, 16, 16, 64, t, c, true);
+            const block8* col = &t[((hx & 15) * 16 + (hz & 15)) * 64];
+            if (hy >= 1 && hy < 63) { under = col[hy - 1]; at = col[hy]; above = col[hy + 1]; }
+        }
+        std::snprintf(d, sizeof d, "result %d home.y %.0f (cells %d/%d/%d) pos.y %.1f", r, ok ? h2.home.y : -1.0f,
+                      under, at, above, ok ? h2.pos.y : -1.0f);
+        check(ok && (r & WP_LIFTED_HOME) && under > 0 && at == 0 && above == 0,
+              "home in unsaved land is lifted to the new surface", d);
+        check(ok && !(r & WP_LIFTED_POS) && h2.pos.y == 63, "a position on saved land keeps its y", d);
+    }
+
+    // ---- 2. legacy (the H.4 fixture: a 1.x world with no record)
+    classic_test::Fixture fx;
+    const bool haveFx = classic_test::load_fixture(g_opt.classicFixture, fx, err);
+    check(haveFx, "the 1.x fixture loads", haveFx ? g_opt.classicFixture.c_str() : err.c_str());
+    if (haveFx) {
+        const std::string lp = docs + "/props-legacy.emod";
+        const int hx = fx.keys[0].first * 16 + 8, hz = fx.keys[0].second * 16 + 8;
+        ok = classic_test::write_world(lp, "props legacy", fx.seed, hx, hz, &fx, NULL, NULL, err) && open_props("props-legacy.emod");
+        check(ok, "a 1.x world opens in Properties", err.c_str());
+        if (ok) {
+            const WorldProps& p = wp->props();
+            ui_tap_rect(wp->tabRect(WorldPropertiesMenu::TAB_TERRAIN));
+            tick(2);
+            std::snprintf(d, sizeof d, "source %d profile %d flags %d caves %d (shown %d)", p.genSource, p.gen.profile,
+                          p.gen.flags, p.gen.caves, wp->choice("caves"));
+            check(p.genSource == WP_GEN_LEGACY && p.gen.profile == CLASSIC_PROFILE_LEGACY && (p.gen.flags & 1) &&
+                  wp->choice("caves") == p.gen.caves, "it shows the detected caves", d);
+            ui_tap_rect(wp->tabRect(WorldPropertiesMenu::TAB_WORLD));
+            tick(2);
+            ui_tap_rect(wp->controlRect("name"));
+            tick(2);
+            for (int i = 0; i < 64; ++i) push_tap_key(SDL_SCANCODE_BACKSPACE);
+            tick(2);                         // the keys drain before the text (two queues)
+            push_text("Legacy renamed");
+            tick(2);
+            ui_tap_rect(wp->controlRect("save"));
+            tick(3);
+            const bool noDialog = !GLDialog::active();
+            if (!noDialog) tap_dialog(1);
+            ClassicGen lg;
+            const bool rd = read_gen(lp, &lg);
+            WorldFileHeader lh;
+            read_header(lp, &lh);
+            std::snprintf(d, sizeof d, "dialog %d result %d, %d record(s), profile %d flags %d caves %d, name \"%.49s\"",
+                          noDialog ? 0 : 1, wp->lastResult(), count_records(lp, emod::T_GENERATOR), rd ? lg.profile : -1,
+                          rd ? lg.flags : -1, rd ? lg.caves : -1, lh.name);
+            check(noDialog && !wp->isOpen() && count_records(lp, emod::T_GENERATOR) == 1 && rd &&
+                  lg.profile == CLASSIC_PROFILE_LEGACY && (lg.flags & 1) && lg.caves == p.gen.caves &&
+                  std::strcmp(lh.name, "Legacy renamed") == 0,
+                  "a name-only save raises no dialog and records the legacy generator once", d);
+            close_props();
+        }
+    }
+
+    // ---- 5. the Terrain tab's other shapes
+    {
+        const std::string a = docs + "/props-legacy256.emod", b = docs + "/props-new256.emod", f = docs + "/props-flat.emod";
+        ClassicGen gn;
+        classic_default_params(&gn, 777);
+        gn.scale4 = 8;
+        uint8_t rn[CLASSIC_RECORD_BYTES];
+        classic_encode_record(gn, rn);
+        ok = write_bare(a, "props legacy 256", 777777, 16, S, S, NULL, err) && write_bare(b, "props new 256", 777, 16, S, S, rn, err) &&
+             write_bare(f, "props flat", 0, 4, S, S, NULL, err);
+        check(ok, "the 256z and flat worlds are written", err.c_str());
+        if (ok && open_props("props-legacy256.emod")) {
+            wp->showTab(WorldPropertiesMenu::TAB_TERRAIN);
+            std::snprintf(d, sizeof d, "scale shown %d editable %d \"%s\"", wp->rowVisible("scale") ? 1 : 0,
+                          wp->rowEditable("scale") ? 1 : 0, wp->value("scale"));
+            check(wp->rowVisible("scale") && !wp->rowEditable("scale"), "Scale is read-only on a 1.x world", d);
+            close_props();
+        }
+        if (ok && open_props("props-new256.emod")) {
+            wp->showTab(WorldPropertiesMenu::TAB_TERRAIN);
+            CGRect r;
+            check(wp->rowEditable("scale") && wp->sliderRect("scale", &r), "Scale is a slider on a new 256z world", "");
+            close_props();
+        }
+        if (ok && open_props("props-flat.emod")) {
+            wp->showTab(WorldPropertiesMenu::TAB_TERRAIN);
+            std::snprintf(d, sizeof d, "type \"%s\" hills %d", wp->value("type"), wp->rowVisible("hills") ? 1 : 0);
+            check(wp->rowVisible("type") && !wp->rowEditable("type") && !wp->rowVisible("hills") && !wp->rowVisible("caves"),
+                  "a Flat world's Terrain tab is its type only", d);
+            close_props();
+        }
+    }
+
+    // ---- 4. cost on a real world
+    if (!g_opt.propsWorld.empty()) {
+        WorldProps p;
+        const bool rd = fm->readWorldProperties([NSString stringWithUTF8String:g_opt.propsWorld.c_str()], &p);
+        std::printf("[eden-props] cost %s: %.1f ms, %d columns, %s\n", g_opt.propsWorld.c_str(), rd ? p.openMs : -1.0,
+                    rd ? p.columns : -1, rd ? "read" : "UNREADABLE");
+        check(rd, "--props-world reads", g_opt.propsWorld.c_str());
+    }
+
+    std::printf("[eden-props] %s (%d failure(s))\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
     return g_selftestFailures ? 1 : 0;
 }
 
@@ -5326,12 +6230,12 @@ int run_menu_selftest() {
         ui_tap_rect(nw->typeRect(flatTile));
         tick(2);
         CGRect b;
-        if (nw->choiceRect("height", 1, &b)) ui_tap_rect(b);     // Classic 64
+        if (nw->choiceRect("height", 1, &b)) ui_tap_rect(b);     // Original 64
         tick(2);
         std::snprintf(detail, sizeof(detail), "type %d (flat tile %d) height %d name \"%s\" focused %d",
                       nw->type(), flatTile, nw->choice("height"), nw->text("name"), nw->focused("name") ? 1 : 0);
         check(nw->type() == flatTile && nw->choice("height") == 64 && std::strcmp(nw->text("name"), typed) == 0 &&
-              !nw->focused("name"), "the rail picks Flat, the pair picks Classic 64, the name is typed (and a tap elsewhere blurs it)", detail);
+              !nw->focused("name"), "the rail picks Flat, the pair picks Original 64, the name is typed (and a tap elsewhere blurs it)", detail);
         ui_tap_rect(nw->controlRect("play"));
         tick(2);
         bool dialog = false;
@@ -5341,7 +6245,7 @@ int run_menu_selftest() {
                       played ? 1 : 0, dialog ? 1 : 0, eden_menu_world_count(), before, g_world_height,
                       World::getWorld->fm->genflat ? 1 : 0);
         check(played && !dialog && eden_menu_world_count() == before + 1 && g_world_height == 64 &&
-              World::getWorld->fm->genflat, "Play makes and loads a flat Classic 64 world without asking again", detail);
+              World::getWorld->fm->genflat, "Play makes and loads a flat Original 64 world without asking again", detail);
         if (!played) return 1;
         tick(60);
         if (!quit_to_menu()) return 1;
@@ -5371,6 +6275,95 @@ int run_menu_selftest() {
         check(fieldLeft && !m->shownewworld && eden_menu_world_count() == count,
               "Escape leaves the name field, then closes the screen", detail);
 
+        if (at >= 0) {
+            eden_menu_select(at);
+            tick(2);
+            ui_tap_rect(m->controlRect("delete"));
+            tick(3);
+            if (GLDialog::buttonRect(0, &b)) ui_tap_rect(b);
+            tick(3);
+        }
+    }
+
+    // H.4: the Classic tab through its real controls. Scale is hidden at Original 64 and back at
+    // New Dawn 256; a worded seed becomes seedFromText's number; the slider, a choice and a toggle
+    // set their fields; Play loads a Classic world whose generator is exactly those settings, and
+    // its first save writes the GENERATOR record.
+    {
+        NewWorldMenu* nw = m->newworld;
+        ui_tap_rect(m->controlRect("new"));
+        tick(3);
+        push_text("Selftest Classic");
+        tick(2);
+        int classicTile = -1;
+        for (int t = 0; t < nw->typeCount(); ++t) if (!std::strcmp(nw->typeShot(t), "classic")) classicTile = t;
+        ui_tap_rect(nw->typeRect(classicTile));
+        tick(2);
+        CGRect b;
+        if (nw->choiceRect("height", 1, &b)) ui_tap_rect(b);     // Original 64
+        tick(2);
+        const bool hidden64 = nw->choice("height") == 64 && !nw->rowVisible("scale") && nw->rowVisible("seed");
+        if (nw->choiceRect("height", 0, &b)) ui_tap_rect(b);     // New Dawn 256
+        tick(2);
+        const bool shown256 = nw->choice("height") == 256 && nw->rowVisible("scale");
+        std::snprintf(detail, sizeof(detail), "type %d (classic tile %d) scale hidden at 64 %d, shown at 256 %d",
+                      nw->type(), classicTile, hidden64 ? 1 : 0, shown256 ? 1 : 0);
+        check(nw->type() == classicTile && hidden64 && shown256, "the Classic tab hides Scale at 64 and shows it at 256", detail);
+
+        const int rolled = nw->seed();
+        ui_tap_rect(nw->controlRect("seed"));
+        tick(2);
+        push_text("hello");
+        tick(2);
+        const int want = NewWorldMenu::seedFromText("hello");
+        std::snprintf(detail, sizeof(detail), "rolled %d, typed \"%s\" -> %d (want %d); \"12345\" -> %d, \"333333\" -> %d",
+                      rolled, nw->text("seed"), nw->seed(), want, NewWorldMenu::seedFromText("12345"),
+                      NewWorldMenu::seedFromText("333333"));
+        check(rolled >= 1 && rolled < (1 << 24) && rolled != 333333 && want >= 1 && want < (1 << 24) &&
+              nw->seed() == want && NewWorldMenu::seedFromText("12345") == 12345 &&
+              NewWorldMenu::seedFromText("333333") != 333333,
+              "a blank seed is the rolled one; digits are the number, words are hashed into [1, 2^24)", detail);
+
+        CGRect sr;
+        if (nw->sliderRect("scale", &sr)) ui_tap_rect(CGRectMake(sr.origin.x + sr.size.width - 1, sr.origin.y, 1, sr.size.height));
+        tick(2);
+        if (nw->choiceRect("trees", 3, &b)) ui_tap_rect(b);      // Dense
+        tick(2);
+        if (nw->choiceRect("caves", 1, &b)) ui_tap_rect(b);      // 2011
+        tick(2);
+        if (nw->toggleRect("flowers", &b)) ui_tap_rect(b);       // off
+        tick(2);
+        ClassicGen want_g;
+        nw->classicSettings(&want_g);
+        std::snprintf(detail, sizeof(detail), "scale4 %d trees %d caves %d flowers %d clouds %d",
+                      want_g.scale4, want_g.trees, want_g.caves, want_g.flowers, want_g.clouds);
+        check(want_g.scale4 == 16 && want_g.trees == 3 && want_g.caves == CLASSIC_CAVES_2011 && !want_g.flowers &&
+              want_g.clouds && !nw->toggle("flowers"), "the slider, a choice and a toggle set the Classic settings", detail);
+
+        ui_tap_rect(nw->controlRect("play"));
+        tick(2);
+        bool dialog = false;
+        const bool played = tick_until([&dialog] { dialog |= GLDialog::active(); return game_mode() == 1; }, 60000,
+                                       "game_mode == PLAY");
+        TerrainGenerator* tg = World::getWorld->terrain->tgen;
+        const ClassicGen& g = tg->classic;
+        std::snprintf(detail, sizeof(detail), "played %d dialog %d height %d genflat %d state %d seed %d/%d scale4 %d trees %d caves %d flowers %d",
+                      played ? 1 : 0, dialog ? 1 : 0, g_world_height, World::getWorld->fm->genflat ? 1 : 0,
+                      tg->classicState, tg->LEVEL_SEED, g.seed, g.scale4, g.trees, g.caves, g.flowers);
+        check(played && !dialog && g_world_height == 256 && !World::getWorld->fm->genflat &&
+              tg->classicState == TerrainGenerator::CLASSIC_STATE_SET && tg->LEVEL_SEED == want && g.seed == want &&
+              g.profile == CLASSIC_PROFILE_NEW && g.scale4 == 16 && g.trees == 3 && g.caves == CLASSIC_CAVES_2011 &&
+              !g.flowers && g.clouds, "Play loads a Classic world with exactly the tab's settings", detail);
+        if (!played) return 1;
+        tick(60);
+        if (!quit_to_menu()) return 1;
+        tick(30);
+        int at = -1;
+        for (int i = 0; i < eden_menu_world_count(); ++i) if (std::strcmp(eden_menu_world_name(i), "Selftest Classic") == 0) at = i;
+        const std::string file = at >= 0 ? std::string(eden_platform_documents_root()) + "/" + eden_menu_world_file(at) : std::string();
+        const int n9 = at >= 0 ? classic_test::count_records(file, emod::T_GENERATOR) : -1;
+        std::snprintf(detail, sizeof(detail), "listed at %d, %d GENERATOR record(s)", at, n9);
+        check(at >= 0 && n9 == 1, "the Classic world's save carries its GENERATOR record", detail);
         if (at >= 0) {
             eden_menu_select(at);
             tick(2);
@@ -5869,8 +6862,10 @@ int run_ui_selftest() {
 
     // --- rename a world that exists on disk -------------------------------------------------
     // Play it once so there is a file (a created-but-never-played world has none), go back to the
-    // menu, rename through the real button -> prompt -> renameSelected path, then check the file:
-    // ONLY WorldFileHeader::name may differ, and the world must still load under its new name.
+    // menu, rename through the real button -> screen -> save path, then check the file: ONLY
+    // WorldFileHeader::name may differ, and the world must still load under its new name.
+    // H.15: the button is Properties (World Properties, Classes/WorldPropertiesMenu.h), whose World
+    // tab holds the name; a name-only change saves with no dialog. (N.4.5 opened a prompt here.)
     const char* name = g_opt.world.empty() ? "ui-selftest" : g_opt.world.c_str();
     if (!open_world(name, g_opt.height)) return 1;
     tick(60);
@@ -5888,18 +6883,40 @@ int run_ui_selftest() {
     check(read_file(file, &before) && before.size() > sizeof(WorldFileHeader), "the world has a file", file.c_str());
 
     Menu* menu = World::getWorld->menu;
-    const bool offered = menu->renameOffered();
-    check(offered, "the menu offers Rename for the selected world", "");
-    const CGRect rb = menu->rect_rename.rect();
-    ui_tap(rb.origin.x + rb.size.width * 0.5f, rb.origin.y + rb.size.height * 0.5f);
+    const bool offered = menu->propertiesOffered();
+    check(offered, "the menu offers Properties for the selected world (Rename's slot)", "");
+    ui_tap_rect(menu->controlRect("properties"));
+    tick(3);
+    WorldPropertiesMenu* wp = menu->props;
+    std::snprintf(detail, sizeof(detail), "showprops %d open %d dialog %d save %d", menu->showprops ? 1 : 0,
+                  wp->isOpen() ? 1 : 0, GLDialog::active() ? 1 : 0, wp->saveEnabled() ? 1 : 0);
+    check(menu->showprops && wp->isOpen() && !GLDialog::active() && !wp->saveEnabled(),
+          "Properties opens World Properties (no prompt), Save disabled until something changes", detail);
+    std::snprintf(detail, sizeof(detail), "name \"%s\" height \"%s\"", wp->text("name"), wp->value("height"));
+    check(std::strcmp(wp->text("name"), name) == 0 && wp->rowVisible("photo") && !wp->rowVisible("seed"),
+          "the World tab shows the photo row and the name, and no seed for a Normal world", detail);
+    ui_tap_rect(wp->tabRect(WorldPropertiesMenu::TAB_TERRAIN));
     tick(2);
-    check(GLDialog::active() && eden_text_input_active() == 1, "the Rename button opens the prompt, focused", "");
+    std::snprintf(detail, sizeof(detail), "tab %d type \"%s\" hills %d", wp->tab(), wp->value("type"),
+                  wp->rowVisible("hills") ? 1 : 0);
+    check(wp->tab() == WorldPropertiesMenu::TAB_TERRAIN && wp->rowVisible("type") && !wp->rowEditable("type") &&
+          !wp->rowVisible("hills"), "a Normal world's Terrain tab is its type only", detail);
+    ui_tap_rect(wp->tabRect(WorldPropertiesMenu::TAB_WORLD));
+    tick(2);
+    ui_tap_rect(wp->controlRect("name"));
+    tick(2);
+    check(wp->focused("name") && eden_text_input_active() == 1, "tapping the name field focuses it", "");
     for (int i = 0; i < 64; ++i) push_tap_key(SDL_SCANCODE_BACKSPACE);
     tick(2);
     push_text("Renamed \xC3\x9C");          // "Renamed Ü"
     tick(2);
-    push_tap_key(SDL_SCANCODE_RETURN);
+    check(wp->saveEnabled() && !wp->terrainChanged(), "a new name enables Save (a name-only change)", "");
+    push_tap_key(SDL_SCANCODE_RETURN);       // Return in the field is Save
     tick(5);
+    std::snprintf(detail, sizeof(detail), "open %d dialog %d result %d", wp->isOpen() ? 1 : 0,
+                  GLDialog::active() ? 1 : 0, wp->lastResult());
+    check(!wp->isOpen() && !menu->showprops && !GLDialog::active() && wp->lastResult() == WP_WROTE_NAME,
+          "a name-only save raises no dialog and closes the screen", detail);
     const char* want = "Renamed \xC3\x9C";
     const std::string listed = eden_menu_world_name(idx);   // copy: one static buffer per accessor family
     std::string onDisk = cpstring(World::getWorld->fm->getName([NSString stringWithUTF8String:eden_menu_world_file(idx)]));
@@ -5916,6 +6933,19 @@ int run_ui_selftest() {
                   before.size(), after.size(), diffPrefix);
     check(after.size() > before.size() && diffPrefix == 0,
           "the rename only appended to the file", detail);
+    {
+        // H.15: Escape over the screen is Back (discards).
+        ui_tap_rect(menu->controlRect("properties"));
+        tick(3);
+        const bool opened = menu->showprops;
+        push_tap_key(SDL_SCANCODE_ESCAPE);
+        tick(3);
+        std::vector<unsigned char> again;
+        read_file(file, &again);
+        std::snprintf(detail, sizeof(detail), "opened %d showprops %d bytes %zu -> %zu", opened ? 1 : 0,
+                      menu->showprops ? 1 : 0, after.size(), again.size());
+        check(opened && !menu->showprops && again.size() == after.size(), "Escape closes Properties and writes nothing", detail);
+    }
 
     const bool reopened = open_world(want, g_opt.height);
     check(reopened, "the renamed world loads under its new name", "");
@@ -7376,6 +8406,7 @@ static int parse_one_arg(const char* a) {
         else if (!std::strcmp(a, "--touch-selftest")) { g_opt.mode = "touch-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--empty-bit-selftest")) { g_opt.mode = "empty-bit-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--newblocks-selftest")) { g_opt.mode = "newblocks-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--photo-selftest")) { g_opt.mode = "photo-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--trailer-selftest")) { g_opt.mode = "trailer-selftest"; g_opt.headless = true; }
         else if (starts_with(a, "--trailer-file="))  g_opt.trailerFiles.push_back(a + 15);
         else if (!std::strcmp(a, "--trailer-no-dirty-mark")) g_opt.trailerNoDirty = true;
@@ -7413,6 +8444,13 @@ static int parse_one_arg(const char* a) {
         else if (starts_with(a, "--evict-mutate="))  g_opt.evictMutate = a + 15;
         else if (starts_with(a, "--light-lattice=")) g_opt.lightLattice = atoi(a + 16);
         else if (!std::strcmp(a, "--shadow-selftest")) { g_opt.mode = "shadow-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--classic-selftest")) { g_opt.mode = "classic-selftest"; g_opt.headless = true; }
+        else if (starts_with(a, "--classic-fixture=")) g_opt.classicFixture = a + 18;
+        else if (starts_with(a, "--classic-mutate=")) g_opt.classicMutate = a + 17;
+        else if (!std::strcmp(a, "--props-selftest")) { g_opt.mode = "props-selftest"; g_opt.headless = true; }
+        else if (starts_with(a, "--props-mutate=")) g_opt.propsMutate = a + 15;
+        else if (starts_with(a, "--props-world=")) g_opt.propsWorld = a + 14;
+        else if (starts_with(a, "--classic="))        g_opt.classicNew = a + 10;
         else if (starts_with(a, "--shadows=")) {
             const char* m = a + 10;
             const int v = !std::strcmp(m, "off") ? 0 : !std::strcmp(m, "classic") ? 1 : !std::strcmp(m, "smooth") ? 2 : -2;
@@ -7743,6 +8781,7 @@ static int eden_main_after_args(int argc, char** argv) {
         else if (!std::strcmp(g_opt.mode, "touch-selftest")) rc = run_touch_selftest();
         else if (!std::strcmp(g_opt.mode, "empty-bit-selftest")) rc = run_empty_bit_selftest();
         else if (!std::strcmp(g_opt.mode, "newblocks-selftest")) rc = run_newblocks_selftest();
+        else if (!std::strcmp(g_opt.mode, "photo-selftest")) rc = run_photo_selftest();
         else if (!std::strcmp(g_opt.mode, "trailer-selftest")) rc = run_trailer_selftest();
         else if (!std::strcmp(g_opt.mode, "signs-selftest")) rc = run_signs_selftest();
         else if (!std::strcmp(g_opt.mode, "sign-shot"))     rc = run_sign_shot();
@@ -7751,6 +8790,8 @@ static int eden_main_after_args(int argc, char** argv) {
         else if (!std::strcmp(g_opt.mode, "evict-selftest")) rc = run_evict_selftest();
         else if (!std::strcmp(g_opt.mode, "ring-light-selftest")) rc = run_ring_light_selftest();
         else if (!std::strcmp(g_opt.mode, "shadow-selftest")) rc = run_shadow_selftest();
+        else if (!std::strcmp(g_opt.mode, "classic-selftest")) rc = run_classic_selftest();
+        else if (!std::strcmp(g_opt.mode, "props-selftest")) rc = run_props_selftest();
         else if (!std::strcmp(g_opt.mode, "codec-bench"))   rc = eden_codec_bench(g_opt.codecFile.c_str(), g_opt.height, 500);
 #if defined(EDEN_DIAGNOSTICS)
         else if (!std::strcmp(g_opt.mode, "emod-selftest"))

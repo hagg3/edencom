@@ -21,6 +21,7 @@
 #include "EdenWorldStore.h"   // emod::eden_detect_bands -- a .eden's height (S.3b)
 #include "EdenWorldSource.h"  // the raw .eden bytes out of a .eden / .gz / .zip (S.5)
 #include "EdenWorldExport.h"  // X.9: Legacy64z export for the .emod "Convert to 64z"
+#import "WorldProps.h"        // H.15: readWorldProperties / applyWorldProperties
 #import "Alert.h"            // showAlertConvertHeight (S.5e)
 
 // See FileManager.h. Both NULL on web — its Foundation shim already answers both questions the
@@ -56,6 +57,12 @@ extern "C" void eden_report_load_failure(const char* world_file_name, const char
 // doesn't exist yet. "Take" semantics: one-shot, -1 means nothing pending. Only linked when the
 // web seam sources are built; a from-scratch iOS build would need its own stub.
 extern "C" int eden_menu_take_pending_world_height(void);
+// H.4: the New World screen's Classic tab parks the GENERATOR record here (same one-shot seam).
+extern "C" int eden_menu_take_pending_generator(unsigned char* out28);
+static void fm_resetGenerator();
+void fm_setNewWorldGenerator(const ClassicGen& g);
+static Vector fm_classicSpawn(const ClassicGen& g);
+static void fm_generatorToast();
 
 
 
@@ -952,6 +959,19 @@ BOOL FileManager::readColumnDeferred(int cx,int cz,NSFileHandle* rcfile){
     return TRUE;
 }
 
+// H.4: what Terrain's bulk reload charges by time (generator-plan.md §2.1): a column this world has
+// not saved, on a Classic seed (not the flat world, not the bundled map).
+BOOL FileManager::columnWillGenerate(int cx,int cz){
+    Terrain* ter=World::getWorld->terrain;
+    if(ter->tgen->LEVEL_SEED==DEFAULT_LEVEL_SEED||ter->tgen->LEVEL_SEED==0)return FALSE;
+    int n=twoToOne(cx,cz);
+    if(n==0)return FALSE;
+    if(emodStore)return !emodStore->hasColumn(cx,cz);
+    ColumnIndex* colIndex=NULL;
+    hashmap_get(indexes,n,(any_t*)&colIndex);
+    return colIndex==NULL;
+}
+
 void FileManager::readColumn(int cx,int cz,NSFileHandle* rcfile){
 	Terrain* ter=World::getWorld->terrain;
 	ColumnIndex* colIndex=NULL;
@@ -1337,6 +1357,9 @@ void FileManager::setImageHash(NSString* hash){
 BOOL FileManager::renameWorld(NSString* file_name, NSString* display_name){
     std::string n=cpstring(file_name);
     if(!worldExists(n,FALSE)) return TRUE;
+    // H.15 (plan §3.5): a dropped-in `.eden.gz` / `.zip` holds its header COMPRESSED; the in-place
+    // write below would land 50 raw bytes in the deflate stream and ruin it. Its name is read-only.
+    if(isArchiveName(file_name)) return FALSE;
     std::string fn=docs+"/"+n;
     if(isEmodName(file_name)){
         // The name is inside the WORLD_HEADER record, which is never rewritten in place: append a
@@ -1809,8 +1832,21 @@ void FileManager::loadWorld(NSString* name,BOOL fromArchive){
         }
 
 		this->clearDirectory();
+        // H.4: a Classic world from the New World screen: its record's seed is the world's seed,
+        // and the record goes into the first save below.
+        fm_resetGenerator();
+        ClassicGen newClassic;
+        BOOL newIsClassic=FALSE;
+        {
+            unsigned char rec[CLASSIC_RECORD_BYTES];
+            if(eden_menu_take_pending_generator(rec)&&!genflat&&classic_decode_record(rec,sizeof(rec),&newClassic))
+                newIsClassic=TRUE;
+        }
         if(genflat)ter->tgen->LEVEL_SEED= 0;
-        else if(gen_default){
+        else if(newIsClassic){
+            ter->tgen->LEVEL_SEED=newClassic.seed;
+            fm_setNewWorldGenerator(newClassic);
+        }else if(gen_default){
            
             
             ter->tgen->LEVEL_SEED=DEFAULT_LEVEL_SEED;
@@ -1834,7 +1870,11 @@ void FileManager::loadWorld(NSString* name,BOOL fromArchive){
 		
         int tempyaw=90;
       
-        if(gen_default){
+        if(newIsClassic){
+            temp=fm_classicSpawn(newClassic);
+            chunkOffsetX=windowOriginChunk(temp.x);
+            chunkOffsetZ=windowOriginChunk(temp.z);
+        }else if(gen_default){
             int spawn_location=arc4random()%10;
             while(spawn_location==last_spawn_location){
                 spawn_location=arc4random()%10;
@@ -1892,6 +1932,13 @@ void FileManager::loadWorld(NSString* name,BOOL fromArchive){
                 }
             }
             printg("sup!!!\n!");
+        }else if(newIsClassic){
+            // H.4: 1.x had no regional skies -- the flat world's plain blue grid (generator-plan.md §5.2).
+            for(int i=0;i<4;i++){
+                for(int j=0;j<4;j++){
+                    regionSkyColors[i][j]=COLOR_NORMAL_BLUE;
+                }
+            }
         }else{
             for(int i=0;i<4;i++){
                 for(int j=0;j<4;j++){
@@ -1949,6 +1996,7 @@ void FileManager::loadWorld(NSString* name,BOOL fromArchive){
     Input::getInput()->clearAll();
     World::getWorld->effects->clearAllEffects();
     World::getWorld->hud->worldLoaded();
+    fm_generatorToast();   // H.4: a GENERATOR record from a newer Emod
 	updateSkyColor1(World::getWorld->player,TRUE);
     extern BOOL loaded_new_terrain;
     loaded_new_terrain=TRUE;
@@ -1987,6 +2035,107 @@ void FileManager::closeWorld(){
 }
 
 BOOL FileManager::emodOpen(){return emodStore!=NULL;}
+
+// ---- H.4: which generator fills this world's unsaved columns -----------------------------------
+// generator-plan.md §4. Seed 0 is the flat world and 333333 the bundled map; any other seed is
+// Classic: the GENERATOR record if the world has one, else a valid `.eden` mirror in the header's
+// reserved[] (an imported Classic world), else the legacy rule -- a 1.x random-seed world, whose
+// caves are detected once from its saved columns. The record is written by the next save
+// (fm_generatorPending) and never again, so a world's terrain never flips.
+static BOOL fm_generatorPending=FALSE;
+static BOOL fm_generatorVoidToast=FALSE;
+int g_classic_cave_votes_cells=0,g_classic_cave_votes_air=0;   // the last detection, for --classic-selftest
+static int fm_detectLegacyCaves(emod::EdenWorldStore* st,int seed){
+    std::vector<std::pair<int32_t,int32_t> > keys=st->columnKeys();
+    std::vector<uint8_t> col((size_t)st->bands()*emod::BAND);
+    long cells=0,air=0;
+    size_t step=keys.size()>64?keys.size()/64:1;
+    for(size_t i=0,n=0;i<keys.size()&&n<64;i+=step,n++){
+        if(st->readColumn(keys[i].first,keys[i].second,&col[0])>emod::EdenWorldStore::READ_FALLBACK)continue;
+        classic_cave_votes(seed,keys[i].first,keys[i].second,&col[0],st->bands(),&cells,&air);
+    }
+    g_classic_cave_votes_cells=(int)cells; g_classic_cave_votes_air=(int)air;
+    printg("classic: legacy cave detection %ld/%ld carved cells are air\n",air,cells);
+    return cells>=2000&&air*2>=cells?CLASSIC_CAVES_2011:CLASSIC_CAVES_OFF;
+}
+// Which settings a Classic seed's world generates with (WP_GEN_*). Shared by the load and by the
+// Properties screen (H.15), so the screen shows exactly what the next load would use.
+static int fm_resolveGenerator(emod::EdenWorldStore* st,const WorldFileHeader* h,int seed,ClassicGen* g){
+    std::vector<uint8_t> rec;
+    if(st&&st->hasRecord(emod::T_GENERATOR)){
+        if(st->readRecord(emod::T_GENERATOR,rec)<=emod::EdenWorldStore::READ_FALLBACK&&
+           classic_decode_record(rec.empty()?NULL:&rec[0],rec.size(),g)&&g->seed==seed)return WP_GEN_RECORD;
+        return WP_GEN_VOID;
+    }
+    if(classic_decode_mirror((const unsigned char*)h->reserved,g)&&g->seed==seed)return WP_GEN_MIRROR;
+    classic_legacy_params(g,seed);
+    if(st&&st->columnCount()>0){
+        g->caves=fm_detectLegacyCaves(st,seed);
+        g->flags=1;
+    }
+    return WP_GEN_LEGACY;
+}
+static void fm_setupGenerator(TerrainGenerator* tg,emod::EdenWorldStore* st,const WorldFileHeader* h){
+    tg->classicState=TerrainGenerator::CLASSIC_STATE_UNSET;
+    fm_generatorPending=FALSE;
+    fm_generatorVoidToast=FALSE;
+    if(tg->LEVEL_SEED==0||tg->LEVEL_SEED==DEFAULT_LEVEL_SEED)return;
+    ClassicGen g;
+    const int src=fm_resolveGenerator(st,h,tg->LEVEL_SEED,&g);
+    if(src==WP_GEN_VOID){
+        tg->classicState=TerrainGenerator::CLASSIC_STATE_VOID;
+        fm_generatorVoidToast=TRUE;
+        return;
+    }
+    tg->setClassic(g);
+    fm_generatorPending=src!=WP_GEN_RECORD;
+}
+// The void columns' one-time toast, once the HUD is up (FileManager::loadWorld's tail).
+static void fm_generatorToast(){
+    if(!fm_generatorVoidToast)return;
+    fm_generatorVoidToast=FALSE;
+    World::getWorld->hud->sb->setStatus(@"This world was made by a newer Emod: unexplored land stays empty",6);
+}
+// A new world starts with no generator decided (a previous world's must not leak into it).
+static void fm_resetGenerator(){
+    World::getWorld->terrain->tgen->classicState=TerrainGenerator::CLASSIC_STATE_UNSET;
+    fm_generatorPending=FALSE;
+    fm_generatorVoidToast=FALSE;
+}
+// H.4: a new Classic world's record arrives from the New World screen (Menu_web.mm's pending
+// seam) and goes into the world's first save.
+void fm_setNewWorldGenerator(const ClassicGen& g){
+    World::getWorld->terrain->tgen->setClassic(g);
+    fm_generatorPending=TRUE;
+}
+// generator-plan.md §5.2: the first block column, spiralling out from the middle of chunk 4096,4096,
+// whose surface is open sky over dirt (the skin's top cell is solid: not a cave mouth), from the
+// heightmap and skin alone; then the first two air cells above whatever the column grows (a tree,
+// a cloud) so the player never spawns inside one.
+static Vector fm_classicSpawn(const ClassicGen& g){
+    const int H=T_HEIGHT,cx0=4096*CHUNK_SIZE+CHUNK_SIZE/2,cz0=cx0;
+    int sx=cx0,sz=cz0,top=-1;
+    for(int r=0;r<256&&top<0;r++){
+        for(int dx=-r;dx<=r&&top<0;dx++){
+            for(int dz=-r;dz<=r&&top<0;dz++){
+                if(dx!=-r&&dx!=r&&dz!=-r&&dz!=r)continue;     // the ring only
+                int t=classic_surface_top(g,cx0+dx,cz0+dz,H);
+                if(t>0&&t==classic_height(g,cx0+dx,cz0+dz,H)-1){ sx=cx0+dx; sz=cz0+dz; top=t; }
+            }
+        }
+    }
+    if(top<0)top=classic_height(g,sx,sz,H)-1;
+    static block8 types[CHUNK_SIZE*CHUNK_SIZE*T_HEIGHT_MAX];
+    static color8 colors[CHUNK_SIZE*CHUNK_SIZE*T_HEIGHT_MAX];
+    const int bx=sx-(sx&(CHUNK_SIZE-1)),bz=sz-(sz&(CHUNK_SIZE-1));
+    classic_generate_window(g,bx,bz,CHUNK_SIZE,CHUNK_SIZE,H,types,colors,TRUE);
+    const block8* col=&types[((sx-bx)*CHUNK_SIZE+(sz-bz))*H];
+    int y=top+1;
+    while(y<H-2&&(col[y]!=TYPE_NONE||col[y+1]!=TYPE_NONE))y++;
+    Vector v;
+    v.x=sx; v.y=y; v.z=sz;
+    return v;
+}
 
 BOOL FileManager::loadEmodWorld(NSString* name){
     Terrain* ter=World::getWorld->terrain;
@@ -2059,6 +2208,7 @@ BOOL FileManager::loadEmodWorld(NSString* name){
     imgHash=[[NSString alloc] initWithCString:sfh->hash encoding:NSUTF8StringEncoding];
     ter->level_seed=sfh->level_seed;
     ter->tgen->LEVEL_SEED=ter->level_seed;
+    fm_setupGenerator(ter->tgen,st,sfh);   // H.4
     cur_dir_offset=sfh->directory_offset;
     World::getWorld->hud->goldencubes=sfh->goldencubes;
     ter->home=sfh->home;
@@ -2224,6 +2374,18 @@ void FileManager::saveEmodWorld(Vector warp){
     emodStore->putRecord(emod::T_WORLD_HEADER,&h,sizeof(h));
     // Stage D / D.3a: an edited trailer is a new SIGN_TRAILER record in this batch (an empty one
     // removes it). Untouched, nothing is written: the last committed record stays live.
+    // H.4: the GENERATOR record, once: a new Classic world's first save, a legacy world's next.
+    BOOL generatorSaving=fm_generatorPending&&ter->tgen->classicState==TerrainGenerator::CLASSIC_STATE_SET&&
+        !emodStore->hasRecord(emod::T_GENERATOR);
+    if(generatorSaving){
+        unsigned char rec[CLASSIC_RECORD_BYTES];
+        classic_encode_record(ter->tgen->classic,rec);
+        if(!emodStore->putRecord(emod::T_GENERATOR,rec,sizeof(rec))){
+            printg("saveWorld: could not stage the generator record: %s\n",emodStore->error().c_str());
+            emodStore->abortBatch();
+            return;
+        }
+    }
     BOOL trailerSaving=worldTrailer.dirty();
     if(trailerSaving){
         std::vector<uint8_t> t=worldTrailer.encode();
@@ -2238,6 +2400,7 @@ void FileManager::saveEmodWorld(Vector warp){
         return;
     }
     if(trailerSaving)trailerSaved();
+    if(generatorSaving)fm_generatorPending=FALSE;
     g_seconds_since_save=0;
     for(size_t i=0;i<saved.size();i++){
         for(int cy=0;cy<CHUNKS_PER_COLUMN;cy++)
@@ -2551,4 +2714,176 @@ void FileManager::resolveOriginal(BOOL deleteIt){
     }
     [pendingOriginalName release];
     pendingOriginalName=nil;
+}
+
+// ---- H.15: the world list's Properties screen ---------------------------------------------------
+// world-properties-plan.md §1 and §3. Both run on a CLOSED world from the main menu (the screen is
+// not offered in game), so nothing re-streams; the store is still shared when it happens to be the
+// open one, as emodSetHeaderName does.
+
+// §3.4: the H.4 spawn rule on one block column of the new terrain -- the first two air cells
+// above its top dirt (a tree or a cloud over it pushes the feet up past it). A cave mouth at the
+// surface drops to the cave's floor first, so the cell under the feet is never air.
+static int fm_classicStandY(const ClassicGen& g,int wx,int wz,int H){
+    static block8 types[CHUNK_SIZE*CHUNK_SIZE*T_HEIGHT_MAX];
+    static color8 colors[CHUNK_SIZE*CHUNK_SIZE*T_HEIGHT_MAX];
+    const int bx=wx-(wx&(CHUNK_SIZE-1)),bz=wz-(wz&(CHUNK_SIZE-1));
+    classic_generate_window(g,bx,bz,CHUNK_SIZE,CHUNK_SIZE,H,types,colors,TRUE);
+    const block8* col=&types[((wx-bx)*CHUNK_SIZE+(wz-bz))*H];
+    int top=classic_surface_top(g,wx,wz,H);
+    if(top<0)top=classic_height(g,wx,wz,H)-1;
+    int y=top+1;
+    if(y<1)y=1;
+    if(y>H-2)y=H-2;
+    while(y>1&&col[y-1]==TYPE_NONE)y--;
+    while(y<H-2&&(col[y]!=TYPE_NONE||col[y+1]!=TYPE_NONE))y++;
+    return y;
+}
+// `home` is the cell the feet stand in; the player's `pos` is one block higher (the new-world
+// branch of loadWorld: pos = home + (.5, 1, .5)). Saved land is left alone.
+static BOOL fm_liftToSurface(const ClassicGen& g,emod::EdenWorldStore* st,Vector* v,int H,BOOL isPos){
+    const int wx=(int)floorf(v->x/BLOCK_SIZE),wz=(int)floorf(v->z/BLOCK_SIZE);
+    if(st->hasColumn(wx>>4,wz>>4))return FALSE;
+    const int y=fm_classicStandY(g,wx,wz,H);
+    const float ny=isPos?BLOCK_SIZE*(y+1):(float)y;
+    if(v->y==ny)return FALSE;
+    v->y=ny;
+    return TRUE;
+}
+
+BOOL FileManager::readWorldProperties(NSString* file_name,WorldProps* out){
+    const std::chrono::steady_clock::time_point t0=std::chrono::steady_clock::now();
+    WorldProps p;
+    p.kind=WP_KIND_EMOD; p.seed=0; p.height=T_HEIGHT_DEFAULT; p.version=0; p.type=WP_TYPE_NORMAL;
+    p.genSource=WP_GEN_RECORD; memset(&p.gen,0,sizeof(p.gen));
+    p.originalBytes=0; p.createdUnix=0; p.columns=-1; p.signs=-1; p.goldencubes=-1; p.convertedVersion=0;
+    p.openMs=0;
+    const std::string fn=cpstring(file_name),path=docs+"/"+fn;
+    p.fileBytes=fileSizeOf(path);
+    p.savedUnix=fileMtimeOf(path);
+    WorldFileHeader h;
+    memset(&h,0,sizeof(h));
+    emod::EdenWorldStore st;
+    BOOL haveStore=FALSE;
+    if(isEmodName(file_name)){
+        if(!st.open(path.c_str(),false))return FALSE;
+        haveStore=TRUE;
+        std::vector<uint8_t> raw;
+        if(st.readRecord(emod::T_WORLD_HEADER,raw)>emod::EdenWorldStore::READ_FALLBACK||raw.size()!=sizeof(h))return FALSE;
+        memcpy(&h,&raw[0],sizeof(h));
+        p.height=st.bands()*CHUNK_SIZE;
+        p.columns=(int)st.columnCount();
+        p.createdUnix=(long long)st.createdUnix();
+        std::vector<uint8_t> traw;
+        p.signs=0;
+        if(st.hasRecord(emod::T_SIGN_TRAILER)&&st.readRecord(emod::T_SIGN_TRAILER,traw)<=emod::EdenWorldStore::READ_FALLBACK&&!traw.empty()){
+            WorldTrailer t;
+            if(t.load(&traw[0],traw.size()))p.signs=(int)t.signCount();
+        }
+        // PROVENANCE (docs/emod-file-format.md): source version @56, name_len @76, the name @80.
+        std::vector<uint8_t> pr;
+        if(st.hasRecord(emod::T_PROVENANCE)&&st.readRecord(emod::T_PROVENANCE,pr)<=emod::EdenWorldStore::READ_FALLBACK&&pr.size()>=80){
+            const uint32_t nl=pr[76]|(pr[77]<<8)|(pr[78]<<16)|((uint32_t)pr[79]<<24);
+            if(pr.size()>=80+(size_t)nl){
+                p.convertedFrom.assign((const char*)&pr[80],nl);
+                p.convertedVersion=(int)(pr[56]|(pr[57]<<8)|(pr[58]<<16)|((uint32_t)pr[59]<<24));
+            }
+        }
+        NSString* o=originalOf(file_name);
+        if(o)p.originalBytes=fileSizeOf(docs+"/"+cpstring(o));
+    }else if(isArchiveName(file_name)){
+        p.kind=WP_KIND_ARCHIVE;
+        if(!peekArchiveHeader(path,&h))return FALSE;
+        p.height=(h.version>=FILE_VERSION_256Z)?T_HEIGHT_MAX:T_HEIGHT_DEFAULT;   // the version rule only: no directory to probe
+    }else{
+        p.kind=WP_KIND_EDEN;
+        FILE* f=fopen(path.c_str(),"rb");   // "rb": see getName
+        if(!f)return FALSE;
+        const BOOL ok=fread(&h,sizeof(h),1,f)==1;
+        fclose(f);
+        if(!ok)return FALSE;
+        p.height=probeWorldHeight(file_name,FALSE);
+    }
+    h.name[49]=0;
+    p.name=h.name;
+    p.seed=h.level_seed;
+    p.version=h.version;
+    p.goldencubes=(h.version==3)?10:h.goldencubes;   // the v3 -> v4 upgrade's value (loadEmodWorld)
+    p.pos=h.pos;
+    p.home=h.home;
+    p.type=p.seed==0?WP_TYPE_FLAT:p.seed==DEFAULT_LEVEL_SEED?WP_TYPE_NORMAL:WP_TYPE_CLASSIC;
+    if(p.type==WP_TYPE_CLASSIC)p.genSource=fm_resolveGenerator(haveStore?&st:NULL,&h,p.seed,&p.gen);
+    p.openMs=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-t0).count();
+    *out=p;
+    return TRUE;
+}
+
+// --props-selftest's mutation leg (gate 1): the GENERATOR append is skipped, which the round trip must catch.
+bool g_wp_test_skip_generator=false;
+int FileManager::applyWorldProperties(NSString* file_name,const WorldProps& e){
+    WorldProps cur;
+    if(!readWorldProperties(file_name,&cur))return -1;
+    const BOOL nameChanged=!e.name.empty()&&e.name!=cur.name;
+    if(cur.kind!=WP_KIND_EMOD){
+        // Only the name is editable on an unconverted world, and not inside an archive (§3.5).
+        if(!nameChanged)return 0;
+        if(cur.kind==WP_KIND_ARCHIVE)return -1;
+        return renameWorld(file_name,nsstring(e.name))?WP_WROTE_NAME:-1;
+    }
+    ClassicGen g=cur.gen;
+    BOOL genChanged=FALSE,writeGen=FALSE;
+    if(cur.type==WP_TYPE_CLASSIC&&cur.genSource!=WP_GEN_VOID){
+        // The seed, the profile and (on a legacy or 64z world) the scale are not the screen's to
+        // change; the detected flag stands only while the caves are the detected ones.
+        g=e.gen;
+        g.seed=cur.seed;
+        g.profile=cur.gen.profile;
+        if(cur.gen.profile==CLASSIC_PROFILE_LEGACY||cur.height<T_HEIGHT_MAX)g.scale4=cur.gen.scale4;
+        g.flags=(g.caves==cur.gen.caves)?cur.gen.flags:0;
+        unsigned char a[CLASSIC_RECORD_BYTES],b[CLASSIC_RECORD_BYTES];
+        classic_encode_record(cur.gen,a);
+        classic_encode_record(g,b);
+        genChanged=memcmp(a,b,sizeof(a))!=0;
+        writeGen=genChanged||cur.genSource!=WP_GEN_RECORD;
+    }
+    if(!nameChanged&&!writeGen)return 0;
+    const std::string path=docs+"/"+cpstring(file_name);
+    emod::EdenWorldStore own;
+    emod::EdenWorldStore* st=(emodStore&&emodStore->path()==path)?emodStore:&own;
+    if(st==&own&&!own.open(path.c_str(),true))return -1;
+    std::vector<uint8_t> raw;
+    if(st->readRecord(emod::T_WORLD_HEADER,raw)>emod::EdenWorldStore::READ_FALLBACK||raw.size()!=sizeof(WorldFileHeader))return -1;
+    WorldFileHeader h;
+    memcpy(&h,&raw[0],sizeof(h));
+    int res=0;
+    if(nameChanged){
+        memset(h.name,0,sizeof(h.name));
+        strncpy(h.name,e.name.c_str(),sizeof(h.name)-1);
+        res|=WP_WROTE_NAME;
+    }
+    if(genChanged){
+        const int H=st->bands()*CHUNK_SIZE;
+        if(fm_liftToSurface(g,st,&h.home,H,FALSE))res|=WP_LIFTED_HOME;
+        if(fm_liftToSurface(g,st,&h.pos,H,TRUE))res|=WP_LIFTED_POS;
+    }
+    st->beginBatch();
+    BOOL ok=TRUE;
+    if(res)ok=st->putRecord(emod::T_WORLD_HEADER,&h,sizeof(h));
+    if(ok&&writeGen&&!g_wp_test_skip_generator){
+        unsigned char rec[CLASSIC_RECORD_BYTES];
+        classic_encode_record(g,rec);
+        ok=st->putRecord(emod::T_GENERATOR,rec,sizeof(rec));
+    }
+    if(writeGen)res|=WP_WROTE_GENERATOR;
+    if(!ok){
+        printg("applyWorldProperties: could not stage the records: %s\n",st->error().c_str());
+        st->abortBatch();
+        return -1;
+    }
+    if(!st->commitBatch()){
+        NSLog(@"applyWorldProperties: commit failed (%s) -- nothing changed",st->error().c_str());
+        return -1;
+    }
+    if(st==emodStore&&emodHeader)memcpy(emodHeader,&h,sizeof(h));
+    return res;
 }

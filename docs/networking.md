@@ -68,7 +68,7 @@ slice per frame by `emod::begin_upload_body` (`Classes/EdenWorldExport.cpp`) int
 prefix and suffix, never a raw `.eden` on disk — then `eden_net_post_file(url, contentType,
 bodyPath)` (`WorldBrowser.h`; native `Net_native.cpp` over the backend's `post_file`: NSURLSession
 upload-from-file, libcurl `READFUNCTION` + `POSTFIELDSIZE_LARGE`, WinHTTP `WinHttpWriteData`), and
-the temp is deleted. An upload needs `<world file>.png` (camera mode); without it the action says
+the temp is deleted. An upload needs `<world file>.png` (camera mode, 3:2 PNG ≤ 1440 long side, H.16; uploaded as-is, and its MD5 is the header hash); without it the action says
 so. Fixture mode (`--net-fixtures`) answers a POST from `<root>/<host>/<path>` and saves the body
 beside it as `<path>.posted`, which is how `--browser-selftest` and the `--upload-*` CLI
 (native/README.md) check the bytes offline. **No live upload has been made by a harness**: one per

@@ -75,6 +75,10 @@ typedef struct{
     BOOL homeClamped;
 }ConvertTo64Report;
 
+// H.15: the Properties screen's record of a world (Classes/WorldProps.h; its own header because it
+// carries a ClassicGen, and TerrainGenerator.h -> Terrain.h -> this file would be a cycle).
+struct WorldProps;
+
 // PORT SEAM (Phase N Stage 2), same shape as Hud.h's eden_hud_draw_menu_screen_hook: NULL by
 // default, so stock behaviour is unchanged and this costs one null test per save.
 //
@@ -120,6 +124,7 @@ public:
     // was dispatched and the column will land in a later frame. readColumn() itself is unchanged
     // and still synchronous for every other caller, world load included.
     BOOL readColumnDeferred(int cx,int cz,NSFileHandle* nsfh);
+    BOOL columnWillGenerate(int cx,int cz);   // H.4: readColumn would run the Classic generator
     void saveWorld();
     void saveWorld(Vector warp);
     // B.5b-1b: saveWorld() WITHOUT its opening endDynamics -- fire keeps burning and water keeps
@@ -138,6 +143,14 @@ public:
     // a world with no file yet (created, never played) needs no write — its first save takes the
     // name from Menu::selected_world. Returns FALSE only if a file exists and the write failed.
     BOOL renameWorld(NSString* file_name, NSString* display_name);
+    // H.15: the Properties screen's pair. read: FALSE if the file cannot be read. apply: writes
+    // only what differs from the file -- for an `.emod`, ONE committed batch of WORLD_HEADER (the
+    // name; pos/home lifted to the new surface where their column is not saved land) and, for a
+    // Classic world, a newer GENERATOR (same seed and profile; the detected flag cleared when caves
+    // changed). A legacy/mirror world gets its record on any save. `.eden`: the name only.
+    // Returns WP_WROTE_* / WP_LIFTED_* bits, 0 when nothing differed, -1 when the write failed.
+    BOOL readWorldProperties(NSString* file_name, WorldProps* out);
+    int  applyWorldProperties(NSString* file_name, const WorldProps& edited);
     void setName(std::string fn,std::string dn);
     void setImageHash(NSString* hash);
     void loadWorld(NSString* name,BOOL fromArchive);

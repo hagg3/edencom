@@ -7,6 +7,7 @@
 //
 
 #import "Menu.h"
+#import "WorldPropertiesMenu.h"   // H.15 (Menu.h only forward-declares it)
 #import "GLDialog.h"
 #import "Graphics.h"
 #import "Globals.h"
@@ -108,7 +109,7 @@ void Menu::layoutKit(){
         k->play.setLabel("Play",du(22));
         k->play.setTone(GLW::Button::TONE_POSITIVE);
         k->del.setLabel("Delete",du(22));
-        rect_rename.setLabel("Rename",du(22));
+        rect_rename.setLabel("Properties",du(22));   // H.15: was "Rename" (N.4.5); the name is on the screen now
         kit_share.setLabel("Share",du(22));
         k->empty.set("No worlds yet",du(24),UITextAlignmentCenter);
         k->emptyHint.set("Choose New to make one.",du(15),UITextAlignmentCenter,0,FACE_BODY);
@@ -170,7 +171,7 @@ void Menu::layoutKit(){
     const bool idle=(loading==0);
     k->play.setEnabled(idle&&selected_world!=NULL);
     k->del.setEnabled(idle&&selected_world!=NULL);
-    rect_rename.setEnabled(idle&&selected_world!=NULL);
+    rect_rename.setEnabled(idle&&selected_world!=NULL);   // H.15: Properties
     kit_share.setEnabled(idle&&WorldShare::offered(selected_world));
     k->create.setEnabled(idle);
     k->settings.setEnabled(idle);
@@ -224,7 +225,8 @@ CGRect Menu::controlRect(const char* which){
     if(!strcmp(which,"new"))      return kit->create.rect();
     if(!strcmp(which,"play"))     return kit->play.rect();
     if(!strcmp(which,"delete"))   return kit->del.rect();
-    if(!strcmp(which,"rename"))   return rect_rename.rect();
+    if(!strcmp(which,"rename"))   return rect_rename.rect();   // H.15: the Properties button (the old key kept)
+    if(!strcmp(which,"properties"))return rect_rename.rect();
     if(!strcmp(which,"share"))    return kit_share.rect();
     if(!strcmp(which,"list"))     return kit->list;
     if(!strcmp(which,"scrollbar"))return kit->scroll.barRect();
@@ -373,6 +375,8 @@ Menu::Menu(){
     showbrowser=FALSE;
     newworld=new NewWorldMenu();
     shownewworld=FALSE;
+    props=new WorldPropertiesMenu();
+    showprops=FALSE;
 	
     
    /*  WorldNode* new_world;
@@ -633,6 +637,18 @@ bool Menu::renameOffered(){
     return true;
 }
 
+// H.15: the same slot is Properties now (world-properties-plan.md). The screen is the only way in;
+// beginRename()/renameSelected() stay as the name's save path for an `.eden` and for the harness.
+bool Menu::propertiesOffered(){
+    return selected_world!=NULL&&!delete_mode&&!share_mode&&!loading;
+}
+
+void Menu::openProperties(){
+    if(!propertiesOffered()) return;
+    if(props->open(selected_world)) showprops=TRUE;
+    else sbar->setStatus(@"Couldn't read this world",2);
+}
+
 // Stage S / S.5: Share sits beside Rename on the hosts that have it (native; WorldShare::offered
 // also wants a playable world selected and nothing running). Drawn disabled while it cannot act.
 bool Menu::shareShown(){
@@ -718,6 +734,11 @@ void Menu::update(float etime){
 		if(!newworld->isOpen()) shownewworld=FALSE;   // Back, or Play (which set loading)
 		return;
 	}
+	if(showprops){
+		props->update(etime);
+		if(!props->isOpen()) showprops=FALSE;   // Back, or a save
+		return;
+	}
 	if(showbrowser){
 		browser->update(etime);
 		if(!browser->isOpen()) showbrowser=FALSE;   // Back, or a download handed back a world
@@ -746,7 +767,7 @@ void Menu::update(float etime){
 			k->getWorlds.setPressed(k->getWorlds.hit(mx,my));
 			k->play.setPressed(k->play.hit(mx,my));
 			k->del.setPressed(k->del.hit(mx,my));
-			if(renameOffered()) rect_rename.setPressed(rect_rename.hit(mx,my));
+			if(propertiesOffered()) rect_rename.setPressed(rect_rename.hit(mx,my));
 			if(shareShown()) kit_share.setPressed(kit_share.hit(mx,my));
 			if(loading) continue;
 			if(k->barTouch<0&&k->scroll.hitBar(mx,my)){
@@ -774,7 +795,7 @@ void Menu::update(float etime){
 			const bool getHit=k->getWorlds.pressed()&&k->getWorlds.hit(mx,my);
 			const bool playHit=k->play.pressed()&&k->play.hit(mx,my);
 			const bool delHit=k->del.pressed()&&k->del.hit(mx,my);
-			const bool renameHit=renameOffered()&&rect_rename.pressed()&&rect_rename.hit(mx,my);
+			const bool propsHit=propertiesOffered()&&rect_rename.pressed()&&rect_rename.hit(mx,my);
 			const bool shareHit=shareShown()&&kit_share.pressed()&&kit_share.hit(mx,my);
 			kit_share.setPressed(false);
 			k->settings.setPressed(false); k->create.setPressed(false); k->play.setPressed(false);
@@ -795,9 +816,9 @@ void Menu::update(float etime){
 				}
 				continue;
 			}
-			if(renameHit){
-				beginRename();
-				return;                 // the dialog owns input from the next frame
+			if(propsHit){
+				openProperties();       // H.15 (was beginRename(): the name is the screen's first field)
+				return;
 			}
 			if(shareHit&&!loading&&WorldShare::offered(selected_world)){
 				WorldShare::begin(selected_world);
@@ -944,7 +965,7 @@ void Menu::renderKit(){
     k->scroll.render();
 
     k->del.render();
-    if(renameOffered()) rect_rename.render();
+    if(propertiesOffered()) rect_rename.render();
     if(shareShown()) kit_share.render();
     k->play.render();
 
@@ -988,6 +1009,11 @@ void Menu::render(){
 	}
 	if(shownewworld){
 		newworld->render();
+        Graphics::endMenu();
+		return;
+	}
+	if(showprops){
+		props->render();
         Graphics::endMenu();
 		return;
 	}

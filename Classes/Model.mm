@@ -606,6 +606,7 @@ void addMoreCreaturesIfNeeded(){
     }
     if(totalactive<15)
     printg("adding more creatures");
+    int oobTries=0;   // H.4: 20 random columns with no ground retried the SAME slot forever (a void world hung its load)
     while(totalactive<15&&gc<nguys){
         if(guys[gc].touched==FALSE&&(guys[gc].model_type==-1||!guys[gc].update||!guys[gc].alive)){
           ResetModel(gc);
@@ -640,6 +641,7 @@ void addMoreCreaturesIfNeeded(){
     escapenest:
         if(ly==-1){
             printg("oob model gen\n");
+            if(++oobTries>=40)break;
             continue;
         }
         guys[gc].pos.y=ly+2;

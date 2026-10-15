@@ -14,6 +14,8 @@
 #import "EAGLView.h"
 #import "md5.h"
 #import "Model.h"
+#include <vector>
+#include <zlib.h>
 
 std::string cpstring(NSString * str){
     char buf[1000];
@@ -326,6 +328,74 @@ extern EAGLView* G_EAGL_VIEW;
 extern float SCREEN_WIDTH; 
 extern float SCREEN_HEIGHT;
 extern BOOL IS_WIDESCREEN;
+// Port rewrite (H.16): the stock path below needs UIImagePNGRepresentation, which the shim cannot
+// provide, so no <world>.png was ever written. This reads the framebuffer, takes a centred crop at the
+// fixed photo aspect (3:2), box-downsizes to a long side <= 1440 and writes a real PNG (zlib).
+static void photo_put32(unsigned char* p, unsigned v){ p[0]=v>>24; p[1]=v>>16; p[2]=v>>8; p[3]=v; }
+static void photo_chunk(std::vector<unsigned char>& out, const char* type, const unsigned char* d, unsigned n){
+    unsigned char h[8]; photo_put32(h,n); memcpy(h+4,type,4);
+    out.insert(out.end(),h,h+8);
+    if(n) out.insert(out.end(),d,d+n);
+    uLong crc=crc32(0L,Z_NULL,0); crc=crc32(crc,h+4,4); if(n) crc=crc32(crc,d,n);
+    unsigned char c[4]; photo_put32(c,(unsigned)crc); out.insert(out.end(),c,c+4);
+}
+bool photoEncodePNG(const unsigned char* rgb,int w,int h,std::vector<unsigned char>& out){
+    std::vector<unsigned char> raw((size_t)(w*3+1)*h);
+    for(int y=0;y<h;y++){ raw[(size_t)y*(w*3+1)]=0; memcpy(&raw[(size_t)y*(w*3+1)+1],rgb+(size_t)y*w*3,(size_t)w*3); }
+    uLongf zn=compressBound((uLong)raw.size());
+    std::vector<unsigned char> z(zn);
+    if(compress2(z.data(),&zn,raw.data(),(uLong)raw.size(),6)!=Z_OK) return false;
+    static const unsigned char sig[8]={0x89,'P','N','G',0x0d,0x0a,0x1a,0x0a};
+    out.assign(sig,sig+8);
+    unsigned char ihdr[13]; photo_put32(ihdr,w); photo_put32(ihdr+4,h); ihdr[8]=8; ihdr[9]=2; ihdr[10]=ihdr[11]=ihdr[12]=0;
+    photo_chunk(out,"IHDR",ihdr,13);
+    photo_chunk(out,"IDAT",z.data(),(unsigned)zn);
+    photo_chunk(out,"IEND",NULL,0);
+    return true;
+}
+void takeScreenshot(){
+    GLint vp[4]={0,0,0,0};
+    glGetIntegerv(GL_VIEWPORT,vp);
+    int fw=vp[2], fh=vp[3];
+    if(fw<=0||fh<=0) return;
+    std::vector<unsigned char> px((size_t)fw*fh*4);
+    glReadPixels(vp[0],vp[1],fw,fh,GL_RGBA,GL_UNSIGNED_BYTE,px.data());
+    // Centred crop at 3:2 (landscape; a portrait frame is cropped the same way on its long axis).
+    int cw=fw, ch=fh;
+    if(fw*2>fh*3) cw=fh*3/2; else ch=fw*2/3;
+    int ox=(fw-cw)/2, oy=(fh-ch)/2;
+    int step=1; while(cw/step>1440) step++;
+    int ow=cw/step, oh=ch/step;
+    if(ow<1||oh<1) return;
+    std::vector<unsigned char> rgb((size_t)ow*oh*3);
+    for(int y=0;y<oh;y++) for(int x=0;x<ow;x++){
+        int sum[3]={0,0,0};
+        for(int dy=0;dy<step;dy++) for(int dx=0;dx<step;dx++){
+            // GL rows run bottom-up: flip while sampling.
+            int sy=oy+ch-1-(y*step+dy), sx=ox+x*step+dx;
+            const unsigned char* s=&px[((size_t)sy*fw+sx)*4];
+            sum[0]+=s[0]; sum[1]+=s[1]; sum[2]+=s[2];
+        }
+        unsigned char* d=&rgb[((size_t)y*ow+x)*3];
+        d[0]=sum[0]/(step*step); d[1]=sum[1]/(step*step); d[2]=sum[2]/(step*step);
+    }
+    std::vector<unsigned char> png;
+    if(!photoEncodePNG(rgb.data(),ow,oh,png)) return;
+    Terrain* ter=World::getWorld->terrain;
+    NSString* name=ter->world_name;
+    NSString* file_name=[NSString stringWithFormat:@"%@/%@.png",World::getWorld->fm->documents,name];
+    NSFileManager* fm=[NSFileManager defaultManager];
+    if([fm fileExistsAtPath:file_name])
+        if(![fm removeItemAtPath:file_name error:NULL])
+            return;
+    NSData* data=[NSData dataWithBytes:png.data() length:png.size()];
+    [data writeToFile:file_name atomically:FALSE];
+    CFStringRef md5hash =
+    FileMD5HashCreateWithPath((CFStringRef)file_name,
+                              FileHashDefaultChunkSizeForReadingData);
+    World::getWorld->fm->setImageHash((NSString *)md5hash);
+}
+#if 0   // stock iOS body (UIImagePNGRepresentation is a nil stub in the port)
 void takeScreenshot(){	
 	int width=SCREEN_HEIGHT;
     int height=SCREEN_WIDTH;
@@ -430,6 +500,7 @@ void takeScreenshot(){
     //CFRelease(md5hash);
 
 }
+#endif
 Vector RGBtoYUV(Vector clr){
   //  return clr;
     Vector ret;

@@ -1,0 +1,26 @@
+CMakeFiles/eden.dir/src/shim/foundation/platform_shims.cpp.o: \
+  /Users/sam/Emod/web/src/shim/foundation/platform_shims.cpp \
+  /Users/sam/Emod/web/src/shim/foundation/platform_shims.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/c++/v1/stdint.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/c++/v1/__config \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/c++/v1/__config_site \
+  /Users/sam/Emod/web/emsdk/upstream/lib/clang/20/include/stdint.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/stdint.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/bits/alltypes.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/bits/stdint.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/em_asm.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/em_macros.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/em_types.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/c++/v1/stdbool.h \
+  /Users/sam/Emod/web/emsdk/upstream/lib/clang/20/include/stdbool.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/stdbool.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/em_js.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/promise.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/compat/stdlib.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/c++/v1/stdlib.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/stdlib.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/features.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/alloca.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/wget.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/version.h

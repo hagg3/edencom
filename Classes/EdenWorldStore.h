@@ -44,10 +44,12 @@ enum : uint32_t {
     EDEN_ENT = 60,               // EntityData
     EDEN_MAX_SLOTS = 400,
     TRAILER_MAX = 1u << 20,
+    GENERATOR_LEN = 28,          // H.4: the GENERATOR record (TerrainGenerator.h CLASSIC_RECORD_BYTES)
 };
 enum RecordType : uint8_t {
     T_COLUMN = 1, T_WORLD_HEADER = 2, T_CREATURES = 3, T_SIGN_TRAILER = 4,
     T_PROVENANCE = 5, T_SUMMARY = 6, T_COMMIT = 7, T_INDEX = 8,
+    T_GENERATOR = 9,             // H.4: Classic generator settings, 28 B, written once (TerrainGenerator.h)
 };
 enum Codec : uint8_t { C_NONE = 0, C_ZSTD = 1, C_ZLIB = 2 };
 

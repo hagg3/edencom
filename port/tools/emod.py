@@ -64,8 +64,12 @@ TAG = b'EmR1'
 REC_HEADER = 32
 MAX_PAYLOAD = 16 << 20
 T_COLUMN, T_WORLD_HEADER, T_CREATURES, T_SIGN_TRAILER, T_PROVENANCE, T_SUMMARY, T_COMMIT, T_INDEX = range(1, 9)
+T_GENERATOR = 9                  # H.4: Classic generator settings (docs/emod-file-format.md "GENERATOR")
 TYPE_NAMES = {1: 'COLUMN', 2: 'WORLD_HEADER', 3: 'CREATURES', 4: 'SIGN_TRAILER', 5: 'PROVENANCE',
-              6: 'SUMMARY', 7: 'COMMIT', 8: 'INDEX'}
+              6: 'SUMMARY', 7: 'COMMIT', 8: 'INDEX', 9: 'GENERATOR'}
+GENERATOR_LEN = 28
+GEN_MIRROR_MAGIC = b'EMG1'       # the .eden mirror in WorldFileHeader.reserved[] (@152, 36 of its 40 B)
+GEN_MIRROR_OFF = 152
 C_NONE, C_ZSTD, C_ZLIB = 0, 1, 2
 CODEC_NAMES = {0: 'none', 1: 'zstd', 2: 'zlib'}
 FH_FMT = '<8sHHIQ36sI'           # 64 B
@@ -894,7 +898,10 @@ class Store:
         st = self.live(T_SIGN_TRAILER)
         if st and (st.aux % DIR_ROW or st.aux > TRAILER_MAX):
             errs.append('SIGN_TRAILER raw length %d is not a multiple of 16 up to 1 MiB' % st.aux)
-        for t in (T_CREATURES, T_SIGN_TRAILER, T_PROVENANCE, T_SUMMARY):
+        gr = self.live(T_GENERATOR)
+        if gr and gr.aux != GENERATOR_LEN:
+            errs.append('GENERATOR raw length %d is not %d' % (gr.aux, GENERATOR_LEN))
+        for t in (T_CREATURES, T_SIGN_TRAILER, T_PROVENANCE, T_SUMMARY, T_GENERATOR):
             r = self.live(t)
             if r:
                 if r.mask or r.x or r.z:
@@ -975,6 +982,10 @@ def export(src, out, force=False, quiet=False):
     total = dir_off + n * DIR_ROW + len(trailer)
     hdr = bytearray(hdr)
     hdr[32:40] = struct.pack('<Q', dir_off)
+    if st.live(T_GENERATOR):          # H.4: carried in reserved[] so a re-import keeps the settings
+        _, gen, _ = st.decode_live(('T', T_GENERATOR))
+        if gen is not None and len(gen) == GENERATOR_LEN:
+            hdr[GEN_MIRROR_OFF:EDEN_HEADER] = generator_mirror(gen) + bytes(EDEN_HEADER - GEN_MIRROR_OFF - 36)
     slot = {k: EDEN_HEADER + i * col for i, (k, _) in enumerate(cols)}
     rows = []
     seen = set()
@@ -1097,6 +1108,33 @@ def measure_order(src, stride=1):
 
 
 # ================================================================== dump
+GEN_SCALES = {4: '1x', 6: '1.5x', 8: '2x', 12: '3x', 16: '4x'}
+GEN_HILLS = ['Plains', 'Rolling', 'Classic', 'Rugged', 'Wild']
+GEN_CAVES = ['Off', '2011', 'Deep']
+GEN_TREES = ['None', 'Sparse', 'Classic', 'Dense']
+
+
+def generator_text(g):
+    """The GENERATOR record (TerrainGenerator.h ClassicGen; generator-plan.md §4.1), for `dump`."""
+    if len(g) != GENERATOR_LEN:
+        return '%d B (not %d): unreadable' % (len(g), GENERATOR_LEN)
+    gen, rev, seed = struct.unpack_from('<HHI', g, 0)
+    sc, hi, cv, tr, fl, cl, sz, pf, fg = g[8:17]
+    if gen != 1 or rev != 1 or any(g[17:]):
+        return 'generator %d revision %d (unknown to this tool: the engine fills void)' % (gen, rev)
+    pick = lambda names, i: names[i] if i < len(names) else '?%d' % i
+    return ('Classic r1 seed=%d scale=%s hilliness=%s caves=%s%s trees=%s flowers=%d clouds=%d size=%s profile=%s' % (
+        seed, GEN_SCALES.get(sc, '?%d' % sc), pick(GEN_HILLS, hi), pick(GEN_CAVES, cv),
+        ' (detected)' if fg & 1 else '', pick(GEN_TREES, tr), fl, cl, 'extended' if sz == 0 else '2880 square',
+        'legacy' if pf else 'new'))
+
+
+def generator_mirror(g):
+    """The 36 B `.eden` mirror of a GENERATOR record: "EMG1" + record + CRC-32 of those 32 B."""
+    b = GEN_MIRROR_MAGIC + bytes(g)
+    return b + struct.pack('<I', zlib.crc32(b) & 0xffffffff)
+
+
 def dump(path, records=False):
     st = open_emod(path)
     print('%s: %d B' % (path, st.size))
@@ -1130,6 +1168,9 @@ def dump(path, records=False):
             p['name'], p['size'], p['source_version'], p['mtime'], p['flags'],
             ', '.join(v for b, v in PF_NAMES.items() if p['flags'] & b) or 'byte-identical export', len(p['short']),
             len(p['dir_order'])))
+    gr = st.live(T_GENERATOR)
+    if gr:
+        print('generator: ' + generator_text(st.decode(gr)))
     sm = st.live(T_SUMMARY)
     if sm:
         lc, no, bo, _, _ = struct.unpack(SUMMARY_FMT, st.decode(sm))

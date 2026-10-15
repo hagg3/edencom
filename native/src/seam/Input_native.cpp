@@ -72,6 +72,7 @@ int  eden_picker_page_step(int delta);   // Input_web.mm (D.2p)
 void eden_tap_hud_button_end(int which);
 int  eden_settings_menu_back(void);      // Settings_web.mm (U.3): Escape over the settings screen
 int  eden_new_world_menu_back(void);     // Menu_web.mm (U.5): Escape over the New World screen
+int  eden_world_props_menu_back(void);   // Menu_web.mm (H.15): Escape over World Properties
 void eden_ui_tick(void);
 int  eden_get_hold_to_act(void);
 double eden_platform_now_ms(void);
@@ -816,7 +817,7 @@ void eden_native_input_handle_event(const SDL_Event& e) {
                 // 2=colours, 7=fire/burn.
                 // U.3: over the settings screen the menu key is its Back, not a HUD tap (which
                 // the screen claimed as a touch of its own and dropped). U.5: likewise New World.
-                if      (mi == g_miMenu)         { if (!eden_settings_menu_back() && !eden_new_world_menu_back()) hud_tap(0); }
+                if      (mi == g_miMenu)         { if (!eden_settings_menu_back() && !eden_new_world_menu_back() && !eden_world_props_menu_back()) hud_tap(0); }
                 else if (mi == g_miBlockPicker)  hud_tap(1);
                 else if (mi == g_miColorPicker)  hud_tap(2);
                 else if (mi == g_miFireTool)     hud_tap(7);

@@ -95,6 +95,10 @@ was wanted.
 - `Model.mm` uses PVRT math types (`PVRTVec3`) while the rest of the game uses
   `Vector` — conversion helpers `vpv/MakeVector2` in `Model.mm`.
 - All state is file-static; there can never be two worlds' creatures loaded.
+- **`addMoreCreaturesIfNeeded` used to hang on land with no ground** (fixed H.4, 2026-10-15). When a
+  random column had no ground (`ly == -1`, "oob model gen") it `continue`d without advancing the slot,
+  so a window with no ground anywhere — a void world — retried the same slot forever and hung the
+  load. It now gives up for this frame after 40 such tries (`oobTries`); creatures appear once land does.
 
 ## Safe vs. risky to modify
 - **Safe:** AI tuning (timers, ranges), spawn density, new interactions following the

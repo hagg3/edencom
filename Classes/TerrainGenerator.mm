@@ -10,11 +10,14 @@
 #import "Terrain.h"
 #import "Util.h"
 #import "TerrainGen2.h"
+#import "ClassicNoiseTables.h"
+#include <vector>
 
 
 float noise3(float vec[3]);
 float noise2(float vec[2]);
 static void init(void);
+static void init_from_random(void);
 static float noiseFast(float x, float y, float z);
 static Terrain* ter;
 extern block8* blockarray;
@@ -28,6 +31,8 @@ TerrainGenerator::TerrainGenerator(Terrain* parent){
 	ter=parent;
 	LEVEL_SEED=0;
     genCaves=FALSE;
+    classicState=CLASSIC_STATE_UNSET;
+    classic_legacy_params(&classic,0);
     
 	
 	
@@ -141,8 +146,19 @@ void TerrainGenerator::generateColumn(int cx,int cz,BOOL bgthread){
 	int ocz=cz;
     boundx=ocx*CHUNK_SIZE;
     boundz=ocz*CHUNK_SIZE;
-    memset(tblocks,0,sizeof(block8)*(CHUNKS_PER_COLUMN*CHUNK_SIZE*2)*(CHUNK_SIZE*2)*(CHUNK_SIZE*2));
-    memset(tcolors,0,sizeof(block8)*(CHUNKS_PER_COLUMN*CHUNK_SIZE*2)*(CHUNK_SIZE*2)*(CHUNK_SIZE*2));
+    // H.4: these two cleared ~1 MB a column (at 256z) for the half-block experiment below, which
+    // is commented out; nothing reads tblocks/tcolors any more (generator-plan.md §2.4).
+    //memset(tblocks,0,sizeof(block8)*(CHUNKS_PER_COLUMN*CHUNK_SIZE*2)*(CHUNK_SIZE*2)*(CHUNK_SIZE*2));
+    //memset(tcolors,0,sizeof(block8)*(CHUNKS_PER_COLUMN*CHUNK_SIZE*2)*(CHUNK_SIZE*2)*(CHUNK_SIZE*2));
+    // H.4: a world whose GENERATOR record this build does not know gets void (never saved,
+    // because generated columns are not `modified`); a Classic "2880 square" world gets void
+    // outside the bundled map's square, behind Player::update's X.6 wall.
+    if(LEVEL_SEED!=0&&(classicState==CLASSIC_STATE_VOID||
+       (classicState==CLASSIC_STATE_SET&&classic.size==1&&
+        (ocx<4096-GSIZE/CHUNK_SIZE/2||ocx>=4096+GSIZE/CHUNK_SIZE/2||ocz<4096-GSIZE/CHUNK_SIZE/2||ocz>=4096+GSIZE/CHUNK_SIZE/2)))){
+        this->generateEmptyColumn(ocx,ocz);
+        return;
+    }
 	for(int cy=0;cy<CHUNKS_PER_COLUMN ;cy++){
 		int bounds[6];
 		bounds[0]=ocx*CHUNK_SIZE;
@@ -207,7 +223,7 @@ void TerrainGenerator::generateColumn(int cx,int cz,BOOL bgthread){
         return;
         
     }else
-    if(TRUE||LEVEL_SEED==0){
+    if(/*TRUE||*/LEVEL_SEED==0){   // H.4: only the flat world now; any other seed is Classic (below)
        for(int x=0;x<CHUNK_SIZE;x++){
             for(int z=0;z<CHUNK_SIZE;z++){
                  setLandt(x ,z ,0,TYPE_BEDROCK);
@@ -347,6 +363,32 @@ void TerrainGenerator::generateColumn(int cx,int cz,BOOL bgthread){
       //  }
         return;
     }
+    {
+        // H.4: the Classic generator (generator-plan.md §3). A world with no GENERATOR record
+        // reaching here is a 1.x random-seed world (seed not 0 / 333333): FileManager sets its
+        // legacy profile at load; UNSET is only a world loaded by a path that did not.
+        static block8 ctypes[CHUNK_SIZE*CHUNK_SIZE*T_HEIGHT_MAX];
+        static color8 ccolors[CHUNK_SIZE*CHUNK_SIZE*T_HEIGHT_MAX];
+        if(classicState!=CLASSIC_STATE_SET)classic_legacy_params(&classic,LEVEL_SEED);
+        classic_generate_window(classic,boundx,boundz,CHUNK_SIZE,CHUNK_SIZE,T_HEIGHT,ctypes,ccolors,TRUE);
+        for(int x=0;x<CHUNK_SIZE;x++){
+            for(int z=0;z<CHUNK_SIZE;z++){
+                const block8* ts=&ctypes[(x*CHUNK_SIZE+z)*T_HEIGHT];
+                const color8* cs=&ccolors[(x*CHUNK_SIZE+z)*T_HEIGHT];
+                for(int y=0;y<T_HEIGHT;y++){
+                    int i=x*(CHUNK_SIZE*CHUNK_SIZE)+z*(CHUNK_SIZE)+(y-((int)y/CHUNK_SIZE)*CHUNK_SIZE);
+                    column[(int)y/CHUNK_SIZE]->pblocks[i]=ts[y];
+                    column[(int)y/CHUNK_SIZE]->pcolors[i]=cs[y];
+                    GBLOCK(x+boundx,z+boundz,y)=ts[y];
+                }
+            }
+        }
+        for(int cy=0;cy<CHUNKS_PER_COLUMN ;cy++){
+            ter->addChunk(column[cy],ocx,cy,ocz,TRUE);
+        }
+        return;
+    }
+#if 0   // H.4: the surviving 1.x body, superseded by classic_generate_window() (archaeology, rule 9)
     float var=3;  //how much variance in heightmap?
     //LEVEL_SEED=0;
 	
@@ -527,7 +569,7 @@ void TerrainGenerator::generateColumn(int cx,int cz,BOOL bgthread){
               ter->addChunk(column[cy],ocx,cy,ocz,TRUE);
     }
 
-	
+#endif
 }
 void TerrainGenerator::generateCloud(){
     int num=arc4random()%4+4;
@@ -848,7 +890,23 @@ static void normalize3(float v[3])
 	v[2] = v[2] / s;
 }
 
+// H.4: the tables are baked (Classes/ClassicNoiseTables.h, generator-plan.md §1.7). They are
+// exactly what init_from_random() below produced on iOS/macOS/glibc from unseeded random() --
+// which is what makes 1.x worlds regenerate -- and no longer depend on the platform's random()
+// or on whoever called it first. g1 is not baked: noise1() has no caller.
 static void init(void)
+{
+    for (int i=0; i < 256 ; i++) pp[256+i] = pp[i] = permutation[i];
+    for (int i=0; i < B + B + 2; i++) {
+        p[i] = kClassicP[i];
+        memcpy(g2[i], &kClassicG2Bits[i*2], sizeof(float)*2);
+        memcpy(g3[i], &kClassicG3Bits[i*3], sizeof(float)*3);
+    }
+}
+
+// The original init(), kept as archaeology and for --classic-selftest's first mutation (tables
+// from a reseeded random(), i.e. what the Windows shim's arc4random-based random() produced).
+static void init_from_random(void)
 {
     for (int i=0; i < 256 ; i++) pp[256+i] = pp[i] = permutation[i];
 	int i, j, k;
@@ -883,3 +941,407 @@ static void init(void)
 	}
 }
 
+
+
+// =============================================================================================
+// H.4: the Classic generator (WORKING/feature-archaeology-2026-10-13/generator-plan.md §3).
+//
+// At scale 1x, Classic hilliness and caves off, the terrain below is the 1.x generateColumn
+// (the #if 0 body above) bit for bit, which is what lets a 1.x random-seed world's unexplored
+// columns regenerate exactly beside its saved ones (§1.2). Keep the float expressions in the
+// 1.x order -- `(float)FREQ*(coord+seed)/NOISE_CONSTANT`, `noise*AMPLITUDE*var`, roundf -- and
+// this translation unit compiled with -ffp-contract=off (native/CMakeLists.txt): one fused
+// multiply-add moves a cell. --classic-selftest and native.yml's hash pins are the proof.
+// Decoration (grass kinds, flowers, trees, clouds) was arc4random() in 1.x and is a counter
+// hash here, so a column regenerates the same every time it streams in.
+// =============================================================================================
+#include "EdenWorldStore.h"   // emod::crc32_of (the .eden mirror's CRC)
+
+static int g_classic_mutation=0;
+void classic_set_mutation(int m){   // 1 tables, 2 trunc, 3 noborder (TerrainGenerator.h)
+    g_classic_mutation=m;
+    if(m==1){ for(int i=0;i<7;i++)random(); init_from_random(); }   // an earlier random() caller
+    else init();
+}
+
+static const float kClassicHilliness[5]={1.0f,2.0f,3.0f,4.5f,6.0f};   // the editor's variance steps
+static const int kClassicTreeSpacing[4]={0,80,50,25};                // None / Sparse / Classic / Dense
+static const int kClassicLeafColors[4]={0,19,20,21};                 // placeTree's ct[]
+
+void classic_legacy_params(ClassicGen* g,int seed){
+    memset(g,0,sizeof(*g));
+    g->seed=seed; g->scale4=4; g->hilliness=2; g->caves=CLASSIC_CAVES_OFF; g->trees=2;
+    g->flowers=1; g->clouds=1; g->size=0; g->profile=CLASSIC_PROFILE_LEGACY; g->flags=0;
+}
+void classic_default_params(ClassicGen* g,int seed){
+    classic_legacy_params(g,seed);
+    g->profile=CLASSIC_PROFILE_NEW;
+}
+
+// ---- the record (generator-plan.md §4.1) and its .eden mirror (§4.2) -------------------------
+void classic_encode_record(const ClassicGen& g,unsigned char out[CLASSIC_RECORD_BYTES]){
+    memset(out,0,CLASSIC_RECORD_BYTES);
+    out[0]=1; out[1]=0;                 // generator: 1 = Classic (u16 LE)
+    out[2]=1; out[3]=0;                 // revision 1
+    uint32_t s=(uint32_t)g.seed;
+    out[4]=s&0xff; out[5]=(s>>8)&0xff; out[6]=(s>>16)&0xff; out[7]=(s>>24)&0xff;
+    out[8]=g.scale4; out[9]=g.hilliness; out[10]=g.caves; out[11]=g.trees;
+    out[12]=g.flowers; out[13]=g.clouds; out[14]=g.size; out[15]=g.profile; out[16]=g.flags;
+}
+int classic_decode_record(const unsigned char* in,size_t len,ClassicGen* g){
+    if(len!=CLASSIC_RECORD_BYTES)return 0;
+    if(in[0]!=1||in[1]!=0||in[2]!=1||in[3]!=0)return 0;
+    for(int i=17;i<CLASSIC_RECORD_BYTES;i++)if(in[i])return 0;   // a revision this build does not know
+    ClassicGen t; memset(&t,0,sizeof(t));
+    t.seed=(int)((uint32_t)in[4]|((uint32_t)in[5]<<8)|((uint32_t)in[6]<<16)|((uint32_t)in[7]<<24));
+    t.scale4=in[8]; t.hilliness=in[9]; t.caves=in[10]; t.trees=in[11];
+    t.flowers=in[12]; t.clouds=in[13]; t.size=in[14]; t.profile=in[15]; t.flags=in[16];
+    if(!(t.scale4==4||t.scale4==6||t.scale4==8||t.scale4==12||t.scale4==16))return 0;
+    if(t.hilliness>4||t.caves>2||t.trees>3||t.flowers>1||t.clouds>1||t.size>1||t.profile>1||(t.flags&~1))return 0;
+    *g=t;
+    return 1;
+}
+void classic_encode_mirror(const ClassicGen& g,unsigned char out[36]){
+    memcpy(out,"EMG1",4);
+    classic_encode_record(g,out+4);
+    uint32_t c=emod::crc32_of(out,32);
+    out[32]=c&0xff; out[33]=(c>>8)&0xff; out[34]=(c>>16)&0xff; out[35]=(c>>24)&0xff;
+}
+int classic_decode_mirror(const unsigned char in[36],ClassicGen* g){
+    if(memcmp(in,"EMG1",4)!=0)return 0;
+    uint32_t c=emod::crc32_of(in,32);
+    if(in[32]!=(c&0xff)||in[33]!=((c>>8)&0xff)||in[34]!=((c>>16)&0xff)||in[35]!=((c>>24)&0xff))return 0;
+    return classic_decode_record(in+4,CLASSIC_RECORD_BYTES,g);
+}
+
+// ---- decoration RNG: SplitMix64 over (seed, x, z, y, salt) ------------------------------------
+enum { CS_GRASS=1, CS_FLOWER, CS_ROOT, CS_TREE_H, CS_LEAF, CS_LEAF_COLOR, CS_CLOUD, CS_CAVE_LO };
+static inline uint64_t cg_mix(uint64_t z){
+    z+=0x9E3779B97F4A7C15ull;
+    z=(z^(z>>30))*0xBF58476D1CE4E5B9ull;
+    z=(z^(z>>27))*0x94D049BB133111EBull;
+    return z^(z>>31);
+}
+static inline uint32_t cg_rand(const ClassicGen& g,int wx,int wz,int y,int salt){
+    uint64_t h=cg_mix((uint64_t)(uint32_t)g.seed);
+    h=cg_mix(h^(uint64_t)(uint32_t)wx);
+    h=cg_mix(h^(uint64_t)(uint32_t)wz);
+    h=cg_mix(h^(((uint64_t)(uint32_t)y<<32)|(uint32_t)salt));
+    return (uint32_t)(h>>32);
+}
+static inline int cg_floordiv(int a,int b){ return a>=0?a/b:-((-a+b-1)/b); }
+
+// ---- noise ----------------------------------------------------------------------------------
+// 3 octaves of noise3 at integer world coords, exactly as the 1.x skin/cave loops built `vec`.
+static float cg_noise3sum(float FREQ3,float AMPLITUDE3,int ax,int ay,int az){
+    float n3=0;
+    for(int i=0;i<3;i++){
+        float vec[3]={(float)FREQ3*ax/NOISE_CONSTANT,(float)FREQ3*az/NOISE_CONSTANT,(float)FREQ3*ay/NOISE_CONSTANT};
+        n3+=noise3(vec)*(AMPLITUDE3);
+        FREQ3*=2;
+        AMPLITUDE3/=2;
+    }
+    return n3;
+}
+
+int classic_height(const ClassicGen& g,int wx,int wz,int height){
+    float var=kClassicHilliness[g.hilliness];
+    float n=(float)(8*g.scale4);                 // offsety: 32*s (1.x: 32, never T_HEIGHT/2 -- §3.1)
+    float FREQ=8.0f/g.scale4;                    // 2/s
+    float AMPLITUDE=(float)g.scale4;             // 4*s
+    int ax=wx+g.seed,az=wz+g.seed;
+    for(int i=0;i<10;i++){
+        float vec[2]={(float)FREQ*ax/NOISE_CONSTANT,(float)FREQ*az/NOISE_CONSTANT};
+        n+=noise2(vec)*(AMPLITUDE)*var;
+        FREQ*=2;
+        AMPLITUDE/=2;
+    }
+    int h=g_classic_mutation==2?(int)n:(int)roundf(n);
+    if(h<3)h=3;
+    if(h>height-2)h=height-2;
+    return h;
+}
+
+// Skin and cave noise. At 1x/1.5x each cell is sampled (the 1.x path, never latticed); at
+// 2x/3x/4x on a lattice of step L=floor(s) anchored to world coords, interpolated in x, z then y
+// (§2.2), so neighbouring columns share nodes. The node box memoises one window's nodes; a node
+// outside it (a probe) is computed directly -- the same value either way.
+struct CgField{
+    float f0,a0; int L;
+    int nx0,nz0,NX,NZ,NY;          // the cached node box
+    std::vector<float> v; std::vector<unsigned char> have;
+};
+static void cg_field_init(CgField* f,const ClassicGen& g,float f0,float a0,int wx0,int wz0,int W,int D,int height){
+    f->f0=f0; f->a0=a0; f->L=g.scale4/4;
+    if(f->L<=1){ f->NX=f->NZ=f->NY=0; return; }
+    f->nx0=cg_floordiv(wx0,f->L); f->nz0=cg_floordiv(wz0,f->L);
+    f->NX=cg_floordiv(wx0+W-1,f->L)-f->nx0+2;
+    f->NZ=cg_floordiv(wz0+D-1,f->L)-f->nz0+2;
+    f->NY=(height-1)/f->L+2;
+    size_t n=(size_t)f->NX*f->NZ*f->NY;
+    f->v.assign(n,0.0f); f->have.assign(n,0);
+}
+static float cg_node(CgField* f,const ClassicGen& g,int i,int j,int k){   // node (i,k) horizontal, j vertical
+    int ci=i-f->nx0,ck=k-f->nz0;
+    if(f->NX&&ci>=0&&ci<f->NX&&ck>=0&&ck<f->NZ&&j>=0&&j<f->NY){
+        size_t idx=((size_t)ci*f->NZ+ck)*f->NY+j;
+        if(!f->have[idx]){ f->v[idx]=cg_noise3sum(f->f0,f->a0,i*f->L+g.seed,j*f->L+g.seed,k*f->L+g.seed); f->have[idx]=1; }
+        return f->v[idx];
+    }
+    return cg_noise3sum(f->f0,f->a0,i*f->L+g.seed,j*f->L+g.seed,k*f->L+g.seed);
+}
+// One field along one (wx, wz) stack. With a lattice, the four node columns around the stack are
+// interpolated in x then z once per node level j (lazily), and each cell only interpolates in y,
+// so a stack costs a few node evaluations plus one lerp a cell. The probes (tree roots, the
+// spawn search, cave detection) build the same CgCol, so they get the same bits as a window.
+#define CG_NODE_LEVELS (T_HEIGHT_MAX/2+2)
+struct CgCol{ int i,k; float tx,tz; float v[CG_NODE_LEVELS]; unsigned char have[CG_NODE_LEVELS]; };
+static void cg_col_init(CgField* f,CgCol* col,int wx,int wz){
+    if(f->L<=1)return;
+    const int L=f->L;
+    col->i=cg_floordiv(wx,L); col->k=cg_floordiv(wz,L);
+    col->tx=(float)(wx-col->i*L)/L; col->tz=(float)(wz-col->k*L)/L;
+    memset(col->have,0,sizeof(col->have));
+}
+static float cg_col_level(CgField* f,const ClassicGen& g,CgCol* col,int j){
+    if(!col->have[j]){
+        float n00=cg_node(f,g,col->i,j,col->k),  n10=cg_node(f,g,col->i+1,j,col->k);
+        float n01=cg_node(f,g,col->i,j,col->k+1),n11=cg_node(f,g,col->i+1,j,col->k+1);
+        float a=n00+(n10-n00)*col->tx, b=n01+(n11-n01)*col->tx;
+        col->v[j]=a+(b-a)*col->tz;
+        col->have[j]=1;
+    }
+    return col->v[j];
+}
+static float cg_col_field(CgField* f,const ClassicGen& g,CgCol* col,int wx,int y,int wz){
+    if(f->L<=1)return cg_noise3sum(f->f0,f->a0,wx+g.seed,y+g.seed,wz+g.seed);
+    const int L=f->L,j=y/L;                      // y >= 0
+    float ty=(float)(y-j*L)/L;
+    float v0=cg_col_level(f,g,col,j),v1=cg_col_level(f,g,col,j+1);
+    return v0+(v1-v0)*ty;
+}
+
+struct CgCtx{
+    const ClassicGen* g; int height;
+    int skinDepth,deepMargin,cave2011Top;   // round(6s), round(16s), round(9s)
+    CgField skin,cave;
+};
+static void cg_ctx_init(CgCtx* c,const ClassicGen& g,int wx0,int wz0,int W,int D,int height){
+    c->g=&g; c->height=height;
+    c->skinDepth=(int)roundf(6.0f*g.scale4/4.0f);
+    c->deepMargin=(int)roundf(16.0f*g.scale4/4.0f);
+    c->cave2011Top=(int)roundf(9.0f*g.scale4/4.0f);
+    cg_field_init(&c->skin,g,12.0f/g.scale4,0.5f,wx0,wz0,W,D,height);     // 1.x: FREQ3 3, AMPLITUDE3 0.5
+    cg_field_init(&c->cave,g,16.0f/g.scale4,0.25f,wx0,wz0,W,D,height);    // 1.x: FREQ3 4, AMPLITUDE3 0.25
+}
+
+// One (wx, wz) stack of 1.x's body loop: its height and the bounds that depend on it, once.
+struct CgStack{
+    int wx,wz,h,F,bandLo,bandHi; float vein;
+    CgCol skin,cave;
+};
+static void cg_stack_init(CgCtx* c,CgStack* s,int wx,int wz,int h){
+    const ClassicGen& g=*c->g;
+    s->wx=wx; s->wz=wz; s->h=h;
+    s->F=h-c->skinDepth;                        // FORMATION_HEIGHT
+    s->bandLo=1<<30; s->bandHi=0; s->vein=0.01f;   // no band: caves off
+    if(g.caves==CLASSIC_CAVES_DEEP){
+        s->bandLo=h%2+1; s->bandHi=s->F-c->deepMargin;
+    }else if(g.caves==CLASSIC_CAVES_2011){
+        s->bandLo=3+(int)(cg_rand(g,wx,wz,0,CS_CAVE_LO)%3);   // 3..5 (§1.4: soft, not a function of h)
+        s->bandHi=h-c->cave2011Top;
+        s->vein=0.005f;
+    }
+    cg_col_init(&c->skin,&s->skin,wx,wz);
+    cg_col_init(&c->cave,&s->cave,wx,wz);
+}
+// One cell of terrain before decoration (1.x's per-y body).
+static int cg_cell(CgCtx* c,CgStack* s,int y){
+    if(y>=s->h)return TYPE_NONE;
+    if(y==0)return TYPE_BEDROCK;
+    if(y<s->F){
+        if(!(y>s->bandLo&&y<s->bandHi))return TYPE_STONE;
+        float n3=cg_col_field(&c->cave,*c->g,&s->cave,s->wx,y,s->wz);
+        if(n3>0)return n3<=s->vein?TYPE_DARK_STONE:TYPE_STONE;
+        return TYPE_NONE;
+    }
+    float n3=cg_col_field(&c->skin,*c->g,&s->skin,s->wx,y,s->wz);
+    return n3<0.07f?TYPE_DIRT:TYPE_NONE;
+}
+static int cg_top(CgCtx* c,CgStack* s){
+    int F=s->F; if(F<1)F=1;
+    int above=TYPE_NONE;
+    for(int y=s->h-1;y>=F;y--){
+        int t=cg_cell(c,s,y);
+        if(t==TYPE_DIRT&&above==TYPE_NONE)return y;
+        above=t;
+    }
+    return -1;
+}
+int classic_surface_top(const ClassicGen& g,int wx,int wz,int height){
+    CgCtx c; cg_ctx_init(&c,g,wx,wz,1,1,height);
+    CgStack st; cg_stack_init(&c,&st,wx,wz,classic_height(g,wx,wz,height));
+    return cg_top(&c,&st);
+}
+// 1.x's surface pass for one dirt-under-air cell (local coords make the flower patch grid).
+static int cg_surface_kind(const ClassicGen& g,int wx,int wz,int y){
+    int lx=wx&(CHUNK_SIZE-1),lz=wz&(CHUNK_SIZE-1);
+    if(g.flowers&&cg_rand(g,wx,wz,y,CS_FLOWER)%2==0&&(lx+lx%10)%20<4&&(lz+lz%10)%20<4)return TYPE_GRASS3;
+    return cg_rand(g,wx,wz,y,CS_GRASS)%2==0?TYPE_GRASS:TYPE_GRASS2;
+}
+
+struct CgWin{
+    int wx0,wz0,W,D,H; block8* t; color8* c;
+    bool in(int wx,int wz,int y) const { return wx>=wx0&&wx<wx0+W&&wz>=wz0&&wz<wz0+D&&y>=0&&y<H; }
+    size_t at(int wx,int wz,int y) const { return ((size_t)(wx-wx0)*D+(wz-wz0))*H+y; }
+    int get(int wx,int wz,int y) const { return in(wx,wz,y)?t[at(wx,wz,y)]:TYPE_NONE; }
+    void set(int wx,int wz,int y,int type,int color){ if(in(wx,wz,y)){ t[at(wx,wz,y)]=type; c[at(wx,wz,y)]=color; } }
+};
+
+// The 1.x crown over a trunk at (wx, base, wz), drawn wherever it falls inside the window. Leaves
+// never replace a trunk; the caller orders trees, so later trunks replace earlier leaves.
+static void cg_draw_tree(const ClassicGen& g,CgWin* w,int wx,int wz,int base,int th){
+    for(int i=0;i<3*th/4;i++)w->set(wx,wz,base+i,TYPE_TREE,0);
+    int color=kClassicLeafColors[cg_rand(g,wx,wz,base,CS_LEAF_COLOR)%4];
+    for(int i=wx-2;i<=wx+2;i++){
+        for(int j=wz-2;j<=wz+2;j++){
+            for(int k=base+2*th/3;k<th+base;k++){
+                if(!w->in(i,j,k)||w->get(i,j,k)==TYPE_TREE)continue;
+                if(i==wx-2||i==wx+2||j==wz-2||j==wz+2){
+                    if((i==wx-2||i==wx+2)&&(j==wz-2||j==wz+2)&&(k==base+2*th/3||k==base+th-1)){
+                    }else if(cg_rand(g,i,j,k,CS_LEAF)%2==0){
+                        w->set(i,j,k,TYPE_LEAVES,color);
+                    }
+                }else{
+                    w->set(i,j,k,TYPE_LEAVES,color);
+                }
+            }
+        }
+    }
+}
+
+void classic_generate_window(const ClassicGen& g,int wx0,int wz0,int W,int D,int height,
+                             block8* types,color8* colors,bool decorate){
+    memset(types,0,(size_t)W*D*height*sizeof(block8));
+    memset(colors,0,(size_t)W*D*height*sizeof(color8));
+    CgWin w={wx0,wz0,W,D,height,types,colors};
+    CgCtx c; cg_ctx_init(&c,g,wx0,wz0,W,D,height);
+    std::vector<int> hs((size_t)W*D);
+    for(int x=0;x<W;x++){                       // heightmap + body (1.x's first loop)
+        for(int z=0;z<D;z++){
+            int wx=wx0+x,wz=wz0+z;
+            int h=classic_height(g,wx,wz,height);
+            hs[(size_t)x*D+z]=h;
+            block8* col=&types[((size_t)x*D+z)*height];
+            CgStack st; cg_stack_init(&c,&st,wx,wz,h);
+            for(int y=0;y<h;y++)col[y]=cg_cell(&c,&st,y);
+        }
+    }
+    if(!decorate)return;
+    for(int x=0;x<W;x++){                       // surface: grass kinds and flower patches
+        for(int z=0;z<D;z++){
+            block8* col=&types[((size_t)x*D+z)*height];
+            for(int y=1;y<height;y++){
+                if(col[y]==TYPE_NONE&&col[y-1]==TYPE_DIRT)col[y-1]=cg_surface_kind(g,wx0+x,wz0+z,y-1);
+            }
+        }
+    }
+    const int spacing=kClassicTreeSpacing[g.trees];
+    if(spacing&&g.profile==CLASSIC_PROFILE_LEGACY){
+        // 1.x: roots only at local 2..13 of a column, scanned x, z, y, each seeing the trees
+        // before it -- which leaves the tree-free lanes on the 16-block grid (§1.5, decision 10).
+        if(W==CHUNK_SIZE&&D==CHUNK_SIZE&&(wx0&(CHUNK_SIZE-1))==0&&(wz0&(CHUNK_SIZE-1))==0){
+            for(int x=2;x<CHUNK_SIZE-2;x++){
+                for(int z=2;z<CHUNK_SIZE-2;z++){
+                    for(int y=1;y<height-1;y++){
+                        int t=w.get(wx0+x,wz0+z,y);
+                        if(t!=TYPE_GRASS&&t!=TYPE_GRASS2)continue;
+                        int wx=wx0+x,wz=wz0+z,base=y+1;          // placeTree(x,z,y+1)
+                        if(cg_rand(g,wx,wz,base,CS_ROOT)%spacing!=0)continue;
+                        int th=cg_rand(g,wx,wz,base,CS_TREE_H)%3+6;
+                        if(base+th>=height)continue;
+                        bool ok=true;
+                        for(int i=wx-1;i<=wx+1&&ok;i++){
+                            for(int j=wz-1;j<=wz+1;j++){
+                                int below=w.get(i,j,base-1);
+                                if(!(below==TYPE_GRASS||below==TYPE_GRASS2||below==TYPE_DIRT)||w.get(i,j,base)!=TYPE_NONE){ ok=false; break; }
+                            }
+                        }
+                        if(ok)cg_draw_tree(g,&w,wx,wz,base,th);
+                    }
+                }
+            }
+        }
+    }else if(spacing){
+        // New worlds: a root anywhere, decided by hash and by the undecorated terrain only, so
+        // every column that a crown reaches draws the same tree (decision 10; gate 3).
+        const int M=3;                                   // roots within 2, their 3x3 within 3
+        const int AW=W+2*M,AD=D+2*M;
+        std::vector<int> hmemo((size_t)AW*AD,-1);
+        for(int x=0;x<W;x++)for(int z=0;z<D;z++)hmemo[(size_t)(x+M)*AD+(z+M)]=hs[(size_t)x*D+z];
+        #define CG_H(WX,WZ) (hmemo[(size_t)((WX)-wx0+M)*AD+((WZ)-wz0+M)]>=0?hmemo[(size_t)((WX)-wx0+M)*AD+((WZ)-wz0+M)]:\
+            (hmemo[(size_t)((WX)-wx0+M)*AD+((WZ)-wz0+M)]=classic_height(g,(WX),(WZ),height)))
+        const int R=g_classic_mutation==3?0:2;           // 3: --classic-selftest's "noborder" mutation
+        for(int wx=wx0-R;wx<wx0+W+R;wx++){
+            for(int wz=wz0-R;wz<wz0+D+R;wz++){
+                if(cg_rand(g,wx,wz,0,CS_ROOT)%spacing!=0)continue;
+                CgStack rs; cg_stack_init(&c,&rs,wx,wz,CG_H(wx,wz));
+                int top=cg_top(&c,&rs);
+                if(top<1||cg_surface_kind(g,wx,wz,top)==TYPE_GRASS3)continue;
+                int base=top+1,th=cg_rand(g,wx,wz,0,CS_TREE_H)%3+6;
+                if(base+th>=height)continue;
+                bool ok=true;
+                for(int i=wx-1;i<=wx+1&&ok;i++){
+                    for(int j=wz-1;j<=wz+1;j++){
+                        CgStack ns; cg_stack_init(&c,&ns,i,j,CG_H(i,j));
+                        if(cg_cell(&c,&ns,top)!=TYPE_DIRT||cg_cell(&c,&ns,base)!=TYPE_NONE){ ok=false; break; }
+                    }
+                }
+                if(ok)cg_draw_tree(g,&w,wx,wz,base,th);
+            }
+        }
+        #undef CG_H
+    }
+    if(g.clouds){
+        // 1.x generateCloud(): one column in five gets 4..7 slabs, all inside that column, at
+        // y 61/62 at 1x (⌊64s⌋-2/-3 at scale s, decision 11), whatever the world height.
+        int top=16*g.scale4; if(top>height)top=height;
+        for(int cx=cg_floordiv(wx0,CHUNK_SIZE);cx<=cg_floordiv(wx0+W-1,CHUNK_SIZE);cx++){
+            for(int cz=cg_floordiv(wz0,CHUNK_SIZE);cz<=cg_floordiv(wz0+D-1,CHUNK_SIZE);cz++){
+                int bx=cx*CHUNK_SIZE,bz=cz*CHUNK_SIZE;
+                if(cg_rand(g,bx,bz,0,CS_CLOUD)%5!=0)continue;
+                int num=cg_rand(g,bx,bz,1,CS_CLOUD)%4+4;
+                for(int rep=0;rep<num;rep++){
+                    int r=8+rep*6;
+                    int x=cg_rand(g,bx,bz,r,CS_CLOUD)%7;
+                    int y=cg_rand(g,bx,bz,r+1,CS_CLOUD)%7;
+                    int cw=cg_rand(g,bx,bz,r+2,CS_CLOUD)%(CHUNK_SIZE-x);
+                    int ch=cg_rand(g,bx,bz,r+3,CS_CLOUD)%(CHUNK_SIZE-y);
+                    if(cw<4)cw=4;
+                    if(ch<4)ch=4;
+                    int d=cg_rand(g,bx,bz,r+4,CS_CLOUD)%2+2;
+                    for(int i=0;i<cw;i++)
+                        for(int j=0;j<ch;j++)
+                            w.set(bx+i+x,bz+j+y,top-d,TYPE_CLOUD,0);
+                }
+            }
+        }
+    }
+}
+
+void classic_cave_votes(int seed,int cx,int cz,const unsigned char* col,int bands,long* cells,long* air){
+    ClassicGen g; classic_legacy_params(&g,seed); g.caves=CLASSIC_CAVES_2011;
+    CgCtx c; cg_ctx_init(&c,g,cx*CHUNK_SIZE,cz*CHUNK_SIZE,CHUNK_SIZE,CHUNK_SIZE,T_HEIGHT_DEFAULT);
+    for(int x=0;x<CHUNK_SIZE;x++){
+        for(int z=0;z<CHUNK_SIZE;z++){
+            int wx=cx*CHUNK_SIZE+x,wz=cz*CHUNK_SIZE+z;
+            CgStack st; cg_stack_init(&c,&st,wx,wz,classic_height(g,wx,wz,T_HEIGHT_DEFAULT));
+            // 6..h-10: inside the 2011 band whatever its soft lower edge (3..5) was in that column.
+            for(int y=6;y<st.bandHi&&y<bands*CHUNK_SIZE;y++){
+                if(cg_col_field(&c.cave,g,&st.cave,wx,y,wz)>0)continue;
+                (*cells)++;
+                if(col[(size_t)(y/CHUNK_SIZE)*8192+x*(CHUNK_SIZE*CHUNK_SIZE)+z*CHUNK_SIZE+y%CHUNK_SIZE]==TYPE_NONE)(*air)++;
+            }
+        }
+    }
+}

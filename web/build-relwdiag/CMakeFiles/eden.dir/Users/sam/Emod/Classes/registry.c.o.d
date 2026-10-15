@@ -1,0 +1,40 @@
+CMakeFiles/eden.dir/Users/sam/Emod/Classes/registry.c.o: \
+  /Users/sam/Emod/Classes/registry.c /Users/sam/Emod/Classes/gluos.h \
+  /Users/sam/Emod/Classes/glu.h \
+  /Users/sam/Emod/web/src/shim/gl/framework/OpenGLES/ES1/gl.h \
+  /Users/sam/Emod/web/src/shim/gl/framework/OpenGLES/ES1/../../../gl_es1_shim.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/GLES/gl.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/GLES/glplatform.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/KHR/khrplatform.h \
+  /Users/sam/Emod/web/emsdk/upstream/lib/clang/20/include/stdint.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/stdint.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/bits/alltypes.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/bits/stdint.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/em_asm.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/em_macros.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/em_types.h \
+  /Users/sam/Emod/web/emsdk/upstream/lib/clang/20/include/stdbool.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/stdbool.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/em_js.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/promise.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/compat/stdlib.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/stdlib.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/features.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/alloca.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/wget.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/version.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/stdio.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/wasi/api.h \
+  /Users/sam/Emod/web/emsdk/upstream/lib/clang/20/include/stddef.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/stddef.h \
+  /Users/sam/Emod/web/emsdk/upstream/lib/clang/20/include/__stddef_header_macro.h \
+  /Users/sam/Emod/web/emsdk/upstream/lib/clang/20/include/__stddef_ptrdiff_t.h \
+  /Users/sam/Emod/web/emsdk/upstream/lib/clang/20/include/__stddef_size_t.h \
+  /Users/sam/Emod/web/emsdk/upstream/lib/clang/20/include/__stddef_wchar_t.h \
+  /Users/sam/Emod/web/emsdk/upstream/lib/clang/20/include/__stddef_null.h \
+  /Users/sam/Emod/web/emsdk/upstream/lib/clang/20/include/__stddef_max_align_t.h \
+  /Users/sam/Emod/web/emsdk/upstream/lib/clang/20/include/__stddef_offsetof.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/compat/string.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/string.h \
+  /Users/sam/Emod/web/emsdk/upstream/emscripten/cache/sysroot/include/strings.h

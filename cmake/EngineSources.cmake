@@ -49,6 +49,9 @@ function(eden_collect_engine_sources)
   #   Classes/NewWorldMenu.mm — Stage U.5's New World screen (name, Flat/Normal, height), opened by
   #   the main menu's New.
   list(APPEND _eden_sources "${EDEN_ECS_BASE_DIR}/Classes/NewWorldMenu.mm")
+  #   Classes/WorldPropertiesMenu.mm — Stage H / H.15's World Properties screen (the world list's
+  #   Properties: name, photo, info, a Classic world's terrain settings), opened in Rename's slot.
+  list(APPEND _eden_sources "${EDEN_ECS_BASE_DIR}/Classes/WorldPropertiesMenu.mm")
   #   Classes/Shadow.mm — Stage H / H.2's baked top-face shadows (the shadow-top table, its
   #   landing sync and edit hook, the shade functions). Plan: WORKING/feature-archaeology-2026-10-13/
   #   shadows-plan.md; engine doc: docs/lighting-liquids-effects.md.

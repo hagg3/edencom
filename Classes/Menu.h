@@ -24,6 +24,9 @@
 
 
 class ShareMenu;
+// H.15: not imported here -- WorldPropertiesMenu.h carries a ClassicGen (TerrainGenerator.h), and
+// Terrain.h reaches this file through Player.h/World.h before Terrain is declared.
+class WorldPropertiesMenu;
 
 
 
@@ -85,7 +88,8 @@ public:
     // N.4.5: rename the selected world. A GL text prompt (GLDialog::prompt) behind a "Rename"
     // button under the carousel, offered only where the host has GL text entry (not web, whose
     // DOM menu owns world naming). renameSelected() is the prompt's commit, public so a harness
-    // can drive the same path the dialog does.
+    // can drive the same path the dialog does. H.15: the button is "Properties" now (below), and
+    // the name is edited on that screen; the prompt is no longer reached from the list.
     GLW::Button rect_rename;
     bool renameOffered();
     void beginRename();
@@ -105,7 +109,8 @@ public:
     void tapRow(int index);
     // --ui-selftest / --shot: where a control is, in point space (y up). `which` is one of
     // "settings", "new", "play", "delete", "rename", "list", "scrollbar"; rowRect() answers for a
-    // world index, and false if that row is scrolled out of view. "getworlds" since 5.9.
+    // world index, and false if that row is scrolled out of view. "getworlds" since 5.9; "properties"
+    // (= "rename", the same button) since H.15.
     CGRect controlRect(const char* which);
     bool   rowRect(int index, CGRect* r);
     int    firstVisibleRow();
@@ -127,6 +132,14 @@ public:
     BOOL shownewworld;
     void openNewWorld();
     void startNewWorld(NSString* name);
+
+    // Stage H / H.15: "Properties" (the rect_rename button, which was N.4.5's Rename) opens
+    // World Properties for the selected world, a full screen over the menu background like New
+    // World. The world is closed, so its Save writes the file directly (FileManager::applyWorldProperties).
+    WorldPropertiesMenu* props;
+    BOOL showprops;
+    bool propertiesOffered();
+    void openProperties();
 
     void a_genFlat(BOOL b);
     void a_deleteCancel();

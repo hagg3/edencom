@@ -2381,6 +2381,9 @@ static int hit_load_counter=0;
 // read (32 KB at 64z, 131 KB at 256z) and the mesh work, so a column budget would cost 4x as
 // much per frame in a tall world. 96 chunks = 24 columns at 64z, 6 at 256z.
 #define BULK_RELOAD_CHUNK_BUDGET 96
+// H.4: the bulk reload's per-frame time for Classic-generated columns (generator-plan.md §2.1).
+// 4 ms is ~11 legacy columns a frame on the iPad Air 2 (0.36 ms each); tune on the device.
+#define GEN_FRAME_BUDGET_MS 4.0
 //
 // RE-TUNED, AND DELIBERATELY LEFT AT 96, after B3 Stage 2 (2026-08-27). Stage 2 turned this from a
 // mesh budget into a DISPATCH budget -- the meshing it gates now happens on a worker -- so what it
@@ -2698,6 +2701,11 @@ void Terrain::prepareAndLoadGeometry(){
                         if(budget<1)budget=1;
                     }
                     int spent=0;
+                    // H.4 (generator-plan.md §2.1): a column the Classic generator makes is charged
+                    // by measured time, not chunks -- GEN_FRAME_BUDGET_MS of generation a frame,
+                    // always at least one column -- so a jump into unexplored land takes a few more
+                    // frames instead of one long one. Saved and bundled columns keep the chunk budget.
+                    double genMs=0; int genCols=0;
                     if(budget>nstale)budget=nstale;
                     // B3 Stage 2, invalidation rule 1 (plan doc §4.3): readColumn re-homes every
                     // chunk of the column -- setBounds(), and a wholesale rewrite of pblocks/
@@ -2709,6 +2717,15 @@ void Terrain::prepareAndLoadGeometry(){
                     for(int i=0,taken=0;i<nstale&&taken<budget&&
                                         (!byBands||spent<BULK_RELOAD_CHUNK_BUDGET);i++){
                         if(columnOrLateralBusy(stale[i].cx,stale[i].cz))continue;   // B.5b-1a: + laterals
+                        if(world->fm->columnWillGenerate(stale[i].cx,stale[i].cz)){
+                            if(genCols>0&&genMs>=GEN_FRAME_BUDGET_MS)continue;
+                            double g0=eden_platform_now_ms();
+                            world->fm->readColumn(stale[i].cx,stale[i].cz,saveFile);
+                            genMs+=eden_platform_now_ms()-g0;
+                            genCols++;
+                            isloaded[stale[i].cx-m_chunkOffsetX][stale[i].cz-m_chunkOffsetZ]=TRUE;
+                            continue;
+                        }
                         //removeLights
                         // B3 Stage 3: readColumnDeferred may hand the column's RLE decode to a
                         // worker and answer FALSE, meaning "not landed yet". Then it must NOT be

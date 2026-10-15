@@ -33,6 +33,7 @@ namespace {
 
 // WorldFileHeader / EntityData field offsets (FileManager.h, Vector.h; docs/eden-file-format.md)
 const size_t H_POS_Y = 8, H_HOME_Y = 20, H_DIR_OFF = 32, H_VERSION = 92, H_HASH = 96, HASH_LEN = 36;
+const size_t H_RESERVED = 152;   // reserved[40]; H.4's GENERATOR mirror is its first 36 bytes
 const size_t E_POS_Y = 4, E_TYPE = 28;
 const uint32_t SLOTS_64 = 200, SLOTS_256 = 400;
 // Block ids (Classes/Constants.h)
@@ -433,6 +434,21 @@ bool EdenExporter::begin(const std::string& srcPath, const ExportOptions& opt) {
         if (py < 0) { wrf(&header_[H_POS_Y], 0); rep_.posClamped = true; }
         if (!(hy < 63)) { wrf(&header_[H_HOME_Y], 63); rep_.homeClamped = true; }
         if (hy < 0) { wrf(&header_[H_HOME_Y], 0); rep_.homeClamped = true; }
+    }
+    // H.4: a Classic world's GENERATOR record rides in reserved[] (@152) as "EMG1" + the 28 bytes +
+    // their CRC-32, so re-importing the `.eden` keeps its settings (docs/eden-file-format.md). Not
+    // for a 256z world cut to 64z at a scale above 1x: its terrain no longer fits, and the bare seed
+    // (what any older client sees) gives the 1x legacy terrain instead.
+    if (emod_ && store_.hasRecord(T_GENERATOR)) {
+        std::vector<uint8_t> g;
+        if (store_.readRecord(T_GENERATOR, g) <= EdenWorldStore::READ_FALLBACK && g.size() == GENERATOR_LEN &&
+            !(rep_.bandsOut < rep_.bandsIn && g[8] != 4)) {
+            uint8_t* m = &header_[H_RESERVED];
+            std::memset(m, 0, EDEN_HEADER - H_RESERVED);
+            std::memcpy(m, "EMG1", 4);
+            std::memcpy(m + 4, g.data(), GENERATOR_LEN);
+            wr32(m + 32, crc32_of(m, 32));
+        }
     }
     if (opt.overrideHash) {
         std::memset(&header_[H_HASH], 0, HASH_LEN);

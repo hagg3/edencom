@@ -1129,7 +1129,10 @@ BOOL Player::update(float etime){
     this->move(etime);
 	
     // X.6: worlds with data outside the bundled square (post-2.1 clients) have no edge wall.
-    if(World::getWorld->terrain->tgen->LEVEL_SEED==DEFAULT_LEVEL_SEED&&!World::getWorld->fm->worldUnbounded){
+    // H.4: a Classic world made "2880 square" has the same wall (its land ends there).
+    TerrainGenerator* tg=World::getWorld->terrain->tgen;
+    if((tg->LEVEL_SEED==DEFAULT_LEVEL_SEED&&!World::getWorld->fm->worldUnbounded)||
+       (tg->LEVEL_SEED!=0&&tg->classicState==TerrainGenerator::CLASSIC_STATE_SET&&tg->classic.size==1)){
         if(pos.x<4096*CHUNK_SIZE-GSIZE/2){
            pos.x=4096*CHUNK_SIZE-GSIZE/2;
         }else if(pos.x>=4096*CHUNK_SIZE+GSIZE/2){
