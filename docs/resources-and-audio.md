@@ -20,10 +20,10 @@ the entire audio layer (sound effects, ambience, music, creature voices).
   clicks, music `Eden_1..6.mp3` + the two title tracks).
 
 ## Textures
-- `atlas` — the opaque block atlas: a vertical strip of `ATLAS_TILES` (64) tiles; the mesher stores
+- `atlas` — the opaque block atlas: a vertical strip of `ATLAS_TILES` (128) tiles; the mesher stores
   a tile index and the texture matrix scales v by 1/`ATLAS_TILES` ([rendering.md](rendering.md)).
   Tiles 0–31 are stock; 32–47 / 48–63 are blocks 112–127 in colour / greyscale (D.2t, 2026-10-10,
-  from the 2026 game's atlas via `port/tools/atlas-d2t.py`, which also pads `atlas2` to 64).
+  from the 2026 game's atlas via `port/tools/atlas-d2t.py`, which also pads `atlas2` to 64). Tile 64 is the 1.x flower patch (H.14, `port/tools/atlas-h14.py`, which grows both to 128).
   `getBlockTexShort(texId)` returns the tile origin/height.
 - `atlas2` — the transparent/animated atlas (water/lava frames, glass, leaves…);
   rows are animation frames advanced by the render pass.

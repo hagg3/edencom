@@ -84,7 +84,9 @@ static const int kMaxTextureSize_Eden = 1024;
 // D.2t: the PNG path's cap. The block atlases grew to 32 x 2048 (64 tiles); under the 1024 cap they
 // were halved to 16 x 1024 -- UVs still right, every tile half-res. 2048 is the ES 2.0-class floor every
 // target clears (WebGL2 and ES 3.0 guarantee it). Strings keep kMaxTextureSize_Eden.
-static const int kMaxImageTextureSize_Eden = 2048;
+// H.14: the atlases are now 32 x 4096 (128 tiles), so the cap is 4096 -- at 2048 they were halved
+// again. Every desktop GPU and every iOS device this port targets (A5 and later) does 4096.
+static const int kMaxImageTextureSize_Eden = 4096;
 
 // Diagnostic-only: the per-texture decode line below (and, since N.4.9, the shim's per-texture
 // memory probe, via eden_gl_debug_tex_label) is far more useful with a filename on it, but

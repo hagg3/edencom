@@ -354,12 +354,13 @@ bool photoEncodePNG(const unsigned char* rgb,int w,int h,std::vector<unsigned ch
     return true;
 }
 void takeScreenshot(){
-    GLint vp[4]={0,0,0,0};
-    glGetIntegerv(GL_VIEWPORT,vp);
-    int fw=vp[2], fh=vp[3];
+    // GL_VIEWPORT answers the engine's point space (the picking raycast needs that), not the
+    // drawable's pixels; reading it sized the capture to the top-left of the frame (H.16b).
+    int fw=0, fh=0;
+    eden_gl_context_get_drawable_size(&fw,&fh);
     if(fw<=0||fh<=0) return;
     std::vector<unsigned char> px((size_t)fw*fh*4);
-    glReadPixels(vp[0],vp[1],fw,fh,GL_RGBA,GL_UNSIGNED_BYTE,px.data());
+    glReadPixels(0,0,fw,fh,GL_RGBA,GL_UNSIGNED_BYTE,px.data());
     // Centred crop at 3:2 (landscape; a portrait frame is cropped the same way on its long axis).
     int cw=fw, ch=fh;
     if(fw*2>fh*3) cw=fh*3/2; else ch=fw*2/3;

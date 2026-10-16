@@ -179,8 +179,9 @@
 //                        detected caves and its one record; home lifted to the new surface; the Terrain
 //                        tab's shapes (Scale read-only on 1.x, Flat's type row). --props-world=FILE times
 //                        one more read (gate 4). --props-mutate=nogen must FAIL it.
-//   --classic=SEED[,SCALE4]  H.4: a world --stage1 & co. CREATE is a Classic one (new profile, the New
-//                        World tab's defaults; SCALE4 4/6/8/12/16 at --height=256), e.g. for the ring walk.
+//   --classic=SEED[,SCALE4[,CAVES[,HILLS[,TREES]]]]  H.4: a world --stage1 & co. CREATE is a Classic one
+//                        (new profile, the New World tab's defaults; SCALE4 4/6/8/12/16 at --height=256;
+//                        X.13: CAVES 0 Off/1 2011/2 Deep, HILLS 0-4, TREES 0-3), e.g. for the ring walk.
 //   --shadows=off|classic|smooth  H.2: override the Shadows setting for this run, NOT stored (native
 //                        prefs are global, not per --docs). CI's geometry pair passes --shadows=off.
 //   --light-selfcheck    R.3: also keep the stock dense light array, written by the stock code,
@@ -617,6 +618,16 @@ bool open_world(const char* displayName, int height) {
     for (int i = 0; i < count; ++i) {
         if (std::strcmp(eden_menu_world_name(i), displayName) == 0) { idx = i; break; }
     }
+    // X.16: `_` may stand for a space (args are whitespace-split), tried only when the literal name
+    // is not a world: --world=Quarry_Town_V24I opens "Quarry Town V24I".
+    std::string spaced;
+    if (idx < 0 && std::strchr(displayName, '_')) {
+        spaced = displayName;
+        for (size_t k = 0; k < spaced.size(); ++k) if (spaced[k] == '_') spaced[k] = ' ';
+        for (int i = 0; i < count; ++i)
+            if (std::strcmp(eden_menu_world_name(i), spaced.c_str()) == 0) { idx = i; displayName = spaced.c_str(); break; }
+    }
+    const Uint64 tOpen0 = SDL_GetTicks();
     // "Normal" (not flat) so the world streams from the bundled Eden.eden — which is the whole
     // point for criterion 2: the default world is a fixed, shipped 2880x2880 map, so the same
     // origin yields the same blocks on every platform and every run. A flat world would compare
@@ -629,10 +640,13 @@ bool open_world(const char* displayName, int height) {
     const bool classic = idx < 0 && !g_opt.classicNew.empty();
     if (classic) {
         ClassicGen g;
-        int seed = 0, scale4 = 4;
-        std::sscanf(g_opt.classicNew.c_str(), "%d,%d", &seed, &scale4);
+        int seed = 0, scale4 = 4, caves = -1, hills = -1, trees = -1;
+        std::sscanf(g_opt.classicNew.c_str(), "%d,%d,%d,%d,%d", &seed, &scale4, &caves, &hills, &trees);
         classic_default_params(&g, seed);
         if (height == 256) g.scale4 = (unsigned char)scale4;
+        if (caves >= 0 && caves <= 2) g.caves = (unsigned char)caves;     // X.13: 0 Off, 1 2011, 2 Deep
+        if (hills >= 0 && hills <= 4) g.hilliness = (unsigned char)hills;
+        if (trees >= 0 && trees <= 3) g.trees = (unsigned char)trees;
         classic_encode_record(g, rec);
     }
     eden_menu_set_pending_generator(classic ? rec : nullptr);
@@ -644,7 +658,10 @@ bool open_world(const char* displayName, int height) {
     }
     eden_menu_select(idx);
     if (eden_menu_play() != 1) { std::fprintf(stderr, "[eden-stage1] menu_play refused\n"); return false; }
-    return tick_until([] { return game_mode() == 1; }, 60000, "game_mode == PLAY");
+    const bool ok = tick_until([] { return game_mode() == 1; }, 60000, "game_mode == PLAY");
+    std::printf("[eden-stage1] open_world \"%s\" %s first-load %llu ms\n", displayName, classic ? "(created Classic)" : "", (unsigned long long)(SDL_GetTicks() - tOpen0));
+    std::fflush(stdout);
+    return ok;
 }
 
 // The HUD taps the web harnesses use, with the same button indices (0 = open the in-game menu,
@@ -1336,7 +1353,7 @@ int run_shot() {
     if (Hud::pickerToolEnabled(HUD_TOOL_SIGN)) {
         tap_hud(1);
         tick(10);
-        const CGRect c = World::getWorld->hud->blockBounds[16];
+        const CGRect c = World::getWorld->hud->blockBounds[17];   // H.14: 16 is the flower block
         ui_tap(c.origin.x + c.size.width * 0.5f, c.origin.y + c.size.height * 0.5f);
         tick(20);
         capture("hud-sign");
@@ -1352,7 +1369,7 @@ int run_shot() {
         tick(2);
         // D.4b: CMD armed, then the command-block script prompt (multi-line, scrolled to the caret).
         {
-            const CGRect c = World::getWorld->hud->blockBounds[17];
+            const CGRect c = World::getWorld->hud->blockBounds[18];
             ui_tap(c.origin.x + c.size.width * 0.5f, c.origin.y + c.size.height * 0.5f);
         }
         tick(20);
@@ -1432,7 +1449,11 @@ int run_shot() {
         const int sel = m ? eden_menu_selected_index() : -1;
         if (sel >= 0 && eden_menu_play() == 1 && tick_until([] { return game_mode() == 1; }, 60000, "game_mode == PLAY")) {
             tick(60);
-            takeScreenshot();
+            // H.16b: the real path: camera mode + take_screenshot reads inside Hud::render, over the
+            // frame just drawn (a bare call here would read a presented, undefined back buffer).
+            World::getWorld->hud->mode = MODE_CAMERA;
+            World::getWorld->hud->take_screenshot = TRUE;
+            tick(3);
             if (quit_to_menu()) {
                 tick(30);
                 if (m->propertiesOffered()) {
@@ -6504,21 +6525,21 @@ int run_picker_selftest() {
     }
     {
         // D.3c / D.4b: SIGN and CMD are live where GL text entry exists (here).
-        ui_tap_rect(hud->blockBounds[17]);                 // CMD
+        ui_tap_rect(hud->blockBounds[18]);                 // CMD
         tick(5);
         const bool cmdArmed = hud->mode == MODE_BUILD && hud->blocktype == HUD_TOOL_CMD;
         tap_hud(1);                                        // reopen: the tool's page
         tick(5);
-        ui_tap_rect(hud->blockBounds[16]);                 // SIGN
+        ui_tap_rect(hud->blockBounds[17]);                 // SIGN
         tick(5);
         const bool signArmed = hud->mode == MODE_BUILD && hud->blocktype == HUD_TOOL_SIGN;
         tap_hud(1);
         tick(5);
         std::snprintf(detail, sizeof(detail), "cells %d %d, CMD armed %d, SIGN armed %d, reopened on page %d",
-                      Hud::pickerCell(1, 16), Hud::pickerCell(1, 17), cmdArmed, signArmed, hud->pickerPage);
-        check(Hud::pickerCell(1, 16) == HUD_TOOL_SIGN && Hud::pickerCell(1, 17) == HUD_TOOL_CMD && cmdArmed &&
+                      Hud::pickerCell(1, 17), Hud::pickerCell(1, 18), cmdArmed, signArmed, hud->pickerPage);
+        check(Hud::pickerCell(1, 16) == TYPE_GRASS3 && Hud::pickerCell(1, 17) == HUD_TOOL_SIGN && Hud::pickerCell(1, 18) == HUD_TOOL_CMD && cmdArmed &&
               signArmed && hud->mode == MODE_PICK_BLOCK && hud->pickerPage == 1,
-              "SIGN and CMD sit after 127 and each arms its tool", detail);
+              "the flower block, SIGN and CMD sit after 127 and each tool arms", detail);
     }
     ui_tap_rect(hud->pickerPrev);
     tick(5);
@@ -6566,7 +6587,7 @@ int run_picker_selftest() {
         tick(5);
         int bt = 0;
         for (int i = 0; i < 16; ++i) bt += hudBlocksMap[Hud::pickerCell(1, i)] != -1;
-        ui_tap_rect(hud->blockBounds[16]);                 // SIGN mid-pick: nothing
+        ui_tap_rect(hud->blockBounds[17]);                 // SIGN mid-pick: nothing
         tick(5);
         const int modeAfterSign = hud->mode;
         ui_tap_rect(hud->blockBounds[0]);                  // 112: the stock fallback, a plain block

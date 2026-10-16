@@ -36,7 +36,7 @@
 // SIGN and CMD tools. The tools are SENTINELS, not block ids: they can never be a block8 or index
 // a [NUM_BLOCKS+1] table, so every table read on a picker cell goes through hud_picker_is_tool().
 #define NUM_PICKER_PAGES 2
-#define NUM_PICKER_PAGE2_CELLS 18
+#define NUM_PICKER_PAGE2_CELLS 19
 #define HUD_TOOL_SIGN 1000
 #define HUD_TOOL_CMD 1001
 static inline bool hud_picker_is_tool(int type){ return type>=HUD_TOOL_SIGN; }
@@ -99,7 +99,7 @@ public:
     float var1,var2,var3;
 	CGRect blockBounds[NUM_DISPLAY_BLOCKS];
     // D.2p: which picker page is showing, and its ◀ ▶ strip under the grid (layoutForScreen()).
-    // blockBounds[] is the same grid on both pages; page 2 fills its first 18 cells.
+    // blockBounds[] is the same grid on both pages; page 2 fills its first 19 cells.
     int pickerPage;
     CGRect pickerPrev,pickerNext;
 	//Texture2D* blockIcons[NUM_DISPLAY_BLOCKS];

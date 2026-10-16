@@ -85,6 +85,7 @@ static int hudBlocks[NUM_DISPLAY_BLOCKS]={
 extern "C" const int hudBlocksMap[NUM_BLOCKS+1]={
     [TYPE_GRASS]=TYPE_BTGRASS,
     [TYPE_FLOWER]=-1,
+    [TYPE_GRASS3]=-1,   // H.14: block 12 has no BT variant
     [TYPE_DARK_STONE]=TYPE_BTDARKSTONE,
     [TYPE_STONE]=TYPE_BTSTONE,
     [TYPE_DIRT]=TYPE_BTDIRT,
@@ -152,11 +153,11 @@ extern "C" const int hudBlocksMap[NUM_BLOCKS+1]={
 
 // D.2p: the picker's page 2 — the 2026 game's second page in ID ORDER (the user's call; the
 // game's screenshot starts 113, 112), then its two tool cells. Laid out in the first 18 slots of
-// the same blockBounds[] grid as page 1.
+// the same blockBounds[] grid as page 1. (H.14 adds TYPE_GRASS3, so it fills the first 19.)
 static const int hudBlocks2[NUM_PICKER_PAGE2_CELLS]={
     TYPE_ORE_SAND,TYPE_SPACE_STONE,TYPE_CARPET,TYPE_SNAKESKIN,TYPE_OBSIDIAN,TYPE_CHEESE,TYPE_SPACE_DIRT,
     TYPE_SPACE_GRASS,TYPE_MOSS,TYPE_DARK_MATTER,TYPE_SPACE_SAND,TYPE_SNOW,TYPE_MOONROCK,TYPE_BASALT,
-    TYPE_DARK_TILE,TYPE_ALGAE,HUD_TOOL_SIGN,HUD_TOOL_CMD,
+    TYPE_DARK_TILE,TYPE_ALGAE,TYPE_GRASS3,HUD_TOOL_SIGN,HUD_TOOL_CMD,   // H.14: the 1.x flower block, before the tools
 };
 int Hud::pickerCellCount(int page){ return page==1?NUM_PICKER_PAGE2_CELLS:NUM_DISPLAY_BLOCKS; }
 int Hud::pickerCell(int page,int i){
@@ -178,7 +179,7 @@ static CGRect picker_hit(CGRect r){
     // Grown DOWNWARD only: centred, it would reach into the grid's last row and steal its taps.
     return CGRectMake(r.origin.x,r.origin.y+r.size.height-h,r.size.width,h);
 }
-static int picker_page_of(int type){ return (type>=TYPE_ORE_SAND&&type<=TYPE_ALGAE)||hud_picker_is_tool(type)?1:0; }
+static int picker_page_of(int type){ return (type>=TYPE_ORE_SAND&&type<=TYPE_ALGAE)||type==TYPE_GRASS3||hud_picker_is_tool(type)?1:0; }
 
 static int marginVert=10;
 static int marginLeft=10;

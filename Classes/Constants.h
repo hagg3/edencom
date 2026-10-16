@@ -291,7 +291,7 @@ enum BLOCK_TYPES{
 
 // Tiles per atlas strip (atlas.png and atlas2.png are both 32 x 32*ATLAS_TILES). Stock was 32, baked in
 // as glScalef(1,1/32,1) and type/32 -- every atlas-UV consumer now reads this instead (D.2t).
-#define ATLAS_TILES 64
+#define ATLAS_TILES 128
 // A greyscale 112-127 face, and its unpainted colour twin.
 #define IS_NEWBLOCK_TEX(bf) ((bf)>=TEX_NEWBLOCK&&(bf)<TEX_NEWBLOCK+16)
 #define NEWBLOCK_COLOR_TEX(bf) ((bf)-TEX_NEWBLOCK+TEX_NEWBLOCK_COLOR)
@@ -332,6 +332,9 @@ enum BLOCK_TEXTURES{
     // paint multiplies onto. Art: the 2026 game's atlas (port/tools/atlas-d2t.py).
     TEX_NEWBLOCK_COLOR=32,
     TEX_NEWBLOCK=48,
+    // H.14: the atlas grew again, to 128 tiles. 64 is the 1.x flower patch (grass3o.png, full colour, so
+    // it is never tinted: paint stays white). Block 12 (TYPE_GRASS3) draws it on top, grass sides.
+    TEX_GRASS_FLOWER=64,
     
     
     TEX_GLASS=0,	

@@ -1146,6 +1146,9 @@ int TerrainChunk::rebuild2(){   //here be dragons//
                                     if(paint[i]<0)paint[i]=0;
                                 }
                             }
+                            else if(bf==TEX_GRASS_FLOWER){
+                                // H.14: full-colour art, drawn white (paint stays 1)
+                            }
                             else if(bf==TEX_GRASS_SIDE)
                                 bf=TEX_GRASS_SIDE_COLOR;
                             else if(bf==TEX_TNT_SIDE)
@@ -1519,6 +1522,8 @@ int TerrainChunk::rebuild2(){   //here be dragons//
                     bf=TEX_TNT_TOP_COLOR;
                 else if(bf==TEX_BRICK){
                     bf=TEX_BRICK_COLOR;
+                }else if(bf==TEX_GRASS_FLOWER){
+                    // H.14: full-colour art, drawn white
                 }else if(IS_NEWBLOCK_TEX(bf)){
                     bf=NEWBLOCK_COLOR_TEX(bf);   // D.2t: the colour art, drawn white
                 }else if(blockinfo[type]&IS_BLOCKTNT){

@@ -83,7 +83,7 @@ Painting the sky (paint tool aimed at the sky) calls `paintSky` which edits
   With `genCaves` false it regenerates the unmodified saved columns of archived 2011–2014 worlds
   bit for bit, and the bottom 64 blocks of a 2026-game 256z world.
   - **The surface is not quite the code's.** 1.x flower patches are block 12 `TYPE_GRASS3` on the
-    `(x+x%10)%20<4` grid, where the code places `TYPE_FLOWER` (73) on `TYPE_GRASS`, a post-1.x change.
+    `(x+x%10)%20<4` grid (H.14 restored its flower top, tile `TEX_GRASS_FLOWER`), where the code places `TYPE_FLOWER` (73) on `TYPE_GRASS`, a post-1.x change.
   - **Trees are column-local** (they root only at local x/z 2–13, which leaves tree-free lanes), and clouds sit at y 61–62.
   - **`offsety` is `T_HEIGHT/2`**: that is right only at 64z, and the 1.x scale is 32.
   - **Worlds up to Aug 2011 had caves.** They use the same noise3 with a band reaching ~9 blocks below the surface and

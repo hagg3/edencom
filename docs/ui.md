@@ -239,8 +239,9 @@ Responsibilities:
 - **Block picker** (`renderBlockScreen` / `handlePickBlock`): `NUM_DISPLAY_BLOCKS 35`
   tiles; picking a second block for ramps (`pickSecondBlock`). Sets `blocktype`.
   **Two pages since D.2p (2026-10-10).** Page 1 is the stock 35 (`hudBlocks[]`); page 2
-  (`hudBlocks2[]`, 18 cells in the first 18 `blockBounds[]` slots) is ids 112…127 in **id order**
-  (the 2026 game shows 113 first; the user chose id order), then the tools `HUD_TOOL_SIGN` (1000)
+  (`hudBlocks2[]`, 19 cells in the first 19 `blockBounds[]` slots) is ids 112…127 in **id order**
+  (the 2026 game shows 113 first; the user chose id order), then the 1.x flower block `TYPE_GRASS3` (12; H.14, no BT
+  variant, `picker_page_of` sends it to page 2), then the tools `HUD_TOOL_SIGN` (1000)
   and `HUD_TOOL_CMD` (1001). The tools are **sentinels, not block ids** — `hud_picker_is_tool()`
   guards every table read (`picker_bt()` for `hudBlocksMap`), they draw as captioned cells, and
   `Hud::pickerToolEnabled()` keeps a tool veiled (a tap is consumed, picks nothing) until its row
@@ -302,7 +303,7 @@ Responsibilities:
   the game's color palette, an inversion worth knowing about.
 - `MODE_CAMERA`: hides UI, screenshot capture (`take_screenshot` →
   glReadPixels → PNG in Documents + MD5 hash → `FileManager::setImageHash`). Port (H.16): `takeScreenshot()` in
-  `Classes/Util.mm` reads the GL viewport, centre-crops to 3:2, box-downsizes to a long side ≤ 1440 and
+  `Classes/Util.mm` reads the real drawable size (`eden_gl_context_get_drawable_size`; `GL_VIEWPORT` answers the point space for picking, so never size from it, H.16b), centre-crops to 3:2, box-downsizes to a long side ≤ 1440 and
   writes `<world>.png` with its own zlib PNG encoder (`photoEncodePNG`; the stock body is under `#if 0`
   because the shim's `UIImagePNGRepresentation` is a nil stub). Gate: `--photo-selftest`.
 - Golden-cube counter, health/damage flash (`flash`, `flashcolor`), underwater tint

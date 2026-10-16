@@ -43,7 +43,7 @@ passes, special objects, sky, and the per-vertex data formats.
   UV shorts are normalized by a **texture matrix** trick: `glMatrixMode(GL_TEXTURE);
   glScalef(1, 1/ATLAS_TILES, 1)` around the terrain passes and `BlockBreak::render` (each atlas
   is a 1×`ATLAS_TILES` strip). **Modified from stock (D.2t, 2026-10-10):** stock was 1/32 with
-  32-tile atlases; both grew to 64 (`Constants.h` `ATLAS_TILES`) to carry blocks 112–127 — atlas2's
+  32-tile atlases; both grew to 64 (`Constants.h` `ATLAS_TILES`) to carry blocks 112–127, then to **128 (H.14, 2026-10-16; the PNG loader's size cap in `Texture2D_web.mm` had to go 2048→4096 with it, or every tile loads half-res)** for tile 64 `TEX_GRASS_FLOWER` (block 12's top, `grass3o.png`, full colour so the mesher leaves its paint white; `port/tools/atlas-h14.py`) — atlas2's
   extra 32 tiles are transparent padding so one constant serves both passes. Every consumer reads
   it: the two passes, `BlockBreak`, `Resources::getBlockTex`/`getBlockTexShort` (normalized
   `type/ATLAS_TILES` for the HUD icons, picker and `Graphics::drawCube`). The door, portal-frame and portal-swirl immediate batches (`Terrain::render`) used to hardcode `*32` to cancel the 1/32 matrix for their own non-atlas textures; they now multiply by `ATLAS_TILES` (X.7 — at `*32` only the top half of the door texture was sampled, stretched over both blocks). The image loader's cap is
