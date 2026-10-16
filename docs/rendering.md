@@ -432,7 +432,7 @@ time becomes an upper bound that includes its own GPU work.
   that draws anything a tile store/reload of ≥ ~2.7 ms (one 4-vertex quad reads 7 ms). Use it to
   compare a pass against itself, never as that pass's GPU cost.
   `WORKING/low-end-perf-audit-2026-10-12.md` §5.1 has the evidence.
-- Harness: `--pass-probe` and `--stage1 --walk … --pass-timers` (native/README.md).
+- Harness: `--pass-probe` and `--stage1 --walk … --pass-timers` (native/README.md). Each pass reports `p50`, `p90`, `max` (2026-10-16) and `mean` ms.
 
 ## Common pitfalls
 - Terrain vertex positions are shorts in quarter-block units — forgetting the ×4/×0.25

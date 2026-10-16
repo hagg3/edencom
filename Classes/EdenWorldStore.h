@@ -149,8 +149,11 @@ public:
     // Open and scan per the spec's reading rules. Returns false (and error()) when the file must
     // be refused: unreadable, bad file header, or no valid commit. `writable` opens r+b; nothing
     // is written until commitBatch(). `checkCrc = false` exists ONLY for the corrupt gate's
-    // control run (it must then fail).
-    bool open(const char* path, bool writable, bool checkCrc = true);
+    // control run (it must then fail). `headerOnly` (X.12, read-only previews such as World
+    // Properties) scans record headers only: payloads are neither read nor CRC-checked and padding
+    // is not inspected, so opening costs one 32-byte read per record, not the file. Records read
+    // afterwards still have to decode, but their CRCs are not checked: for display only.
+    bool open(const char* path, bool writable, bool checkCrc = true, bool headerOnly = false);
     // A brand-new world: writes a 64-byte file header to `path`.creating. The first
     // commitBatch() (which must carry WORLD_HEADER and CREATURES) fsyncs and renames it to
     // `path`, so a world never appears on disk without a committed batch.
@@ -267,7 +270,7 @@ private:
 
     FILE* f_;
     std::string path_, error_, finalPath_;
-    bool writable_, checkCrc_, creating_;
+    bool writable_, checkCrc_, headerOnly_, creating_;
     int bands_;
     uint64_t created_, size_;
     std::vector<Rec> recs_;                                    // scan output (cleared after open)

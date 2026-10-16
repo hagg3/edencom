@@ -390,7 +390,10 @@ more; convert-on-play reports progress through `convertStep`'s percent. A 1.x fi
 - **World Properties (H.15, 2026-10-15)** — `FileManager::readWorldProperties(file, WorldProps*)` and
   `applyWorldProperties(file, const WorldProps&)` (`Classes/WorldProps.h`), the world list's Properties
   screen (ui.md). Both work on a CLOSED world (the screen is list-only) but share the open store when the
-  path matches, as `emodSetHeaderName` does. *Read* opens the store read-only once (`WORLD_HEADER`,
+  path matches, as `emodSetHeaderName` does. *Read* opens the store read-only once, **header-only** (X.12,
+  2026-10-16: `EdenWorldStore::open(path,false,true,true)` frames each record from its 32-byte header and
+  never reads or CRCs payloads, so Quarry's 30k columns no longer cost a whole-file read; the Air 2 took
+  ~755 ms before; Mac 34k columns 7 ms; reads of the few records it wants still decode), (`WORLD_HEADER`,
   `GENERATOR`, `PROVENANCE`, `SIGN_TRAILER` parsed through a local `WorldTrailer` for the sign count,
   `columnCount`, `created_unix`; the original's size via `originalOf`) and resolves a Classic world's
   settings with `fm_resolveGenerator()` — the function the load itself now uses, so the screen shows what

@@ -2766,7 +2766,7 @@ BOOL FileManager::readWorldProperties(NSString* file_name,WorldProps* out){
     emod::EdenWorldStore st;
     BOOL haveStore=FALSE;
     if(isEmodName(file_name)){
-        if(!st.open(path.c_str(),false))return FALSE;
+        if(!st.open(path.c_str(),false,true,true))return FALSE;   // X.12: header-only scan (Quarry on the Air 2: ~755 ms before)
         haveStore=TRUE;
         std::vector<uint8_t> raw;
         if(st.readRecord(emod::T_WORLD_HEADER,raw)>emod::EdenWorldStore::READ_FALLBACK||raw.size()!=sizeof(h))return FALSE;

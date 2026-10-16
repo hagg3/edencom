@@ -355,6 +355,7 @@ char* eden_menu_name_buffer(void);
 int   eden_menu_create_world(void);
 void  eden_menu_set_pending_world_type(int flat);
 void  eden_menu_set_pending_world_height(int height);
+int   eden_menu_delete_at(int index);   // X.15: --shadow-selftest clears its scratch world
 void  eden_menu_set_pending_generator(const unsigned char* rec28);   // H.4: NULL = none
 
 // Phase N Stage 4.2 (port/src/seam/AppLifecycle_web.mm, cmake-shared into this target).
@@ -803,7 +804,7 @@ void mesh_bench(const char* phase) {
 
 // P.1b: per-pass samples over a run (Classes/PassTimers.h). add() after every tick(1) whose frame
 // should count; print() emits one `[<tag>] <label>.passes {...}` JSON line: the whole-tick frame
-// p50/p90, and per pass p50/p90/mean ms plus the median draws / vertices / issued setup calls the
+// p50/p90, and per pass p50/p90/max/mean ms plus the median draws / vertices / issued setup calls the
 // GL shim counted inside it. Parents include their children (docs/rendering.md, "Per-pass instruments").
 struct PassAgg {
     std::vector<double> frame, ms[P_COUNT];
@@ -839,8 +840,8 @@ struct PassAgg {
                       q(fDraws, 0.5), q(fVerts, 0.5), q(fSetup, 0.5), q(fElided, 0.5));
         out += b;
         for (int i = 0; i < P_COUNT; ++i) {
-            std::snprintf(b, sizeof b, "%s\"%s\":{\"p50\":%.3f,\"p90\":%.3f,\"mean\":%.3f,\"draws\":%ld,\"verts\":%ld,\"setup\":%ld}",
-                          i ? "," : "", kEdenPassNames[i], q(ms[i], 0.5), q(ms[i], 0.9), mean(ms[i]),
+            std::snprintf(b, sizeof b, "%s\"%s\":{\"p50\":%.3f,\"p90\":%.3f,\"max\":%.3f,\"mean\":%.3f,\"draws\":%ld,\"verts\":%ld,\"setup\":%ld}",
+                          i ? "," : "", kEdenPassNames[i], q(ms[i], 0.5), q(ms[i], 0.9), q(ms[i], 1.0), mean(ms[i]),
                           q(draws[i], 0.5), q(verts[i], 0.5), q(setup[i], 0.5));
             out += b;
         }
@@ -4301,6 +4302,12 @@ int run_shadow_selftest() {
     g_selftestTag = "eden-shadow";
     const char* name = g_opt.world.empty() ? "shadow-selftest" : g_opt.world.c_str();
     if (g_shadow_mode == SHADOW_OFF) shadow_setOverride(SHADOW_CLASSIC);
+    // X.15: the default scratch world is deleted first. A leftover one (an earlier run at another
+    // height, with its lightbox and edits) was reopened as-is: --height was ignored and step 4 failed.
+    if (g_opt.world.empty()) {
+        for (int i = 0, n = eden_menu_world_count(); i < n; ++i)
+            if (std::strcmp(eden_menu_world_name(i), name) == 0) { eden_menu_delete_at(i); break; }
+    }
     if (!open_world(name, g_opt.height)) return 1;
     if (!g_opt.haveAt) { g_opt.at[0] = 65536.5f; g_opt.at[1] = 60.0f; g_opt.at[2] = 65536.5f; }
     const float X0 = g_opt.at[0], Y0 = g_opt.at[1], Z0 = g_opt.at[2];

@@ -428,7 +428,7 @@ int eden_detect_bands_raw(const uint8_t header[EDEN_HEADER], const uint8_t* dir,
 // EdenWorldStore — opening (docs/emod-file-format.md "Reading (normative)")
 // =============================================================================================
 EdenWorldStore::EdenWorldStore()
-    : testCrashAfter((size_t)-1), testCrashZeroFill(false), f_(nullptr), writable_(false), checkCrc_(true),
+    : testCrashAfter((size_t)-1), testCrashZeroFill(false), f_(nullptr), writable_(false), checkCrc_(true), headerOnly_(false),
       creating_(false), bands_(0), created_(0), size_(0) {
     close();
 }
@@ -460,13 +460,14 @@ bool EdenWorldStore::readAt(uint64_t off, void* dst, size_t n) {
     return std::fread(dst, 1, n, f_) == n;
 }
 
-bool EdenWorldStore::open(const char* path, bool writable, bool checkCrc) {
+bool EdenWorldStore::open(const char* path, bool writable, bool checkCrc, bool headerOnly) {
     close();
     error_.clear();
     auto t0 = std::chrono::steady_clock::now();
     path_ = path;
     writable_ = writable;
-    checkCrc_ = checkCrc;
+    headerOnly_ = headerOnly && !writable;
+    checkCrc_ = checkCrc && !headerOnly_;
     f_ = fopen_utf8(path, writable ? "r+b" : "rb");
     if (!f_) return fail(fmt("cannot open %s", path));
     size_ = file_size(f_);
@@ -510,7 +511,7 @@ bool EdenWorldStore::create(const char* path, int bands, uint64_t createdUnix) {
         remove_file(std::string(path) + ".creating");
         return fail("cannot write the file header");
     }
-    writable_ = true; creating_ = true; checkCrc_ = true;
+    writable_ = true; creating_ = true; checkCrc_ = true; headerOnly_ = false;
     bands_ = bands; created_ = createdUnix; size_ = FILE_HEADER;
     return true;
 }
@@ -525,6 +526,14 @@ bool EdenWorldStore::frame(uint64_t p, Rec* r, std::vector<uint8_t>& buf) {
     uint64_t end = p + recSize(plen);
     if (end > size_) return false;
     uint32_t padn = pad8(REC_HEADER + (uint64_t)plen);
+    if (headerOnly_) {
+        r->off = p; r->end = end;
+        r->type = h[4]; r->codec = h[5]; r->mask = rd16(h + 6);
+        r->x = (int32_t)rd32(h + 8); r->z = (int32_t)rd32(h + 12);
+        r->aux = rd32(h + 16); r->plen = plen; r->seq = rd32(h + 24); r->crc = rd32(h + 28);
+        r->padOk = true;
+        return true;
+    }
     buf.resize((size_t)plen + padn);
     if (!readAt(p + REC_HEADER, buf.data(), buf.size())) return false;
     uint32_t crc = rd32(h + 28);
