@@ -103,6 +103,19 @@ int   eden_display_point_height(void);
 // own aspect and the letterbox is a no-op, but the clamp below can make them differ.
 int   eden_display_aspect_x1000(void);
 
+// I.2 — THE SAFE AREA. The host reports the window's unsafe insets (Dynamic Island, rounded corners,
+// home indicator) in WINDOW points, top-left convention (left, top, right, bottom), whenever they
+// may have changed (native: SDL_GetWindowSafeArea on every display-mode pass and on
+// SDL_EVENT_WINDOW_SAFE_AREA_CHANGED; `--safe-area=`/`--device=` fake them). Re-lays-out the HUD
+// and menu when the engine-point rect moves. The world still renders full-bleed: only UI moves.
+void eden_display_set_safe_insets(float l, float t, float r, float b);
+// The rect UI may anchor to, in ENGINE points, y up (the HUD's convention): the point space less
+// the insets, converted through the letterbox (an inset the bars already cover costs nothing).
+// The whole point space when no insets are known. Derived live, never cached.
+void  eden_safe_rect(float* x, float* y, float* w, float* h);
+// --touch-selftest's teeth: 1 = report the whole point space (the pre-I.2 layout) and re-lay-out.
+void  eden_display_debug_ignore_safe_area(int on);
+
 // Device pixels per 2D-ortho unit (the `glOrthof(0, SCREEN_WIDTH*2, ...)` space every UI pass
 // draws in), from the live drawable. N.4.8: the UI text rasters were built at 1 texel per ortho
 // unit and then magnified by this ratio through GL_NEAREST — 1.8x on an iPad Air 2's touch

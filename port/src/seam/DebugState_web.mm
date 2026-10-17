@@ -21,6 +21,7 @@
 #include "../../../Classes/Resources.h"       // audit row 11 (A5) recolor probe
 #include "../../../Classes/SignRenderer.h"    // D.3b sign-pass probe
 #include "DisplayProfile_web.h"               // audit D1/D4 display-profile probe
+#include "../../../Classes/GLWidgets.h"       // I.2: GLW::safeRect / railFrame
 #include "../shim/foundation/platform_shims.h"   // EDEN_EXPORT (Phase N Stage 1)
 #include <cstdio>
 
@@ -165,6 +166,40 @@ const char* eden_debug_display_state(void) {
         h->colorBounds[0].origin.x, h->colorBounds[0].origin.y,
         h->colorBounds[0].size.width, h->colorBounds[0].size.height);
     return buf;
+}
+
+// I.2 — --touch-selftest's safe-area gate. Counts the in-world HUD rects (every edge-anchored
+// button and hit box, the stick pad, the status line, both picker grids and their page strip) and
+// the shared rail-screen panel that lie outside GLW::safeRect(), naming the first few in `buf`.
+// The pause menu's column is NOT here: whether it fits at all is I.4's gate. The rect to check
+// against is the caller's, so a layout made with the insets ignored can be checked against them.
+EDEN_EXPORT
+int eden_debug_safe_area_violations(float sx, float sy, float sw, float sh, char* buf, int cap) {
+    if (buf && cap > 0) buf[0] = 0;
+    if (!World::getWorld || !World::getWorld->hud) return -1;
+    Hud* h = World::getWorld->hud;
+    const CGRect sr = CGRectMake(sx, sy, sw, sh);
+    int bad = 0, n = 0;
+    auto chk = [&](const char* name, CGRect r) {
+        const float e = 0.01f;
+        if (r.origin.x >= sr.origin.x - e && r.origin.y >= sr.origin.y - e &&
+            r.origin.x + r.size.width <= sr.origin.x + sr.size.width + e &&
+            r.origin.y + r.size.height <= sr.origin.y + sr.size.height + e) return;
+        if (bad++ < 6 && buf && n < cap)
+            n += snprintf(buf + n, cap - n, "%s%s[%.0f,%.0f,%.0f,%.0f]", bad > 1 ? " " : "", name,
+                          r.origin.x, r.origin.y, r.size.width, r.size.height);
+    };
+    auto chkb = [&](const char* name, Button b) { chk(name, RectFromButton(b)); };
+    chkb("rmine", h->rmine); chkb("rburn", h->rburn); chkb("rbuild", h->rbuild); chkb("rpaint", h->rpaint);
+    chkb("rjumphit", h->rjumphit); chkb("rjumprender", h->rjumprender);
+    chkb("rcrouchhit", h->rcrouchhit); chkb("rcrouchrender", h->rcrouchrender);
+    chkb("rmenu", h->rmenu); chk("stick", padbounds); chk("status", h->sb->pos);
+    for (int i = 0; i < NUM_DISPLAY_BLOCKS; i++) chk("block", h->blockBounds[i]);
+    for (int i = 0; i < NUM_COLORS; i++) chk("color", h->colorBounds[i]);
+    chk("pickerPrev", h->pickerPrev); chk("pickerNext", h->pickerNext);
+    chk("paintframe", h->rpaintframe);
+    chk("railFrame", GLW::railFrame().panel);
+    return bad;
 }
 
 EDEN_EXPORT

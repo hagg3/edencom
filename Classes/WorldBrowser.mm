@@ -755,9 +755,10 @@ static void wb_layout(BrowserImpl* d) {
     d->pitch = std::max(du(28), tf);
     d->btnH = std::max(du(30), tf);
     const float m = du(12), pad = du(12), gap = du(8);
-    float pw = std::min(SCREEN_WIDTH - 2.0f * m, du(900));
-    const float ph = SCREEN_HEIGHT - 2.0f * m;
-    d->panel = CGRectMake((SCREEN_WIDTH - pw) * 0.5f, m, pw, ph);
+    const CGRect safe = safeRect();   // I.2
+    float pw = std::min((float)safe.size.width - 2.0f * m, du(900));
+    const float ph = safe.size.height - 2.0f * m;
+    d->panel = CGRectMake(safe.origin.x + (safe.size.width - pw) * 0.5f, safe.origin.y + m, pw, ph);
     const float left = d->panel.origin.x + pad, cw = pw - 2.0f * pad, right = left + cw;
     const float top = d->panel.origin.y + ph - pad;
     const float actY = d->panel.origin.y + pad;

@@ -425,6 +425,10 @@ const char* eden_debug_world_format(void);
 const char* eden_debug_heap(void);
 void  eden_debug_heap_reset_peak(void);
 void  eden_native_apply_display_mode(void);   // src/seam/DisplayMode_native.cpp
+void  eden_native_set_safe_area_override(float l, float t, float r, float b);   // I.2, same file
+void  eden_safe_rect(float* x, float* y, float* w, float* h);   // I.2, DisplayProfile_web.mm
+void  eden_display_debug_ignore_safe_area(int on);
+int   eden_debug_safe_area_violations(float sx, float sy, float sw, float sh, char* buf, int cap);       // I.2, DebugState_web.mm
 void  eden_live_commands_init(const char* path);   // src/seam/LiveCommands_native.mm (diagnostics)
 void  eden_live_commands_tick(void);
 }
@@ -471,6 +475,7 @@ struct Options {
     int  cycles = 8;                     // --leak-probe: load/quit cycles in one process
     int  winW = 0, winH = 0;             // --window=WxH: 0 means the built-in default (16:9)
     bool touchProfile = false;           // --touch-profile: pretend to be a touchscreen
+    float safeL = 0, safeT = 0, safeR = 0, safeB = 0;   // --safe-area=L,T,R,B (window points); I.0 overlay
     std::string docs;
     std::string bundle;
     std::string shot;                    // --shot=PREFIX: file prefix for --shot's captures
@@ -561,6 +566,7 @@ extern "C" void eden_mem_trace_install(void);   // HeapProbe_native.cpp, --mem-t
 extern "C" void eden_gl_set_tex_experiments(int bits);   // gl_fixed_function.cpp, --tex-exp=
 extern "C" void eden_gl_set_tex_flush(int on);           // gl_fixed_function.cpp, N.4.9's fix
 extern "C" void eden_mem_trace(const char* where);
+extern "C" void eden_test_force_touch_input(void);   // Settings_web.mm (X.19)
 void settings_pump() {
     if (!eden_settings_loaded()) eden_settings_init();
     // --render-scale=N is applied the first frame the model has loaded (before then a write would
@@ -570,6 +576,12 @@ void settings_pump() {
     if (!scaleApplied && g_opt.renderScalePct > 0 && eden_settings_loaded()) {
         scaleApplied = true;
         set_render_scale_pct(g_opt.renderScalePct);
+    }
+    // I.0: the stored prefs load after startup and would put a saved Input mode back over --touch-profile.
+    static bool touchForced = false;
+    if (!touchForced && g_opt.touchProfile && eden_settings_loaded()) {
+        touchForced = true;
+        eden_test_force_touch_input();
     }
     static bool setsApplied = false;
     if (!setsApplied && !g_opt.sets.empty() && eden_settings_loaded()) {
@@ -1094,6 +1106,23 @@ bool capture(const char* label, void (*overlay)() = nullptr) {
     std::vector<unsigned char> px((size_t)w * h * 4);
     eden_gl_glReadPixels(0, 0, w, h, 0x1908, 0x1401, px.data());   // GL_RGBA, GL_UNSIGNED_BYTE
     eden_native_gl_set_present(1);
+    if (g_opt.safeL > 0 || g_opt.safeT > 0 || g_opt.safeR > 0 || g_opt.safeB > 0) {
+        // I.0: tint the unsafe bands (island / home bar) red so a shot shows what the hand covers.
+        // Rows are bottom-up, so the "top" inset is the last rows. Window points -> drawable pixels.
+        int sw = 0, sh = 0;
+        if (eden_native_gl_window()) SDL_GetWindowSize(eden_native_gl_window(), &sw, &sh);
+        if (sw > 0 && sh > 0) {
+            const float kx = (float)w / sw, ky = (float)h / sh;
+            const int L = (int)(g_opt.safeL * kx), R = (int)(g_opt.safeR * kx);
+            const int T = (int)(g_opt.safeT * ky), B = (int)(g_opt.safeB * ky);
+            for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x) {
+                if (x < L || x >= w - R || y < B || y >= h - T) {
+                    unsigned char* q = px.data() + ((size_t)y * w + x) * 4;
+                    q[0] = (unsigned char)((q[0] + 255 * 2) / 3); q[1] = (unsigned char)(q[1] * 2 / 3); q[2] = (unsigned char)(q[2] * 2 / 3);
+                }
+            }
+        }
+    }
     char path[1024];
     std::snprintf(path, sizeof(path), "%s-%s.bmp",
                   g_opt.shot.empty() ? "eden-shot" : g_opt.shot.c_str(), label);
@@ -6126,6 +6155,26 @@ int run_touch_selftest() {
         }
     }
 
+    // I.2: every edge-anchored HUD rect (and the rail-screen panel) inside the safe rect. Only a
+    // real check where there are insets (`--device=iphone16`, `--safe-area=`, a notched device);
+    // there it also proves it has teeth: with the insets ignored the same layout must FAIL.
+    {
+        float sx = 0, sy = 0, sw = 0, sh = 0;
+        eden_safe_rect(&sx, &sy, &sw, &sh);
+        char who[512];
+        const int bad = eden_debug_safe_area_violations(sx, sy, sw, sh, who, sizeof(who));
+        std::snprintf(detail, sizeof(detail), "safe rect %.0f,%.0f %.0fx%.0f in %.0fx%.0f; %d outside%s%s",
+                      sx, sy, sw, sh, SCREEN_WIDTH, SCREEN_HEIGHT, bad, bad ? ": " : "", who);
+        check(bad == 0, "every HUD hit box lies inside the safe rect", detail);
+        if (sw < SCREEN_WIDTH || sh < SCREEN_HEIGHT) {
+            eden_display_debug_ignore_safe_area(1);
+            const int bad0 = eden_debug_safe_area_violations(sx, sy, sw, sh, who, sizeof(who));
+            eden_display_debug_ignore_safe_area(0);
+            std::snprintf(detail, sizeof(detail), "%d rect(s) outside with the insets ignored: %s", bad0, who);
+            check(bad0 > 0, "the safe-area gate fails with the inset ignored", detail);
+        }
+    }
+
     std::printf("[eden-touch] %s (%d failure(s))\n",
                 g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
     return g_selftestFailures ? 1 : 0;
@@ -9293,6 +9342,9 @@ void pump_events() {
             case SDL_EVENT_WINDOW_FOCUS_GAINED:
                 if (g_app) g_app->onVisibilityVisible();
                 break;
+            case SDL_EVENT_WINDOW_SAFE_AREA_CHANGED:   // I.2: rotation, island side, home bar
+                eden_native_apply_display_mode();
+                break;
             case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
                 // The new surface first, then the FIT. eden_set_drawable_size() clears the
                 // letterbox origin (the box is the whole surface until something says otherwise)
@@ -9820,6 +9872,29 @@ static int parse_one_arg(const char* a) {
         else if (starts_with(a, "--world="))          g_opt.world = a + 8;
         else if (starts_with(a, "--frames="))         g_opt.frames = atoi(a + 9);
         else if (!std::strcmp(a, "--touch-profile")) g_opt.touchProfile = true;
+        else if (starts_with(a, "--safe-area=")) {
+            float l = 0, t = 0, r = 0, b = 0;
+            if (sscanf(a + 12, "%f,%f,%f,%f", &l, &t, &r, &b) == 4) {
+                g_opt.safeL = l; g_opt.safeT = t; g_opt.safeR = r; g_opt.safeB = b;
+                eden_native_set_safe_area_override(l, t, r, b);   // I.2: the same seam call SDL's area feeds
+            }
+        }
+        else if (starts_with(a, "--device=")) {
+            // I.0: phone/tablet preview on a desktop = window size in points + touch profile + safe insets.
+            struct Dev { const char* n; int w, h; float l, t, r, b; };
+            static const Dev kDev[] = {
+                {"iphone16", 852, 393, 59, 0, 59, 21}, {"iphone16promax", 932, 430, 59, 0, 59, 21},
+                {"iphonese", 667, 375, 0, 0, 0, 0},    {"ipadair2", 1024, 768, 0, 0, 0, 0},
+                {"ipadpro11", 1194, 834, 0, 0, 0, 20},
+            };
+            bool found = false;
+            for (const Dev& d : kDev) if (!std::strcmp(a + 9, d.n)) {
+                g_opt.winW = d.w; g_opt.winH = d.h; g_opt.touchProfile = true;
+                g_opt.safeL = d.l; g_opt.safeT = d.t; g_opt.safeR = d.r; g_opt.safeB = d.b; found = true;
+                eden_native_set_safe_area_override(d.l, d.t, d.r, d.b);
+            }
+            if (!found) std::fprintf(stderr, "[eden] unknown --device=%s (iphone16 iphone16promax iphonese ipadair2 ipadpro11)\n", a + 9);
+        }
         else if (starts_with(a, "--window=")) {
             // Phase N Stage 4.3. The letterbox fit can only be exercised where the window's aspect
             // differs from the engine's, and every default this harness has is 16:9 — which is the
@@ -10079,6 +10154,7 @@ static int eden_main_after_args(int argc, char** argv) {
     eden_set_detected_touch(1);
 #else
     eden_set_detected_touch(g_opt.touchProfile ? 1 : 0);
+    if (g_opt.touchProfile) eden_test_force_touch_input();  // I.0: a saved input_mode must not undo the preview (in-process only)
 #endif
     settings_pump();                // may be too early (needs menu->settings); tick() retries
 

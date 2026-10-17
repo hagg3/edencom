@@ -14,6 +14,7 @@
 #import "Input.h"
 #import "Util.h"
 #import "Hud.h"
+#import "GLWidgets.h"   // I.2: GLW::safeRect
 
 
 CGRect padbounds;
@@ -39,6 +40,13 @@ Joystick::Joystick(){
 	joystick_pos=default_pos;
 	pos.x=pos.y=pos.z=0;
 	
+}
+void Joystick::layoutForScreen(){
+    const CGRect safe=GLW::safeRect();
+    padbounds.origin.x=safe.origin.x+20;padbounds.origin.y=safe.origin.y+20;
+    default_pos.origin.x=(padbounds.size.width/2)-default_pos.size.width/2+padbounds.origin.x;
+    default_pos.origin.y=(padbounds.size.height/2)-default_pos.size.height/2+padbounds.origin.y;
+    joystick_pos=default_pos;
 }
 static const int usage_id=999;
 
@@ -67,14 +75,19 @@ BOOL Joystick::update(float etime){
 				joystick_pos.origin.x=touches[i].mx-joystick_pos.size.width/2;
 				joystick_pos.origin.y=touches[i].my-joystick_pos.size.height/2;
 				//NSLog(@"%f",joystick_pos.origin.x);
-				if(joystick_pos.origin.x<-6)joystick_pos.origin.x=-6;
-				if(joystick_pos.origin.y<-7)joystick_pos.origin.y=-7;
-				if(joystick_pos.origin.x+joystick_pos.size.width>padbounds.size.width+47)
-					joystick_pos.origin.x=padbounds.size.width-joystick_pos.size.width+47;
-				if(joystick_pos.origin.y+joystick_pos.size.height>padbounds.size.height+47)
-					joystick_pos.origin.y=padbounds.size.height-joystick_pos.size.height+47;
+				// I.2: stock's clamps are absolute (the pad sat at 20,20); keep them relative to
+				// the pad so a safe-area inset moves the knob's range with it. dx = dy = 0 stock.
+				const float dx=padbounds.origin.x-20, dy=padbounds.origin.y-20;
+				if(joystick_pos.origin.x<-6+dx)joystick_pos.origin.x=-6+dx;
+				if(joystick_pos.origin.y<-7+dy)joystick_pos.origin.y=-7+dy;
+				if(joystick_pos.origin.x+joystick_pos.size.width>padbounds.size.width+47+dx)
+					joystick_pos.origin.x=padbounds.size.width-joystick_pos.size.width+47+dx;
+				if(joystick_pos.origin.y+joystick_pos.size.height>padbounds.size.height+47+dy)
+					joystick_pos.origin.y=padbounds.size.height-joystick_pos.size.height+47+dy;
 				pos.x=touches[i].mx-(default_pos.origin.x+default_pos.size.width/2);
-				pos.y=touches[i].my-(default_pos.origin.x+default_pos.size.width/2);
+				// Stock read origin.x here too (the same number while the pad sat at 20,20); a
+				// bottom inset different from the left one would make the stick drift.
+				pos.y=touches[i].my-(default_pos.origin.y+default_pos.size.height/2);
 				float mag=sqrt(pos.x*pos.x+pos.y*pos.y);
 				//NSLog(@"%f",mag);
 				NormalizeVector(&pos);

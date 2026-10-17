@@ -123,10 +123,11 @@ void Menu::layoutKit(){
     // The window lives between the logo (rect_name, laid out by layoutForScreen) and the status
     // line, and is as tall as its list needs — at least four rows, so a short list does not make a
     // stub of a window, and at most what fits.
+    const CGRect safe=safeRect();   // I.2: above the home bar, clear of the island
     const float top=rect_name.origin.y-gap;
-    const float bottom=margin+statusH;
+    const float bottom=safe.origin.y+margin+statusH;
     float cw=du(520);
-    const float maxCw=SCREEN_WIDTH-margin*2.0f-pad*2.0f;
+    const float maxCw=safe.size.width-margin*2.0f-pad*2.0f;
     if(cw>maxCw) cw=maxCw;
     const float fixed=pad+k->btnH+gap+gap+k->btnH+pad;
     int cap=(int)std::floor((top-bottom-fixed)/k->pitch);
@@ -142,7 +143,7 @@ void Menu::layoutKit(){
     const float ph=fixed+listH, pw=cw+pad*2.0f;
     float py=bottom+((top-bottom)-ph)*0.5f;
     if(py<bottom) py=bottom;
-    k->panel=CGRectMake((SCREEN_WIDTH-pw)*0.5f,py,pw,ph);
+    k->panel=CGRectMake(safe.origin.x+(safe.size.width-pw)*0.5f,py,pw,ph);
     const float left=k->panel.origin.x+pad, right=left+cw;
 
     // Titlebar: Settings at the left, the title centred on the window, [Get Worlds] New at the
@@ -256,7 +257,8 @@ void Menu::layoutForScreen(){
 	rect_name.size.width=284*.77f;
 	rect_name.size.height=83*.77f;
 	rect_name.origin.x=SCREEN_WIDTH/2-rect_name.size.width/2;
-    rect_name.origin.y=SCREEN_HEIGHT-rect_name.size.height-10;
+    // I.2: under the safe top (a portrait island); the logo is centred, so x needs nothing.
+    rect_name.origin.y=GLW::safeRect().origin.y+GLW::safeRect().size.height-rect_name.size.height-10;
     if(IS_IPAD&&!IS_RETINA){
         rect_name.origin.x=SCREEN_WIDTH/2-(591/SCALE_WIDTH)/2.0f;
         rect_name.origin.y-=10;
@@ -985,7 +987,7 @@ void Menu::renderKit(){
     }
     if(!k->status.empty()){
         const float yTop=k->panel.origin.y-du(6);
-        k->status.drawChrome(SCREEN_WIDTH*0.5f,yTop,kWhite,kBlack);
+        k->status.drawChrome(k->panel.origin.x+k->panel.size.width*0.5f,yTop,kWhite,kBlack);   // I.2: under the window
     }
     glColor4f(1.0f,1.0f,1.0f,1.0f);
 }

@@ -229,6 +229,11 @@ private:
 extern const float kTouchFloor;
 float touchFloor();
 
+// I.2: the rect UI may anchor to (point space, y up): the screen less the safe-area insets (the
+// Dynamic Island, rounded corners, the home bar), the whole screen where there are none. The
+// world still renders full-bleed; edge-anchored HUD chrome and full-screen panels use this.
+CGRect safeRect();
+
 // --- Toggle (Stage 5.4, U.1) ---------------------------------------------------------------
 // `.eden-toggle`: a SUNKEN split pill, no sliding knob. The left half is lime when on, the right
 // half dark grey when off; the other half is the white content face. Holds a value, so it is SUNKEN

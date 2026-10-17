@@ -118,7 +118,8 @@ void GLDialog::layout() {
     const float titlePt = du(30), bodyPt = du(14), btnPt = du(20);
 
     float pw = du(420);
-    const float maxW = SCREEN_WIDTH - du(24) * 2.0f;
+    const CGRect safe = GLW::safeRect();   // I.2: centred clear of the island and home bar
+    const float maxW = safe.size.width - du(24) * 2.0f;
     if (pw > maxW) pw = maxW;
     const float innerW = pw - pad * 2.0f;
     const float colW   = (innerW - gap) * 0.5f;
@@ -132,8 +133,8 @@ void GLDialog::layout() {
              + (m_hasField ? du(12) + fieldH : 0.0f)
              + du(14) + rows * (rowH + gap) - gap + pad;
 
-    const float px = (SCREEN_WIDTH  - pw) * 0.5f;
-    const float py = (SCREEN_HEIGHT - ph) * 0.5f;
+    const float px = safe.origin.x + (safe.size.width  - pw) * 0.5f;
+    const float py = safe.origin.y + (safe.size.height - ph) * 0.5f;
     m_panel = CGRectMake(px, py, pw, ph);
 
     m_titleTop = py + ph - pad;

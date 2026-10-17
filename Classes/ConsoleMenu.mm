@@ -287,7 +287,8 @@ RailFrame ConsoleMenu::frame(float kbTop){
     m_noRail=false;
     if(kbTop<=0||kbTop+du(6)<=f.panel.origin.y) return f;
     m_noRail=true;
-    const float bottom=kbTop+du(6), top=SCREEN_HEIGHT-du(6);
+    const CGRect safe=safeRect();   // I.2
+    const float bottom=kbTop+du(6), top=safe.origin.y+safe.size.height-du(6);
     f.panel=CGRectMake(f.panel.origin.x,bottom,f.panel.size.width,std::max(0.0f,top-bottom));
     const float pad=du(9), gap=du(6), barH=du(29), barW=du(18);
     const float left=f.panel.origin.x+pad, right=f.panel.origin.x+f.panel.size.width-pad;

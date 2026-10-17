@@ -47,6 +47,10 @@ SDL_Window* eden_native_gl_window(void);
 void eden_native_gl_set_letterbox(int x, int y, int w, int h);
 void eden_gl_context_get_drawable_size(int* width, int* height);
 
+// I.2: --safe-area= / --device= (eden_main_native.cpp) replace SDL's answer when set.
+static bool  g_safeOverride = false;
+static float g_safeOv[4] = {0, 0, 0, 0};
+
 // Called at boot from SDLView_native.mm's -establishScreenMetrics (before World::World() reads the
 // metrics — the ordering DisplayProfile_web.h requires) and again on every window size change.
 void eden_native_apply_display_mode(void) {
@@ -93,6 +97,26 @@ void eden_native_apply_display_mode(void) {
     if (bh < 1) bh = 1;
 
     eden_native_gl_set_letterbox((pw - bw) / 2, (ph - bh) / 2, bw, bh);
+
+    // (4) I.2: the unsafe insets (island, rounded corners, home bar), in window points, AFTER the
+    // point space is settled because the seam converts them through it. `--safe-area=`/`--device=`
+    // override SDL so a desktop window can preview a phone's.
+    float l = 0, t = 0, r = 0, b = 0;
+    if (g_safeOverride) {
+        l = g_safeOv[0]; t = g_safeOv[1]; r = g_safeOv[2]; b = g_safeOv[3];
+    } else {
+        SDL_Rect sa;
+        if (SDL_GetWindowSafeArea(win, &sa) && sa.w > 0 && sa.h > 0) {
+            l = (float)sa.x; t = (float)sa.y;
+            r = (float)(ww - (sa.x + sa.w)); b = (float)(wh - (sa.y + sa.h));
+        }
+    }
+    eden_display_set_safe_insets(l, t, r, b);
+}
+
+void eden_native_set_safe_area_override(float l, float t, float r, float b) {
+    g_safeOverride = true;
+    g_safeOv[0] = l; g_safeOv[1] = t; g_safeOv[2] = r; g_safeOv[3] = b;
 }
 
 }  // extern "C"

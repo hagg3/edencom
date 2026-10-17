@@ -310,9 +310,9 @@ Hud::Hud(){
 
     Hud::genColorTable();
 
-    // Both of these size themselves from layoutForScreen() below (statusbar::pos is public and
-    // Joystick's own rects are screen-independent), so they are constructed once here and merely
-    // repositioned on a later re-layout rather than being rebuilt.
+    // Both of these size themselves from layoutForScreen() below (statusbar::pos is public, and
+    // Joystick::layoutForScreen() moves the pad in from the safe left edge, I.2), so they are
+    // constructed once here and merely repositioned on a later re-layout rather than being rebuilt.
 	sb= new statusbar(CGRectMake(0,0,0,0));
     sb->useToast();   // N.5.11: every HUD message is the GL kit's toast (GLWidgets.h)
 	//gamepad=[[Gamepad alloc] init];
@@ -339,18 +339,25 @@ void Hud::layoutForScreen(){
     marginLeft=10;
     marginLeft2=10-6;
 
-	HUDR_X=SCREEN_WIDTH-HUD_BOX_SIZE-13;
+    // I.2: every edge-anchored element anchors to the SAFE rect (the screen less the island,
+    // rounded corners and home bar; GLW::safeRect). With no insets sR/sT are SCREEN_WIDTH/HEIGHT
+    // and s0x/s0y are 0, so every number below is the stock one.
+    const CGRect safe=GLW::safeRect();
+    const float s0x=safe.origin.x, s0y=safe.origin.y;
+    const float sR=safe.origin.x+safe.size.width, sT=safe.origin.y+safe.size.height;
+
+	HUDR_X=sR-HUD_BOX_SIZE-13;
 
 	rjumprender.origin.x=HUDR_X;
-	rjumprender.origin.y=0;
+	rjumprender.origin.y=s0y;
 	rjumprender.size.width=45;
 	rjumprender.size.height=45;
    // if(IS_IPAD){
         rjumprender.origin.y+=23;
         rjumprender.origin.x-=17;
     
-    rmenu.origin.x=0;
-    rmenu.origin.y=SCREEN_HEIGHT-45;
+    rmenu.origin.x=s0x;
+    rmenu.origin.y=sT-45;
     rmenu.size.width=45;
     rmenu.size.height=45;
    // }else{
@@ -358,9 +365,9 @@ void Hud::layoutForScreen(){
     //    rjumprender.origin.x-=7;
     //}
     rjumphit.origin.x=rjumprender.origin.x-1;
-	rjumphit.origin.y=0;
-	rjumphit.size.width=SCREEN_WIDTH- rjumphit.origin.x;
-	rjumphit.size.height=45+rjumprender.origin.y;
+	rjumphit.origin.y=s0y;
+	rjumphit.size.width=sR- rjumphit.origin.x;
+	rjumphit.size.height=45+rjumprender.origin.y-s0y;
 
     // Crouch button: same icon as jump, drawn mirrored on the X axis, sitting just to its left.
     rcrouchrender.origin.x=rjumprender.origin.x-50;
@@ -368,15 +375,15 @@ void Hud::layoutForScreen(){
     rcrouchrender.size.width=45;
     rcrouchrender.size.height=45;
     rcrouchhit.origin.x=rcrouchrender.origin.x-1;
-    rcrouchhit.origin.y=0;
+    rcrouchhit.origin.y=s0y;
     rcrouchhit.size.width=rjumphit.origin.x-rcrouchhit.origin.x;
-    rcrouchhit.size.height=45+rcrouchrender.origin.y;
+    rcrouchhit.size.height=45+rcrouchrender.origin.y-s0y;
 
 	CGRect sbrect;
-	sbrect.origin.x=20;
-	sbrect.size.width=SCREEN_WIDTH-40;
+	sbrect.origin.x=s0x+20;
+	sbrect.size.width=safe.size.width-40;
     
-	sbrect.origin.y=0;
+	sbrect.origin.y=s0y;
 	sbrect.size.height=25;
 	
     int roffy=3;
@@ -388,7 +395,7 @@ void Hud::layoutForScreen(){
     // layout had and anchor the column to the top edge, which is where it already sat (`k==5` is
     // flush against it). Identical to the stock arithmetic at SCREEN_HEIGHT==320.
     const float hudr_pitch=(float)IPHONE_HEIGHT/(HUDR_NUM);
-    const float hudr_top=SCREEN_HEIGHT-(int)(HUD_BOX_SIZE)-roffy;
+    const float hudr_top=sT-(int)(HUD_BOX_SIZE)-roffy;
 	rbuild.origin.x=HUDR_X;
 	rbuild.origin.y=hudr_top-hudr_pitch*2;
 	rbuild.size.width=rbuild.size.height=HUD_BOX_SIZE;
@@ -423,12 +430,14 @@ void Hud::layoutForScreen(){
     // width past that profile is split evenly here, so the grid (and rpaintframe, which shares
     // marginLeft2) keeps the same position relative to the screen centre at any width, and 568
     // points still produces byte-identical numbers to the stock layout.
-    if(SCREEN_WIDTH>IPHONE5_WIDTH)
-        marginLeft2+=(int)((SCREEN_WIDTH-IPHONE5_WIDTH)/2.0f);
+    // I.2: centred on the safe rect (the same centre while the insets are symmetric).
+    marginLeft2+=(int)s0x;
+    if(safe.size.width>IPHONE5_WIDTH)
+        marginLeft2+=(int)((safe.size.width-IPHONE5_WIDTH)/2.0f);
 	for(int i=0;i<NUM_DISPLAY_BLOCKS;i++){
 		
 		blockBounds[i].origin.x=7+BLOCK_ICON_SPACING+marginLeft2+(BLOCK_ICON_SPACING+BLOCK_ICON_SIZE)*c;
-		blockBounds[i].origin.y=-3+SCREEN_HEIGHT-marginVert-BLOCK_ICON_SPACING-BLOCK_ICON_SIZE-
+		blockBounds[i].origin.y=-3+sT-marginVert-BLOCK_ICON_SPACING-BLOCK_ICON_SIZE-
         (                                                                                                BLOCK_ICON_SPACING+BLOCK_ICON_SIZE)*r;									 ;
 		blockBounds[i].size.height=BLOCK_ICON_SIZE;
 		blockBounds[i].size.width=BLOCK_ICON_SIZE;
@@ -445,15 +454,17 @@ void Hud::layoutForScreen(){
     {
         const CGRect first=blockBounds[NUM_DISPLAY_BLOCKS-7], last=blockBounds[NUM_DISPLAY_BLOCKS-1];
         const float h=22.0f;
-        pickerPrev=CGRectMake(first.origin.x,first.origin.y-6.0f-h,first.size.width,h);
-        pickerNext=CGRectMake(last.origin.x,last.origin.y-6.0f-h,last.size.width,h);
+        // I.2: never into the home-bar band; on a 320-point phone that eats into the 6-point gap.
+        const float py=std::max((float)(first.origin.y-6.0f-h),s0y);
+        pickerPrev=CGRectMake(first.origin.x,py,first.size.width,h);
+        pickerNext=CGRectMake(last.origin.x,py,last.size.width,h);
     }
 
     c=r=0;
     for(int i=0;i<NUM_COLORS;i++){
 		
 		colorBounds[i].origin.x=5+4+COLOR_ICON_SPACING+marginLeft2+(COLOR_ICON_SPACING+COLOR_ICON_SIZE)*c;
-		colorBounds[i].origin.y=(-5)+(-5)+SCREEN_HEIGHT-marginVert-BLOCK_ICON_SPACING-COLOR_ICON_SIZE-
+		colorBounds[i].origin.y=(-5)+(-5)+sT-marginVert-BLOCK_ICON_SPACING-COLOR_ICON_SIZE-
         (                                                                                                COLOR_ICON_SPACING+COLOR_ICON_SIZE)*r;									 ;
 		colorBounds[i].size.height=COLOR_ICON_SIZE;
 		colorBounds[i].size.width=COLOR_ICON_SIZE;
@@ -488,8 +499,8 @@ void Hud::layoutForScreen(){
     // 320 points the two coincide exactly, which is why the coupling was invisible for 15 years; at
     // any taller point space the card slides out from under its own contents and you get an empty
     // panel with a grid of swatches floating above it. Anchor it to the edge the grids use.
-    if(SCREEN_HEIGHT>IPHONE_HEIGHT)
-        rpaintframe.origin.y+=SCREEN_HEIGHT-IPHONE_HEIGHT;
+    if(sT>IPHONE_HEIGHT)
+        rpaintframe.origin.y+=sT-IPHONE_HEIGHT;
 
 
     rmenuframe.origin.x=110;
@@ -529,6 +540,7 @@ void Hud::layoutForScreen(){
     rtCam=ButtonMake(rcam.origin.x+57,rcam.origin.y+5,180,56/2+10);
     rtExit=ButtonMake(rexit.origin.x+57,rexit.origin.y+5,180,56/2+10);
     layoutPauseMenu();   // Stage 5.5: replaces the four rects above with the kit column
+    if(joystick) joystick->layoutForScreen();   // I.2: the stick pad follows the safe left edge
 }
 
 void Hud::layoutPauseMenu(){
@@ -543,7 +555,9 @@ void Hud::layoutPauseMenu(){
     const float bw=du(240);
     const float ph=pad+titleH+n*btnH+(n-1)*gap+pad;
     const float pw=bw+pad*2.0f;
-    const float px=(SCREEN_WIDTH-pw)*0.5f, py=(SCREEN_HEIGHT-ph)*0.5f;
+    // I.2: centred on the safe rect. Whether the column FITS is I.4's job, not this one.
+    const CGRect safe=safeRect();
+    const float px=safe.origin.x+(safe.size.width-pw)*0.5f, py=safe.origin.y+(safe.size.height-ph)*0.5f;
     pauseKit->panel=CGRectMake(px,py,pw,ph);
     pauseKit->titleTop=py+ph-pad;
     float y=py+ph-pad-titleH-btnH;

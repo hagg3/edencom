@@ -53,6 +53,13 @@ const float kTouchFloor = 44.0f;
 extern "C" int eden_effective_input_is_touch(void);   // port/src/seam/Settings_web.mm (both targets)
 float touchFloor() { return eden_effective_input_is_touch() ? kTouchFloor : 0.0f; }
 
+extern "C" void eden_safe_rect(float* x, float* y, float* w, float* h);   // DisplayProfile_web.mm (I.2)
+CGRect safeRect() {
+    float x = 0, y = 0, w = SCREEN_WIDTH, h = SCREEN_HEIGHT;
+    eden_safe_rect(&x, &y, &w, &h);
+    return CGRectMake(x, y, w, h);
+}
+
 // A hit box: the explicit one if a screen set it, else the drawn rect.
 static bool inBox(CGRect drawn, CGRect hitBox, float x, float y) {
     const CGRect r = (hitBox.size.width > 0.0f && hitBox.size.height > 0.0f) ? hitBox : drawn;
@@ -332,7 +339,7 @@ void Label::drawChrome(float cx, float yTop, Color c, Color shadow) const {
 static const float kToastFade  = 0.2f;
 static const float kToastNever = 1000.0f;   // statusbar.mm's `thresh`: never expires
 
-static float toastMaxTextWidth() { return SCREEN_WIDTH - du(160); }
+static float toastMaxTextWidth() { return safeRect().size.width - du(160); }
 
 Toast::Toast() : m_life(0), m_age(0), m_builtU(0) {}
 
@@ -371,7 +378,8 @@ CGRect Toast::rect() const {
     if (tw > toastMaxTextWidth()) tw = toastMaxTextWidth();
     const float w = tw + 2 * du(12);
     const float h = m_label.height() + 2 * du(4);
-    return CGRectMake((SCREEN_WIDTH - w) * 0.5f, du(16), w, h);
+    const CGRect sr = safeRect();   // I.2: above the home bar
+    return CGRectMake(sr.origin.x + (sr.size.width - w) * 0.5f, sr.origin.y + du(16), w, h);
 }
 
 void Toast::render() const {
@@ -931,9 +939,11 @@ RailFrame railFrame() {
     RailFrame f;
     // THE PANEL IS FIXED (plan D3): on the constraining axis it is exactly the design frame, since
     // u() = min(W/783, H/587).
-    const float W = std::min(SCREEN_WIDTH - 2.0f * du(12), du(783));
-    const float H = std::min(SCREEN_HEIGHT - 2.0f * du(12), du(587));
-    f.panel = CGRectMake((SCREEN_WIDTH - W) * 0.5f, (SCREEN_HEIGHT - H) * 0.5f, W, H);
+    // I.2: framed by the safe rect, which is the screen wherever there are no insets.
+    const CGRect sr = safeRect();
+    const float W = std::min((float)sr.size.width - 2.0f * du(12), du(783));
+    const float H = std::min((float)sr.size.height - 2.0f * du(12), du(587));
+    f.panel = CGRectMake(sr.origin.x + (sr.size.width - W) * 0.5f, sr.origin.y + (sr.size.height - H) * 0.5f, W, H);
     const float pad = du(9), gap = du(6);
     const float left = f.panel.origin.x + pad, right = f.panel.origin.x + W - pad;
     const float barH = du(29), barTop = f.panel.origin.y + H - du(7);
@@ -1273,7 +1283,8 @@ void drawVersionTag() {
         tag.set(t.c_str(), 14.0f, UITextAlignmentLeft);
         builtU = u();
     }
-    const float x = du(6), yTop = SCREEN_HEIGHT - du(6), o = u();
+    const CGRect sr = safeRect();   // I.2: clear of the island's corner
+    const float x = sr.origin.x + du(6), yTop = sr.origin.y + sr.size.height - du(6), o = u();
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glEnableClientState(GL_VERTEX_ARRAY);

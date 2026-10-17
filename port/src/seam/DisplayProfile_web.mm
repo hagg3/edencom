@@ -230,6 +230,17 @@ static int eden_display_snap(float aspect, float targetH, float maxPointH, int* 
     return best;
 }
 
+// I.2: the host's unsafe insets in WINDOW points (top-left convention), and the selftest switch.
+static float g_safeL = 0, g_safeT = 0, g_safeR = 0, g_safeB = 0;
+static bool  g_ignoreSafe = false;
+
+static void eden_display_relayout(void) {
+    if (World::getWorld) {
+        if (World::getWorld->hud)  World::getWorld->hud->layoutForScreen();
+        if (World::getWorld->menu) World::getWorld->menu->layoutForScreen();
+    }
+}
+
 // The one place the metrics are written. Everything else in this file funnels here.
 static void eden_display_apply(void) {
     const int   pct    = eden_resolved_ui_scale_pct();
@@ -325,10 +336,7 @@ static void eden_display_apply(void) {
     // Re-layout whatever already exists. At boot none of it does — the constructors read the
     // globals set above — so this is purely the "metrics changed while running" path.
     Input::getInput()->screenMetricsChanged();
-    if (World::getWorld) {
-        if (World::getWorld->hud)  World::getWorld->hud->layoutForScreen();
-        if (World::getWorld->menu) World::getWorld->menu->layoutForScreen();
-    }
+    eden_display_relayout();
 }
 
 extern "C" {
@@ -351,6 +359,63 @@ void eden_display_set_viewport_px(int css_w, int css_h, int px_w, int px_h) {
 
 EDEN_EXPORT
 int eden_display_px_per_point(void) { return g_pxPerPoint; }
+
+// I.2. The insets are window points; the engine's point space is the LETTERBOXED box scaled to
+// g_pointW x g_pointH, so each inset first loses the bar on its side (a bar already keeps the UI off
+// that edge) and is then scaled by points-per-window-point. Insets round UP: half a point under
+// the island is still under it.
+EDEN_EXPORT
+void eden_safe_rect(float* x, float* y, float* w, float* h) {
+    const float W = SCREEN_WIDTH, H = SCREEN_HEIGHT;
+    float L = 0, T = 0, R = 0, B = 0;
+    if (!g_ignoreSafe && g_cssW > 0 && g_cssH > 0 && W > 0 && H > 0 &&
+        (g_safeL > 0 || g_safeT > 0 || g_safeR > 0 || g_safeB > 0)) {
+        float bw, bh;   // the box in window points
+        if (g_pxPerPoint > 0 && g_pxW > 0 && g_pxH > 0) {
+            bw = W * g_pxPerPoint * (float)g_cssW / (float)g_pxW;
+            bh = H * g_pxPerPoint * (float)g_cssH / (float)g_pxH;
+        } else {
+            const float aspect = W / H;
+            bw = (float)g_cssW; bh = bw / aspect;
+            if (bh > (float)g_cssH) { bh = (float)g_cssH; bw = bh * aspect; }
+        }
+        const float ox = ((float)g_cssW - bw) * 0.5f, oy = ((float)g_cssH - bh) * 0.5f;
+        const float kx = W / bw, ky = H / bh;
+        L = std::ceil(std::fmax(0.0f, g_safeL - ox) * kx);
+        R = std::ceil(std::fmax(0.0f, g_safeR - ox) * kx);
+        T = std::ceil(std::fmax(0.0f, g_safeT - oy) * ky);
+        B = std::ceil(std::fmax(0.0f, g_safeB - oy) * ky);
+        // Belt and braces: never hand the UI less than half the screen on either axis.
+        if (L + R > W * 0.5f) L = R = 0;
+        if (T + B > H * 0.5f) T = B = 0;
+    }
+    if (x) *x = L;
+    if (y) *y = B;   // y up: the BOTTOM inset is the origin
+    if (w) *w = W - L - R;
+    if (h) *h = H - T - B;
+}
+
+EDEN_EXPORT
+void eden_display_set_safe_insets(float l, float t, float r, float b) {
+    l = std::fmax(0.0f, l); t = std::fmax(0.0f, t); r = std::fmax(0.0f, r); b = std::fmax(0.0f, b);
+    if (l == g_safeL && t == g_safeT && r == g_safeR && b == g_safeB) return;
+    float x0, y0, w0, h0, x1, y1, w1, h1;
+    eden_safe_rect(&x0, &y0, &w0, &h0);
+    g_safeL = l; g_safeT = t; g_safeR = r; g_safeB = b;
+    eden_safe_rect(&x1, &y1, &w1, &h1);
+    if (x0 == x1 && y0 == y1 && w0 == w1 && h0 == h1) return;
+    std::fprintf(stderr, "[eden-display] safe insets %.0f,%.0f,%.0f,%.0f window pt -> "
+                         "safe rect %.0f,%.0f %.0fx%.0f points\n",
+                 (double)l, (double)t, (double)r, (double)b, x1, y1, w1, h1);
+    eden_display_relayout();
+}
+
+EDEN_EXPORT
+void eden_display_debug_ignore_safe_area(int on) {
+    if (g_ignoreSafe == (on != 0)) return;
+    g_ignoreSafe = (on != 0);
+    eden_display_relayout();
+}
 
 EDEN_EXPORT
 void eden_display_refresh(void) { eden_display_apply(); }
