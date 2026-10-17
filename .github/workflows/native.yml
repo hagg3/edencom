@@ -299,7 +299,7 @@ jobs:
           cp build/eden_native dist/Emod/emod-bin
           find build -maxdepth 1 \( -type f -o -type l \) \
             \( -name '*.png' -o -name '*.pod' -o -name '*.caf' -o -name '*.wav' \
-               -o -name '*.aif' -o -name '*.mp3' -o -name '*.eden' -o -name '*.ttf' \) -exec cp -L {} dist/Emod/ \;
+               -o -name '*.aif' -o -name '*.mp3' -o -name '*.eden' -o -name '*.emod' -o -name '*.ttf' \) -exec cp -L {} dist/Emod/ \;
           cp -a "$HOME"/sdl3-prefix/lib/libSDL3.so* dist/Emod/
           printf '%s\n' '#!/bin/sh' \
             'd="$(dirname "$(readlink -f "$0")")"' \
@@ -577,7 +577,7 @@ jobs:
           # four files in it and no error. `cp -L` then copies what each one points at.
           find build -maxdepth 1 \( -type f -o -type l \) \
             \( -name '*.png' -o -name '*.pod' -o -name '*.caf' -o -name '*.wav' \
-               -o -name '*.aif' -o -name '*.mp3' -o -name '*.eden' -o -name '*.ttf' \) -exec cp -L {} dist/ \;
+               -o -name '*.aif' -o -name '*.mp3' -o -name '*.eden' -o -name '*.emod' -o -name '*.ttf' \) -exec cp -L {} dist/ \;
 
           # SDL3, plus the runtime this toolchain links against. `ldd` on the built exe is the
           # source of truth rather than a hand-listed set of DLL names: it reports what THIS binary
@@ -772,7 +772,7 @@ jobs:
           cp build/eden_native dist/Emod/emod
           find build -maxdepth 1 \( -type f -o -type l \) \
             \( -name '*.png' -o -name '*.pod' -o -name '*.caf' -o -name '*.wav' \
-               -o -name '*.aif' -o -name '*.mp3' -o -name '*.eden' -o -name '*.ttf' \) -exec cp -L {} dist/Emod/ \;
+               -o -name '*.aif' -o -name '*.mp3' -o -name '*.eden' -o -name '*.emod' -o -name '*.ttf' \) -exec cp -L {} dist/Emod/ \;
           lib=$(otool -L build/eden_native | awk '/libSDL3/{print $1}')
           cp -L "$lib" dist/Emod/libSDL3.0.dylib
           chmod u+w dist/Emod/libSDL3.0.dylib
