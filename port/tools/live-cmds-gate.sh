@@ -14,6 +14,6 @@ cat "$FIX/gate.txt" >> "$WORK/feed.txt"
 i=0
 while kill -0 $PID 2>/dev/null && [ $i -lt 120 ]; do sleep 1; i=$((i+1)); done
 if kill -0 $PID 2>/dev/null; then kill $PID; echo "live-cmds gate: no quit within 130 s"; cat "$WORK/run.log"; exit 1; fi
-grep -ao '\[live\] .*' "$WORK/run.log" | grep -v '^\[live\] tailing' > "$WORK/got.txt"
+grep -ao '\[live\] .*' "$WORK/run.log" | grep -v '^\[live\] tailing' | tr -d '\r' > "$WORK/got.txt"
 if ! diff "$FIX/expected.txt" "$WORK/got.txt"; then echo "live-cmds gate: output differs"; exit 1; fi
 echo "live-cmds gate: ok"
