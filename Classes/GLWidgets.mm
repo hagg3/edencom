@@ -1110,7 +1110,7 @@ void progressBar(CGRect r, float frac, float phase) {
 // --- TextField -----------------------------------------------------------------------------
 static TextField* s_focused = NULL;
 
-TextField::TextField() : m_pt(16.0f), m_maxBytes(49), m_lines(1), m_showingPlaceholder(false) {
+TextField::TextField() : m_pt(16.0f), m_maxBytes(49), m_lines(1), m_showingPlaceholder(false), m_code(false) {
     m_rect = CGRectMake(0, 0, 0, 0);
     m_keep = CGRectMake(0, 0, 0, 0);
 }
@@ -1118,7 +1118,8 @@ TextField::TextField() : m_pt(16.0f), m_maxBytes(49), m_lines(1), m_showingPlace
 // Tells the platform where the field is, and what else the keyboard must leave visible.
 void TextField::announce() const {
     eden_text_input_keep_visible(m_keep.origin.x, m_keep.origin.y, m_keep.size.width, m_keep.size.height);
-    eden_text_input_start(m_rect.origin.x, m_rect.origin.y, m_rect.size.width, m_rect.size.height);
+    if (m_code) eden_text_input_start_code(m_rect.origin.x, m_rect.origin.y, m_rect.size.width, m_rect.size.height);
+    else        eden_text_input_start(m_rect.origin.x, m_rect.origin.y, m_rect.size.width, m_rect.size.height);
 }
 
 TextField::~TextField() { if (s_focused == this) blur(); }
@@ -1206,6 +1207,10 @@ bool TextField::applyInput(const char* bytes, int n, Event* ev) {
             *ev = EV_CHANGED;
             continue;
         }
+        if (c == EDEN_TEXT_KEY_TAB || c == EDEN_TEXT_KEY_UP || c == EDEN_TEXT_KEY_DOWN) {
+            if (m_code) m_keys += (char)c;             // C.4: the screen's, via takeKey()
+            continue;
+        }
         if (c < 0x20 || c == 0x7f) continue;          // other control bytes: not text
         // A lead byte starts a character of 1-4 bytes; take it whole or not at all.
         int len = 1;
@@ -1223,7 +1228,15 @@ bool TextField::applyInput(const char* bytes, int n, Event* ev) {
     return true;
 }
 
+int TextField::takeKey() {
+    if (m_keys.empty()) return 0;
+    const int k = (unsigned char)m_keys[0];
+    m_keys.erase(0, 1);
+    return k;
+}
+
 TextField::Event TextField::update() {
+    m_keys.clear();
     if (!focused()) return EV_NONE;
     Event ev = EV_NONE;
     char buf[256];
@@ -1245,6 +1258,31 @@ void TextField::render() const {
     const float yTop = m_lines > 1 ? m_rect.origin.y + m_rect.size.height - du(5)   // top-aligned
                                    : m_rect.origin.y + (m_rect.size.height + m_label.height()) * 0.5f;
     m_label.draw(m_rect.origin.x + du(6), yTop, m_showingPlaceholder ? kPlaceholder : kText);
+}
+
+// --- Version tag -----------------------------------------------------------------------------
+#ifndef EMOD_VERSION_STRING
+#define EMOD_VERSION_STRING "dev"
+#endif
+
+void drawVersionTag() {
+    static Label tag;
+    static float builtU = 0.0f;
+    if (tag.empty() || builtU != u()) {
+        const std::string t = std::string("Emod ") + EMOD_VERSION_STRING;
+        tag.set(t.c_str(), 14.0f, UITextAlignmentLeft);
+        builtU = u();
+    }
+    const float x = du(6), yTop = SCREEN_HEIGHT - du(6), o = u();
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+    glDisableClientState(GL_COLOR_ARRAY);
+    glEnable(GL_TEXTURE_2D);
+    tag.draw(x + o, yTop - o, kBlack);
+    tag.draw(x, yTop, kWhite);
+    glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
 }
 
 }  // namespace GLW

@@ -27,6 +27,8 @@ class ShareMenu;
 // H.15: not imported here -- WorldPropertiesMenu.h carries a ClassicGen (TerrainGenerator.h), and
 // Terrain.h reaches this file through Player.h/World.h before Terrain is declared.
 class WorldPropertiesMenu;
+// C.3: the Console screen; ConsoleMenu.h pulls in Console.h/CmdScript.h, which Menu.h's includers don't need.
+class ConsoleMenu;
 
 
 
@@ -140,6 +142,12 @@ public:
     BOOL showprops;
     bool propertiesOffered();
     void openProperties();
+
+    // Stage C / C.3: the Console (Classes/ConsoleMenu.h) over a RUNNING world -- unlike showsettings it
+    // freezes nothing; World::update runs console->update first and then the whole play step without
+    // player input. In play only (opened from the pause menu or the `console` key).
+    ConsoleMenu* console;
+    BOOL showconsole;
 
     void a_genFlat(BOOL b);
     void a_deleteCancel();

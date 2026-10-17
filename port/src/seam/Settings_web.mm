@@ -125,12 +125,15 @@ static const Setting kSettings[] = {
   { "view_distance",     "View distance",     "Video",     KIND_ENUM,   -1,             0,   6,   1,   0,  "In chunks. Lower is faster.", "Auto,4,5,6,7,8,9" },
   // B.5b-2: the resident window's radius in chunks (kRenderRadius[] below), read once per world
   // entry by eden_window_radius_for_world() -- the arrays are sized from it, so it cannot change
-  // under an open world. 9 is stock. iOS offers 10 at most until a device round measures more
-  // (render-distance plan §1.4: iPad Air 2 projected ~216 / ~273 MB at R10, 64z / 256z).
+  // under an open world. 9 is stock. iOS offers 12 at most, opt-in (P.4 decision 5): T.B16 measured
+  // the iPad Air 2 at R12 160 MiB (64z) and 240 MiB (Quarry-dense 256z), under the 300 MB bar.
+  // X.17: 4-8 added below 9 (T_RADIUS_MIN is 4; the runtime window ran ASan clean at R4). The stored value is an
+  // INDEX, so prepending options needed a new key: "render_radius" replaced "render_distance" (9,10,12,16 = old
+  // indexes 0-3 = new 5-8), migrated once in eden_settings_init.
 #if defined(EDEN_PLATFORM_IOS)
-  { "render_distance",   "Render distance",   "Video",     KIND_ENUM,   -1,             0,   1,   1,   0,  "More uses more memory. Applies when a world opens.", "9,10" },
+  { "render_radius",     "Render distance",   "Video",     KIND_ENUM,   -1,             0,   7,   1,   5,  "Less is faster and lighter; 12 may crash 2 GB devices. Applies when a world opens.", "4,5,6,7,8,9,10,12" },
 #else
-  { "render_distance",   "Render distance",   "Video",     KIND_ENUM,   -1,             0,   3,   1,   0,  "More uses more memory. Applies when a world opens.", "9,10,12,16" },
+  { "render_radius",     "Render distance",   "Video",     KIND_ENUM,   -1,             0,   8,   1,   5,  "Less is faster and lighter; more uses more memory. Applies when a world opens.", "4,5,6,7,8,9,10,12,16" },
 #endif
   // H.2: baked top-face shadows (Classes/Shadow.h). CPU meshing only (< 1 % computed), so not in the
   // presets. Default Off until the user's T look picks the shipped one (ROADMAP Stage H).
@@ -163,9 +166,10 @@ static const Setting kSettings[] = {
   // default for everyone; eden_apply_input_profile() below sets it to 60 the first time a touch
   // profile is detected AND the player has never explicitly touched this row.
 #if defined(EDEN_PLATFORM_IOS)
-  // P.14 (decision P.4-4): 45 stays so stored indices and the low-mem profile keep meaning, but it is
-  // labelled -- at vsync 1 on a 60 Hz panel it alternates 16.7 / 33.3 ms frames.
-  { "fps_cap",           "Frame rate cap",    "Video",     KIND_ENUM,   -1,             0,   3,   1,   0,  "Lower saves battery and heat. 45 is uneven on a 60 Hz screen.", "Uncapped,30,45 (uneven),60" },
+  // P.14 (decision P.4-4): no 45 on iOS -- at vsync 1 on a 60 Hz panel it alternates 16.7 / 33.3 ms
+  // frames. The list is 3 long here, so the stored index differs from the 4-entry list below:
+  // eden_get_fps_cap() maps it, the profile seeder remaps, and eden_settings_init migrates once.
+  { "fps_cap",           "Frame rate cap",    "Video",     KIND_ENUM,   -1,             0,   2,   1,   0,  "Lower saves battery and heat.", "Uncapped,30,60" },
 #else
   { "fps_cap",           "Frame rate cap",    "Video",     KIND_ENUM,   -1,             0,   3,   1,   0,  "Lower saves battery and heat.", "Uncapped,30,45,60" },
 #endif
@@ -191,6 +195,7 @@ static const Setting kSettings[] = {
   { "fire_melts_ice",    "Fire melts ice",    "Experiments", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Burning ice turns to water.", NULL },
   { "fire_chars_vines",  "Fire chars vines",  "Experiments", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Burning vines turn to dark stone.", NULL },
   { "creature_walk_voices", "Creature walking sounds", "Experiments", KIND_TOGGLE, -1,  0,   1,   1,   0,  "Creatures call out as they start walking.", NULL },
+  { "double_brush",      "Double-size build brush", "Experiments", KIND_TOGGLE, -1,      0,   1,   1,   0,  "A key builds 2x2x2 blocks at a time.", NULL },
 
   { "save_backup",       "Keep a save backup", "Saves",      KIND_TOGGLE, -1,           0,   1,   1,   1,  "Keep the previous save as a .bak.", NULL },
   // B.5b-1b (2026-10-12): the periodic save that replaced the walk reload's. Off leaves saving to
@@ -223,7 +228,7 @@ static int eden_setting_index(const char* key) {
 float eden_look_sensitivity = 1.0f;   // read by eden_apply_look_delta
 float eden_fov_degrees      = 80.0f;  // read by Graphics::prepareScene
 float eden_view_distance    = 0.0f;   // enum index (0=Auto, 1..6 = 4..9 chunks), read by Graphics::viewDistanceZFAR
-float eden_render_distance  = 0.0f;   // B.5b-2: enum index into kRenderRadius[], read by eden_window_radius_for_world
+float eden_render_distance  = 5.0f;   // B.5b-2: enum index into kRenderRadius[], read by eden_window_radius_for_world
 // PC controls audit F1/F2 (Movement_web.mm's --wrap of Player::setSpeed). Default ON; a toggle
 // exists so stock (frame-time-dependent) feel can be A/B'd without a rebuild.
 float eden_fps_normalize    = 1.0f;
@@ -239,7 +244,7 @@ float eden_display_mode     = 0.0f;      // 0=Fixed/1=Fit/2=Fullscreen-on-demand
 // one place instead of being duplicated in JS.
 float eden_render_scale     = 2.0f;      // index into {50%,75%,100%,125%}
 float eden_dpr_cap          = 2.0f;      // index into {1x,1.5x,2x}
-float eden_fps_cap          = 0.0f;      // index into {Uncapped,30,45,60}; row #14
+float eden_fps_cap          = 0.0f;      // index into {Uncapped,30,45,60} ({Uncapped,30,60} on iOS, P.14); row #14
 // Audit D1/D4. Both are enum indexes whose 0 is "Auto"; read (not written) by
 // src/seam/DisplayProfile_web.mm, which resolves Auto against the active profile every time it
 // recomputes the point space. Never seeded by eden_apply_profile_defaults — see that function.
@@ -282,6 +287,17 @@ int eden_effective_input_is_touch(void) {
     if (g_inputMode == 1) return 1;
     if (g_inputMode == 2) return 0;
     return g_detectedTouch ? 1 : 0;
+}
+
+// For the touch selftest (X.19): force the effective input to Touch for this run only. Selftests read
+// the REAL prefs file, so a Mac whose Input mode is "Keyboard+Mouse" overrode eden_set_detected_touch
+// and the stick checks ran on a desktop profile. Deliberately NOT eden_settings_set(): that persists.
+EDEN_EXPORT
+void eden_test_force_touch_input(void) {
+    const int i = eden_setting_index("input_mode");
+    if (i >= 0) g_value[i] = 1.0f;
+    g_inputMode = 1;
+    eden_apply_input_profile();
 }
 
 EDEN_EXPORT
@@ -355,6 +371,9 @@ static void eden_apply_profile_defaults(void) {
         if (lm->fps_cap) fps = lm->fps_cap;
     }
     eden_seed_profile_default("dpr_cap",      dpr);
+#if defined(EDEN_PLATFORM_IOS)
+    if (fps >= 2) fps -= 1;   // profile indices are into {Uncapped,30,45,60}; iOS dropped 45 (P.14): 45 -> 30, 60 -> 60
+#endif
     eden_seed_profile_default("fps_cap",      fps);
     eden_seed_profile_default("render_scale", rs);
 }
@@ -378,6 +397,8 @@ extern "C" void eden_set_crouch_enabled(int on);
 extern "C" void eden_set_fire_melts_ice(int on);
 extern "C" void eden_set_fire_chars_vines(int on);
 extern bool CREATURE_WALK_VOICES;
+extern bool DOUBLE_BRUSH;
+extern "C" void eden_set_build_size(int size);
 
 static SettingsMenu* eden_engine_settings(void) {
     if (!World::getWorld || !World::getWorld->menu) return NULL;
@@ -400,15 +421,14 @@ static void eden_apply_port_settings(void);
 // 2 = 100%). Index 0 (Custom) has no row. iOS hides render_scale and reads it as 100% whatever is
 // stored, so there the preset is judged on view distance alone.
 // B.5b-2 adds render_distance (an index into kRenderRadius[]): High is radius 16 on desktop native,
-// 12 on web (the 512 MB heap cap; a 256z world is held to 12 there anyway), and stays 9 on iOS until
-// a device round has measured a larger window (ROADMAP Stage T).
+// and 10 on iOS (P.4 decision 6, after T.B16 measured R10 on the Air 2; R12 is opt-in only there).
 struct GfxPreset { int view_distance, render_scale, render_distance; };
 #if defined(EDEN_PLATFORM_IOS)
-static const GfxPreset kPresets[] = { {0, 0, 0}, {1, 1, 0}, {0, 2, 0}, {0, 2, 0} };   // Custom, Low, Default, High
+static const GfxPreset kPresets[] = { {0, 0, 5}, {1, 1, 5}, {0, 2, 5}, {0, 2, 6} };   // Custom, Low, Default, High
 #else
-static const GfxPreset kPresets[] = { {0, 0, 0}, {1, 1, 0}, {0, 2, 0}, {0, 2, 3} };
+static const GfxPreset kPresets[] = { {0, 0, 5}, {1, 1, 5}, {0, 2, 5}, {0, 2, 8} };
 #endif
-static const int kRenderRadius[] = { 9, 10, 12, 16 };
+static const int kRenderRadius[] = { 4, 5, 6, 7, 8, 9, 10, 12, 16 };
 static void eden_preset_sync(int changedKnob);
 extern "C" void eden_settings_set(int i, float v);
 static bool g_presetApplying = false;
@@ -447,6 +467,9 @@ static void eden_apply_setting(int i, bool commitEngine) {
         eden_set_fire_chars_vines(v != 0.0f ? 1 : 0);
     } else if (std::strcmp(s.key, "creature_walk_voices") == 0) {
         CREATURE_WALK_VOICES = v != 0.0f;
+    } else if (std::strcmp(s.key, "double_brush") == 0) {
+        DOUBLE_BRUSH = v != 0.0f;
+        if (!DOUBLE_BRUSH) eden_set_build_size(1);
     } else if (std::strcmp(s.key, "mouse_sensitivity") == 0) {
         eden_look_sensitivity = v;
     } else if (std::strcmp(s.key, "fov") == 0) {
@@ -455,7 +478,7 @@ static void eden_apply_setting(int i, bool commitEngine) {
         eden_view_distance = v;
         if (World::getWorld) Graphics::setZFAR(0);   // re-derive ZFAR now (it is otherwise only set on world load)
         eden_preset_sync(i);
-    } else if (std::strcmp(s.key, "render_distance") == 0) {
+    } else if (std::strcmp(s.key, "render_radius") == 0) {
         eden_render_distance = v;   // read at the next world entry, never applied to an open one
         eden_preset_sync(i);
     } else if (std::strcmp(s.key, "graphics_preset") == 0) {
@@ -465,7 +488,7 @@ static void eden_apply_setting(int i, bool commitEngine) {
         if (commitEngine && p >= 1 && p < (int)(sizeof(kPresets) / sizeof(kPresets[0]))) {
             g_presetApplying = true;
             eden_settings_set(eden_setting_index("view_distance"), (float)kPresets[p].view_distance);
-            eden_settings_set(eden_setting_index("render_distance"), (float)kPresets[p].render_distance);
+            eden_settings_set(eden_setting_index("render_radius"), (float)kPresets[p].render_distance);
 #if !defined(EDEN_PLATFORM_IOS)
             eden_settings_set(eden_setting_index("render_scale"), (float)kPresets[p].render_scale);
 #endif
@@ -561,7 +584,7 @@ static void eden_preset_sync(int changedKnob) {
     (void)changedKnob;
     if (g_presetApplying) return;
     int pi = eden_setting_index("graphics_preset"), vi = eden_setting_index("view_distance"),
-        ri = eden_setting_index("render_scale"), di = eden_setting_index("render_distance");
+        ri = eden_setting_index("render_scale"), di = eden_setting_index("render_radius");
     if (pi < 0 || vi < 0 || ri < 0 || di < 0) return;
     int p = (int)lroundf(g_value[pi]);
     if (p < 1 || p >= (int)(sizeof(kPresets) / sizeof(kPresets[0]))) return;
@@ -609,11 +632,34 @@ void eden_settings_init(void) {
             if (oldTouch && [(NSNumber*)oldTouch intValue] > 0) g_value[input_mode_i] = 1.0f;
         }
     }
+    {   // X.17: "render_distance" (9,10,12,16) became "render_radius" (4..16); old index i is new i+5
+        int di = eden_setting_index("render_radius");
+        id old = [prefs objectForKey:[NSString stringWithUTF8String:"render_distance"]];
+        if (di >= 0 && !g_hadStored[di] && old) {
+            int v = [(NSNumber*)old intValue] / 1000 + 5;
+            if (v > (int)kSettings[di].max) v = (int)kSettings[di].max;
+            g_value[di] = (float)v; g_hadStored[di] = true;
+            eden_persist_setting(di);
+        }
+    }
+#if defined(EDEN_PLATFORM_IOS)
+    {   // P.14: fps_cap lost its 45 entry, so a stored index > 1 shifts down once (45 -> 30, 60 -> 60)
+        int fi = eden_setting_index("fps_cap");
+        if (fi >= 0 && [prefs objectForKey:@"fps_cap_v2"] == nil) {
+            if (g_hadStored[fi]) {
+                int v = (int)lroundf(g_value[fi]);
+                if (v >= 2) { g_value[fi] = (float)(v - 1); eden_persist_setting(fi); }
+            }
+            [prefs setObject:[NSNumber numberWithInt:1000] forKey:@"fps_cap_v2"];
+            [prefs synchronize];
+        }
+    }
+#endif
     {   // B.8: a preset nobody chose is whatever the knobs add up to (Default, unless a seed moved them)
         int pi = eden_setting_index("graphics_preset");
         if (pi >= 0 && !g_hadStored[pi]) {
             int vi = eden_setting_index("view_distance"), ri = eden_setting_index("render_scale"),
-                di = eden_setting_index("render_distance");
+                di = eden_setting_index("render_radius");
             bool isDefault = (int)lroundf(g_value[vi]) == kPresets[2].view_distance
                           && (int)lroundf(g_value[di]) == kPresets[2].render_distance
 #if !defined(EDEN_PLATFORM_IOS)
@@ -822,7 +868,11 @@ int eden_get_dpr_cap_x100(void) {
 // 0 means "uncapped" and any other value IS the target fps, no separate on/off flag needed.
 EDEN_EXPORT
 int eden_get_fps_cap(void) {
+#if defined(EDEN_PLATFORM_IOS)
+    static const int kFps[] = {0, 30, 60};
+#else
     static const int kFps[] = {0, 30, 45, 60};
+#endif
     int i = (int)lroundf(eden_fps_cap);
     if (i < 0 || i >= (int)(sizeof(kFps) / sizeof(kFps[0]))) return 0;
     return kFps[i];
@@ -893,6 +943,17 @@ EDEN_EXPORT const char* eden_settings_enum_label(int i, int j) {
     std::memcpy(buf, p, len);
     buf[len] = '\0';
     return buf;
+}
+
+// C.2 (the console): WHEN a row's value takes effect. 0 = at once (every row but two), 1 = the next
+// world open ("read at the next world entry"), 2 = the next 64z -> 256z conversion. By key, not a
+// table field: the #if'd duplicate rows above would each need the extra positional initialiser.
+EDEN_EXPORT int eden_settings_apply(int i) {
+    const Setting* s = eden_row(i);
+    if (!s) return 0;
+    if (std::strcmp(s->key, "render_radius") == 0) return 1;
+    if (std::strcmp(s->key, "upgrade_256z") == 0) return 2;
+    return 0;
 }
 
 // Rows whose effect is not wired on native yet — the GL screen skips these rather than show a
@@ -1009,10 +1070,10 @@ static const char* eden_keybind_code_name_internal(int code) {
 // future SDL that renumbered scancodes would fail loudly instead of rebinding everyone's keyboard.
 enum {
     KC_A = 4, KC_C = 6, KC_D = 7, KC_E = 8, KC_F = 9, KC_L = 15, KC_O = 18,
-    KC_S = 22, KC_V = 25, KC_W = 26, KC_B = 5,
+    KC_S = 22, KC_V = 25, KC_W = 26, KC_X = 27, KC_B = 5,
     KC_1 = 30, KC_2 = 31, KC_3 = 32, KC_4 = 33, KC_5 = 34,
     KC_6 = 35, KC_7 = 36, KC_8 = 37, KC_9 = 38,
-    KC_ESCAPE = 41, KC_SPACE = 44,
+    KC_ESCAPE = 41, KC_SPACE = 44, KC_GRAVE = 53, KC_F1 = 58, KC_F2 = 59,
     KC_RIGHT = 79, KC_LEFT = 80, KC_DOWN = 81, KC_UP = 82,
     KC_LCTRL = 224, KC_LSHIFT = 225, KC_LALT = 226,
     KC_RCTRL = 228, KC_RSHIFT = 229, KC_RALT = 230,
@@ -1061,10 +1122,14 @@ static const Keybind kKeybinds[] = {
   { "flyToggle",   "Toggle fly mode",       "Actions",   KC_V,       0,         KB_MOMENTARY,  KB_BOTH },
   { "blockPicker", "Block picker",          "Actions",   KC_E,       0,         KB_MOMENTARY,  KB_BOTH },
   { "colorPicker", "Colour picker",         "Actions",   KC_C,       0,         KB_MOMENTARY,  KB_BOTH },
+  { "buildSize",   "Build brush size",      "Actions",   KC_X,       0,         KB_MOMENTARY,  KB_NATIVE },
 
   { "menu",        "Menu / pause",          "Interface", KC_ESCAPE,  0,         KB_MOMENTARY,  KB_BOTH },
+  { "console",     "Console",               "Interface", KC_GRAVE,   0,         KB_MOMENTARY,  KB_NATIVE },
   { "settings",    "Open settings",         "Interface", KC_O,       0,         KB_MOMENTARY,  KB_WEB  },
   { "blockPreview","Toggle block preview",  "Interface", KC_B,       0,         KB_MOMENTARY,  KB_BOTH },
+  { "hideHud",     "Hide HUD",              "Interface", KC_F1,      0,         KB_MOMENTARY,  KB_NATIVE },
+  { "screenshot",  "Screenshot",            "Interface", KC_F2,      0,         KB_MOMENTARY,  KB_NATIVE },
   { "fullscreen",  "Fullscreen",            "Interface", KC_L,       0,         KB_MOMENTARY,  KB_WEB  },
 
   { "hotbar1", "Hotbar 1", "Hotbar", KC_1, 0, KB_MOMENTARY, KB_BOTH },

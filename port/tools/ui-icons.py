@@ -14,7 +14,7 @@ from PIL import Image, ImageDraw
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ICONS = ["wrench", "volume-2", "gamepad-2", "keyboard", "monitor", "flask-conical",
-         "hard-drive", "settings", "square", "mountain", "play", "info", "trees"]
+         "hard-drive", "settings", "square", "mountain", "play", "info", "trees", "terminal"]
 FILLED = {"play"}
 CELL, SS, GRID, STROKE = 64, 8, 4, 2.4
 

@@ -110,7 +110,8 @@ Texture2D(NSString* path);
     Texture2D(NSString* string, CGSize dimension, UITextAlignment alignment, UIFont* font);
     // N.4.8: the same label rasterised at `density` texels per ortho unit (font and buffer both
     // scaled) so it lands 1:1 on device pixels; it still DRAWS at `dimension`, via drawText.
-    // Pass eden_ui_raster_density(). density <= 1 is exactly the constructor above.
+    // Pass eden_ui_raster_density(). density 1 (or <= 0) is exactly the constructor above; below 1
+    // (X.20, a small window on a 1x monitor) it rasterises at fewer texels, still 1:1.
     Texture2D(NSString* string, CGSize dimension, UITextAlignment alignment, UIFont* font, float density);
 /*
 Extensions to make it easy to create a Texture2D object from a string of text.

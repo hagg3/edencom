@@ -28,8 +28,10 @@
 #import "../../../Classes/World.h"
 #import "../../../Classes/Menu.h"
 #import "../../../Classes/WorldPropertiesMenu.h"   // H.15: eden_world_props_menu_back
+#import "../../../Classes/ConsoleMenu.h"           // C.3: eden_console_menu_*
 #import "../../../Classes/FileManager.h"
 #import "../../../Classes/Hud.h"       // eden_hud_draw_menu_screen_hook
+#import "../../../Classes/GLDialog.h"  // C.3: eden_console_menu_toggle asks GLDialog::active()
 #import "../../../Classes/Terrain.h"   // eden_menu_load_percent reads terrain->counter
 #import "../../../Classes/SettingsMenu.h"
 #import "../../../Classes/Util.h"
@@ -307,6 +309,50 @@ int eden_world_props_menu_back(void) {
     m->props->back();
     m->showprops = FALSE;
     return 1;
+}
+
+// C.3: the Console (Classes/ConsoleMenu.h) over a running world. Unlike the screens above it is not
+// a modal that freezes the world: World::update runs it first and then the play step. `_open` is the
+// pause menu's Console button; `_toggle` is the `console` key (opens from play, closes while the
+// field is not focused); `_back` is Escape (1 = consumed: it blurred the field or closed).
+extern "C" int eden_hud_in_menu(void);   // Input_web.mm
+
+EDEN_EXPORT
+int eden_console_menu_active(void) {
+    Menu* m = menu_ptr();
+    return (m && m->showconsole && m->console && m->console->isOpen()) ? 1 : 0;
+}
+
+EDEN_EXPORT
+void eden_console_menu_open(void) {
+    Menu* m = menu_ptr();
+    if (!m || !m->console || !World::getWorld || World::getWorld->game_mode != GAME_MODE_PLAY) return;
+    m->showconsole = TRUE;
+    m->console->open();
+}
+
+EDEN_EXPORT
+int eden_console_menu_toggle(void) {
+    Menu* m = menu_ptr();
+    if (!m || !m->console || !World::getWorld || World::getWorld->game_mode != GAME_MODE_PLAY) return 0;
+    // Not over another screen: a GL dialog, in-game Settings, or the pause menu owns the keys.
+    if (!m->console->isOpen() && (m->showsettings || GLDialog::active() || eden_hud_in_menu())) return 0;
+    m->console->toggle();
+    return 1;
+}
+
+EDEN_EXPORT
+int eden_console_menu_back(void) {
+    if (!eden_console_menu_active()) return 0;
+    menu_ptr()->console->back();
+    return 1;
+}
+
+// Keys belong to the Console while it is open, even with its field blurred (desktop): typing must
+// never walk the player. Input_native.cpp lets only the `menu` and `console` keys through.
+EDEN_EXPORT
+int eden_ui_captures_keys(void) {
+    return eden_console_menu_active();
 }
 
 // -----------------------------------------------------------------------------------------------

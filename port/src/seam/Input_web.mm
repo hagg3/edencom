@@ -378,6 +378,13 @@ void eden_click_begin(int isBuild) {
     if (!World::getWorld || !World::getWorld->hud) return;
     Hud* hud = World::getWorld->hud;
     if (hud->mode == MODE_NONE) return;
+    // Photo mode: the click IS the shutter (Player::processInput takes the photo on the release while
+    // mode == MODE_CAMERA). Do not resolve a tool mode: that left camera mode (or, aimed at the sky,
+    // went to MODE_NONE) before the release, so a mouse click never took a photo (F2 did).
+    if (hud->mode == MODE_CAMERA) {
+        eden_input_pointer_event(0, kClickIdentity, SCREEN_WIDTH / 2.0f, SCREEN_HEIGHT / 2.0f);
+        return;
+    }
     const int resolvedMode = isBuild ? g_toolMode : MODE_MINE;
     if (resolvedMode != MODE_PAINT && eden_crosshair_raycast().x == -1) {
         hud->mode = MODE_NONE;
@@ -565,6 +572,8 @@ int eden_pick_block_at_crosshair(void) {
 // Minecraft convention (inventory releases the mouse, closing it re-grabs). Polled from JS each
 // frame rather than pushed, because the pickers can also be opened/closed by engine-side paths
 // (the HUD buttons) that never route through our key handlers.
+extern "C" int eden_console_menu_active(void);   // Menu_web.mm (C.3)
+
 EDEN_EXPORT
 int eden_ui_wants_cursor(void) {
     // A GLDialog (native's world-type/height chooser, the ESC-menu Home popup) is a modal you
@@ -573,6 +582,7 @@ int eden_ui_wants_cursor(void) {
     // this term the native mouse-capture predicate re-grabs the pointer the instant the dialog
     // opens and its buttons become unclickable. Permanently false on web (DOM overlays instead).
     if (GLDialog::active()) return 1;
+    if (eden_console_menu_active()) return 1;   // C.3: the Console is pointed at and typed into
     if (!World::getWorld) return 1;
     if (World::getWorld->game_mode == 0) return 1;  // menu
     if (!World::getWorld->hud) return 1;
@@ -728,6 +738,33 @@ void eden_set_block_preview(int on) {
 
 EDEN_EXPORT
 int eden_get_block_preview(void) { return g_blockPreview ? 1 : 0; }
+
+// H.7: brush size is 1 or 2, never 0 (the retired half-size brush). Toggling needs the Experiments
+// "double_brush" setting; without it only a reset to 1 goes through.
+extern bool DOUBLE_BRUSH;
+EDEN_EXPORT
+void eden_set_build_size(int size) {
+    if (!World::getWorld || !World::getWorld->hud) return;
+    World::getWorld->hud->build_size = (size == 2 && DOUBLE_BRUSH) ? 2 : 1;
+}
+EDEN_EXPORT
+void eden_toggle_build_size(void) {
+    if (!DOUBLE_BRUSH || !World::getWorld || !World::getWorld->hud) return;
+    eden_set_build_size(World::getWorld->hud->build_size == 2 ? 1 : 2);
+}
+
+// H.5: the F1 / F2 keybinds. Screenshot reuses the camera mode's own path (Hud::render takes the
+// shot, plays the shutter, and drops back to build mode), so it stays one code path with the button.
+EDEN_EXPORT
+void eden_toggle_hide_hud(void) {
+    if (World::getWorld && World::getWorld->hud) World::getWorld->hud->hideui = !World::getWorld->hud->hideui;
+}
+EDEN_EXPORT
+void eden_take_screenshot(void) {
+    if (!World::getWorld || !World::getWorld->hud) return;
+    World::getWorld->hud->mode = MODE_CAMERA;
+    World::getWorld->hud->take_screenshot = TRUE;
+}
 
 EDEN_EXPORT
 void eden_ui_tick(void) {

@@ -24,6 +24,7 @@
 // statusbar.mm's `new Texture2D(status, ...)` draws the world-name label under the menu's world
 // picker, and SharedList.mm draws world/date labels.
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -238,6 +239,19 @@ const stbtt_fontinfo* active_font() {
     return f.ok ? &f.info : nullptr;
 }
 
+// X.22(a): Jersey 10 is a pixel font drawn on a 75-font-unit grid. At a raster size where one grid
+// cell is not a whole number of device pixels every cell edge is antialiased, so the "pixels" go
+// soft. For the display face the scale is snapped so a cell is a whole number of pixels (>= 1); the
+// size moves by at most half a cell. Measuring and rasterising both go through here, so they agree.
+float face_scale(const stbtt_fontinfo* fi, float fontPx) {
+    const float scale = stbtt_ScaleForPixelHeight(fi, fontPx);
+    if (g_face != 1) return scale;
+    const float cell = 75.0f * scale;           // device px per grid cell
+    if (cell < 0.5f) return scale;              // too small to hold a grid; leave it alone
+    const float snapped = std::floor(cell + 0.5f);
+    return snapped / 75.0f;
+}
+
 }  // namespace
 
 // Selects the face the NEXT rasters use. Sticky, so a caller sets it, builds, and puts it back —
@@ -252,7 +266,7 @@ extern "C" float eden_text_raster_measure(const char* textC, float fontPx) {
     if (!textC || fontPx <= 0.0f) return 0.0f;
     const stbtt_fontinfo* fi = active_font();
     if (!fi) return 0.0f;
-    const float scale = stbtt_ScaleForPixelHeight(fi, fontPx);
+    const float scale = face_scale(fi, fontPx);
     float advance = 0.0f;
     for (const char* p = textC; *p; ++p) {
         int aw = 0, lsb = 0;
@@ -271,7 +285,7 @@ extern "C" void eden_rasterize_text_rgba(const char* textC, int width, int heigh
     const stbtt_fontinfo* fi = active_font();
     if (!fi) return;   // pre-zeroed buffer stands — see the contract note above
 
-    const float scale = stbtt_ScaleForPixelHeight(fi, fontPx);
+    const float scale = face_scale(fi, fontPx);
     int ascent = 0, descent = 0, lineGap = 0;
     stbtt_GetFontVMetrics(fi, &ascent, &descent, &lineGap);
 

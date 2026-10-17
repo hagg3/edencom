@@ -271,7 +271,11 @@ as `skycolors[16]`). `updateSkyColor1/2` map the player's position in the defaul
 world onto the grid and set `terrain->final_skycolor`; `Terrain::update` interpolates
 `skycolor` toward it (X.6: the region index clamps to [0,3]; it used to clamp to 4, one past the
 array, reachable on flat worlds and on unbounded worlds past the bundled square) and updates the fog color; `Terrain::render` crossfades the
-colored/B&W skybox textures. Painting the sky (`paintSky`) recolors the region the
+colored/B&W skybox textures. The sky quad (`Texture2D::drawSky`, the port's copy is
+`port/src/seam/Texture2D_web.mm`) draws *inside* `render`'s atlas texture matrix `glScalef(1,1/ATLAS_TILES,1)`, so
+its t range is `0..ATLAS_TILES` (stock wrote `32`, then the atlas size; left at 32 after D.2t it showed only the top
+quarter of `sky_box.png`, losing the pale horizon the fog colour blends into: X.8). Pitch picks the rows: level shows
+the whole gradient, looking down shows its pale bottom. Painting the sky (`paintSky`) recolors the region the
 player is in — a signature Eden feature. Night = palette entry 54 (dims skylight and
 GL lights for doors/creatures).
 
@@ -293,3 +297,9 @@ GL lights for doors/creatures).
   firework physics.
 - **Caution:** liquid queue processing order (spread-vs-drain interleaving prevents
   infinite loops), the mesher→portal registry coupling, lighting rebuild triggers.
+
+## `startDynamics()` is a stub
+`Terrain::startDynamics()` (`Terrain.mm`) has an empty body: the original full-window liquid rescan is
+commented out. So liquids that were flowing when a world was saved stay still after it loads until
+something disturbs them. Restoring the rescan re-floods worlds (every source in the window restarts),
+so it was parked on purpose (ROADMAP Stage H, report item 8).

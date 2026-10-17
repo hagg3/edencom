@@ -54,8 +54,9 @@ The resident window is runtime too, by the same mechanism as the height. `T_SIZE
 `eden_set_window_radius()` (`Globals.mm`; it also re-derives `g_xz_stride`, `g_t_blocks` and the
 toroidal offsets `g_offcx/z = T_SIZE*100`). `World::loadWorld` calls it right after
 `eden_set_world_height`, before `Terrain::allocateMemory`, with `eden_window_radius_for_world(height)`
-(`port/src/seam/Settings_web.mm`): the **Render distance** setting (9 / 10 / 12 / 16 chunks; iOS offers
-9 / 10), held to 9 when `eden_low_memory()` is set (no native host sets it today);
+(`port/src/seam/Settings_web.mm`): the **Render distance** setting (key `render_radius`: 4–10 / 12 / 16 chunks,
+default 9; iOS stops at 12, which carries a 2 GB warning. X.17 added 4–8 under a new key because the value is stored as an index;
+the old `render_distance` index migrates once), held to 9 when `eden_low_memory()` is set (no native host sets it today);
 `EDEN_WINDOW_RADIUS=N` overrides it (the native harness pins 9 for every scripted mode unless
 `--radius=N`). It applies at the next world entry, never to an open world. The height's three rules
 hold unchanged: fixed-size declarations use `CHUNKS_PER_SIDE_MAX` (32) / `T_SIZE_MAX` (512) —

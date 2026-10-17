@@ -143,6 +143,12 @@
 //                        once, the frame budget), the safety rules, @step/@near/@timer, a real screen
 //                        tap, and nothing of a run surviving a reload. --cmds-mutate=nodepth must fail;
 //                        --cmds-trace prints every statement.
+//   --console-selftest   C.1: the command-block language as a console line (dev-console-plan.md §8).
+//                        World-free: the shared parser table, gate 1 (port/tools/fixtures/cmds/corpus.txt,
+//                        --console-corpus=PATH, parsed with block and console options), kVerbs vs the
+//                        parser's errors; then a fresh world in --docs: gate 2 (a typed line == the
+//                        script pressed on a block the player stands on), jobs/stop/`=`/sink/OP_EXT/
+//                        timeHook. --console-mutate=anchor must FAIL it.
 //   --sign-shot[=PREFIX] a REAL WINDOW: --world, --at, --look=YAW,PITCH, then PREFIX-signs.bmp and
 //                        the sign pass's probe line.
 //   --light-selftest     R.3: lightbox place/repaint/break (incl. saturation, the y clip and the
@@ -255,6 +261,7 @@
 #include "../../../Classes/TerrainGen2.h"  // GSIZE — same, and it is macros only
 #include "../../../Classes/Menu.h"         // Menu::settings, for --shot's keybinds capture
 #include "../../../Classes/WorldPropertiesMenu.h"   // H.15: --props-selftest, --ui-selftest, --shot
+#include "../../../Classes/ConsoleMenu.h"           // C.3: --ui-selftest, --shot
 #include "../../../Classes/SettingsMenu.h" // SettingsMenu::showKeybinds()
 #include "../../../Classes/GLDialog.h"    // --ui-selftest drives GLDialog::prompt
 #include "../../../Classes/WorldShare.h"  // --browser-selftest's Share legs (S.5 / S.5c)
@@ -263,6 +270,8 @@
 #include "../../../Classes/SignRenderer.h"   // --signs-selftest / --sign-shot (D.3b)
 #include "../../../Classes/SignTool.h"       // --signs-selftest (D.3c)
 #include "../../../Classes/CmdScript.h"      // --cmds-selftest (D.4c)
+#include "../../../Classes/Console.h"        // --console-selftest (C.2)
+#include "../seam/PlayerReadme_native.h"      // C.9: README.txt
 #include "../../../Classes/Model.h"          // --cmds-selftest: CountActiveCreatures
 #include "../../../Classes/PassTimers.h"     // --pass-probe / --pass-timers (P.1b)
 #include "../../../Classes/Shadow.h"         // --shadows= / --shadow-selftest (H.2)
@@ -327,6 +336,8 @@ bool photoEncodePNG(const unsigned char* rgb, int w, int h, std::vector<unsigned
 #include <zlib.h>                  // --browser-selftest builds its gzip/zip fixtures
 
 // Shared seam exports (port/src/seam/*, compiled into this target too).
+extern "C" void eden_click_begin(int);               // Input_web.mm
+extern "C" void eden_click_end(int);
 extern "C" {
 int   eden_get_fps_cap(void);
 void  eden_settings_init(void);
@@ -366,6 +377,11 @@ int   eden_app_background_last_status(void);
 void  eden_tap_hud_button_begin(int which);
 void  eden_tap_hud_button_end(int which);
 int   eden_hud_in_menu(void);
+void  eden_console_menu_open(void);      // C.3 (Menu_web.mm)
+int   eden_console_menu_toggle(void);
+int   eden_console_menu_back(void);
+int   eden_ui_captures_keys(void);
+int   eden_ui_wants_cursor(void);
 
 void  eden_settings_menu_open_now(void);
 void  eden_settings_menu_close(void);
@@ -463,6 +479,9 @@ struct Options {
     std::string evictMutate;             // --evict-mutate=nosave|nodrop: --evict-selftest's mutation legs
     std::string signsMutate;             // --signs-mutate=bottom|nohook: --signs-selftest's mutation legs
     std::string cmdsMutate;              // --cmds-mutate=nodepth: --cmds-selftest's mutation leg
+    std::string consoleMutate;           // --console-mutate=anchor: --console-selftest's mutation leg (C.1)
+    std::string consoleCorpus = "../port/tools/fixtures/cmds/corpus.txt";   // --console-corpus=
+    std::string consoleRef = "../docs/console-reference.md";                // --console-reference=
     bool cmdsTrace = false;              // --cmds-trace: print every command-block statement
     float look[2] = {0.0f, 0.0f};        // --look=YAW,PITCH (degrees): --sign-shot's view
     bool haveLook = false;
@@ -1410,6 +1429,46 @@ int run_shot() {
     World::getWorld->menu->showsettings = FALSE;
     tick(2);
 
+    // C.3: the Console over the running world -- full (a few lines through the real path), Variables,
+    // Help, then the collapsed strip. Opened from play (the pause menu is toggled off and back on).
+    eden_tap_hud_button_begin(0); tick(6); eden_tap_hud_button_end(0); tick(10);
+    {
+        ConsoleMenu* cm = World::getWorld->menu->console;
+        eden_console_menu_open();
+        tick(5);
+        static const char* const kLines[] = { "help set", "where", "set 0 3 0 lamp", "video.fov", "fill 0 0 0 9 2 9 glas", "echo done" };
+        for (const char* l : kLines) { cm->setInput(l); cm->submit(); tick(2); }
+        tick(10);
+        capture("console");
+        cm->setInput("fi");
+        cm->complete();
+        tick(5);
+        capture("console-complete");
+        cm->showTab(ConsoleMenu::TAB_VARIABLES);
+        tick(10);
+        capture("console-variables");
+        cm->showTab(ConsoleMenu::TAB_HELP);
+        tick(10);
+        capture("console-help");
+        cm->showTab(ConsoleMenu::TAB_CONSOLE);
+        cm->setCollapsed(true);
+        tick(10);
+        capture("console-strip");
+        cm->setCollapsed(false);
+        // C.4: a pretend on-screen keyboard over the bottom 30% (iPad-like), then 62% (iPhone
+        // landscape: the auto strip). The keyboard itself is not drawn; the console's bottom is its top.
+        eden_native_debug_set_keyboard_top(SCREEN_HEIGHT * 0.3f);
+        tick(10);
+        capture("console-keyboard");
+        eden_native_debug_set_keyboard_top(SCREEN_HEIGHT * 0.62f);
+        tick(10);
+        capture("console-keyboard-tall");
+        eden_native_debug_set_keyboard_top(-2.0f);
+        cm->close();
+        tick(5);
+    }
+    eden_tap_hud_button_begin(0); tick(6); eden_tap_hud_button_end(0); tick(10);
+
     // The GL modal (Phase N Stage 2.5) — the ESC menu's Home button raises this. Shown directly
     // here rather than hunting the icon's rect; the point is the artefact.
     ::showAlertWarpHome();
@@ -1452,8 +1511,12 @@ int run_shot() {
             tick(60);
             // H.16b: the real path: camera mode + take_screenshot reads inside Hud::render, over the
             // frame just drawn (a bare call here would read a presented, undefined back buffer).
+            // Through the mouse-click path (eden_click_begin/end), not the F2 flag: a click in camera mode
+            // once left camera mode before its release and took no photo.
             World::getWorld->hud->mode = MODE_CAMERA;
-            World::getWorld->hud->take_screenshot = TRUE;
+            eden_click_begin(1);
+            tick(2);
+            eden_click_end(1);
             tick(3);
             if (quit_to_menu()) {
                 tick(30);
@@ -1728,6 +1791,8 @@ void rise_until_clear(int maxFrames);
 void check_clear_of_map_border(const char* what);
 
 extern "C" void eden_set_fly_mode(int);
+extern "C" void eden_test_force_touch_input(void);   // Settings_web.mm (X.19)
+extern "C" void eden_prefs_set_ephemeral(int on);    // NSUserDefaults_native.mm (X.21)
 // ---------------------------------------------------------------------------------------------
 // --empty-bit-selftest  (Stage R / R.2, the per-chunk empty bit)
 // ---------------------------------------------------------------------------------------------
@@ -3550,14 +3615,10 @@ int digitOf(int bits) {
 
 }  // namespace cmds_test
 
-int run_cmds_selftest() {
-    using namespace cmds_test;
-    g_selftestTag = "eden-cmds";
-    CmdScript::testNoDepthCap = g_opt.cmdsMutate == "nodepth";
-    CmdScript::trace = g_opt.cmdsTrace;
+// The parser on literal scripts: one case table, run by --cmds-selftest and --console-selftest (C.1
+// moved it out of the adder test so CI, which has no adder, checks the parser on every target).
+void cmds_parser_cases() {
     char d[1024];
-
-    // ---- the parser, on literal scripts
     {
         CmdScript::Program p;
         CmdScript::parse("say WELCOME TRAVELER;wait 1;set 0 3 0 lamp;gold 1", &p);
@@ -3581,8 +3642,10 @@ int run_cmds_selftest() {
         check(p.errors == 5 && p.firstError == "Unknown command: frob" && p.stmts.size() == 7 &&
               p.stmts[2].op == CmdScript::OP_SAY && p.stmts[5].op == CmdScript::OP_WAIT && p.stmts[5].f == 600.0f,
               "parse: unknown command, fill > 4096, late trigger, unknown block; wait capped at 600", d);
-        CmdScript::parse("fill 0 0 0 15 15 15 stone; spawn moof; spawn charger 1 2 3; spawn dragon; sound 72; sound 73; "
-                         "time 0.5; time 2; paint 0 0 0 54; paint 0 0 0 55", &p);
+        // The last sound and one past it (NUM_SOUNDS grew from 73 to 79 in 6ef81de; this leg pinned 72/73).
+        std::snprintf(d, sizeof(d), "fill 0 0 0 15 15 15 stone; spawn moof; spawn charger 1 2 3; spawn dragon; sound %d; "
+                      "sound %d; time 0.5; time 2; paint 0 0 0 54; paint 0 0 0 55", NUM_SOUNDS - 1, NUM_SOUNDS);
+        CmdScript::parse(d, &p);
         std::snprintf(d, sizeof(d), "errors %d, first '%s'", p.errors, p.firstError.c_str());
         check(p.errors == 4 && p.stmts.size() == 10 && p.stmts[0].op == CmdScript::OP_FILL && p.stmts[2].hasPos &&
               p.stmts[2].type == M_CHARGER && p.stmts[3].op == CmdScript::OP_BAD && p.stmts[4].op == CmdScript::OP_SOUND &&
@@ -3590,6 +3653,17 @@ int run_cmds_selftest() {
               p.stmts[8].op == CmdScript::OP_PAINT && p.stmts[9].op == CmdScript::OP_BAD,
               "parse: fill at exactly 4096, creatures, sound/time/colour ranges", d);
     }
+}
+
+int run_cmds_selftest() {
+    using namespace cmds_test;
+    g_selftestTag = "eden-cmds";
+    CmdScript::testNoDepthCap = g_opt.cmdsMutate == "nodepth";
+    CmdScript::trace = g_opt.cmdsTrace;
+    char d[1024];
+
+    // ---- the parser, on literal scripts (shared with --console-selftest)
+    cmds_parser_cases();
 
     if (g_opt.world.empty()) { check(false, "--world=NAME (the 3-bit adder) is given", ""); return 1; }
     if (!open_world(g_opt.world.c_str(), g_opt.height)) return 1;
@@ -4020,6 +4094,858 @@ int run_cmds_selftest() {
           "after reload: the command block is kept, its run is not", d);
     std::printf("[eden-cmds] %s\n", CmdScript::describe());
     std::printf("[eden-cmds] %s (%d failure(s))\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
+    return g_selftestFailures ? 1 : 0;
+}
+
+// ---------------------------------------------------------------------------------------------
+// --console-selftest  (Stage C / C.1, the command-block language as a console line)
+// ---------------------------------------------------------------------------------------------
+// dev-console-plan.md §8. World-free first: the shared parser case table; gate 1, the corpus
+// (--console-corpus=PATH, default ../port/tools/fixtures/cmds/corpus.txt) parsed with block and
+// console options, classified and field-compared; the kVerbs table against the parser's own errors;
+// runLine's refusals before a world. Then in a fresh world in --docs: gate 2 (execution equivalence:
+// each script pressed on a command block P, then typed with the player standing on P -- the cells,
+// player, purse, health, creatures and sky must come out identical), and runLine's jobs, `=`, sink,
+// stop, the stand-in registry and the time hook. --console-mutate=anchor (the anchor is the feet cell,
+// not the one under them) must FAIL it.
+extern "C" {   // port/src/seam/Settings_web.mm -- C.2's gates read the tables the cvars were built from
+int         eden_settings_count(void);
+const char* eden_settings_key(int i);
+const char* eden_settings_label(int i);
+const char* eden_settings_group(int i);
+int         eden_settings_kind(int i);
+float       eden_settings_min(int i);
+float       eden_settings_max(int i);
+float       eden_settings_def(int i);
+float       eden_settings_get(int i);
+void        eden_settings_set(int i, float v);
+int         eden_settings_enum_count(int i);
+const char* eden_settings_enum_label(int i, int j);
+int         eden_settings_native_hidden(int i);
+int         eden_settings_apply(int i);
+int         eden_keybind_count(void);
+int         eden_keybind_index(const char* action);
+int         eden_keybind_get(int i);
+int         eden_keybind_default(int i);
+int         eden_keybind_native_hidden(int i);
+const char* eden_keybind_action(int i);
+int         eden_keybind_action_after(int prev, int code);
+void        eden_keybind_set(int i, int code);
+}
+
+namespace console_test {
+
+struct TestSink : CmdScript::Sink {
+    std::vector<std::pair<int, std::string>> lines;
+    void line(int kind, const std::string& text) override { lines.push_back(std::make_pair(kind, text)); }
+    bool has(const std::string& t) const {
+        for (const auto& l : lines) if (l.second == t) return true;
+        return false;
+    }
+    std::string all() const {
+        std::string r;
+        for (const auto& l : lines) r += (r.empty() ? "" : " | ") + l.second;
+        return r;
+    }
+};
+
+// The stand-in for the C.2 registry: three verbs, one dotted like a cvar.
+const char* const kTestVerbs[] = {"echo", "help", "video.fov"};
+int g_extCalls = 0, g_extLast = -1, g_extAnchor[3] = {0, 0, 0};
+std::vector<std::string> g_extArgs;
+int test_ext_find(const char* v) {
+    for (int i = 0; i < 3; ++i) if (!std::strcmp(v, kTestVerbs[i])) return i;
+    return -1;
+}
+void test_ext_run(int i, const CmdScript::ExtCall& c) {
+    g_extCalls++;
+    g_extLast = i;
+    g_extArgs = c.args;
+    g_extAnchor[0] = c.ax; g_extAnchor[1] = c.ay; g_extAnchor[2] = c.az;
+    if (c.sink) c.sink->line(CmdScript::Sink::OUT, std::string("ext ") + kTestVerbs[i]);
+}
+const CmdScript::Ext kTestExt = {test_ext_find, test_ext_run};
+
+bool stmt_eq(const CmdScript::Stmt& a, const CmdScript::Stmt& b) {
+    if (a.op != b.op || a.type != b.type || a.color != b.color || a.hasPos != b.hasPos || a.f != b.f ||
+        a.text != b.text || a.ext != b.ext || a.args != b.args) return false;
+    for (int i = 0; i < 6; ++i) if (a.v[i] != b.v[i] || a.abs[i] != b.abs[i]) return false;
+    return true;
+}
+bool any_abs(const CmdScript::Stmt& s) {
+    for (int i = 0; i < 6; ++i) if (s.abs[i]) return true;
+    return false;
+}
+
+// Gate 1 on one corpus line; "" if it holds, else why not.
+std::string corpus_line(char cls, const std::string& src) {
+    CmdScript::Program blk, con;
+    CmdScript::parse(src.c_str(), &blk);
+    CmdScript::parseLine(src.c_str(), &con, CmdScript::consoleOptions(&kTestExt));
+    const bool bok = blk.errors == 0, cok = con.errors == 0;
+    const char got = bok && cok ? 'B' : bok ? 'b' : cok ? 'c' : 'x';
+    if (got != cls)
+        return std::string("is '") + got + "' (block: " + (bok ? "ok" : blk.firstError) + "; console: " +
+               (cok ? "ok" : con.firstError) + ")";
+    const auto& b = blk.stmts;
+    const auto& c = con.stmts;
+    if (cls == 'B') {
+        if (b.size() != c.size()) return "statement counts differ";
+        for (size_t i = 0; i < b.size(); ++i)
+            if (!stmt_eq(b[i], c[i])) return "statement " + std::to_string(i + 1) + " differs";
+    } else if (cls == 'b') {
+        size_t k = src.find_first_not_of(" \t;");
+        if (k == std::string::npos || src[k] != '@') return "a blocks-only line without a trigger header";
+        if (con.errors != 1 || con.firstError != "Triggers only work in a command block")
+            return "console error is '" + con.firstError + "'";
+        if (c.size() != b.size() + 1) return "statement counts differ";
+        for (size_t i = 0; i < b.size(); ++i)
+            if (!stmt_eq(b[i], c[i + 1])) return "statement " + std::to_string(i + 2) + " differs";
+    } else if (cls == 'c') {
+        if (b.size() != c.size()) return "statement counts differ";
+        for (size_t i = 0; i < b.size(); ++i) {
+            if (b[i].op == CmdScript::OP_BAD) {
+                if (c[i].op != CmdScript::OP_EXT && !any_abs(c[i]))
+                    return "statement " + std::to_string(i + 1) + " is console-only without `=` or a registry verb";
+            } else if (!stmt_eq(b[i], c[i])) {
+                return "statement " + std::to_string(i + 1) + " differs";
+            }
+        }
+    } else if (b.size() == c.size()) {
+        for (size_t i = 0; i < b.size(); ++i)
+            if (b[i].op != CmdScript::OP_BAD && c[i].op != CmdScript::OP_BAD && !stmt_eq(b[i], c[i]))
+                return "statement " + std::to_string(i + 1) + " differs";
+    }
+    return "";
+}
+
+// One argument a verb accepts, by kind.
+const char* sample(int kind) {
+    switch (kind) {
+    case CmdScript::ARG_COORD: return "1";
+    case CmdScript::ARG_BLOCK: return "stone";
+    case CmdScript::ARG_COLOR: return "7";
+    case CmdScript::ARG_CREATURE: return "moof";
+    case CmdScript::ARG_NUMBER: return "1";   // sound takes whole numbers only
+    default: return "hi";
+    }
+}
+
+// Gate 2's snapshot: the site's cells, the player, the purse, health, creatures, the sky, the toast.
+struct Snap {
+    std::vector<int> cells;
+    float px, py, pz;
+    int gold, creatures;
+    float life;
+    bool night;
+    std::string toast;
+};
+
+}  // namespace console_test
+void mkdirs(const std::string& path);   // defined with main()
+
+int run_console_selftest() {
+    using namespace cmds_test;
+    using namespace console_test;
+    using CS = CmdScript;
+    g_selftestTag = "eden-console";
+    CS::testAnchorFeet = g_opt.consoleMutate == "anchor";
+    Console::testNoBridge = g_opt.consoleMutate == "noreg";
+    CS::trace = g_opt.cmdsTrace;
+    char d[1024];
+
+    // ---- the shared literal-script table (block options)
+    cmds_parser_cases();
+
+    // ---- gate 1: the corpus
+    {
+        std::FILE* f = std::fopen(g_opt.consoleCorpus.c_str(), "rb");
+        check(f != NULL, "gate 1: the corpus opens", g_opt.consoleCorpus.c_str());
+        int lines = 0, bad = 0, counts[4] = {0, 0, 0, 0};
+        std::string why;
+        char buf[2048];
+        while (f && std::fgets(buf, sizeof(buf), f)) {
+            std::string l(buf);
+            while (!l.empty() && (l.back() == '\n' || l.back() == '\r')) l.pop_back();   // CRLF checkouts
+            if (l.empty() || l[0] == '#') continue;
+            const char cls = l[0];
+            const char* kinds = "Bbcx";
+            const char* at = std::strchr(kinds, cls);
+            if (!at || (l.size() > 1 && l[1] != ' ')) { ++bad; why += "unreadable: " + l + "; "; continue; }
+            const std::string src = l.size() > 2 ? l.substr(2) : std::string();
+            ++lines;
+            counts[at - kinds]++;
+            const std::string r = corpus_line(cls, src);
+            if (!r.empty()) {
+                ++bad;
+                if (bad <= 6) why += "'" + src + "' " + r + "; ";
+            }
+        }
+        if (f) std::fclose(f);
+        std::snprintf(d, sizeof(d), "%d lines (B %d, b %d, c %d, x %d), %d wrong %s", lines, counts[0], counts[1],
+                      counts[2], counts[3], bad, why.c_str());
+        check(f && lines >= 100 && bad == 0 && counts[0] && counts[1] && counts[2] && counts[3],
+              "gate 1: block and console parse the corpus alike", d);
+    }
+
+    // ---- the verb table is the parser's: every row parses, every "needs" error is the row's
+    {
+        size_t n = 0;
+        const CS::Verb* vs = CS::verbs(&n);
+        std::string why;
+        for (size_t i = 0; i < n; ++i) {
+            const CS::Verb& v = vs[i];
+            std::string line = v.name;
+            for (int k = 0; k < 9 && v.kinds[k]; ++k) line += std::string(" ") + sample(v.kinds[k]);
+            CS::Program p;
+            CS::parse(line.c_str(), &p);
+            if (p.errors || p.stmts.size() != 1) why += line + " -> " + p.firstError + "; ";
+            if (*v.usage && std::strcmp(v.name, "say")) {
+                CS::parse(v.name, &p);
+                const std::string want = std::string(v.name) + " needs " + (v.needs ? v.needs : v.usage);
+                if (p.errors != 1 || p.firstError != want) why += std::string(v.name) + " -> '" + p.firstError + "' not '" + want + "'; ";
+            }
+            if (v.kinds[0] == CS::ARG_COORD || v.kinds[0] == CS::ARG_CREATURE) {
+                line = std::string(v.name) + (v.kinds[0] == CS::ARG_CREATURE ? " moof 1" : " 1");
+                CS::parse(line.c_str(), &p);
+                const std::string want = std::string(v.name) + " needs " + v.usage;
+                if (p.firstError != want) why += line + " -> '" + p.firstError + "' not '" + want + "'; ";
+            }
+        }
+        std::snprintf(d, sizeof(d), "%zu verbs %s", n, why.c_str());
+        check(n == 22 && why.empty(), "kVerbs: every verb parses; its errors are its usage", d);
+        check(CS::findVerb("FILL") && CS::findVerb("Unless") && !CS::findVerb("video.fov") && !CS::findVerb("echo"),
+              "findVerb: case-insensitive, built-ins only", "");
+    }
+
+    // ---- C.9 / C.10: the player's README and the commands reference name nothing that is gone
+    {
+        Console::init();
+        // every `backticked` token whose first word starts with a letter must be a verb or a variable
+        // (a ';' separates statements); the verbs the roadmap promises must be named
+        const std::string text = eden_player_readme_text();
+        std::string why;
+        std::set<std::string> named;
+        for (size_t at = text.find('`'); at != std::string::npos;) {
+            const size_t end = text.find('`', at + 1);
+            if (end == std::string::npos) { why += "unbalanced backtick; "; break; }
+            std::string tok = text.substr(at + 1, end - at - 1);
+            at = text.find('`', end + 1);
+            size_t p = 0;
+            while (p <= tok.size()) {
+                size_t q = tok.find(';', p);
+                if (q == std::string::npos) q = tok.size();
+                std::string st = tok.substr(p, q - p);
+                p = q + 1;
+                size_t b = st.find_first_not_of(' ');
+                if (b == std::string::npos || !std::isalpha((unsigned char)st[b])) continue;
+                const std::string w = st.substr(b, st.find(' ', b) == std::string::npos ? std::string::npos : st.find(' ', b) - b);
+                named.insert(w);
+                if (!CS::findVerb(w.c_str()) && Console::cvarIndex(w.c_str()) < 0) {
+                    bool reg = false;
+                    for (size_t i = 0; i < Console::commandCount(); ++i)
+                        if (w == Console::commandAt(i).name) reg = true;
+                    if (!reg) why += "`" + w + "` ; ";
+                }
+            }
+        }
+        for (const char* must : {"help", "set", "fill", "tp", "day", "night", "spawn", "video.fov", "toggle", "reset", "where", "anchor"})
+            if (!named.count(must)) why += std::string("missing ") + must + "; ";
+        check(why.empty(), "README.txt: every command and variable it names exists, the promised ones are named", why.c_str());
+        const std::string rd = std::string(eden_platform_documents_root()) + "/readme-test";
+        mkdirs(rd);
+        std::remove((rd + "/README.txt").c_str());
+        const int w1 = eden_player_readme_write(rd.c_str()), w2 = eden_player_readme_write(rd.c_str());
+        std::string back;
+        if (std::FILE* f = std::fopen((rd + "/README.txt").c_str(), "rb")) {
+            char b[512]; size_t n;
+            while ((n = std::fread(b, 1, sizeof(b), f)) > 0) back.append(b, n);
+            std::fclose(f);
+        }
+        {   // a stale version line is rewritten; a current file with edits is left alone
+            if (std::FILE* f = std::fopen((rd + "/README.txt").c_str(), "wb")) { std::fputs("Emod README v0\nold\n", f); std::fclose(f); }
+        }
+        const int w3 = eden_player_readme_write(rd.c_str());
+        std::snprintf(d, sizeof(d), "first %d, again %d, after a stale one %d, bytes %zu", w1, w2, w3, back.size());
+        check(w1 == 1 && w2 == 0 && w3 == 1 && back == text, "README.txt: written once, idempotent, rewritten only when its version changes", d);
+
+        // docs/console-reference.md: every verb, console verb and variable group appears in it
+        std::string doc;
+        if (std::FILE* f = std::fopen(g_opt.consoleRef.c_str(), "rb")) {
+            char b[4096]; size_t n;
+            while ((n = std::fread(b, 1, sizeof(b), f)) > 0) doc.append(b, n);
+            std::fclose(f);
+        }
+        std::string miss;
+        size_t nv = 0;
+        const CS::Verb* vs = CS::verbs(&nv);
+        for (size_t i = 0; i < nv; ++i)
+            if (doc.find(std::string("`") + vs[i].name + "`") == std::string::npos) miss += std::string(vs[i].name) + " ";
+        for (size_t i = 0; i < Console::commandCount(); ++i)
+            if (doc.find(std::string("`") + Console::commandAt(i).name + "`") == std::string::npos) miss += std::string(Console::commandAt(i).name) + " ";
+        std::set<std::string> groups;
+        for (size_t i = 0; i < Console::cvarCount(); ++i) {
+            const std::string n = Console::cvarAt(i)->name;
+            groups.insert(n.substr(0, n.find('.') + 1));
+            if (doc.find("`" + n + "`") == std::string::npos) miss += n + " ";
+        }
+        for (const std::string& g : groups)
+            if (doc.find("`" + g + "`") == std::string::npos) miss += g + " ";
+        std::snprintf(d, sizeof(d), "%s: %zu bytes; missing: %s (run port/tools/console-reference.py)", g_opt.consoleRef.c_str(), doc.size(), miss.c_str());
+        check(!doc.empty() && miss.empty(), "console-reference.md names every verb, variable and group", d);
+    }
+
+    // ---- what only the options change
+    {
+        CS::Program b, c;
+        CS::parse("tp =1 0 0", &b);
+        CS::parseLine("tp =1 0 0", &c, CS::consoleOptions(&kTestExt));
+        std::snprintf(d, sizeof(d), "block '%s', console errors %d", b.firstError.c_str(), c.errors);
+        check(b.firstError == "Not a coordinate: =1" && c.errors == 0 && c.stmts[0].abs[0] && !c.stmts[0].abs[1],
+              "`=N` is a console coordinate only", d);
+        CS::parseLine("fill =1 2 =3 4 =5 6 stone", &c, CS::consoleOptions(&kTestExt));
+        const CS::Stmt& s = c.stmts[0];
+        check(c.errors == 0 && s.abs[0] && !s.abs[1] && s.abs[2] && !s.abs[3] && s.abs[4] && !s.abs[5] && s.v[0] == 1 &&
+              s.v[5] == 6, "abs[] marks exactly the `=` coordinates", c.firstError.c_str());
+        CS::parse("echo hi", &b);
+        CS::parseLine("video.fov 95", &c, CS::consoleOptions(&kTestExt));
+        std::snprintf(d, sizeof(d), "block '%s'; console op %d ext %d args %zu", b.firstError.c_str(), c.stmts[0].op,
+                      c.stmts[0].ext, c.stmts[0].args.size());
+        check(b.firstError == "Unknown command: echo" && c.stmts[0].op == CS::OP_EXT && c.stmts[0].ext == 2 &&
+              c.stmts[0].args == std::vector<std::string>{"95"} && c.ext == &kTestExt,
+              "registry verbs are OP_EXT in the console, unknown in a block", d);
+        CS::parseLine("@step;say hi", &c, CS::consoleOptions(&kTestExt));
+        check(c.errors == 1 && c.firstError == "Triggers only work in a command block", "the console refuses triggers",
+              c.firstError.c_str());
+    }
+
+    // ---- runLine before a world: the parse refusals still come first, then "No world is open"
+    {
+        TestSink sk;
+        const int rBad = CS::runLine("set 1 1 1 glass; fill 0 0 0 9 2 9 glas; frob", 0, 0, 0, CS::SRC_CONSOLE, &sk, &kTestExt);
+        const bool msgs = sk.has("2: Unknown block: glas") && sk.has("3: Unknown command: frob") && sk.has("line not run");
+        const std::string longLine(512, 'x');
+        const int rLong = CS::runLine(longLine.c_str(), 0, 0, 0, CS::SRC_CONSOLE, &sk, &kTestExt);
+        const int rEmpty = CS::runLine(" ;; ", 0, 0, 0, CS::SRC_CONSOLE, &sk, &kTestExt);
+        const int rNone = CS::runLine("say hi", 0, 0, 0, CS::SRC_CONSOLE, &sk, &kTestExt);
+        std::snprintf(d, sizeof(d), "bad %d long %d empty %d noworld %d | %s", rBad, rLong, rEmpty, rNone, sk.all().c_str());
+        check(rBad == CS::RUN_BAD && msgs && rLong == CS::RUN_LONG && rEmpty == CS::RUN_EMPTY &&
+              rNone == CS::RUN_NO_WORLD && sk.has("No world is open"),
+              "runLine: a bad line lists every error and runs nothing", d);
+    }
+
+    // ---- a world
+    const char* name = g_opt.world.empty() ? "console-selftest" : g_opt.world.c_str();
+    if (!open_world(name, g_opt.height)) return 1;
+    if (g_opt.haveAt) eden_console_teleport(g_opt.at[0], g_opt.at[1], g_opt.at[2]);
+    tick(g_opt.frames / 4);
+    if (GLDialog::active()) { GLDialog::dismiss(); tick(2); }
+    g_app->viewController.setFixedEtime(1.0f / 60.0f);
+    Hud* hud = World::getWorld->hud;
+    Player* pl = World::getWorld->player;
+    const PlayerState ps = player_state();
+    int ox, oy, oz;
+    if (!open_air((int)ps.x - 50, (int)ps.z, 16, 12, 16, &ox, &oy, &oz)) { check(false, "an open-air test site", ""); return 1; }
+    const int PX = ox + 8, PY = oy + 3, PZ = oz + 8;   // the command block P, engine order
+    std::printf("[eden-console] site %d,%d,%d, P %d,%d,%d (engine order)\n", ox, oy, oz, PX, PY, PZ);
+    void (*const defaultTime)(float) = CS::timeHook;
+
+    // Every gate-2 run starts from the same site: the box air, P holding `script`, stone at +2, grass at
+    // +3, a command block at +5 (run's target), the player standing on P, purse 10, life 0.5, day sky.
+    auto setup = [&](const char* script) {
+        CS::stop(CS::STOP_ALL);
+        tick(1);
+        for (int a = 0; a < 16; ++a)
+            for (int b = 0; b < 12; ++b)
+                for (int c = 0; c < 16; ++c)
+                    if (land(ox + a, oy + b, oz + c) != 0) put(ox + a, oy + b, oz + c, 0);
+        put(PX + 2, PY, PZ, TYPE_STONE);
+        ter()->setColor(PX + 2, PZ, PY, 0);
+        put(PX + 3, PY, PZ, TYPE_GRASS);
+        ter()->setColor(PX + 3, PZ, PY, 0);
+        make(PX + 5, PY, PZ, "set 0 2 0 brick 7");
+        const TrailerPos p = make(PX, PY, PZ, script);
+        pl->pos = MakeVector(PX + 0.5f, PY + 1 + pl->boxheight / 2 + 0.001f, PZ + 0.5f);
+        pl->vel = MakeVector(0, 0, 0);
+        pl->life = 0.5f;
+        hud->goldencubes = 10;
+        defaultTime(0.5f);
+        return p;
+    };
+    auto snap = [&](Snap* s, int creatures0) {
+        s->cells.clear();
+        for (int a = 0; a < 16; ++a)
+            for (int b = 0; b < 12; ++b)
+                for (int c = 0; c < 16; ++c)
+                    s->cells.push_back(land(ox + a, oy + b, oz + c) * 256 + paint(ox + a, oy + b, oz + c));
+        s->gold = hud->goldencubes;
+        s->life = pl->life;
+        (void)creatures0;
+        s->night = v_equals(ter()->final_skycolor, colorTable[54]);
+    };
+    auto diff = [&](const Snap& a, const Snap& b) {
+        std::string r;
+        for (size_t i = 0; i < a.cells.size() && r.empty(); ++i)
+            if (a.cells[i] != b.cells[i]) {
+                const int a0 = (int)i / (12 * 16), b0 = ((int)i / 16) % 12, c0 = (int)i % 16;
+                r = "cell P+" + std::to_string(ox + a0 - PX) + "," + std::to_string(oy + b0 - PY) + "," +
+                    std::to_string(oz + c0 - PZ) + " " + std::to_string(a.cells[i] >> 8) + ":" + std::to_string(a.cells[i] & 255) +
+                    " vs " + std::to_string(b.cells[i] >> 8) + ":" + std::to_string(b.cells[i] & 255);
+            }
+        if (std::fabs(a.px - b.px) > 0.001f || std::fabs(a.py - b.py) > 0.001f || std::fabs(a.pz - b.pz) > 0.001f) r += " player";
+        if (a.gold != b.gold) r += " gold " + std::to_string(a.gold) + " vs " + std::to_string(b.gold);
+        if (std::fabs(a.life - b.life) > 1e-4f) r += " life";
+        if (a.creatures != b.creatures) r += " creatures " + std::to_string(a.creatures) + " vs " + std::to_string(b.creatures);
+        if (a.night != b.night) r += " sky";
+        if (a.toast != b.toast) r += " toast '" + a.toast + "' vs '" + b.toast + "'";
+        return r;
+    };
+
+    // ---- gate 2: execution equivalence
+    {
+        const char* scripts[] = {
+            "set 0 2 0 glass; fill 1 0 1 3 2 2 brick 19; paint 2 0 0 30",
+            "set 0 0 0 glass; set 0 1 0 dirt; set 1 1 0 dirt; set 2 0 0 air",
+            "if 2 0 0 stone; set -1 1 0 lamp 9; unless 3 0 0 grass; set -2 1 0 lamp 9",
+            "if 2 0 0 grass; if 3 0 0 grass; set 0 3 0 brick; set 0 4 0 brick",
+            "run 5 0 0",
+            "gold 1; run 0 0 0",
+            "tp 0 6 3",
+            "gold 7; heal",
+            "say HELLO there",
+            "fill -3 0 -3 -1 2 -1 cobble 12",
+            "set 1 0 -1 glass; wait 0.5; set 1 1 -1 glass; wait 0.2; fill -1 3 -1 1 3 1 ice",
+            "spawn moof 4 1 4",
+            "night",
+            "set 4 0 4 lamp 12; set 4 1 4 lamp 3; set 4 0 4 air",
+            "hurt 30; sound 8; flash",
+            "fill -2 -1 -2 2 -1 2 stone; fill -1 -1 -1 1 -1 1 air",
+        };
+        int same = 0, total = 0, changed = 0;
+        std::string why;
+        bool anchorOk = true;
+        for (const char* sc : scripts) {
+            ++total;
+            Snap A, B, base;
+            const bool sayIt = std::strncmp(sc, "say", 3) == 0;
+            // As a command block: press P.
+            const TrailerPos P0 = setup(sc);
+            int c0 = CountActiveCreatures();
+            base.px = pl->pos.x; base.py = pl->pos.y; base.pz = pl->pos.z;
+            snap(&base, c0);
+            base.creatures = 0;
+            CS::press(P0);
+            // Creatures: right after the run, before a frame lets ambient spawning move the count.
+            const int cA = CountActiveCreatures() - c0;
+            A.px = pl->pos.x; A.py = pl->pos.y; A.pz = pl->pos.z;
+            A.toast = sayIt ? toast() : "";
+            secs(1.5f);
+            snap(&A, c0);
+            A.creatures = cA;
+            if (!diff(base, A).empty()) ++changed;   // (a toast counts: base's is "")
+            // Typed, standing on P.
+            setup(sc);
+            c0 = CountActiveCreatures();
+            int ax, ay, az;
+            CS::playerAnchor(&ax, &ay, &az);
+            anchorOk = anchorOk && ax == PX && ay == PY && az == PZ;
+            TestSink sk;
+            const int r = CS::runLine(sc, ax, ay, az, CS::SRC_CONSOLE, &sk, NULL);
+            const int cB = CountActiveCreatures() - c0;
+            B.px = pl->pos.x; B.py = pl->pos.y; B.pz = pl->pos.z;
+            B.toast = sayIt ? toast() : "";
+            secs(1.5f);
+            snap(&B, c0);
+            B.creatures = cB;
+            const std::string dd = r < CS::RUN_DONE ? "runLine " + std::to_string(r) + " " + sk.all() : diff(A, B);
+            if (dd.empty()) ++same;
+            else why += std::string("'") + sc + "': " + dd + "; ";
+        }
+        std::snprintf(d, sizeof(d), "%d/%d identical, %d changed the world %s", same, total, changed, why.c_str());
+        // Only "hurt 30; sound 8; flash" leaves nothing to compare (Health is off in a new world).
+        check(same == total && changed >= total - 1, "gate 2: a typed line = the same script pressed on a block", d);
+        check(anchorOk, "the anchor is the cell under the player's feet", "");
+    }
+
+    // ---- runLine in play
+    {
+        // a line with a bad statement runs nothing, even its good ones
+        setup("");
+        TestSink sk;
+        int r = CS::runLine("set 1 1 1 glass; fill 0 0 0 9 2 9 glas", PX, PY, PZ, CS::SRC_CONSOLE, &sk, NULL);
+        std::snprintf(d, sizeof(d), "r %d cell %d | %s", r, land(PX + 1, PY + 1, PZ + 1), sk.all().c_str());
+        check(r == CS::RUN_BAD && land(PX + 1, PY + 1, PZ + 1) == 0 && sk.has("2: Unknown block: glas") && sk.has("line not run"),
+              "in play: a bad line changes nothing", d);
+
+        // `=` absolute, mixed with relative, from an anchor far away
+        sk.lines.clear();
+        char line[160];
+        std::snprintf(line, sizeof(line), "set =%d =%d =%d glass; set =%d 5 =%d brick", PX + 1, PY + 4, PZ, PX, PZ);
+        r = CS::runLine(line, PX - 40, PY, PZ, CS::SRC_CONSOLE, &sk, NULL);
+        std::snprintf(d, sizeof(d), "r %d glass %d brick %d | %s", r, land(PX + 1, PY + 4, PZ), land(PX, PY + 5, PZ), sk.all().c_str());
+        check(r == CS::RUN_DONE && land(PX + 1, PY + 4, PZ) == TYPE_GLASS && land(PX, PY + 5, PZ) == TYPE_BRICK &&
+              sk.has("2 cells set, 0 refused"), "`=` coordinates are absolute; the rest count from the anchor", d);
+
+        // a job: prints its cells, waits, finishes, says so
+        sk.lines.clear();
+        r = CS::runLine("set 1 0 1 glass; wait 0.3; set 1 1 1 glass", PX, PY, PZ, CS::SRC_CONSOLE, &sk, NULL);
+        const bool waiting = r > 0 && land(PX + 1, PY + 1, PZ + 1) == 0 && CS::jobs().size() == 1 && CS::liveCount() == 0;
+        secs(0.6f);
+        const std::string jn = "[job " + std::to_string(r) + "]";
+        std::snprintf(d, sizeof(d), "r %d waiting %d cell %d jobs %zu | %s", r, waiting, land(PX + 1, PY + 1, PZ + 1),
+                      CS::jobs().size(), sk.all().c_str());
+        check(waiting && land(PX + 1, PY + 1, PZ + 1) == TYPE_GLASS && CS::jobs().empty() && sk.has("1 cell set, 0 refused") &&
+              sk.has(jn + " waiting 0.3 s") && sk.has(jn + " done"),
+              "a waiting line is a job outside the 32; it finishes and says so", d);
+
+        // four jobs at most; a line with no wait still runs; stop N, stop jobs, stop all
+        sk.lines.clear();
+        int ids[4];
+        for (int i = 0; i < 4; ++i) ids[i] = CS::runLine("wait 5; set 0 6 0 brick", PX, PY, PZ, CS::SRC_CONSOLE, &sk, NULL);
+        const int r5 = CS::runLine("wait 1", PX, PY, PZ, CS::SRC_CONSOLE, &sk, NULL);
+        const int rNo = CS::runLine("set 1 6 0 brick", PX, PY, PZ, CS::SRC_CONSOLE, &sk, NULL);
+        const size_t j4 = CS::jobs().size();
+        const int s1 = CS::stop(ids[0]);
+        const size_t j3 = CS::jobs().size();
+        const TrailerPos Q = make(PX - 3, PY, PZ, "wait 5; set 0 1 0 brick");
+        CS::press(Q);
+        const int sJobs = CS::stop(CS::STOP_JOBS);
+        const bool qBusy = CS::busy(Q);
+        CS::runLine("wait 5", PX, PY, PZ, CS::SRC_CONSOLE, &sk, NULL);
+        const int sAll = CS::stop(CS::STOP_ALL);
+        secs(6.0f);
+        std::snprintf(d, sizeof(d), "ids %d %d %d %d, 5th %d, nowait %d, jobs %zu -> stop1 %d -> %zu, stopjobs %d (block busy %d), "
+                      "stopall %d; cells %d %d %d", ids[0], ids[1], ids[2], ids[3], r5, rNo, j4, s1, j3, sJobs, qBusy, sAll,
+                      land(PX, PY + 6, PZ), land(PX + 1, PY + 6, PZ), land(PX - 3, PY + 1, PZ));
+        check(ids[0] > 0 && ids[3] == ids[0] + 3 && r5 == CS::RUN_FULL && rNo == CS::RUN_DONE && j4 == 4 && s1 == 1 &&
+              j3 == 3 && sJobs == 3 && qBusy && sAll == 2 && !CS::busy(Q) && CS::jobs().empty() &&
+              land(PX, PY + 6, PZ) == 0 && land(PX + 1, PY + 6, PZ) == TYPE_BRICK && land(PX - 3, PY + 1, PZ) == 0 &&
+              sk.has("[job " + std::to_string(ids[0]) + "] stopped"),
+              "jobs: 4 at most, stop N / jobs / all; blocks only stop with all", d);
+
+        // say: a toast and a line; a `run` with no block there says so
+        sk.lines.clear();
+        CS::runLine("say ping; run 9 9 9", PX, PY, PZ, CS::SRC_CONSOLE, &sk, NULL);
+        std::snprintf(d, sizeof(d), "toast '%s' | %s", toast().c_str(), sk.all().c_str());
+        char none[64];
+        std::snprintf(none, sizeof(none), "No command block at %d %d %d", PX + 9, PY + 9, PZ + 9);
+        check(toast() == "ping" && sk.has("ping") && sk.has(none), "say toasts and prints; a missing run target is reported", d);
+
+        // the registry hook: OP_EXT runs with the anchor and the words, and `if` gates it
+        sk.lines.clear();
+        const int calls0 = g_extCalls;
+        r = CS::runLine("echo hi there; if 2 0 0 grass; echo no", PX, PY, PZ, CS::SRC_CONSOLE, &sk, &kTestExt);
+        std::snprintf(d, sizeof(d), "r %d calls %d last %d args %zu anchor %d,%d,%d | %s", r, g_extCalls - calls0, g_extLast,
+                      g_extArgs.size(), g_extAnchor[0], g_extAnchor[1], g_extAnchor[2], sk.all().c_str());
+        check(r == CS::RUN_DONE && g_extCalls == calls0 + 1 && g_extLast == 0 &&
+              g_extArgs == std::vector<std::string>{"hi", "there"} && g_extAnchor[0] == PX && g_extAnchor[1] == PY &&
+              g_extAnchor[2] == PZ && sk.has("ext echo"), "OP_EXT calls the registry with the anchor and its words", d);
+
+        // the time hook: blocks and the console go through it together
+        static std::vector<float> times;
+        times.clear();
+        CS::timeHook = [](float t) { times.push_back(t); };
+        CS::runLine("night; time 0.3", PX, PY, PZ, CS::SRC_CONSOLE, &sk, NULL);
+        CS::press(make(PX - 3, PY, PZ + 3, "midnight"));
+        tick(1);
+        CS::timeHook = defaultTime;
+        std::snprintf(d, sizeof(d), "%zu calls: %.2f %.2f %.2f", times.size(), times.size() > 0 ? times[0] : -1.0f,
+                      times.size() > 1 ? times[1] : -1.0f, times.size() > 2 ? times[2] : -1.0f);
+        check(times.size() == 3 && times[0] == 0.75f && std::fabs(times[1] - 0.3f) < 1e-6f && times[2] == 0.0f,
+              "day/night/time call CmdScript::timeHook from a line and a block", d);
+        setup("");
+    }
+
+    // ---- gates 3-5 (C.2): cvars, completion / help / history, gating
+    {
+        using namespace Console;
+        init();
+        auto lowerS = [](std::string t) { for (char& ch : t) ch = (char)std::tolower((unsigned char)ch); return t; };
+        auto numS = [](double v) { char b[48]; std::snprintf(b, sizeof(b), "%g", v); return std::string(b); };
+        // Run one console line; the output is the scrollback it left.
+        auto con = [&](const char* line, std::string* out = NULL) {
+            Console::clear();
+            const int r = Console::run(line);
+            if (out) {
+                out->clear();
+                for (const Line& l : scrollback()) *out += (out->empty() ? "" : " | ") + l.text;
+            }
+            return r;
+        };
+        auto has = [](const std::string& hay, const char* needle) { return hay.find(needle) != std::string::npos; };
+#ifdef EDEN_DIAGNOSTICS
+        const bool diag = true;
+#else
+        const bool diag = false;
+#endif
+        std::string out;
+        // The player stands on P (setup), stone at +2 and grass at +3, so the anchor is P.
+        setup("");
+
+        // gate 3: every kSettings row is a cvar named group.key with the row's metadata
+        {
+            std::string why;
+            int rows = 0, present = 0;
+            for (int i = 0; i < eden_settings_count(); ++i) {
+                const std::string name = lowerS(eden_settings_group(i)) + "." + eden_settings_key(i);
+                const int ci = cvarIndex(name.c_str());
+                const bool expect = diag || !eden_settings_native_hidden(i);
+                ++rows;
+                if (ci < 0) { if (expect) why += name + " missing; "; continue; }
+                if (!expect) { why += name + " should be absent; "; continue; }
+                ++present;
+                const Cvar* c = cvarAt(ci);
+                if (c->kind != eden_settings_kind(i) || c->min != eden_settings_min(i) || c->max != eden_settings_max(i) ||
+                    c->def != eden_settings_def(i) || c->apply != eden_settings_apply(i)) why += name + " metadata; ";
+                const float v = eden_settings_get(i);
+                const std::string want = c->kind == KIND_TOGGLE ? (v != 0 ? "on" : "off")
+                                       : c->kind == KIND_ENUM ? std::string(eden_settings_enum_label(i, (int)std::lround(v)))
+                                       : numS(v);
+                if (cvarValue(ci) != want) why += name + " value '" + cvarValue(ci) + "' not '" + want + "'; ";
+            }
+            std::snprintf(d, sizeof(d), "%d rows, %d cvars %s", rows, present, why.substr(0, 300).c_str());
+            check(why.empty() && rows >= 40, "gate 3: every Settings row is a cvar group.key with its metadata", d);
+        }
+
+        // set / clamp / persist (through eden_settings_set), print, enum by label and by index
+        {
+            const int fov = cvarIndex("video.fov"), sh = cvarIndex("video.shadows");
+            const int fovRow = [&] { for (int i = 0; i < eden_settings_count(); ++i) if (!std::strcmp(eden_settings_key(i), "fov")) return i; return -1; }();
+            const int shRow = [&] { for (int i = 0; i < eden_settings_count(); ++i) if (!std::strcmp(eden_settings_key(i), "shadows")) return i; return -1; }();
+            check(fov >= 0 && sh >= 0 && fovRow >= 0 && shRow >= 0, "video.fov and video.shadows exist", "");
+            if (fov >= 0 && sh >= 0 && fovRow >= 0 && shRow >= 0) {
+                std::string o1, o2, o3, o4, o5, o6;
+                con("video.fov", &o1);
+                con("video.fov 95", &o2);
+                const float after95 = eden_settings_get(fovRow);
+                con("video.fov 500", &o3);
+                const float after500 = eden_settings_get(fovRow);
+                con("video.fov abc", &o4);
+                std::snprintf(d, sizeof(d), "'%s' | '%s' (%g) | '%s' (%g) | '%s'", o1.c_str(), o2.c_str(), after95, o3.c_str(), after500, o4.c_str());
+                check(has(o1, "video.fov = 80") && has(o1, "60..110") && has(o1, "default 80") && after95 == 95 &&
+                      has(o2, "video.fov = 95") && after500 == 110 && has(o3, "clamped to 110") && has(o4, "takes a number"),
+                      "cvars: read, set, clamp like the slider, refuse text", d);
+                con("reset video.fov", &o1);
+                const bool fovBack = eden_settings_get(fovRow) == 80;
+
+                con("video.shadows smooth", &o1);
+                const float byLabel = eden_settings_get(shRow);
+                con("video.shadows 1", &o2);
+                const float byIndex = eden_settings_get(shRow);
+                con("video.shadows CLASSIC", &o3);
+                const float byCase = eden_settings_get(shRow);
+                con("video.shadows smooth", &o4);
+                con("toggle video.shadows", &o5);
+                const float wrapped = eden_settings_get(shRow);
+                con("video.shadows bogus", &o6);
+                std::snprintf(d, sizeof(d), "label %g index %g case %g wrap %g | '%s' | '%s'", byLabel, byIndex, byCase, wrapped, o5.c_str(), o6.c_str());
+                check(fovBack && byLabel == 2 && byIndex == 1 && byCase == 1 && wrapped == 0 && has(o6, "takes one of"),
+                      "cvars: an enum by label (any case) or index; toggle steps and wraps; reset restores", d);
+                con("reset video.shadows", &o1);
+            }
+            const int ap = cvarIndex("saves.autosave"), rd = cvarIndex("video.render_radius");
+            if (ap >= 0 && rd >= 0) {
+                std::string o1, o2;
+                con("saves.autosave 2min", &o1);
+                const bool two = cvarValue(ap) == "2 min";
+                con("video.render_radius 12", &o2);
+                const bool next = has(o2, "applies when a world opens") && cvarValue(rd) == "12";
+                std::snprintf(d, sizeof(d), "autosave '%s' | '%s'", cvarValue(ap).c_str(), o2.c_str());
+                check(two && next, "cvars: `2min` finds `2 min`; render_distance reports 'applies when a world opens'", d);
+                con("reset saves.autosave", &o1);
+                con("reset video.render_radius", &o1);
+            } else check(false, "saves.autosave and video.render_radius exist", "");
+            std::string o1, o2, o3;
+            con("toggle gameplay.health", &o1);
+            const bool flipped = cvarValue(cvarIndex("gameplay.health")) == "off";
+            con("toggle gameplay.health", &o2);
+            con("toggle video.fov", &o3);
+            check(flipped && cvarValue(cvarIndex("gameplay.health")) == "on" && has(o3, "not an on/off"),
+                  "toggle flips an on/off variable and refuses a range", o3.c_str());
+        }
+
+        // keybinds are cvars: rebind, and the old key stops (both directions)
+        {
+            const int jump = eden_keybind_index("jump");
+            const int def = jump >= 0 ? eden_keybind_default(jump) : 0;
+            std::string o1, o2, o3;
+            con("keys.jump", &o1);
+            con("keys.jump F9", &o2);
+            const int nowF9 = jump >= 0 ? eden_keybind_get(jump) : -1;
+            const bool oldStops = jump >= 0 && eden_keybind_action_after(-1, def) != jump;
+            const bool newFires = jump >= 0 && eden_keybind_action_after(-1, nowF9) == jump;
+            con("keys.jump nonsense", &o3);
+            con("reset keys.jump", &o1);
+            const bool back = jump >= 0 && eden_keybind_get(jump) == def && eden_keybind_action_after(-1, def) == jump;
+            std::snprintf(d, sizeof(d), "now %d old stops %d new fires %d back %d | '%s' | '%s'", nowF9, oldStops, newFires, back, o2.c_str(), o3.c_str());
+            check(jump >= 0 && nowF9 != def && oldStops && newFires && back && has(o2, "keys.jump = F9") && has(o3, "Not a key name"),
+                  "keys.jump rebinds; the old key stops; reset restores", d);
+        }
+
+        // world.* / gen.*: read-only ones refuse; world.gold is live; the name is live
+        {
+            std::string o1, o2, o3;
+            const int seed0 = ter()->level_seed;
+            con("world.seed 5", &o1);
+            con("gen.caves deep", &o2);
+            std::snprintf(d, sizeof(d), "'%s' | '%s' | seed %d", o1.c_str(), o2.c_str(), ter()->level_seed);
+            check(has(o1, "read-only") && has(o2, "World Properties") && ter()->level_seed == seed0,
+                  "world.seed and gen.* are read-only in game and point at World Properties", d);
+            con("world.gold 50", &o1);
+            const int g50 = hud->goldencubes;
+            con("world.gold 5000", &o2);
+            const int g999 = hud->goldencubes;
+            hud->goldencubes = 10;
+            check(g50 == 50 && g999 == 999 && has(o2, "clamped to 999"), "world.gold is the purse, clamped to 0..999", o2.c_str());
+            con("world.height", &o1);
+            con("world.type", &o2);
+            con("world.cmdblocks", &o3);
+            std::snprintf(d, sizeof(d), "'%s' | '%s' | '%s'", o1.c_str(), o2.c_str(), o3.c_str());
+            check(has(o1, std::to_string(g_world_height).c_str()) && has(o2, "world.type = ") && has(o3, "world.cmdblocks = 2"),
+                  "world.height / type / cmdblocks read the open world", d);
+        }
+
+        // gate 4: completion, help, history
+        {
+            Completion f = complete("fi");
+            std::string got;
+            for (const std::string& m : f.matches) got += (got.empty() ? "" : " ") + m;
+            check(got == "fill find fire", "completion: `fi` lists fill find fire", got.c_str());
+            Completion v = complete("video.sha");
+            check(v.line == "video.shadows ", "completion: `video.sha` -> video.shadows", v.line.c_str());
+            Completion b = complete("set 0 0 0 gla");
+            check(b.line == "set 0 0 0 glass ", "completion: block names by argument kind", b.line.c_str());
+            Completion e = complete("gold 1; video.shadows sm");
+            check(e.line == "gold 1; video.shadows Smooth ", "completion: after `;`, a cvar's enum labels", e.line.c_str());
+            Completion k = complete("keys.jump F1");
+            std::string km;
+            for (const std::string& m : k.matches) km += m + " ";
+            check(k.matches.size() >= 2 && k.line == "keys.jump F1", "completion: key labels for a keys.* variable (F1, F10, F11, F12)", km.c_str());
+
+            std::string o;
+            con("help set", &o);
+            const CS::Verb* sv = CS::findVerb("set");
+            check(sv && has(o, (std::string(sv->name) + " " + sv->usage).c_str()), "help set = the parser's usage string", o.c_str());
+            con("help video.fov", &o);
+            check(has(o, "video.fov = ") && has(o, "60..110"), "help on a cvar describes it", o.c_str());
+            con("help nonsense", &o);
+            check(has(o, "No verb or variable named nonsense"), "help on nothing says so", o.c_str());
+            con("find shad", &o);
+            check(has(o, "video.shadows") && has(o, "shadow"), "find searches names and descriptions", o.c_str());
+            con("cvars video", &o);
+            check(has(o, "video.fov = 80") && has(o, "video.shadows = "), "cvars GROUP lists the group", o.c_str());
+
+            historyClear();
+            std::string last;
+            for (int i = 0; i < 60; ++i) { last = "line " + std::to_string(i); historyAdd(last); }
+            historyAdd(last);   // a repeat of the last is not stored
+            const bool capped = historyCount() == (size_t)MAX_HISTORY && historyGet(0) == "line 10" && historyGet(MAX_HISTORY - 1) == last;
+            historySave();
+            historyClear();
+            historyLoad();
+            check(capped && historyCount() == (size_t)MAX_HISTORY && historyGet(0) == "line 10" && historyGet(MAX_HISTORY - 1) == last,
+                  "history keeps 50, skips repeats, survives a restart", numS((double)historyCount()).c_str());
+            con("echo hello  world", &o);
+            check(historyGet(historyCount() - 1) == "echo hello  world" && o == "hello world", "run() records history; echo prints only here", o.c_str());
+        }
+
+        // the verbs on the anchor, chaining with block verbs, jobs
+        {
+            std::string o;
+            con("if 2 0 0 stone; echo yes; if 2 0 0 grass; echo no", &o);
+            check(o == "yes", "registry verbs chain and gate like block verbs", o.c_str());
+            con("anchor 1 0 0", &o);
+            int ax, ay, az;
+            currentAnchor(&ax, &ay, &az);
+            const bool moved = anchorIsFixed() && ax == PX + 1 && ay == PY && az == PZ;
+            con("if 1 0 0 stone; echo anchored", &o);
+            const bool rel = o == "anchored";
+            con("anchor me", &o);
+            currentAnchor(&ax, &ay, &az);
+            const bool me = !anchorIsFixed() && ax == PX && ay == PY && az == PZ;
+            char ln[96];
+            std::snprintf(ln, sizeof(ln), "anchor =%d =%d =%d", PX + 3, PY, PZ);
+            con(ln, &o);
+            currentAnchor(&ax, &ay, &az);
+            const bool absolute = anchorIsFixed() && ax == PX + 3;
+            con("where", &o);
+            const bool where = has(o, "you stand on") && has(o, "anchor ");
+            con("anchor me", &o);
+            con("anchor look", &o);
+            const bool lookRefusedOrSet = has(o, "Nothing in front") || has(o, "anchor ");
+            con("anchor me", &o);
+            std::snprintf(d, sizeof(d), "moved %d rel %d me %d abs %d where %d look %d", moved, rel, me, absolute, where, lookRefusedOrSet);
+            check(moved && rel && me && absolute && where && lookRefusedOrSet, "anchor X Y Z / =N / me / look; where prints cells", d);
+
+            con("wait 5; set 0 6 0 brick", &o);
+            std::string jo, so;
+            con("jobs", &jo);
+            const size_t waiting = CS::jobs().size();
+            con("stop all", &so);
+            const bool stopped = CS::jobs().empty();
+            con("jobs", &o);
+            check(waiting == 1 && has(jo, "[job ") && stopped && has(o, "No jobs waiting"), "jobs lists and stop all stops console jobs", jo.c_str());
+            con("set 0 3 0 glas", &o);
+            check(has(o, "Unknown block: glas") && has(o, "line not run") && land(PX, PY + 3, PZ) == 0,
+                  "a bad line through run() prints its errors and changes nothing", o.c_str());
+            con("reset all", &o);
+            con("video.fov 95", &o);
+            con("reset all", &o);
+            const int fovRow = cvarIndex("video.fov");
+            const bool kept = fovRow >= 0 && cvarValue(fovRow) == "95";
+            con("reset video", &o);
+            check(kept && cvarValue(fovRow) == "80" && has(o, "reset"), "reset all asks first; reset GROUP resets the group", o.c_str());
+        }
+
+        // gate 5: gating and registration rules
+        {
+            static bool ran;
+            ran = false;
+            addCommand("cheattest", "", "test", CF_CHEAT, {}, [](Ctx&) { ran = true; });
+            std::string o;
+            con("cheattest", &o);
+            check(!ran && has(o, "Allow cheats"), "a CF_CHEAT verb is refused without Allow cheats", o.c_str());
+            bool gb = false;
+            for (size_t i = 0; i < commandCount(); ++i) if (!std::strcmp(commandAt(i).name, "getblock")) gb = true;
+            check(gb == diag, "a CF_DIAG verb exists only in a diagnostics build", diag ? "diagnostics on" : "diagnostics off");
+            const size_t n0 = commandCount(), v0 = cvarCount();
+            addCommand("fill", "", "dup of a block verb", 0, {}, [](Ctx&) {});
+            addCommand("help", "", "dup", 0, {}, [](Ctx&) {});
+            addCommand("dotted.verb", "", "dotted", 0, {}, [](Ctx&) {});
+            Cvar nodot = {}; nodot.name = "nodot"; nodot.kind = KIND_TOGGLE;
+            addCvar(nodot);
+            Cvar dup = {}; dup.name = "world.gold"; dup.kind = KIND_RANGE;
+            addCvar(dup);
+            check(commandCount() == n0 && cvarCount() == v0, "duplicate, dotted and block-verb names are dropped", "");
+            CS::Program p;
+            CS::parse("video.fov 95", &p);
+            CS::parse("help", &p);
+            check(p.firstError == "Unknown command: help", "a command block cannot see the registry", p.firstError.c_str());
+            con("video.fov 70; tp 0 1 0; video.fov", &o);
+            check(has(o, "video.fov = 70"), "console verbs and block verbs share a line", o.c_str());
+            con("reset video.fov", &o);
+        }
+        setup("");
+    }
+
+    // ---- world.name is live: it round-trips through a save and a reload (last: it closes the world)
+    {
+        Console::init();
+        Console::clear();
+        Console::run("world.name Console Renamed");
+        const std::string nowName = Console::cvarValue(Console::cvarIndex("world.name"));
+        const std::string file = Console::cvarValue(Console::cvarIndex("world.file"));
+        Console::run("save");
+        const bool reopened = quit_to_menu() && open_world(name, g_opt.height);
+        const std::string onDisk = Console::storedWorldName(file);
+        std::snprintf(d, sizeof(d), "now '%s', header of %s after save + reload '%s'", nowName.c_str(), file.c_str(), onDisk.c_str());
+        check(reopened && nowName == "Console Renamed" && onDisk == "Console Renamed", "world.name round-trips through a save and a reload", d);
+        Console::run("world.name Console selftest");   // leave the saved name as the file was made
+        Console::run("save");
+    }
+
+    std::printf("[eden-console] %s\n", CS::describe());
+    std::printf("[eden-console] %s (%d failure(s))\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
     return g_selftestFailures ? 1 : 0;
 }
 
@@ -4716,6 +5642,7 @@ int run_touch_selftest() {
     // stick checks below would be asserting against chrome that is not drawn. iOS already sets
     // this in main(); saying it again here is what makes the four platforms run the same test.
     eden_set_detected_touch(1);
+    eden_test_force_touch_input();   // X.19: a stored Input mode of Keyboard+Mouse would beat the line above
 
     const char* name = g_opt.world.empty() ? "touch-selftest" : g_opt.world.c_str();
     if (!open_world(name, g_opt.height)) return 1;
@@ -5186,10 +6113,13 @@ int run_recolor_selftest() {
 // (Hud::layoutForScreen, Menu::layoutForScreen, Input::screenMetricsChanged). A rect that does not
 // follow a metrics change is drawn in one place and hit-tested in another, silently. Pins: (1) the
 // stock 568x320 HUD rects, byte-exact; (2) the derivation; (3) idempotent, reversible re-layout;
-// (4) the profiles' chrome and the classic-width floor; (5) the aspect clamps. --touch-selftest
+// (4) the profiles' chrome and the classic-width floor; (5) the aspect clamps; (6) X.20's whole-
+// pixels-per-point snap on the desktop profile. --touch-selftest
 // covers the touch half at a real window; this one is headless and drives the viewport itself
 // (eden_display_set_viewport is exactly what DisplayMode_native.cpp calls on a window resize).
 extern "C" void eden_display_set_viewport(int css_w, int css_h);
+extern "C" void eden_display_set_viewport_px(int css_w, int css_h, int px_w, int px_h);   // X.20
+extern "C" int  eden_display_px_per_point(void);
 extern "C" void eden_display_refresh(void);
 int run_display_selftest() {
     g_selftestTag = "eden-display";
@@ -5378,6 +6308,48 @@ int run_display_selftest() {
     eden_display_set_viewport(3840, 1080);
     tick(2);
     check(std::abs(probe_int(state(), "aspect_x1000") - 2400) <= 10, "a 32:9 viewport clamps to aspect 2.40", dims(st.c_str()));
+
+    // ---- 7. X.20: the pixel snap (desktop, adaptive) ----------------------------------------------
+    // Given the box in device pixels, the desktop point space is a whole number of pixels per point
+    // (1 or even preferred; odd only when 25% closer). Expected values are the measured windows:
+    // the default 1136x640 on the 1x and the 2x monitor, a maximised 1080p window, a maximised
+    // window on the "looks like 2304x1296" 2x screen.
+    set("display_layout", 2);
+    set("ui_scale", 2);
+    const struct { int cw, ch, pw, ph, wantW, wantH, wantP; const char* what; } kSnap[] = {
+        {1136, 640, 1136,  640, 1136, 640, 1, "125%, default window, 1x: 1 px/pt"},
+        {1136, 640, 2272, 1280, 1136, 640, 2, "125%, default window, 2x: 2 px/pt, same points"},
+        {1920, 1050, 1920, 1050, 960, 525, 2, "125%, maximised 1080p: 2 px/pt, art 1:1, odd height kept"},
+        {2304, 1240, 4608, 2480, 1152, 620, 4, "125%, maximised 2x 2304-wide: 4 px/pt"},
+    };
+    for (const auto& k : kSnap) {
+        eden_display_set_viewport_px(k.cw, k.ch, k.pw, k.ph);
+        tick(2);
+        std::snprintf(d, sizeof(d), "%s, snap %d", dims(state()), eden_display_px_per_point());
+        check(probe_num(st.c_str(), "SCREEN_WIDTH") == k.wantW && probe_num(st.c_str(), "SCREEN_HEIGHT") == k.wantH &&
+              eden_display_px_per_point() == k.wantP, k.what, d);
+    }
+    pickViewport("snapped 4 px/pt", st.c_str());
+    set("ui_scale", 4);
+    eden_display_set_viewport_px(1920, 1050, 1920, 1050);
+    tick(2);
+    std::snprintf(d, sizeof(d), "%s, snap %d", dims(state()), eden_display_px_per_point());
+    check(probe_num(st.c_str(), "SCREEN_HEIGHT") == 350 && eden_display_px_per_point() == 3,
+          "200%, maximised 1080p: an odd 3 px/pt when it is much closer", d);
+    set("ui_scale", 2);
+    eden_display_set_viewport(1136, 640);
+    tick(2);
+    std::snprintf(d, sizeof(d), "%s, snap %d", dims(state()), eden_display_px_per_point());
+    check(probe_num(st.c_str(), "SCREEN_HEIGHT") == 512 && eden_display_px_per_point() == 0,
+          "no pixel size: unsnapped, the old 512-point space", d);
+    set("input_mode", 1);
+    set("ui_scale", 0);
+    eden_display_set_viewport_px(1136, 640, 2272, 1280);
+    tick(2);
+    std::snprintf(d, sizeof(d), "%s, snap %d", dims(state()), eden_display_px_per_point());
+    check(probe_num(st.c_str(), "SCREEN_WIDTH") == 568 && probe_num(st.c_str(), "SCREEN_HEIGHT") == 320 &&
+          eden_display_px_per_point() == 0, "the touch profile is never snapped", d);
+    set("input_mode", 2);
 
     std::printf("[eden-display] %s (%d failure(s))\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
     return g_selftestFailures ? 1 : 0;
@@ -6783,24 +7755,24 @@ int run_ui_selftest() {
 
     {   // B.8: presets drive view_distance (+ render_scale off iOS); a hand edit drops to Custom
         const int iP = settings_index("graphics_preset"), iV = settings_index("view_distance"),
-                  iD = settings_index("render_distance");   // B.5b-2
+                  iD = settings_index("render_radius");     // B.5b-2, X.17
         const float p0 = iP >= 0 ? eden_settings_get(iP) : 0.0f, v0 = iV >= 0 ? eden_settings_get(iV) : 0.0f,
                     d0 = iD >= 0 ? eden_settings_get(iD) : 0.0f;
 #if defined(EDEN_PLATFORM_IOS)
-        const float highD = 0.0f;                              // radius 9 until a device round measures more
+        const float highD = 6.0f;                              // radius 10 (P.4 decision 6)
 #else
-        const float highD = 3.0f;                              // radius 16 (kRenderRadius[3])
+        const float highD = 8.0f;                              // radius 16 (kRenderRadius[8])
 #endif
         bool ok = iP >= 0 && iV >= 0 && iD >= 0;
         if (ok) {
             eden_settings_set(iP, 1.0f);                       // Low
-            ok = eden_settings_get(iV) == 1.0f && eden_settings_get(iD) == 0.0f && eden_settings_get(iP) == 1.0f;
+            ok = eden_settings_get(iV) == 1.0f && eden_settings_get(iD) == 5.0f && eden_settings_get(iP) == 1.0f;
             eden_settings_set(iP, 3.0f);                       // High: Auto view, the larger window
             ok = ok && eden_settings_get(iV) == 0.0f && eden_settings_get(iD) == highD && eden_settings_get(iP) == 3.0f;
             eden_settings_set(iV, 3.0f);                       // by hand
             ok = ok && eden_settings_get(iP) == 0.0f;          // -> Custom
             eden_settings_set(iP, 2.0f);                       // Default restores Auto and radius 9
-            ok = ok && eden_settings_get(iV) == 0.0f && eden_settings_get(iD) == 0.0f;
+            ok = ok && eden_settings_get(iV) == 0.0f && eden_settings_get(iD) == 5.0f;
             eden_settings_set(iD, 2.0f);                       // the radius by hand -> Custom too
             ok = ok && eden_settings_get(iP) == 0.0f;
             eden_settings_set(iV, v0); eden_settings_set(iD, d0); eden_settings_set(iP, p0);
@@ -7022,6 +7994,170 @@ int run_ui_selftest() {
                       eden_hud_in_menu());
         check(armed == miPick && stillSettings && !menu->showsettings && eden_hud_in_menu() == 1,
               "Escape steps back capture -> Settings -> the pause menu", detail);
+        // --- C.3: the Console over the running world --------------------------------------------
+        {
+            ConsoleMenu* cm = menu->console;
+            const Button* pm[7] = { &hud->rresume, &hud->rsave, &hud->rhome, &hud->rcam, &hud->rsettings,
+                                    &hud->rconsole, &hud->rexit };
+            bool allIn = true;
+            for (const Button* b : pm)
+                if (b->size.width <= 0 || b->origin.x < 0 || b->origin.y < 0 ||
+                    b->origin.x + b->size.width > SCREEN_WIDTH || b->origin.y + b->size.height > SCREEN_HEIGHT) allIn = false;
+            std::snprintf(detail, sizeof(detail), "screen %.0fx%.0f console button y=%.0f h=%.0f", SCREEN_WIDTH, SCREEN_HEIGHT,
+                          hud->rconsole.origin.y, hud->rconsole.size.height);
+            check(allIn, "the pause menu's seven buttons all fit on the screen", detail);
+            const Button rc = hud->rconsole;
+            ui_tap(rc.origin.x + rc.size.width * 0.5f, rc.origin.y + rc.size.height * 0.5f);
+            tick(5);
+            std::snprintf(detail, sizeof(detail), "showconsole=%d open=%d in_menu=%d game_mode=%d", (int)menu->showconsole,
+                          cm->isOpen() ? 1 : 0, eden_hud_in_menu(), World::getWorld->game_mode);
+            check(menu->showconsole && cm->isOpen() && eden_hud_in_menu() == 0 && World::getWorld->game_mode == GAME_MODE_PLAY,
+                  "pause menu -> Console opens it over the world and closes the pause menu", detail);
+            check(cm->inputFocused() && eden_text_input_active() == 1, "the Console's input is focused on open", "");
+            check(eden_ui_wants_cursor() == 1, "the Console releases the mouse", "");
+
+            push_text("echo hello world");
+            tick(2);
+            push_tap_key(SDL_SCANCODE_RETURN);
+            tick(3);
+            bool echoed = false, printed = false;
+            for (const Console::Line& l : Console::scrollback()) {
+                if (l.kind == Console::ECHO && l.text == "> echo hello world") echoed = true;
+                if (l.kind != Console::ECHO && l.text == "hello world") printed = true;
+            }
+            check(echoed && printed && cm->input().empty() && cm->inputFocused(),
+                  "Return runs the line: echoed, answered, the field cleared and still focused", "");
+            check(cm->visibleLines() >= 2 && cm->following(), "the scrollback shows both lines and follows the bottom", "");
+
+            ui_tap_rect(cm->controlRect("up"));
+            tick(3);
+            check(cm->input() == "echo hello world", "Up recalls the last line", cm->input().c_str());
+            ui_tap_rect(cm->controlRect("down"));
+            tick(3);
+            check(cm->input().empty(), "Down returns to the (empty) draft", cm->input().c_str());
+
+            cm->setInput("vid");
+            ui_tap_rect(cm->controlRect("tab"));
+            tick(3);
+            check(cm->input().compare(0, 6, "video.") == 0, "Tab completes a variable to its group", cm->input().c_str());
+            cm->setInput("");
+
+            ui_tap_rect(cm->tabRect(ConsoleMenu::TAB_VARIABLES));
+            tick(5);
+            std::snprintf(detail, sizeof(detail), "tab %d rows %d (cvars %zu)", cm->tab(), cm->varRows(), Console::cvarCount());
+            check(cm->tab() == ConsoleMenu::TAB_VARIABLES && cm->varRows() == (int)Console::cvarCount() && cm->varRows() > 40,
+                  "the Variables tab lists every variable", detail);
+            // Every cvar's name pointer still names it (C.3 found them dangling once: a vector of records
+            // with std::string members moved them, and the short names live inside the string object).
+            int badName = 0;
+            for (size_t i = 0; i < Console::cvarCount(); ++i)
+                if (Console::cvarIndex(Console::cvarAt(i)->name) != (int)i) badName++;
+            check(badName == 0, "every variable's name pointer is stable", "");
+            ui_tap_rect(cm->tabRect(ConsoleMenu::TAB_HELP));
+            tick(5);
+            std::snprintf(detail, sizeof(detail), "tab %d rows %d", cm->tab(), cm->helpRows());
+            check(cm->tab() == ConsoleMenu::TAB_HELP && cm->helpRows() >= 30, "the Help tab lists the verbs", detail);
+            ui_tap_rect(cm->tabRect(ConsoleMenu::TAB_CONSOLE));
+            tick(5);
+            check(cm->tab() == ConsoleMenu::TAB_CONSOLE && cm->inputFocused(), "back on the Console tab the input is focused again", "");
+
+            // The strip: collapse, run a line from it, expand.
+            ui_tap_rect(cm->controlRect("collapse"));
+            tick(5);
+            check(cm->collapsed(), "Collapse docks the strip", "");
+            const CGRect sp = cm->controlRect("panel");
+            check(sp.origin.y + sp.size.height > SCREEN_HEIGHT * 0.6f, "the strip sits at the top so the world shows below", "");
+            cm->setInput("echo from the strip");
+            ui_tap_rect(cm->controlRect("run"));
+            tick(3);
+            bool strip = false;
+            for (const Console::Line& l : Console::scrollback()) if (l.text == "from the strip") strip = true;
+            check(strip && cm->visibleLines() >= 1, "Run works from the strip", "");
+            ui_tap_rect(cm->controlRect("collapse"));
+            tick(3);
+            check(!cm->collapsed(), "Expand restores the full panel", "");
+
+            // C.4: a hardware keyboard's Up / Down / Tab do what the buttons do.
+            push_tap_key(SDL_SCANCODE_UP);
+            tick(3);
+            check(cm->input() == "echo from the strip", "the Up key recalls the last line", cm->input().c_str());
+            push_tap_key(SDL_SCANCODE_DOWN);
+            tick(3);
+            check(cm->input().empty(), "the Down key returns to the draft", cm->input().c_str());
+            cm->setInput("vid");
+            push_tap_key(SDL_SCANCODE_TAB);
+            tick(3);
+            check(cm->input().compare(0, 6, "video.") == 0, "the Tab key completes", cm->input().c_str());
+            cm->setInput("");
+
+            // C.4: the on-screen keyboard (faked through the seam). A low keyboard: the full layout moves
+            // above it without the rail; a tall one (iPhone landscape) or an unknown one: the auto strip;
+            // gone: the full layout with the rail. The input is never below the keyboard's top.
+            const float kbLow = SCREEN_HEIGHT * 0.3f, kbTall = SCREEN_HEIGHT * 0.62f;
+            eden_native_debug_set_keyboard_top(kbLow);
+            tick(3);
+            CGRect in = cm->controlRect("input"), pn = cm->controlRect("panel");
+            std::snprintf(detail, sizeof(detail), "kb %.0f input y %.0f panel y %.0f auto %d rail %d lines %d", kbLow,
+                          in.origin.y, pn.origin.y, cm->autoStrip(), cm->railShown(), cm->visibleLines());
+            check(!cm->autoStrip() && !cm->railShown() && in.origin.y >= kbLow && pn.origin.y >= kbLow && cm->visibleLines() >= 2,
+                  "a keyboard: the full layout sits above it, without the rail", detail);
+            eden_native_debug_set_keyboard_top(kbTall);
+            tick(3);
+            in = cm->controlRect("input"); pn = cm->controlRect("panel");
+            std::snprintf(detail, sizeof(detail), "kb %.0f input y %.0f panel y %.0f auto %d lines %d", kbTall,
+                          in.origin.y, pn.origin.y, cm->autoStrip(), cm->visibleLines());
+            check(cm->autoStrip() && !cm->collapsed() && in.origin.y >= kbTall && pn.origin.y >= kbTall && cm->visibleLines() >= 1,
+                  "a tall keyboard: the auto strip, above it", detail);
+            push_text("echo over the keyboard");
+            tick(2);
+            push_tap_key(SDL_SCANCODE_RETURN);
+            tick(3);
+            bool overKb = false;
+            for (const Console::Line& l : Console::scrollback()) if (l.text == "over the keyboard") overKb = true;
+            check(overKb, "typing and Return work in the auto strip", "");
+            eden_native_debug_set_keyboard_top(-1.0f);
+            tick(3);
+            check(cm->autoStrip(), "a keyboard of unknown height: the auto strip (top-docked)", "");
+            eden_native_debug_set_keyboard_top(0.0f);
+            tick(3);
+            check(!cm->autoStrip() && cm->railShown() && cm->controlRect("panel").origin.y < kbLow,
+                  "the keyboard gone: the full layout and the rail are back", "");
+            eden_native_debug_set_keyboard_top(-2.0f);
+
+            // Escape: the focused field takes the first (blur), the second closes. Blurred, the keys are
+            // still the Console's: typing must never walk.
+            push_tap_key(SDL_SCANCODE_ESCAPE);
+            tick(3);
+            check(cm->isOpen() && !cm->inputFocused() && eden_ui_captures_keys() == 1, "Escape once blurs the field and keeps the Console open", "");
+            push_tap_key(SDL_SCANCODE_ESCAPE);
+            tick(3);
+            check(!menu->showconsole && !cm->isOpen() && eden_hud_in_menu() == 0, "Escape twice closes it, back to play", "");
+
+            // The `console` key (Backquote): opens from play; typed into a focused field; closes once the
+            // field is blurred.
+            push_tap_key(SDL_SCANCODE_GRAVE);
+            tick(3);
+            check(menu->showconsole && cm->isOpen() && cm->inputFocused() && cm->input().empty(), "the console key opens it, input focused and empty", "");
+            push_tap_key(SDL_SCANCODE_GRAVE);
+            tick(3);
+            check(cm->isOpen(), "a focused field owns the console key", "");
+            push_tap_key(SDL_SCANCODE_ESCAPE);
+            tick(3);
+            push_tap_key(SDL_SCANCODE_GRAVE);
+            tick(3);
+            check(!cm->isOpen(), "the console key closes it while the field is blurred", "");
+            ui_tap_rect(cm->controlRect("back"));   // closed: a no-op, must not crash
+            tick(2);
+
+            // Back closes it too.
+            eden_console_menu_open();
+            tick(3);
+            ui_tap_rect(cm->controlRect("back"));
+            tick(3);
+            check(!cm->isOpen() && !menu->showconsole, "Back closes the Console", "");
+            tap_hud(0);                      // the pause menu again, for Resume below
+            tick(10);
+        }
         const Button rr = hud->rresume;
         ui_tap(rr.origin.x + rr.size.width * 0.5f, rr.origin.y + rr.size.height * 0.5f);
         tick(5);
@@ -8444,6 +9580,11 @@ static int parse_one_arg(const char* a) {
         else if (!std::strcmp(a, "--cmds-selftest"))  { g_opt.mode = "cmds-selftest"; g_opt.headless = true; }
         else if (starts_with(a, "--cmds-mutate="))   g_opt.cmdsMutate = a + 14;
         else if (!std::strcmp(a, "--cmds-trace"))     g_opt.cmdsTrace = true;
+        else if (!std::strcmp(a, "--console-selftest")) { g_opt.mode = "console-selftest"; g_opt.headless = true; }
+        else if (starts_with(a, "--console-mutate=")) g_opt.consoleMutate = a + 17;
+        else if (starts_with(a, "--console-corpus=")) g_opt.consoleCorpus = a + 17;
+        else if (starts_with(a, "--console-reference=")) g_opt.consoleRef = a + 20;
+        else if (!std::strcmp(a, "--console-dump")) { g_opt.mode = "console-dump"; g_opt.headless = true; }
         else if (starts_with(a, "--signs="))         SignRenderer::enabled = atoi(a + 8) != 0;
         else if (!std::strcmp(a, "--sign-shot"))      g_opt.mode = "sign-shot";
         else if (starts_with(a, "--sign-shot="))      { g_opt.mode = "sign-shot"; g_opt.shot = a + 12; }
@@ -8605,6 +9746,12 @@ static int eden_main_after_args(int argc, char** argv) {
         return rc;
     }
     (void)argc;
+    // X.21: every `--*-selftest` keeps its prefs in memory (no read of the user's real prefs file, no
+    // write), so a stored setting cannot change a result (X.19's cause). Nothing has touched prefs yet.
+    if (g_opt.mode) {
+        const size_t ml = std::strlen(g_opt.mode);
+        if (ml > 9 && !std::strcmp(g_opt.mode + ml - 9, "-selftest")) eden_prefs_set_ephemeral(1);
+    }
     // `--touch-selftest --window=WxH` runs WINDOWED, and that is the whole point of the
     // combination: headless has no window, so the letterbox is degenerate and the mapping under
     // test is the fallback rather than the real one. With a window — and `--touch-profile` for the
@@ -8638,7 +9785,21 @@ static int eden_main_after_args(int argc, char** argv) {
     const std::string bundle = g_opt.bundle.empty() ? default_bundle(argv[0])   : g_opt.bundle;
     mkdirs(docs);
     eden_platform_set_roots(docs.c_str(), bundle.c_str());
+    // C.10: `--console-dump` prints the generated tables of docs/console-reference.md (port/tools/
+    // console-reference.py splices them in); the registry needs no world and no window.
+    if (g_opt.mode && !std::strcmp(g_opt.mode, "console-dump")) {
+        Console::init();
+        const char* const secs[] = {"block-verbs", "console-verbs", "variables"};
+        for (const char* sec : secs)
+            std::printf("<!-- BEGIN generated:%s -->\n%s<!-- END generated:%s -->\n", sec, Console::referenceMarkdown(sec).c_str(), sec);
+        return 0;
+    }
     migrate_legacy_saves(docs);
+    // C.9: the player's README.txt. Harness runs leave their --docs directories as they found them.
+    if (!g_opt.mode && g_opt.liveCmds.empty()) {
+        const int r = eden_player_readme_write(docs.c_str());
+        if (r < 0) std::fprintf(stderr, "[eden] README.txt not written in %s\n", docs.c_str());
+    }
 
     // The previous-save slot. Stage 1 left native WITHOUT one, and that was a real regression
     // against web rather than a missing nicety: web gets it from the Foundation shim's
@@ -8814,6 +9975,7 @@ static int eden_main_after_args(int argc, char** argv) {
         else if (!std::strcmp(g_opt.mode, "signs-selftest")) rc = run_signs_selftest();
         else if (!std::strcmp(g_opt.mode, "sign-shot"))     rc = run_sign_shot();
         else if (!std::strcmp(g_opt.mode, "cmds-selftest")) rc = run_cmds_selftest();
+        else if (!std::strcmp(g_opt.mode, "console-selftest")) rc = run_console_selftest();
         else if (!std::strcmp(g_opt.mode, "light-selftest")) rc = run_light_selftest();
         else if (!std::strcmp(g_opt.mode, "evict-selftest")) rc = run_evict_selftest();
         else if (!std::strcmp(g_opt.mode, "ring-light-selftest")) rc = run_ring_light_selftest();

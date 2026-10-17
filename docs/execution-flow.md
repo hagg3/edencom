@@ -132,6 +132,8 @@ while a `GLDialog` is active only the dialog updates, and while the in-game Sett
    build, so they land before this frame's meshing (edit-before-mesh). A tap on a command block runs
    its script earlier, inside step 4's input processing. `Terrain::unloadTerrain` (exit, warp, the
    `do_reload` path — never ordinary streaming) calls `CmdScript::reset()`: no run survives it.
+   Console jobs (C.1, [console.md](console.md): typed lines still waiting) resume here too;
+   `CmdScript::runLine` executes a line at once, in the input phase like a tap.
 6. `terrain->prepareAndLoadGeometry()` — streaming + chunk re-meshing (CPU). A bulk window
    reload (the `count>140` path) is **spread over several frames** on a fixed per-frame chunk
    budget rather than done inside this one call — modified from stock, 2026-08-13; see

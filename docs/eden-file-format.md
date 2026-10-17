@@ -205,7 +205,8 @@ middle number is height (`run -4 0 -4` from ONE reaches the "reset (units)" bloc
 file y), and a script's COLOR is the **stored colour byte** 0..54, not cmd.html's "0–53": the adder writes
 `lamp 54` and its saved display lamps hold 54. The interpreter keeps no state in the file (a running
 script is runtime-only), so running a world's command blocks never changes its trailer, except that a
-script's `set … air` on a command block removes that record, as mining does. The 2026 game also keeps a local world's records in sidecar files `signs_<world>.eden.dat` /
+script's `set … air` on a command block removes that record, as mining does. The language itself (shared
+with typed console lines since C.1) is in [console.md](console.md). The 2026 game also keeps a local world's records in sidecar files `signs_<world>.eden.dat` /
 `cmd_<world>.eden.dat` — exactly one *bare* section each (`MAGIC | u32 version | u32 count` + records, no
 outer wrapper), same coordinates — which a single exported `.eden` does not carry. The engine adopts them
 (below).

@@ -195,3 +195,12 @@ one's bytes, and it measured worse than the occasional top-up.
 - **Caution:** `DEFAULT_LEVEL_SEED` handling, spawn-point tables, anything about how
   missing columns resolve (the three-way fallback in `readColumn` is subtle and
   ordering-dependent).
+
+## 2.0 in-app world types, and 1.x seed worlds
+The 2.0 New-World menu named "Normal", "Mountains", "Red planet", "River Trees", "Desert" and "Ponies"; each
+set `g_terrain_type`, and `FileManager::loadWorld` ran the matching `TerrainGen2` recipe over a
+`T_SIZE` (288²) region with a random `LEVEL_SEED`. The code is still in `FileManager.mm` but is dead: the
+RLE default world commit (2014-05-22) forces `g_terrain_type=9` on the line after the switch is read.
+Whether a released build ever exposed the menu is unverified. Separately, 1.x seed worlds (the per-column
+`generateColumn` path in `TerrainGenerator.mm`) now fill flat: the `TRUE||LEVEL_SEED==0` flat branch
+returns first. The Classic generator (H.4) is what brings the 1.x terrain back.

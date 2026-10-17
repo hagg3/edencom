@@ -2,7 +2,7 @@
 //  WorldShare.h
 //  Eden — Stage S / S.5, S.5b, S.5c: the world list's "Share" action, on the GL widget kit.
 //
-//  Share > Export          a format picker (own format first; Legacy64z / NewDawn256z / NewFormat256z),
+//  Share > Export          a format picker (Automatic = own format, first; Legacy64z / NewDawn256z / NewFormat256z),
 //                          the signs question when pruning would drop any, then the pre-flight's loss
 //                          report as a confirm, then a time-sliced export to Documents/Exports/
 //                          <name>.eden.gz (the default export everywhere, plan §4).

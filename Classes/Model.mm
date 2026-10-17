@@ -443,7 +443,7 @@ bool isFacingPlayer(int idx){
     
 }
 void PlaySound(int idx,int sound){
-    if(guys[idx].alive&&guys[idx].insideView&&guys[idx].update){
+    if(guys[idx].alive&&(guys[idx].insideView||sound==VO_WALKING)&&guys[idx].update){
         if((sound==VO_IDLE||sound==VO_STRETCHING)){
             if(guys[idx].model_type!=M_BATTY&&isFacingPlayer(idx))
            Resources::getResources->voSound(sound,guys[idx].model_type,MakeVector2(guys[idx].pos));
@@ -872,7 +872,9 @@ void LoadModels2(){
 }
 
 // H.11 Experiments toggle ("creature_walk_voices", Settings_web.mm), off by default. One VO_WALKING
-// per creature per CREATURE_WALK_VOICE_GAP seconds on the transition into DEFAULT_WALK.
+// per creature per CREATURE_WALK_VOICE_GAP seconds on the transition into DEFAULT_WALK. PlaySound does not
+// require the creature to be on screen for VO_WALKING (voSound's 12-block range is the gate), so a
+// creature just behind or beside you is heard.
 bool CREATURE_WALK_VOICES=false;
 #define CREATURE_WALK_VOICE_GAP 8.0
 static double walkVoiceLast[nguys+1];

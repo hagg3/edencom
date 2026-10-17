@@ -1,4 +1,4 @@
-# Emod
+# Eden: Community Edition (Emod)
 
 Eden: World Builder was a voxel sandbox for iPhone and iPad, made by Ari Ronen (Kingly Games) and
 released in 2010. You walked around a big blocky world, dug it up, built things, set fire to them,

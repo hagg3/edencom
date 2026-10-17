@@ -73,6 +73,13 @@ void eden_tap_hud_button_end(int which);
 int  eden_settings_menu_back(void);      // Settings_web.mm (U.3): Escape over the settings screen
 int  eden_new_world_menu_back(void);     // Menu_web.mm (U.5): Escape over the New World screen
 int  eden_world_props_menu_back(void);   // Menu_web.mm (H.15): Escape over World Properties
+int  eden_console_menu_back(void);       // Menu_web.mm (C.3): Escape over the Console (blur, then close)
+int  eden_console_menu_toggle(void);     // Menu_web.mm (C.3): the `console` key
+int  eden_ui_captures_keys(void);        // Menu_web.mm (C.3): the Console owns the keyboard, field focused or not
+#if defined(EDEN_PLATFORM_IOS)
+float    eden_ios_keyboard_cover(void);  // IOSKeyboard_native.mm (C.4): docked keyboard height, window points
+unsigned eden_ios_keyboard_serial(void); // ... and how many frame notifications it has seen
+#endif
 void eden_ui_tick(void);
 int  eden_get_hold_to_act(void);
 double eden_platform_now_ms(void);
@@ -86,6 +93,9 @@ int  eden_get_fly_mode(void);
 void eden_set_fly_mode(int on);
 void eden_set_block_preview(int on);
 int  eden_get_block_preview(void);
+void eden_toggle_build_size(void);
+void eden_toggle_hide_hud(void);
+void eden_take_screenshot(void);
 void eden_gl_context_get_drawable_size(int* width, int* height);
 void eden_native_gl_get_letterbox(int* x, int* y, int* w, int* h);
 
@@ -160,8 +170,9 @@ static_assert((int)SDL_SCANCODE_RALT == 230,   "SDL scancodes are no longer HID 
 constexpr int kMaxModelActions = 64;
 int  g_contAction[kMaxModelActions];   // model row -> Action, or -1
 int  g_miHotbar[9];
+int  g_miConsole = -1;
 int  g_miMenu = -1, g_miBlockPicker = -1, g_miColorPicker = -1, g_miFireTool = -1;
-int  g_miFlyToggle = -1, g_miBlockPreview = -1;
+int  g_miFlyToggle = -1, g_miBlockPreview = -1, g_miBuildSize = -1, g_miHideHud = -1, g_miScreenshot = -1;
 bool g_modelResolved = false;
 
 void resolve_model(void) {
@@ -182,11 +193,15 @@ void resolve_model(void) {
     }
     // One-shot actions: an EDGE, dispatched at the keydown site.
     g_miMenu         = eden_keybind_index("menu");
+    g_miConsole      = eden_keybind_index("console");
     g_miBlockPicker  = eden_keybind_index("blockPicker");
     g_miColorPicker  = eden_keybind_index("colorPicker");
     g_miFireTool     = eden_keybind_index("fireTool");
     g_miFlyToggle    = eden_keybind_index("flyToggle");
     g_miBlockPreview = eden_keybind_index("blockPreview");
+    g_miBuildSize    = eden_keybind_index("buildSize");
+    g_miHideHud      = eden_keybind_index("hideHud");
+    g_miScreenshot   = eden_keybind_index("screenshot");
     // Resolved one by one rather than as "hotbar1 + n": the table's rows happen to be contiguous
     // today and nothing promises they stay that way.
     for (int n = 0; n < 9; ++n) {
@@ -651,9 +666,17 @@ int eden_native_input_debug_hold_active(void) { return g_hold.active ? 1 : 0; }
 // drains it once a frame. Kept as OUR flag rather than only SDL_TextInputActive() so the headless
 // --text-input-selftest (no window) drives exactly the path a real keyboard does.
 namespace {
+// C.4: Classes/GLWidgets.h's EDEN_TEXT_KEY_* (that header is Objective-C++; this file is not).
+const char kKeyTab = 0x09, kKeyUp = 0x11, kKeyDown = 0x12;
 bool        g_textActive = false;
 std::string g_textQueue;
+bool        g_dropGrave = false;        // C.3: see SDL_EVENT_TEXT_INPUT
 float       g_keep[4] = {0, 0, 0, 0};   // eden_text_input_keep_visible(), point space
+float       g_kbOverride = -2.0f;       // C.4: --ui-selftest / --shot's fake keyboard top; -2 = none
+#if defined(EDEN_PLATFORM_IOS)
+Uint64      g_textStartMs = 0;          // C.4: when text input last started, and the observer's
+unsigned    g_textStartSerial = 0;      //      notification count then (keyboard_top's "pending")
+#endif
 
 // Point space (y up) -> window points (y down), the inverse of window_to_point(). Only used to
 // tell the IME / iOS keyboard where the field is, so a little slop is harmless.
@@ -679,12 +702,16 @@ void point_rect_to_window(float x, float y, float w, float h, SDL_Rect* out) {
 }  // namespace
 
 extern "C" int eden_text_input_available(void) { return 1; }
+extern "C" int eden_text_input_active(void);
 
 extern "C" void eden_text_input_keep_visible(float x, float y, float w, float h) {
     g_keep[0] = x; g_keep[1] = y; g_keep[2] = w; g_keep[3] = h;
 }
 
-extern "C" void eden_text_input_start(float x, float y, float w, float h) {
+// C.4: `code` asks the system keyboard for no autocorrect and no autocapitalisation (the Console:
+// `set 0 0 0 stone` must not become "Set 0 0 0 stone"). It only matters where text input STARTS --
+// a re-announce of a running session keeps its keyboard -- and desktops ignore the properties.
+static void text_input_start(float x, float y, float w, float h, bool code) {
     if (!g_textActive) release_held_input();   // the field owns the keyboard from here (D.4b)
     g_textActive = true;
     if (!g_window) return;
@@ -706,8 +733,61 @@ extern "C" void eden_text_input_start(float x, float y, float w, float h) {
     SDL_Rect r;
     point_rect_to_window(x, y, w, h, &r);
     SDL_SetTextInputArea(g_window, &r, 0);
-    if (!SDL_TextInputActive(g_window)) SDL_StartTextInput(g_window);
+    if (SDL_TextInputActive(g_window)) return;
+#if defined(EDEN_PLATFORM_IOS)
+    g_textStartMs = SDL_GetTicks();
+    g_textStartSerial = eden_ios_keyboard_serial();
+#endif
+    if (!code) { SDL_StartTextInput(g_window); return; }
+    const SDL_PropertiesID props = SDL_CreateProperties();
+    SDL_SetNumberProperty(props, SDL_PROP_TEXTINPUT_TYPE_NUMBER, SDL_TEXTINPUT_TYPE_TEXT);
+    SDL_SetNumberProperty(props, SDL_PROP_TEXTINPUT_CAPITALIZATION_NUMBER, SDL_CAPITALIZE_NONE);
+    SDL_SetBooleanProperty(props, SDL_PROP_TEXTINPUT_AUTOCORRECT_BOOLEAN, false);
+    SDL_SetBooleanProperty(props, SDL_PROP_TEXTINPUT_MULTILINE_BOOLEAN, false);
+    SDL_StartTextInputWithProperties(g_window, props);
+    SDL_DestroyProperties(props);
 }
+
+extern "C" void eden_text_input_start(float x, float y, float w, float h)      { text_input_start(x, y, w, h, false); }
+extern "C" void eden_text_input_start_code(float x, float y, float w, float h) { text_input_start(x, y, w, h, true); }
+
+// C.4: the on-screen keyboard's top edge in point space (y up). iOS only: the observer in
+// IOSKeyboard_native.mm reports how much of the window's bottom the docked keyboard covers, in
+// window points, and this maps it through the letterbox exactly as point_rect_to_window() maps the
+// other way. A floating or undocked iPad keyboard covers no bottom strip and reads as 0.
+// "Pending" (-1) is the gap between starting text input and the keyboard's first frame
+// notification; it gives up after 600 ms, so an iPad with a hardware keyboard (no soft keyboard,
+// maybe no notification) falls back to 0.
+extern "C" float eden_text_input_keyboard_top(void) {
+    if (g_kbOverride > -2.0f) return g_kbOverride;
+    if (!eden_text_input_active()) return 0.0f;
+#if defined(EDEN_PLATFORM_IOS)
+    const float cover = eden_ios_keyboard_cover();
+    if (cover <= 0.0f) {
+        if (eden_ios_keyboard_serial() == g_textStartSerial && SDL_GetTicks() - g_textStartMs < 600) return -1.0f;
+        return 0.0f;
+    }
+    int bx = 0, by = 0, bw = 0, bh = 0;
+    eden_native_gl_get_letterbox(&bx, &by, &bw, &bh);
+    int ww = 0, wh = 0, ph = 0, pw = 0;
+    SDL_GetWindowSize(g_window, &ww, &wh);
+    SDL_GetWindowSizeInPixels(g_window, &pw, &ph);
+    if (wh <= 0) return 0.0f;
+    const float sy = ph > 0 ? (float)ph / (float)wh : 1.0f;
+    const float boxY = (float)by / sy, boxH = bh > 0 ? (float)bh / sy : (float)wh;
+    const float topWin = (float)wh - cover;                       // window points, y down
+    float top = SCREEN_HEIGHT - (topWin - boxY) / boxH * SCREEN_HEIGHT;
+    if (top < 0.0f) top = 0.0f;
+    if (top > SCREEN_HEIGHT) top = SCREEN_HEIGHT;
+    return top;
+#else
+    return 0.0f;
+#endif
+}
+
+// For --ui-selftest and --shot: pretend an on-screen keyboard's top is at `top` (point space; 0 =
+// none, -1 = pending); -2 restores the platform's answer.
+void eden_native_debug_set_keyboard_top(float top) { g_kbOverride = top; }
 
 extern "C" void eden_text_input_stop(void) {
     g_textActive = false;
@@ -773,6 +853,12 @@ void eden_native_input_init(SDL_Window* window) {
 void eden_native_input_handle_event(const SDL_Event& e) {
     switch (e.type) {
         case SDL_EVENT_TEXT_INPUT: {
+            // C.3: the key that opened the Console can deliver its own character after the field took
+            // focus (a platform that composes text after the key event): drop that one backquote.
+            if (g_dropGrave) {
+                g_dropGrave = false;
+                if (e.text.text && (std::strcmp(e.text.text, "`") == 0 || std::strcmp(e.text.text, "~") == 0)) return;
+            }
             if (g_textActive && e.text.text) g_textQueue += e.text.text;
             return;
         }
@@ -785,6 +871,11 @@ void eden_native_input_handle_event(const SDL_Event& e) {
                 if (sc == SDL_SCANCODE_BACKSPACE) g_textQueue += '\b';
                 else if (sc == SDL_SCANCODE_RETURN || sc == SDL_SCANCODE_KP_ENTER) { if (!e.key.repeat) g_textQueue += '\r'; }
                 else if (sc == SDL_SCANCODE_ESCAPE) { if (!e.key.repeat) g_textQueue += '\x1b'; }
+                // C.4: a hardware keyboard's completion and history keys (the Console). Up/Down
+                // repeat, so holding one walks the history; a field not in code mode drops them.
+                else if (sc == SDL_SCANCODE_TAB)  { if (!e.key.repeat) g_textQueue += kKeyTab; }
+                else if (sc == SDL_SCANCODE_UP)   g_textQueue += kKeyUp;
+                else if (sc == SDL_SCANCODE_DOWN) g_textQueue += kKeyDown;
                 return;
             }
             if (e.key.repeat) return;          // held keys are state, not repeated edges
@@ -802,8 +893,12 @@ void eden_native_input_handle_event(const SDL_Event& e) {
             // more of them at any time, so the old `if (action == A_FLYDOWN) g_down[A_CROUCH]`
             // special case is replaced by simply honouring every row bound to this key.
             const int code = (int)e.key.scancode;
+            // C.3: with the Console open and its field blurred (Escape once), the keys still belong to
+            // it -- typing must never walk -- except the two that close it.
+            const bool consoleKeys = eden_ui_captures_keys() != 0;
             for (int mi = eden_keybind_action_after(-1, code); mi >= 0;
                  mi = eden_keybind_action_after(mi, code)) {
+                if (consoleKeys && mi != g_miMenu && mi != g_miConsole) continue;
                 const int action = continuous_action(mi);
                 if (action >= 0) {
                     g_down[action] = true;
@@ -817,12 +912,16 @@ void eden_native_input_handle_event(const SDL_Event& e) {
                 // 2=colours, 7=fire/burn.
                 // U.3: over the settings screen the menu key is its Back, not a HUD tap (which
                 // the screen claimed as a touch of its own and dropped). U.5: likewise New World.
-                if      (mi == g_miMenu)         { if (!eden_settings_menu_back() && !eden_new_world_menu_back() && !eden_world_props_menu_back()) hud_tap(0); }
+                if      (mi == g_miMenu)         { if (!eden_console_menu_back() && !eden_settings_menu_back() && !eden_new_world_menu_back() && !eden_world_props_menu_back()) hud_tap(0); }
+                else if (mi == g_miConsole)      { if (eden_console_menu_toggle() && eden_ui_captures_keys()) g_dropGrave = true; }
                 else if (mi == g_miBlockPicker)  hud_tap(1);
                 else if (mi == g_miColorPicker)  hud_tap(2);
                 else if (mi == g_miFireTool)     hud_tap(7);
                 else if (mi == g_miFlyToggle)    eden_set_fly_mode(eden_get_fly_mode() ? 0 : 1);
                 else if (mi == g_miBlockPreview) eden_set_block_preview(eden_get_block_preview() ? 0 : 1);
+                else if (mi == g_miBuildSize)    eden_toggle_build_size();
+                else if (mi == g_miHideHud)      eden_toggle_hide_hud();
+                else if (mi == g_miScreenshot)   eden_take_screenshot();
                 else {
                     for (int n = 0; n < 9; ++n)
                         if (mi == g_miHotbar[n]) { eden_select_hotbar_slot(n); break; }

@@ -62,9 +62,14 @@ void eden_native_apply_display_mode(void) {
     // (1) POINTS, not pixels. SDL_GetWindowSize is the point/logical size — the same space the DOM
     // reports CSS pixels in — and the point space the engine derives is a UI space, not a
     // framebuffer. Using pixels here would double the derived size on every retina display.
+    // X.20: the pixel size goes with it, so the desktop profile can snap the point space to a
+    // whole number of device pixels per point (DisplayProfile_web.mm, eden_display_snap).
     int ww = 0, wh = 0;
     SDL_GetWindowSize(win, &ww, &wh);
-    if (ww > 0 && wh > 0) eden_display_set_viewport(ww, wh);
+    int pw = 0, ph = 0;
+    SDL_GetWindowSizeInPixels(win, &pw, &ph);
+    if (pw <= 0 || ph <= 0) eden_gl_context_get_drawable_size(&pw, &ph);
+    if (ww > 0 && wh > 0) eden_display_set_viewport_px(ww, wh, pw, ph);
 
     // (2) What the engine settled on. It is not necessarily the window's aspect: Classic pins
     // 16:9, and DisplayProfile clamps extreme shapes rather than hand its absolutely-sized HUD
@@ -73,15 +78,17 @@ void eden_native_apply_display_mode(void) {
     if (aspect <= 0.0f) return;
 
     // (3) The real framebuffer, in pixels, and the largest box of the engine's aspect that fits
-    // inside it, centred.
-    int pw = 0, ph = 0;
-    SDL_GetWindowSizeInPixels(win, &pw, &ph);
-    if (pw <= 0 || ph <= 0) eden_gl_context_get_drawable_size(&pw, &ph);
+    // inside it, centred. Snapped (X.20), the box is exactly the point space x px-per-point — at
+    // most p-1 px short of the window on each axis, so the ratio holds to the pixel.
     if (pw <= 0 || ph <= 0) return;
 
     int bw = pw;
     int bh = (int)((float)pw / aspect + 0.5f);
     if (bh > ph) { bh = ph; bw = (int)((float)ph * aspect + 0.5f); }
+    if (const int p = eden_display_px_per_point()) {
+        bw = eden_display_point_width() * p;
+        bh = eden_display_point_height() * p;
+    }
     if (bw < 1) bw = 1;
     if (bh < 1) bh = 1;
 

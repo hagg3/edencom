@@ -28,7 +28,22 @@ on:
       - ".github/workflows/native.yml"
       - ".github/scripts/**"
   pull_request:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      # Set by ./publish-to-edencom.sh --release. The release job at the bottom needs every
+      # build job green, then attaches the chosen platforms' artifacts to release v<version>.
+      release:
+        description: "Publish a GitHub release after the build"
+        type: boolean
+        default: false
+      release_version:
+        description: "Release version (default: VERSION.txt)"
+        type: string
+        default: ""
+      release_platforms:
+        description: "Comma list of: linux, macos, windows, ios"
+        type: string
+        default: "linux,macos,windows,ios"
 
 concurrency:
   group: native-${{ github.ref }}
@@ -201,6 +216,21 @@ jobs:
               echo "::error::--classic-selftest --classic-mutate=$m PASSED: the gate cannot see that mutation"; exit 1
             fi
           done
+          # C.1: the command-block language as a console line (dev-console-plan.md §8 gates 1-2):
+          # the parser on the checked-in corpus with block and console options (the first time the
+          # parser runs off the Mac: --cmds-selftest needs the gitignored adder), then a typed line vs
+          # the same script pressed on a block. The anchor mutation must FAIL it.
+          rm -rf console-docs console-docs-anchor console-docs-noreg && mkdir -p console-docs console-docs-anchor console-docs-noreg
+          run_gate "console selftest" $B --console-selftest --docs="$PWD/console-docs"
+          if $B --console-selftest --console-mutate=anchor --docs="$PWD/console-docs-anchor" > gate-console-mutate-anchor.log 2>&1; then
+            echo "::error::--console-selftest --console-mutate=anchor PASSED: the gate cannot see that mutation"; exit 1
+          fi
+          # C.2: the Settings/keybind bridge off (gate 3) must FAIL it too.
+          if $B --console-selftest --console-mutate=noreg --docs="$PWD/console-docs-noreg" > gate-console-mutate-noreg.log 2>&1; then
+            echo "::error::--console-selftest --console-mutate=noreg PASSED: the gate cannot see that mutation"; exit 1
+          fi
+          # C.5 gate 6: --live-cmds drives legacy verbs and `/` console lines; output pinned.
+          run_gate "live-cmds gate" ../port/tools/live-cmds-gate.sh $B "$PWD/live-gate"
           # H.15: World Properties (world-properties-plan.md §6): the screen's save path on worlds in
           # --docs -- a terrain change regenerates untouched land and keeps edits, Cancel writes
           # nothing, a 1.x world's record, the lifted home. The mutation (no GENERATOR) must FAIL it.
@@ -254,6 +284,45 @@ jobs:
           # Both files: the world, and the geometry checksum Linux gets from loading it. The other
           # three jobs assert against that number.
           path: native/publish/world-linux.*
+          if-no-files-found: error
+
+      # -----------------------------------------------------------------------------------------
+      # The downloadable: a tar.gz of a flat directory (binary + assets + the pinned libSDL3),
+      # same layout as the Windows zip. It is tarred HERE because an artifact zip drops unix mode
+      # bits. System libraries (GL, X11/Wayland, curl, ALSA/Pulse) come from the player's distro.
+      # -----------------------------------------------------------------------------------------
+      - name: Package a portable tar.gz
+        working-directory: native
+        run: |
+          set -e
+          rm -rf dist && mkdir -p dist/Emod
+          cp build/eden_native dist/Emod/emod-bin
+          find build -maxdepth 1 \( -type f -o -type l \) \
+            \( -name '*.png' -o -name '*.pod' -o -name '*.caf' -o -name '*.wav' \
+               -o -name '*.aif' -o -name '*.mp3' -o -name '*.eden' -o -name '*.ttf' \) -exec cp -L {} dist/Emod/ \;
+          cp -a "$HOME"/sdl3-prefix/lib/libSDL3.so* dist/Emod/
+          printf '%s\n' '#!/bin/sh' \
+            'd="$(dirname "$(readlink -f "$0")")"' \
+            'LD_LIBRARY_PATH="$d${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" exec "$d/emod-bin" "$@"' > dist/Emod/emod
+          chmod +x dist/Emod/emod dist/Emod/emod-bin
+          test -f dist/Emod/Eden.emod || { echo "::error::Eden.emod is not in the package"; exit 1; }
+          n=$(find dist/Emod -type f | wc -l)
+          [ "$n" -gt 800 ] || { echo "::error::only $n files in the package"; exit 1; }
+          tar -C dist -czf Emod-linux-x64.tar.gz Emod
+          ls -l Emod-linux-x64.tar.gz
+
+      - name: Smoke-test the package from another directory
+        run: |
+          set -e
+          rm -rf /tmp/unpack && mkdir /tmp/unpack && tar -C /tmp/unpack -xzf native/Emod-linux-x64.tar.gz
+          # no LD_LIBRARY_PATH of ours: the launcher must supply libSDL3 itself
+          (cd / && env -u LD_LIBRARY_PATH /tmp/unpack/Emod/emod --p1-gate)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eden-linux-x64-portable
+          retention-days: 7
+          path: native/Emod-linux-x64.tar.gz
           if-no-files-found: error
 
   # =============================================================================================
@@ -398,6 +467,21 @@ jobs:
               echo "::error::--classic-selftest --classic-mutate=$m PASSED: the gate cannot see that mutation"; exit 1
             fi
           done
+          # C.1: the command-block language as a console line (dev-console-plan.md §8 gates 1-2):
+          # the parser on the checked-in corpus with block and console options (the first time the
+          # parser runs off the Mac: --cmds-selftest needs the gitignored adder), then a typed line vs
+          # the same script pressed on a block. The anchor mutation must FAIL it.
+          rm -rf console-docs console-docs-anchor console-docs-noreg && mkdir -p console-docs console-docs-anchor console-docs-noreg
+          run_gate "console selftest" $B --console-selftest --docs="$PWD/console-docs"
+          if $B --console-selftest --console-mutate=anchor --docs="$PWD/console-docs-anchor" > gate-console-mutate-anchor.log 2>&1; then
+            echo "::error::--console-selftest --console-mutate=anchor PASSED: the gate cannot see that mutation"; exit 1
+          fi
+          # C.2: the Settings/keybind bridge off (gate 3) must FAIL it too.
+          if $B --console-selftest --console-mutate=noreg --docs="$PWD/console-docs-noreg" > gate-console-mutate-noreg.log 2>&1; then
+            echo "::error::--console-selftest --console-mutate=noreg PASSED: the gate cannot see that mutation"; exit 1
+          fi
+          # C.5 gate 6: --live-cmds drives legacy verbs and `/` console lines; output pinned.
+          run_gate "live-cmds gate" ../port/tools/live-cmds-gate.sh $B "$PWD/live-gate"
           # H.15: World Properties (world-properties-plan.md §6): the screen's save path on worlds in
           # --docs -- a terrain change regenerates untouched land and keeps edits, Cancel writes
           # nothing, a 1.x world's record, the lifted home. The mutation (no GENERATOR) must FAIL it.
@@ -606,6 +690,17 @@ jobs:
               echo "::error::--classic-selftest --classic-mutate=$m PASSED"; exit 1
             fi
           done
+          # C.1 (see the linux job).
+          rm -rf console-docs console-docs-anchor console-docs-noreg && mkdir -p console-docs console-docs-anchor console-docs-noreg
+          ./build/eden_native --console-selftest --docs="$PWD/console-docs"
+          if ./build/eden_native --console-selftest --console-mutate=anchor --docs="$PWD/console-docs-anchor" > console-mutate-anchor.log 2>&1; then
+            echo "::error::--console-selftest --console-mutate=anchor PASSED"; exit 1
+          fi
+          if ./build/eden_native --console-selftest --console-mutate=noreg --docs="$PWD/console-docs-noreg" > console-mutate-noreg.log 2>&1; then
+            echo "::error::--console-selftest --console-mutate=noreg PASSED"; exit 1
+          fi
+          # C.5 gate 6 (see the linux job).
+          ../port/tools/live-cmds-gate.sh ./build/eden_native "$PWD/live-gate"
           # H.15 (see the linux job).
           rm -rf props-docs props-docs-nogen && mkdir -p props-docs props-docs-nogen
           ./build/eden_native --props-selftest --docs="$PWD/props-docs"
@@ -660,6 +755,50 @@ jobs:
           name: world-macos
           retention-days: 1
           path: native/publish/world-macos.*
+          if-no-files-found: error
+
+      # -----------------------------------------------------------------------------------------
+      # The downloadable: a tar.gz of a flat directory (binary + assets + a relocated libSDL3),
+      # tarred here because an artifact zip drops unix mode bits. Homebrew's SDL3 is re-pointed at
+      # @executable_path and both Mach-Os are ad-hoc signed (arm64 refuses unsigned, modified
+      # code). It is NOT notarized: a browser download is quarantined, so the README note says to
+      # run `xattr -dr com.apple.quarantine Emod` once.
+      # -----------------------------------------------------------------------------------------
+      - name: Package a portable tar.gz
+        working-directory: native
+        run: |
+          set -e
+          rm -rf dist && mkdir -p dist/Emod
+          cp build/eden_native dist/Emod/emod
+          find build -maxdepth 1 \( -type f -o -type l \) \
+            \( -name '*.png' -o -name '*.pod' -o -name '*.caf' -o -name '*.wav' \
+               -o -name '*.aif' -o -name '*.mp3' -o -name '*.eden' -o -name '*.ttf' \) -exec cp -L {} dist/Emod/ \;
+          lib=$(otool -L build/eden_native | awk '/libSDL3/{print $1}')
+          cp -L "$lib" dist/Emod/libSDL3.0.dylib
+          chmod u+w dist/Emod/libSDL3.0.dylib
+          install_name_tool -id @executable_path/libSDL3.0.dylib dist/Emod/libSDL3.0.dylib
+          install_name_tool -change "$lib" @executable_path/libSDL3.0.dylib dist/Emod/emod
+          codesign --force -s - dist/Emod/libSDL3.0.dylib
+          codesign --force -s - dist/Emod/emod
+          if otool -L dist/Emod/emod dist/Emod/libSDL3.0.dylib | grep -E '/opt/homebrew|/usr/local'; then
+            echo "::error::the package still links a Homebrew library"; exit 1; fi
+          test -f dist/Emod/Eden.emod || { echo "::error::Eden.emod is not in the package"; exit 1; }
+          n=$(find dist/Emod -type f | wc -l)
+          [ "$n" -gt 800 ] || { echo "::error::only $n files in the package"; exit 1; }
+          tar -C dist -czf Emod-macos-arm64.tar.gz Emod
+          ls -l Emod-macos-arm64.tar.gz
+
+      - name: Smoke-test the package from another directory
+        run: |
+          set -e
+          rm -rf /tmp/unpack && mkdir /tmp/unpack && tar -C /tmp/unpack -xzf native/Emod-macos-arm64.tar.gz
+          (cd / && env -u DYLD_LIBRARY_PATH /tmp/unpack/Emod/emod --p1-gate)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eden-macos-arm64-portable
+          retention-days: 7
+          path: native/Emod-macos-arm64.tar.gz
           if-no-files-found: error
 
   # =============================================================================================
@@ -900,6 +1039,12 @@ jobs:
           launch classic.log --classic-selftest --classic-fixture="$DATA/classic-fixture.bin.gz"
           grep -q 'eden-classic. ALL PASS' classic.log || {
             echo "::error::--classic-selftest did not pass in the simulator"; cat classic.log; exit 1; }
+          # C.1: the console-line gates (corpus copied in like the classic fixture).
+          cp port/tools/fixtures/cmds/corpus.txt "$DATA/cmds-corpus.txt"
+          cp docs/console-reference.md "$DATA/console-reference.md"
+          launch console.log --console-selftest --console-corpus="$DATA/cmds-corpus.txt" --console-reference="$DATA/console-reference.md"
+          grep -q 'eden-console. ALL PASS' console.log || {
+            echo "::error::--console-selftest did not pass in the simulator"; cat console.log; exit 1; }
 
           # (the touch gate moved below — it needs a real window, so it cannot use `launch`,
           #  which sets the dummy video driver)
@@ -1068,3 +1213,46 @@ jobs:
           sha256sum w/*/*.eden
           python3 .github/scripts/compare-worlds.py \
             w/linux/world-linux.eden w/windows/world-windows.eden w/macos/world-macos.eden
+
+  # =============================================================================================
+  # release — only for a workflow_dispatch with release=true (./publish-to-edencom.sh --release).
+  # Creates (or updates) the public release v<version> and attaches the selected platforms'
+  # artifacts. Linux and macOS ship no packaged artifact yet, so they are not offered.
+  # =============================================================================================
+  release:
+    if: github.event_name == 'workflow_dispatch' && inputs.release
+    needs: [linux, windows, macos, ios, interchange]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLATFORMS: ${{ inputs.release_platforms }}
+          INPUT_VERSION: ${{ inputs.release_version }}
+        run: |
+          set -e
+          VERSION="${INPUT_VERSION:-$(tr -d '[:space:]' < VERSION.txt)}"
+          TAG="v$VERSION"
+          mkdir -p out
+          for p in ${PLATFORMS//,/ }; do
+            case "$p" in
+              linux)   cp artifacts/eden-linux-x64-portable/Emod-linux-x64.tar.gz "out/Emod-$VERSION-linux-x64.tar.gz" ;;
+              macos)   cp artifacts/eden-macos-arm64-portable/Emod-macos-arm64.tar.gz "out/Emod-$VERSION-macos-arm64.tar.gz" ;;
+              windows) (cd artifacts/eden-windows-x64-portable && zip -qr "../../out/Emod-$VERSION-windows-x64-portable.zip" .) ;;
+              ios)     cp artifacts/Emod-ios-unsigned-ipa/Emod-unsigned.ipa "out/Emod-$VERSION-ios-unsigned.ipa" ;;
+              *) echo "::error::unknown platform $p"; exit 1 ;;
+            esac
+          done
+          ls -l out
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" out/* --clobber
+          else
+            gh release create "$TAG" out/* --target "$GITHUB_SHA" --title "Emod $VERSION" \
+              --notes "Emod $VERSION. macOS: run xattr -dr com.apple.quarantine Emod once after unpacking (not notarized). Linux: needs the usual system GL, X11 or Wayland, curl and audio libraries. iOS: the .ipa is unsigned; install with TrollStore, Sideloadly or AltStore."
+          fi

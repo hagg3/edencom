@@ -136,9 +136,16 @@ static const int kClassicPointW = IPHONE5_WIDTH;
 static int g_cssW = 0;
 static int g_cssH = 0;
 
+// The same box in DEVICE pixels, when the host knows it (eden_display_set_viewport_px; native
+// windowed only). 0 = unknown, and then the point space is never snapped (X.20).
+static int g_pxW = 0;
+static int g_pxH = 0;
+
 // Last-applied point space, so a no-op refresh does not re-run the engine's layout.
 static int g_pointW = 0;
 static int g_pointH = 0;
+// X.20: device pixels per point when the point space was snapped to the drawable, else 0.
+static int g_pxPerPoint = 0;
 
 // Settings_web.mm owns the input-mode arbitration; the profile follows it rather than detecting
 // anything a second time.
@@ -186,6 +193,43 @@ static int eden_round_even(float v) {
 
 static int eden_clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
+// X.20 — THE PIXEL SNAP (desktop profile only). Measured 2026-10-17: the desktop's 125% point
+// space (908x512, ortho 1816x1024) in the default 1136x640 window put 0.625 device px on each ortho
+// unit on a 1x monitor and 1.25 on a 2x one. Every engine image is @2x art (one texel per ortho
+// unit) sampled GL_NEAREST, so at those ratios texels are dropped or doubled unevenly, and UI text
+// (rasterised at max(1, ratio) texels per unit) was minified 0.625x through NEAREST on the 1x
+// screen: the "blurry on the Mac" report. So when the host has said how many PIXELS the box has,
+// the point space is chosen so that one point is a whole number `p` of device pixels and the box is
+// exactly (w*p) x (h*p): `ui_scale` still picks the target size, and the snap takes the nearest p.
+// p = 1 or an EVEN p is preferred, because the art is 2 texels per point: p = 2, 4, 6 put a whole
+// number of pixels on every texel; p = 1 is an exact 2:1 reduction (the smallest UI a 1x window can
+// have, and the density floor's own limit). An odd p >= 3 keeps text and the GL kit crisp but
+// magnifies the art 1.5x, 2.5x, ... unevenly, so it must beat the best other p by kOddPenalty in
+// log size — without it, every ui_scale lands on p = 2 in a 1080p window and 200% does nothing.
+// The touch profile is left alone: its sizes are tuned for fingers, and the iPad was never blurry
+// (N.4.8 fixed its text; its art is magnified 1.8x on a 264 ppi screen). Returns 0 (no snap) when
+// the pixel box is unknown — headless, the selftests, the classic fallback — or no p fits the floors.
+static int eden_display_snap(float aspect, float targetH, float maxPointH, int* outW, int* outH) {
+    if (g_pxW <= 0 || g_pxH <= 0 || aspect <= 0.0f || targetH <= 0.0f) return 0;
+    if (eden_active_profile() != EDEN_PROFILE_DESKTOP) return 0;
+    float bw = (float)g_pxW, bh = (float)g_pxW / aspect;   // the letterbox the host will fit
+    if (bh > (float)g_pxH) { bh = (float)g_pxH; bw = bh * aspect; }
+    const float kOddPenalty = 0.22f;   // ln 1.25: an odd p must be 25% closer to the target
+    int best = 0, bestW = 0, bestH = 0;
+    float bestErr = 0.0f;
+    for (int p = 1; p <= 16; p++) {
+        const int h = (int)(bh / (float)p), w = (int)(bw / (float)p);
+        if (h < kMinPointH) break;                                  // only smaller from here
+        if (h > kMaxPointH || (float)h > maxPointH) continue;       // denser than a CSS px / too big
+        if (w < kClassicPointW || w < kMinPointW || w > kMaxPointW) continue;
+        const float err = std::fabs(std::log((float)h / targetH)) +
+                          ((p >= 3 && (p & 1)) ? kOddPenalty : 0.0f);
+        if (!best || err < bestErr) { best = p; bestW = w; bestH = h; bestErr = err; }
+    }
+    if (best) { *outW = bestW; *outH = bestH; }
+    return best;
+}
+
 // The one place the metrics are written. Everything else in this file funnels here.
 static void eden_display_apply(void) {
     const int   pct    = eden_resolved_ui_scale_pct();
@@ -198,13 +242,15 @@ static void eden_display_apply(void) {
     if (aspect > kMaxAspect) aspect = kMaxAspect;
 
     float pointH = kBasePointHeight * 100.0f / (float)pct;
+    const float targetH = pointH;   // X.20: what the pixel snap aims for
+    float maxPointsForBox = (float)kMaxPointH;
     // Apply the density floor against the box the page will actually letterbox the canvas to, not
     // against the raw viewport: when the aspect clamp bites (a portrait window), the canvas is
     // shorter than the viewport and it is the canvas the UI is drawn into.
     if (g_cssW > 0 && g_cssH > 0) {
         float boxH = (float)g_cssH;
         if ((float)g_cssW / aspect < boxH) boxH = (float)g_cssW / aspect;
-        const float maxPointsForBox = boxH / kMinCssPxPerPoint;
+        maxPointsForBox = boxH / kMinCssPxPerPoint;
         if (pointH > maxPointsForBox) pointH = maxPointsForBox;
     }
     // THE CLASSIC-WIDTH FLOOR, and it is the reason the touch profile no longer has to pin 16:9.
@@ -229,8 +275,11 @@ static void eden_display_apply(void) {
         const float minPointH = (float)kClassicPointW / aspect;
         if (pointH < minPointH) pointH = minPointH;
     }
-    const int h = eden_clampi(eden_round_even(pointH), kMinPointH, kMaxPointH);
-    const int w = eden_clampi(eden_round_even((float)h * aspect), kMinPointW, kMaxPointW);
+    int h = eden_clampi(eden_round_even(pointH), kMinPointH, kMaxPointH);
+    int w = eden_clampi(eden_round_even((float)h * aspect), kMinPointW, kMaxPointW);
+    // X.20: the snapped space wins when one fits. It skips the even rounding on purpose: an odd
+    // point count is a whole number of ortho units, and exactness to the pixel is the point.
+    const int snap = eden_display_snap(aspect, targetH, maxPointsForBox, &w, &h);
 
     // Retina/UI-scale flags. Unchanged from what EAGLView_web.mm pinned — see CLAUDE.md #3
     // ("IS_IPAD == true also on retina iPhones", i.e. it means '2x UI scale') and this port's own
@@ -260,15 +309,18 @@ static void eden_display_apply(void) {
                               (int)(SCREEN_HEIGHT * SCALE_HEIGHT));
 
     const bool changed = (w != g_pointW || h != g_pointH);
+    const bool snapChanged = (snap != g_pxPerPoint);
     g_pointW = w;
     g_pointH = h;
-    if (!changed) return;
+    g_pxPerPoint = snap;
+    if (!changed && !snapChanged) return;
 
     std::fprintf(stderr, "[eden-display] profile=%s ui_scale=%d%% layout=%s -> %dx%d points"
-                         " (aspect %.3f)\n",
+                         " (aspect %.3f, snap %d px/pt)\n",   // snap 0 = not snapped
                  eden_profile_active()->name, pct,
                  (layout == LAYOUT_ADAPTIVE) ? "adaptive" : "classic",
-                 w, h, (double)P_ASPECT_RATIO);
+                 w, h, (double)P_ASPECT_RATIO, snap);
+    if (!changed) return;
 
     // Re-layout whatever already exists. At boot none of it does — the constructors read the
     // globals set above — so this is purely the "metrics changed while running" path.
@@ -283,12 +335,22 @@ extern "C" {
 
 EDEN_EXPORT
 void eden_display_set_viewport(int css_w, int css_h) {
+    eden_display_set_viewport_px(css_w, css_h, 0, 0);   // pixels unknown: never snapped
+}
+
+EDEN_EXPORT
+void eden_display_set_viewport_px(int css_w, int css_h, int px_w, int px_h) {
     if (css_w <= 0 || css_h <= 0) return;
-    if (css_w == g_cssW && css_h == g_cssH) return;
+    if (css_w == g_cssW && css_h == g_cssH && px_w == g_pxW && px_h == g_pxH) return;
     g_cssW = css_w;
     g_cssH = css_h;
+    g_pxW = px_w > 0 ? px_w : 0;
+    g_pxH = px_h > 0 ? px_h : 0;
     eden_display_apply();
 }
+
+EDEN_EXPORT
+int eden_display_px_per_point(void) { return g_pxPerPoint; }
 
 EDEN_EXPORT
 void eden_display_refresh(void) { eden_display_apply(); }
@@ -308,13 +370,15 @@ int eden_display_aspect_x1000(void) {
 // Height only: the drawable is the letterboxed box, whose aspect is the point space's, so the
 // two axes agree to within the even-rounding of the point width. Read live, never cached — the
 // drawable and the point space both change mid-session (a native window resize, a profile flip).
+// X.20: below 1 too (down to the density floor's 0.5): clamping at 1 rasterised text at more
+// texels than pixels and minified it through NEAREST, which mangled every label on a 1x monitor.
 float eden_ui_raster_density(void) {
     int w = 0, h = 0;
     eden_gl_context_get_drawable_size(&w, &h);
     const float orthoH = SCREEN_HEIGHT * SCALE_HEIGHT;
     if (h <= 0 || orthoH <= 0.0f) return 1.0f;
     float k = (float)h / orthoH;
-    if (k < 1.0f) k = 1.0f;
+    if (k < 0.5f) k = 0.5f;
     if (k > 4.0f) k = 4.0f;
     return k;
 }

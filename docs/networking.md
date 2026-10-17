@@ -40,7 +40,11 @@ community archive:
 `<name>.name` on alternating lines, no counts and no page size (Recent returned 150 per page and
 Featured 100 on 2026-10-07; `popularlist.txt` repeats an id under two names). Parse by adjacency,
 not by stride — a stray blank line would desync every later pair. `sort=2` is what the stock client
-sends for Recent; `sort=0` returns a different ordering whose meaning is unknown. Only the `files*`
+sends for Recent. From the 2015 server source (`edenweb/src/List2.java`; the live `app2` host may differ):
+`sort=0` is alphabetical, `sort=1` is the same as 0 (a "Popular" sort was planned and never built;
+Featured is the hand-curated `popularlist.txt`), `sort=2` is newest. A list is capped at **150** results
+and `start=` is **ignored**, so there is no paging. Search is an OR word-index match, ranked by number
+of words matched, then by date. Only the `files*`
 hosts answer HTTPS (CloudFront); `app*` refuse TLS, so the client stays plain HTTP and iOS needs an
 ATS exception for `edengame.net` (`NSAppTransportSecurity` in native/ios/Info.plist.in). Neither service
 sends CORS headers, which is why the retired web build could not use them. Worlds can be large: the current server's first Featured world inflated to 1.88 GB

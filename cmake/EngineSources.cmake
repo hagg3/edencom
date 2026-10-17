@@ -91,6 +91,11 @@ function(eden_collect_engine_sources)
   list(APPEND _eden_sources "${EDEN_ECS_BASE_DIR}/Classes/SignTool.mm")
   #   Classes/CmdScript.mm — Stage D / D.4c: the command-block interpreter (cmd.html's language).
   list(APPEND _eden_sources "${EDEN_ECS_BASE_DIR}/Classes/CmdScript.mm")
+  #   Classes/Console.mm — Stage C / C.2: the console's registry (verbs, cvars over Settings/keybinds/world),
+  #   history, completion. Runs over CmdScript's Ext hook.
+  list(APPEND _eden_sources "${EDEN_ECS_BASE_DIR}/Classes/Console.mm")
+  #   Classes/ConsoleMenu.mm — Stage C / C.3: the Console screen (rail panel + strip) over Console.
+  list(APPEND _eden_sources "${EDEN_ECS_BASE_DIR}/Classes/ConsoleMenu.mm")
 
   list(LENGTH _eden_sources_rel _eden_total_count)
   list(LENGTH _eden_sources _eden_kept_count)

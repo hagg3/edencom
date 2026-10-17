@@ -38,9 +38,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>2.1.1</string>
+	<string>@EMOD_VERSION@</string>
 	<key>CFBundleVersion</key>
-	<string>2.1.1</string>
+	<string>@EMOD_VERSION@</string>
 	<key>CFBundleSupportedPlatforms</key>
 	<array>
 		<string>@EDEN_IOS_PLATFORM@</string>

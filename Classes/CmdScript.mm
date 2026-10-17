@@ -31,6 +31,7 @@ extern int fwc_result;
 
 bool CmdScript::trace = false;
 bool CmdScript::testNoDepthCap = false;
+bool CmdScript::testAnchorFeet = false;
 
 // ---- parsing ----------------------------------------------------------------------------------
 
@@ -67,9 +68,19 @@ bool number(const std::string& t, double* out) {
     *out = v;
     return true;
 }
-// A coordinate: a number, optionally after '~' ("~" alone is 0). Rounded to a cell.
-bool coord(const std::string& t, int* out) {
+// A coordinate: a number, optionally after '~' ("~" alone is 0). Rounded to a cell. With `absOK`
+// (the console), `=N` is the engine coordinate N and sets *isAbs; a block never gets here with it,
+// so `=N` stays "Not a coordinate" there.
+bool coord(const std::string& t, int* out, bool* isAbs, bool absOK) {
     std::string s = t;
+    *isAbs = false;
+    if (absOK && !s.empty() && s[0] == '=') {
+        double v;
+        if (!number(s.substr(1), &v) || std::fabs(v) > 10000000) return false;
+        *out = (int)std::lround(v);
+        *isAbs = true;
+        return true;
+    }
     if (!s.empty() && s[0] == '~') {
         s = s.substr(1);
         if (s.empty()) { *out = 0; return true; }
@@ -102,15 +113,56 @@ const Name kBlocks[] = {
 };
 const char* const kCreatures[NUM_CREATURES] = {"moof", "batty", "green", "nergle", "stumpy", "charger", "stalker"};
 
+// The built-in verbs (CmdScript::verbs). The wording of every "X needs ..." error comes from here.
+#define C_ CmdScript::ARG_COORD
+const CmdScript::Verb kVerbs[] = {
+    {"say", "TEXT", NULL, "Shows TEXT on screen as a status message.", {CmdScript::ARG_TEXT}},
+    {"tp", "X Y Z", NULL, "Teleports the player, feet landing at that cell.", {C_, C_, C_}},
+    {"set", "X Y Z TYPE [COLOR]", NULL, "Places or replaces one block; air removes it. Optional paint colour.",
+     {C_, C_, C_, CmdScript::ARG_BLOCK, CmdScript::ARG_COLOR}},
+    {"fill", "X Y Z X2 Y2 Z2 TYPE [COLOR]", NULL, "Fills the box between the two corners, up to 4096 blocks.",
+     {C_, C_, C_, C_, C_, C_, CmdScript::ARG_BLOCK, CmdScript::ARG_COLOR}},
+    {"paint", "X Y Z COLOR", NULL, "Repaints an existing block (colour 0-54).", {C_, C_, C_, CmdScript::ARG_COLOR}},
+    {"explode", "X Y Z", NULL, "Drops a lit TNT block there: real fuse, real blast.", {C_, C_, C_}},
+    {"fire", "X Y Z", NULL, "Ignites the block there, if it burns.", {C_, C_, C_}},
+    {"spawn", "CREATURE [X Y Z]", "a creature", "Spawns a creature, on the anchor unless you give a spot.",
+     {CmdScript::ARG_CREATURE, C_, C_, C_}},
+    {"day", "", NULL, "Gives the region its day sky back (time 0.25).", {0}},
+    {"noon", "", NULL, "The day sky (time 0.5).", {0}},
+    {"night", "", NULL, "Paints the region's sky night (time 0.75).", {0}},
+    {"midnight", "", NULL, "The night sky (time 0).", {0}},
+    {"time", "T", "T from 0 to 1", "Sets the time, T from 0 to 1: 0.25..0.75 is day, the rest night.",
+     {CmdScript::ARG_NUMBER}},
+    {"heal", "", NULL, "Full health.", {0}},
+    {"hurt", "N", "a number", "Deals N% damage. Only bites with Health on.", {CmdScript::ARG_NUMBER}},
+    {"gold", "N", "a number", "Grants N golden cubes (the purse holds 999).", {CmdScript::ARG_NUMBER}},
+    {"sound", "N", "a number", "Plays sound effect number N.", {CmdScript::ARG_NUMBER}},
+    {"flash", "", NULL, "White screen flash.", {0}},
+    {"wait", "S", "a number", "Pauses this script S seconds (up to 600). Everything else keeps running.",
+     {CmdScript::ARG_NUMBER}},
+    {"run", "X Y Z", NULL, "Pushes the command block at that spot. Chains up to 8 deep.", {C_, C_, C_}},
+    {"if", "X Y Z TYPE", NULL, "The next statement runs only if that cell holds that block.",
+     {C_, C_, C_, CmdScript::ARG_BLOCK}},
+    {"unless", "X Y Z TYPE", NULL, "The next statement runs only if it doesn't.", {C_, C_, C_, CmdScript::ARG_BLOCK}},
+};
+#undef C_
+
+// "fill needs X Y Z X2 Y2 Z2 TYPE [COLOR]": the row's usage, or its `needs` wording when `own`.
+std::string needs(const char* verb, bool own) {
+    const CmdScript::Verb* v = CmdScript::findVerb(verb);
+    return std::string(verb) + " needs " + (own && v->needs ? v->needs : v->usage);
+}
+
 bool bad(CmdScript::Stmt* s, const std::string& msg) {
     s->op = CmdScript::OP_BAD;
     s->text = msg;
     return false;
 }
-bool coords(const std::vector<std::string>& w, size_t from, int n, CmdScript::Stmt* s, const char* usage) {
-    if (w.size() < from + n) return bad(s, std::string(usage));
+bool coords(const std::vector<std::string>& w, size_t from, int n, CmdScript::Stmt* s, const std::string& usage,
+            bool absOK) {
+    if (w.size() < from + n) return bad(s, usage);
     for (int i = 0; i < n; ++i)
-        if (!coord(w[from + i], &s->v[i])) return bad(s, "Not a coordinate: " + w[from + i]);
+        if (!coord(w[from + i], &s->v[i], &s->abs[i], absOK)) return bad(s, "Not a coordinate: " + w[from + i]);
     return true;
 }
 bool block(const std::string& t, CmdScript::Stmt* s) {
@@ -126,15 +178,19 @@ bool colour(const std::string& t, CmdScript::Stmt* s) {
 }
 
 // One statement (not a header). Returns false when it is OP_BAD.
-bool parseStmt(const std::string& src, CmdScript::Stmt* s) {
+bool parseStmt(const std::string& src, CmdScript::Stmt* s, const CmdScript::ParseOptions& opts) {
     using CS = CmdScript;
     s->op = CS::OP_BAD;
     std::memset(s->v, 0, sizeof(s->v));
+    std::memset(s->abs, 0, sizeof(s->abs));
     s->type = 0;
     s->color = -1;
     s->hasPos = false;
     s->f = 0;
     s->text.clear();
+    s->ext = -1;
+    s->args.clear();
+    const bool A = opts.absolute;
     const std::vector<std::string> w = words(src);
     const std::string c = lower(w[0]);
     const size_t n = w.size();
@@ -146,20 +202,20 @@ bool parseStmt(const std::string& src, CmdScript::Stmt* s) {
         return true;
     }
     if (c == "tp") {
-        if (!coords(w, 1, 3, s, "tp needs X Y Z")) return false;
+        if (!coords(w, 1, 3, s, needs("tp", false), A)) return false;
         s->op = CS::OP_TP;
         return true;
     }
     if (c == "set") {
-        if (n < 5) return bad(s, "set needs X Y Z TYPE [COLOR]");
-        if (!coords(w, 1, 3, s, "")) return false;
+        if (n < 5) return bad(s, needs("set", true));
+        if (!coords(w, 1, 3, s, "", A)) return false;
         if (!block(w[4], s) || (n > 5 && !colour(w[5], s))) return false;
         s->op = CS::OP_SET;
         return true;
     }
     if (c == "fill") {
-        if (n < 8) return bad(s, "fill needs X Y Z X2 Y2 Z2 TYPE [COLOR]");
-        if (!coords(w, 1, 6, s, "")) return false;
+        if (n < 8) return bad(s, needs("fill", true));
+        if (!coords(w, 1, 6, s, "", A)) return false;
         if (!block(w[7], s) || (n > 8 && !colour(w[8], s))) return false;
         const long cells = (long)(std::abs(s->v[3] - s->v[0]) + 1) * (std::abs(s->v[4] - s->v[1]) + 1) *
                            (std::abs(s->v[5] - s->v[2]) + 1);
@@ -168,23 +224,23 @@ bool parseStmt(const std::string& src, CmdScript::Stmt* s) {
         return true;
     }
     if (c == "paint") {
-        if (n < 5) return bad(s, "paint needs X Y Z COLOR");
-        if (!coords(w, 1, 3, s, "")) return false;
+        if (n < 5) return bad(s, needs("paint", true));
+        if (!coords(w, 1, 3, s, "", A)) return false;
         if (!colour(w[4], s)) return false;
         s->op = CS::OP_PAINT;
         return true;
     }
     if (c == "explode" || c == "fire") {
-        if (!coords(w, 1, 3, s, c == "fire" ? "fire needs X Y Z" : "explode needs X Y Z")) return false;
+        if (!coords(w, 1, 3, s, needs(c.c_str(), false), A)) return false;
         s->op = c == "fire" ? CS::OP_FIRE : CS::OP_EXPLODE;
         return true;
     }
     if (c == "spawn") {
-        if (n < 2) return bad(s, "spawn needs a creature");
+        if (n < 2) return bad(s, needs("spawn", true));
         s->type = CmdScript::creatureByName(w[1].c_str());
         if (s->type < 0) return bad(s, "Unknown creature: " + w[1]);
         if (n > 2) {
-            if (!coords(w, 2, 3, s, "spawn needs CREATURE [X Y Z]")) return false;
+            if (!coords(w, 2, 3, s, needs("spawn", false), A)) return false;
             s->hasPos = true;
         }
         s->op = CS::OP_SPAWN;
@@ -196,7 +252,7 @@ bool parseStmt(const std::string& src, CmdScript::Stmt* s) {
         return true;
     }
     if (c == "time") {
-        if (n < 2 || !number(w[1], &v) || v < 0 || v > 1) return bad(s, "time needs T from 0 to 1");
+        if (n < 2 || !number(w[1], &v) || v < 0 || v > 1) return bad(s, needs("time", true));
         s->op = CS::OP_TIME;
         s->f = (float)v;
         return true;
@@ -204,7 +260,7 @@ bool parseStmt(const std::string& src, CmdScript::Stmt* s) {
     if (c == "heal") { s->op = CS::OP_HEAL; return true; }
     if (c == "flash") { s->op = CS::OP_FLASH; return true; }
     if (c == "hurt" || c == "gold" || c == "sound" || c == "wait") {
-        if (n < 2 || !number(w[1], &v) || v < 0) return bad(s, c + " needs a number");
+        if (n < 2 || !number(w[1], &v) || v < 0) return bad(s, needs(c.c_str(), true));
         if (c == "hurt") { s->op = CS::OP_HURT; s->f = (float)std::min(v, 100.0); }
         else if (c == "gold") { s->op = CS::OP_GOLD; s->f = (float)std::min(std::floor(v), (double)CS::MAX_GOLD); }
         else if (c == "wait") { s->op = CS::OP_WAIT; s->f = (float)std::min(v, (double)CS::MAX_WAIT); }
@@ -216,18 +272,30 @@ bool parseStmt(const std::string& src, CmdScript::Stmt* s) {
         return true;
     }
     if (c == "run") {
-        if (!coords(w, 1, 3, s, "run needs X Y Z")) return false;
+        if (!coords(w, 1, 3, s, needs("run", false), A)) return false;
         s->op = CS::OP_RUN;
         return true;
     }
     if (c == "if" || c == "unless") {
-        if (n < 5) return bad(s, c + " needs X Y Z TYPE");
-        if (!coords(w, 1, 3, s, "")) return false;
+        if (n < 5) return bad(s, needs(c.c_str(), true));
+        if (!coords(w, 1, 3, s, "", A)) return false;
         if (!block(w[4], s)) return false;
         s->op = c == "if" ? CS::OP_IF : CS::OP_UNLESS;
         return true;
     }
-    if (c[0] == '@') return bad(s, "A trigger must be the first statement: " + w[0]);
+    // The console's own verbs come after every built-in one, so they can never change a block's meaning.
+    if (opts.ext && opts.ext->find) {
+        const int i = opts.ext->find(c.c_str());
+        if (i >= 0) {
+            s->op = CS::OP_EXT;
+            s->ext = i;
+            s->args.assign(w.begin() + 1, w.end());
+            return true;
+        }
+    }
+    if (c[0] == '@')
+        return bad(s, opts.triggers ? "A trigger must be the first statement: " + w[0]
+                                    : std::string("Triggers only work in a command block"));
     return bad(s, "Unknown command: " + w[0]);
 }
 
@@ -250,8 +318,40 @@ int CmdScript::creatureByName(const char* name) {
     return -1;
 }
 
-void CmdScript::parse(const char* src, Program* out) {
+std::vector<std::string> CmdScript::blockNames() {
+    std::vector<std::string> r;
+    for (const Name& b : kBlocks) r.push_back(b.name);
+    return r;
+}
+
+std::vector<std::string> CmdScript::creatureNames() {
+    return std::vector<std::string>(kCreatures, kCreatures + NUM_CREATURES);
+}
+
+CmdScript::ParseOptions CmdScript::consoleOptions(const Ext* ext) {
+    ParseOptions o;
+    o.triggers = false;
+    o.absolute = true;
+    o.ext = ext;
+    return o;
+}
+
+const CmdScript::Verb* CmdScript::verbs(size_t* count) {
+    if (count) *count = sizeof(kVerbs) / sizeof(kVerbs[0]);
+    return kVerbs;
+}
+
+const CmdScript::Verb* CmdScript::findVerb(const char* name) {
+    const std::string t = lower(name ? name : "");
+    for (const Verb& v : kVerbs) if (t == v.name) return &v;
+    return NULL;
+}
+
+void CmdScript::parse(const char* src, Program* out) { parseLine(src, out, blockOptions()); }
+
+void CmdScript::parseLine(const char* src, Program* out, const ParseOptions& opts) {
     *out = Program();
+    out->ext = opts.ext;
     std::string all(src ? src : "");
     size_t at = 0;
     bool first = true;
@@ -264,7 +364,7 @@ void CmdScript::parse(const char* src, Program* out) {
         if (piece.empty()) continue;
         const std::vector<std::string> w = words(piece);
         const std::string c = lower(w[0]);
-        if (first && c[0] == '@') {
+        if (first && c[0] == '@' && opts.triggers) {
             first = false;
             double v = 0;
             Stmt s;
@@ -284,7 +384,7 @@ void CmdScript::parse(const char* src, Program* out) {
         }
         first = false;
         Stmt s;
-        if (!parseStmt(piece, &s)) {
+        if (!parseStmt(piece, &s, opts)) {
             out->errors++;
             if (out->firstError.empty()) out->firstError = s.text;
         }
@@ -302,12 +402,19 @@ uint64_t key(const TrailerPos& p) {
 
 struct Cached { std::string src; std::shared_ptr<const CmdScript::Program> prog; };
 struct Inst {
-    TrailerPos block;
+    TrailerPos block;     // SRC_BLOCK: the owner (the console's jobs have none)
     std::shared_ptr<const CmdScript::Program> prog;
     size_t pc;
     float wait;
     int depth;
     bool live;
+    int source = CmdScript::SRC_BLOCK;
+    int ax = 0, ay = 0, az = 0;           // the anchor, engine order (a block's own cell)
+    CmdScript::Sink* sink = NULL;         // console/harness output; NULL = toasts (a block)
+    int job = 0;                          // console job id, 0 for a block
+    bool announced = false;               // the console was told "[job N] waiting"
+    int cells = 0, refused = 0;           // console: cells set/refused since the last report
+    std::string src;                      // console: the line, for jobs()
 };
 struct TrigState { bool armed; float acc; };
 
@@ -321,6 +428,7 @@ std::vector<Inst*> g_insts;
 CmdScript::Stats g_stats;
 double g_now = 0;
 int g_work = 0;
+int g_nextJob = 1;        // console job ids, reset with the world
 float g_toastQuiet = 0;   // refusal toasts at most once a second
 float g_daySky = -1;      // the region's sky before a script made it night
 
@@ -332,6 +440,21 @@ void toast(const std::string& msg, bool rateLimited) {
         g_toastQuiet = 1.0f;
     }
     World::getWorld->hud->sb->setStatus([NSString stringWithUTF8String:msg.c_str()], 3);
+}
+
+// A refusal: a block toasts it (rate-limited), a console job prints it.
+void refuse(CmdScript::Sink* sink, const std::string& msg) {
+    if (sink) sink->line(CmdScript::Sink::ERR, msg);
+    else toast(msg, true);
+}
+
+// A console job's "N cells set, M refused" since its last report.
+void reportCells(Inst* in) {
+    if (!in->sink || (!in->cells && !in->refused)) return;
+    char b[96];
+    std::snprintf(b, sizeof(b), "%d cell%s set, %d refused", in->cells, in->cells == 1 ? "" : "s", in->refused);
+    in->sink->line(CmdScript::Sink::OUT, b);
+    in->cells = in->refused = 0;
 }
 
 std::shared_ptr<const CmdScript::Program> programFor(const TrailerPos& p, int* index) {
@@ -418,11 +541,12 @@ void setSky(float t) {
 
 void execute(Inst* in);
 
-// Start the block's script at `depth`: run it to its first wait. Returns PRESS_*.
-int start(const TrailerPos& block, int depth) {
+// Start the block's script at `depth`: run it to its first wait. Returns PRESS_*. `from` is the
+// console job's sink when a job's `run` started it (refusals print there).
+int start(const TrailerPos& block, int depth, CmdScript::Sink* from = NULL) {
     if (CmdScript::liveCount() >= CmdScript::MAX_RUNNING) {
         g_stats.refusedFull++;
-        toast("Too many command blocks running (32)", true);
+        refuse(from, "Too many command blocks running (32)");
         return CmdScript::PRESS_REFUSED;
     }
     std::shared_ptr<const CmdScript::Program> prog = programFor(block, NULL);
@@ -434,6 +558,7 @@ int start(const TrailerPos& block, int depth) {
     in->wait = 0;
     in->depth = depth;
     in->live = true;
+    block.toEngine(&in->ax, &in->ay, &in->az);
     g_insts.push_back(in);
     g_liveOn[key(block)]++;
     g_greenUntil[key(block)] = Green{block, g_now + kGreenMin};
@@ -445,9 +570,14 @@ int start(const TrailerPos& block, int depth) {
 
 void finish(Inst* in) {
     in->live = false;
+    g_stats.finished++;
+    if (in->source != CmdScript::SRC_BLOCK) {
+        reportCells(in);
+        if (in->announced && in->sink) in->sink->line(CmdScript::Sink::JOB, "[job " + std::to_string(in->job) + "] done");
+        return;
+    }
     auto it = g_liveOn.find(key(in->block));
     if (it != g_liveOn.end() && --it->second <= 0) g_liveOn.erase(it);
-    g_stats.finished++;
 }
 
 // The index after statement i, a gated statement included: skipping an `if` skips what it gates.
@@ -462,17 +592,24 @@ void execute(Inst* in) {
     Terrain* ter = w->terrain;
     Player* pl = w->player;
     const std::vector<CS::Stmt>& st = in->prog->stmts;
-    int bx, by, bz;   // the owner, engine order
-    in->block.toEngine(&bx, &by, &bz);
+    const int bx = in->ax, by = in->ay, bz = in->az;   // the anchor (a block: its own cell), engine order
     while (in->live && in->pc < st.size()) {
-        if (g_work >= CS::WORK_PER_FRAME) { in->wait = 0; g_stats.suspended++; return; }
+        if (g_work >= CS::WORK_PER_FRAME) { in->wait = 0; g_stats.suspended++; reportCells(in); return; }
         const CS::Stmt& s = st[in->pc];
         g_work++;
         g_stats.statements++;
-        const int x = bx + s.v[0], y = by + s.v[1], z = bz + s.v[2];
-        if (CS::trace)
-            std::printf("[cmd] %d,%d,%d d%d #%zu op%d %d %d %d t%d c%d %s\n", in->block.x, in->block.y, in->block.z,
-                        in->depth, in->pc, s.op, s.v[0], s.v[1], s.v[2], s.type, s.color, s.text.c_str());
+        // A console `=N` coordinate is absolute; everything else counts from the anchor.
+        const int x = s.abs[0] ? s.v[0] : bx + s.v[0], y = s.abs[1] ? s.v[1] : by + s.v[1],
+                  z = s.abs[2] ? s.v[2] : bz + s.v[2];
+        const int cells0 = g_stats.cells, refused0 = g_stats.refusedCells;
+        if (CS::trace) {
+            if (in->source == CS::SRC_BLOCK)
+                std::printf("[cmd] %d,%d,%d d%d #%zu op%d %d %d %d t%d c%d %s\n", in->block.x, in->block.y, in->block.z,
+                            in->depth, in->pc, s.op, s.v[0], s.v[1], s.v[2], s.type, s.color, s.text.c_str());
+            else
+                std::printf("[cmd] job%d @%d,%d,%d #%zu op%d %d %d %d t%d c%d %s\n", in->job, bx, by, bz, in->pc, s.op,
+                            x, y, z, s.type, s.color, s.text.c_str());
+        }
         switch (s.op) {
         case CS::OP_IF:
         case CS::OP_UNLESS: {
@@ -483,22 +620,26 @@ void execute(Inst* in) {
         case CS::OP_WAIT:
             in->pc++;
             in->wait = s.f;
+            reportCells(in);
             return;   // always yields, at least to the next frame
         case CS::OP_RUN:
             in->pc++;
             if (in->depth + 1 > CS::MAX_DEPTH && !CS::testNoDepthCap) {
                 g_stats.refusedDepth++;
-                toast("Command blocks can chain 8 deep", true);
-            } else {
-                start(TrailerPos::fromEngine(x, y, z), in->depth + 1);
+                refuse(in->sink, "Command blocks can chain 8 deep");
+            } else if (start(TrailerPos::fromEngine(x, y, z), in->depth + 1, in->sink) == CS::PRESS_NONE && in->sink) {
+                in->sink->line(CS::Sink::ERR, "No command block at " + std::to_string(x) + " " + std::to_string(y) + " " +
+                                                  std::to_string(z));
             }
             continue;
         case CS::OP_BAD:
             g_stats.unknown++;
-            toast(s.text, false);
+            if (in->sink) in->sink->line(CS::Sink::ERR, s.text);
+            else toast(s.text, false);
             break;
         case CS::OP_SAY:
             w->hud->sb->setStatus([NSString stringWithUTF8String:s.text.c_str()], 3);
+            if (in->sink) in->sink->line(CS::Sink::OUT, s.text);
             break;
         case CS::OP_TP:
             if (y >= 0 && y < T_HEIGHT + 32) {
@@ -512,7 +653,8 @@ void execute(Inst* in) {
             break;
         case CS::OP_FILL: {
             if (!placeable(s.type)) { g_stats.refusedCells++; break; }
-            const int x2 = bx + s.v[3], y2 = by + s.v[4], z2 = bz + s.v[5];
+            const int x2 = s.abs[3] ? s.v[3] : bx + s.v[3], y2 = s.abs[4] ? s.v[4] : by + s.v[4],
+                      z2 = s.abs[5] ? s.v[5] : bz + s.v[5];
             for (int a = std::min(x, x2); a <= std::max(x, x2); ++a)
                 for (int b = std::min(y, y2); b <= std::max(y, y2); ++b)
                     for (int c = std::min(z, z2); c <= std::max(z, z2); ++c)
@@ -549,7 +691,7 @@ void execute(Inst* in) {
             break;
         }
         case CS::OP_TIME:
-            setSky(s.f);
+            CS::timeHook(s.f);
             break;
         case CS::OP_HEAL:
             pl->life = 1;
@@ -568,7 +710,15 @@ void execute(Inst* in) {
             w->hud->flash = 1.0f;
             w->hud->flashcolor = MakeVector(1.0f, 1.0f, 1.0f);
             break;
+        case CS::OP_EXT:
+            if (in->prog->ext && in->prog->ext->run) {
+                const CS::ExtCall call{bx, by, bz, s.args, in->sink, in->source, in->job};
+                in->prog->ext->run(s.ext, call);
+            }
+            break;
         }
+        in->cells += g_stats.cells - cells0;
+        in->refused += g_stats.refusedCells - refused0;
         in->pc++;
     }
     if (in->live && in->pc >= st.size()) finish(in);
@@ -578,7 +728,7 @@ void syncGreen() {
     WorldTrailer* t = World::getWorld->fm->trailer();
     std::unordered_map<uint64_t, TrailerPos> want;
     for (const Inst* in : g_insts)
-        if (in->live) want[key(in->block)] = in->block;
+        if (in->live && in->source == CmdScript::SRC_BLOCK) want[key(in->block)] = in->block;
     // A block still inside its minimum green time stays green with no live instance.
     for (auto it = g_greenUntil.begin(); it != g_greenUntil.end();) {
         if (it->second.until <= g_now) { it = g_greenUntil.erase(it); continue; }
@@ -596,7 +746,92 @@ void syncGreen() {
 
 int CmdScript::liveCount() {
     int n = 0;
-    for (const Inst* in : g_insts) if (in->live) ++n;
+    for (const Inst* in : g_insts) if (in->live && in->source == SRC_BLOCK) ++n;
+    return n;
+}
+
+void (*CmdScript::timeHook)(float t) = setSky;
+
+void CmdScript::playerAnchor(int* x, int* y, int* z) {
+    const Player* p = World::getWorld->player;
+    const float feet = p->pos.y - p->boxheight / 2;
+    *x = (int)std::floor(p->pos.x);
+    *y = (int)std::floor(feet + (testAnchorFeet ? 0.01f : -0.01f));
+    *z = (int)std::floor(p->pos.z);
+}
+
+int CmdScript::runLine(const char* src, int ax, int ay, int az, int source, Sink* sink, const Ext* ext) {
+    World* w = World::getWorld;
+    const size_t len = src ? std::strlen(src) : 0;
+    if (len > MAX_LINE) {
+        if (sink) sink->line(Sink::ERR, "A line holds up to 511 characters (this one has " + std::to_string(len) + ")");
+        return RUN_LONG;
+    }
+    std::shared_ptr<Program> prog = std::make_shared<Program>();
+    parseLine(src, prog.get(), consoleOptions(ext));
+    if (prog->stmts.empty()) return RUN_EMPTY;
+    if (prog->errors) {
+        // Typed input is all or nothing: a half-run line can't be undone (dev-console-plan.md §2.4).
+        for (size_t i = 0; sink && i < prog->stmts.size(); ++i)
+            if (prog->stmts[i].op == OP_BAD) sink->line(Sink::ERR, std::to_string(i + 1) + ": " + prog->stmts[i].text);
+        if (sink) sink->line(Sink::ERR, "line not run");
+        return RUN_BAD;
+    }
+    if (!w || !w->terrain || !w->terrain->loaded || !w->fm) {
+        if (sink) sink->line(Sink::ERR, "No world is open");
+        return RUN_NO_WORLD;
+    }
+    // The job pool caps lines that wait; a line with no `wait` always runs (a frame-budget pause
+    // ends next frame).
+    bool waits = false;
+    for (const Stmt& s : prog->stmts) waits = waits || s.op == OP_WAIT;
+    if (waits && (int)jobs().size() >= MAX_JOBS) {
+        if (sink) sink->line(Sink::ERR, "4 console jobs are waiting: stop one first (jobs, stop N)");
+        return RUN_FULL;
+    }
+    Inst* in = new Inst();
+    in->prog = prog;
+    in->pc = 0;
+    in->wait = 0;
+    in->depth = 0;   // so a `run` from the console chains 8 deep, as from a block
+    in->live = true;
+    in->source = source;
+    in->ax = ax; in->ay = ay; in->az = az;
+    in->sink = sink;
+    in->job = g_nextJob++;
+    in->src.assign(src, len);
+    g_insts.push_back(in);
+    g_stats.lines++;
+    execute(in);
+    if (!in->live) return RUN_DONE;
+    in->announced = true;
+    if (sink) {
+        char b[64];
+        std::snprintf(b, sizeof(b), "[job %d] waiting %.1f s", in->job, in->wait);
+        sink->line(Sink::JOB, b);
+    }
+    return in->job;
+}
+
+std::vector<CmdScript::JobInfo> CmdScript::jobs() {
+    std::vector<JobInfo> r;
+    for (const Inst* in : g_insts)
+        if (in->live && in->source != SRC_BLOCK)
+            r.push_back(JobInfo{in->job, in->wait, in->pc, in->prog->stmts.size(), in->src});
+    return r;
+}
+
+int CmdScript::stop(int job) {
+    int n = 0;
+    for (Inst* in : g_insts) {
+        if (!in->live) continue;
+        const bool console = in->source != SRC_BLOCK;
+        if (!(job == STOP_ALL || (console && (job == STOP_JOBS || in->job == job)))) continue;
+        in->announced = false;   // no "done" line: it was stopped
+        finish(in);
+        if (console && in->sink) in->sink->line(Sink::JOB, "[job " + std::to_string(in->job) + "] stopped");
+        ++n;
+    }
     return n;
 }
 
@@ -705,12 +940,14 @@ void CmdScript::reset() {
     g_green.clear();
     g_liveOn.clear();
     g_daySky = -1;
+    g_nextJob = 1;
     CmdTool::clearRunning();
     g_stats.live = 0;
 }
 
 CmdScript::Stats CmdScript::stats() {
     g_stats.live = liveCount();
+    g_stats.jobs = (int)jobs().size();
     return g_stats;
 }
 

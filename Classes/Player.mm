@@ -213,6 +213,22 @@ void Player::setSpeed(Vector walk_dir, float walk_speed){
 
 extern bool hitCustom;
 
+// H.7: Experiments "Double-size build brush" (Settings_web.mm), off by default. build_size is 1 or 2
+// (0 is the retired half-size brush). A 2x2x2 brush anchored at (x,z,y) fills only cells that are
+// air or shallow liquid, and is skipped whole when it would poke above the world top. A golden cube
+// stays a single block (each buildBlock spends one).
+bool DOUBLE_BRUSH=false;
+static void buildBrush2(int x,int z,int y){
+    Terrain* t=World::getWorld->terrain;
+    if(World::getWorld->hud->blocktype==TYPE_GOLDEN_CUBE){t->buildBlock(x,z,y);return;}
+    if(y+1>=T_HEIGHT)return;
+    for(int dy=0;dy<2;dy++)for(int dz=0;dz<2;dz++)for(int dx=0;dx<2;dx++){
+        int c=getLandc(x+dx,z+dz,y+dy);
+        if(c==TYPE_NONE||(c>0&&blockinfo[c]&IS_LIQUID&&getLevel(c)<4))
+            t->buildBlock(x+dx,z+dz,y+dy);
+    }
+}
+
 void Player::processInput(float etime){
 	Input* input=Input::getInput();
 	int mode=World::getWorld->hud->mode;
@@ -265,14 +281,7 @@ void Player::processInput(float etime){
                 if(World::getWorld->hud->build_size==0){
                    // [World::getWorld->terrain buildCustom:buildpoint.x:buildpoint.z:buildpoint.y);
                 } else if(World::getWorld->hud->build_size==2){
-                   /* World::getWorld->terrain->buildBlock:buildpoint.x:buildpoint.z:buildpoint.y];
-                    [World::getWorld->terrain buildBlock:buildpoint.x+1:buildpoint.z:buildpoint.y];
-                    [World::getWorld->terrain buildBlock:buildpoint.x:buildpoint.z+1:buildpoint.y];
-                    [World::getWorld->terrain buildBlock:buildpoint.x:buildpoint.z:buildpoint.y+1];
-                    [World::getWorld->terrain buildBlock:buildpoint.x+1:buildpoint.z+1:buildpoint.y];
-                    [World::getWorld->terrain buildBlock:buildpoint.x:buildpoint.z+1:buildpoint.y+1];
-                    [World::getWorld->terrain buildBlock:buildpoint.x+1:buildpoint.z:buildpoint.y+1];
-                    [World::getWorld->terrain buildBlock:buildpoint.x+1:buildpoint.z+1:buildpoint.y+1];    */
+                    buildBrush2(buildpoint.x,buildpoint.z,buildpoint.y);
                 }else{
                     World::getWorld->terrain->buildBlock(buildpoint.x,buildpoint.z,buildpoint.y);
                 }
@@ -518,16 +527,7 @@ void Player::processInput(float etime){
                                 if(World::getWorld->hud->build_size==1){
 								World::getWorld->terrain->buildBlock(point.x,point.z,point.y);
                                 }else if(World::getWorld->hud->build_size==2){
-                                    /*[World::getWorld->terrain buildBlock:point.x:point.z:point.y];
-                                    [World::getWorld->terrain buildBlock:point.x+1:point.z:point.y];
-                                    [World::getWorld->terrain buildBlock:point.x:point.z+1:point.y];
-                                    [World::getWorld->terrain buildBlock:point.x:point.z:point.y+1];
-                                    [World::getWorld->terrain buildBlock:point.x+1:point.z+1:point.y];
-                                    [World::getWorld->terrain buildBlock:point.x:point.z+1:point.y+1];
-                                    [World::getWorld->terrain buildBlock:point.x+1:point.z:point.y+1];
-                                    [World::getWorld->terrain buildBlock:point.x+1:point.z+1:point.y+1];*/
-                                 
-                                    
+                                    buildBrush2(point.x,point.z,point.y);
                                 }else if(World::getWorld->hud->build_size==0){
                                    
                                 //    [World::getWorld->terrain buildCustom:point.x:point.z:point.y];

@@ -1,0 +1,13 @@
+# C.5 gate 6: legacy verbs, then `/` console lines, then quit. Pinned output: expected.txt
+open c5gate
+tp 64096 63 64096 0 0
+wait 150
+say begin
+set 64105 62 64096 3 2
+cells 64105 62 64096 64107 62 64096
+/fill 64106 62 64096 64107 62 64096 glass
+/cells 64105 62 64096 64107 62 64096
+/cells 1 2 3
+/nosuchverb
+say end
+quit

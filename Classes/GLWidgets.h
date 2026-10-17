@@ -622,6 +622,13 @@ public:
     // Bytes, not characters: the limit that matters is the storage it lands in
     // (WorldFileHeader::name is char[50]). A multi-byte character is never split.
     void setMaxBytes(int n)  { m_maxBytes = n; }
+    // C.4: a code field (the Console) starts text input through eden_text_input_start_code() --
+    // no autocorrect, no autocapitalisation -- and keeps the Tab / Up / Down key bytes for the
+    // screen (takeKey()). Other fields keep the defaults and drop those bytes.
+    void setCodeMode(bool on) { m_code = on; }
+    // The next Tab / Up / Down byte (EDEN_TEXT_KEY_*) seen by this frame's update(), 0 when none.
+    // Keys not taken are dropped at the next update().
+    int  takeKey();
 
     bool hit(float x, float y) const;
     void focus();
@@ -649,7 +656,15 @@ private:
     std::string m_text, m_placeholder;
     Label       m_label;
     bool        m_showingPlaceholder;
+    bool        m_code;
+    std::string m_keys;          // code mode: this frame's Tab / Up / Down bytes, oldest first
 };
+
+// The "Emod 0.1" tag in the top-left corner of the main menu and the in-game HUD (beta-Minecraft
+// style). The string is EMOD_VERSION_STRING from the repo-root VERSION.txt file (native/CMakeLists.txt).
+// Rasterises lazily on the first call and again when the UI scale changes; call it inside a
+// Graphics::prepareMenu()/beginHud() pass.
+void drawVersionTag();
 
 }  // namespace GLW
 
@@ -658,7 +673,11 @@ private:
 // DOM owns text entry there until Stage 5.10, so a GL screen must check available() before
 // offering an editable field. The rect is POINT space, y up, and only positions the IME / keyboard.
 // take() drains typed UTF-8; editing keys arrive inline as '\b' (backspace), '\r' (return/done)
-// and 0x1b (escape).
+// and 0x1b (escape). C.4 adds three more for a hardware keyboard: Tab, Up and Down (below); a
+// field that is not in code mode drops them like any other control byte.
+#define EDEN_TEXT_KEY_TAB   0x09
+#define EDEN_TEXT_KEY_UP    0x11
+#define EDEN_TEXT_KEY_DOWN  0x12
 extern "C" {
 // The raster seam's face switch (2026-10-05): 0 = body, 1 = display (Jersey 10). Sticky; Label
 // sets it around its own rasters and puts it back to 0. Native: TextRaster_native.cpp (bundled
@@ -676,6 +695,14 @@ int  eden_text_input_take(char* buf, int cap);
 // eden_text_input_start(); zero-size = only the field. iOS folds it into the text-input area SDL
 // lifts the view above the keyboard by; desktops ignore it so the IME still anchors on the field.
 void eden_text_input_keep_visible(float x, float y, float w, float h);
+// C.4: eden_text_input_start() for code -- the system keyboard comes up with autocorrect and
+// autocapitalisation off (SDL_StartTextInputWithProperties). Desktops: the same as start().
+void eden_text_input_start_code(float x, float y, float w, float h);
+// C.4: the top edge of the on-screen keyboard in point space (y up), so a screen can lay itself
+// out above it. 0 = no on-screen keyboard over the window (always, on desktops); -1 = text input
+// started and a keyboard is expected but its frame is not known yet (lay out somewhere no keyboard
+// can cover). Native iOS: a UIKeyboardWillChangeFrameNotification observer (IOSKeyboard_native.mm).
+float eden_text_input_keyboard_top(void);
 // Stage 5.6: mouse-wheel notches the platform saw while NOT in mouse-look, positive = away from
 // the user (scroll up), drained by the call. Native: Input_native.cpp. Web: 0 (the DOM scrolls).
 int  eden_ui_take_wheel(void);

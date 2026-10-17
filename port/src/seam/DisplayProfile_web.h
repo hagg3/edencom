@@ -82,6 +82,13 @@ int  eden_low_memory(void);
 // The page's real canvas/viewport box, in CSS pixels. Only the RATIO is used (the pixel buffer is
 // sized separately by eden_set_drawable_size). Re-derives the metrics and re-lays-out the UI.
 void eden_display_set_viewport(int css_w, int css_h);
+// X.20: the same, plus the box's size in DEVICE pixels (the native windowed host). Knowing the
+// pixels lets the desktop profile snap the point space to a whole number of pixels per point (see
+// eden_display_snap in the .mm); px 0 = unknown = never snapped, which is set_viewport's behaviour.
+void eden_display_set_viewport_px(int css_w, int css_h, int px_w, int px_h);
+// Device pixels per point when the point space is snapped (1, 2, 4, …), else 0. The host then
+// letterboxes to exactly point space x this, so the ratio holds to the pixel.
+int  eden_display_px_per_point(void);
 
 // Re-derive the metrics from the current viewport + settings and re-lay-out. Call after anything
 // that could change ui_scale / display_layout / the active profile.
@@ -101,7 +108,8 @@ int   eden_display_aspect_x1000(void);
 // unit and then magnified by this ratio through GL_NEAREST — 1.8x on an iPad Air 2's touch
 // profile, which is the "dialogs are slightly blurry" report. Text built through
 // Texture2D's density constructor rasterises at this many texels per unit instead.
-// 1.0 when there is no drawable (headless), so no headless hash can move; clamped to [1, 4].
+// 1.0 when there is no drawable (headless), so no headless hash can move; clamped to [0.5, 4]
+// (X.20: it was [1, 4], which minified text on a 1x monitor).
 float eden_ui_raster_density(void);
 
 // Does the active profile want the on-screen joystick / jump / crouch chrome? A profile FIELD, so

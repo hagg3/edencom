@@ -42,6 +42,10 @@
 
 namespace {
 
+// X.21: a selftest run keeps its prefs in memory only: nothing is read from or written to the
+// real prefs file, so a developer's stored settings (X.19: Input mode) cannot change the result.
+bool g_ephemeral = false;
+
 // Creates every missing component of `path`. This was a hand-rolled mkdir(2) walk, because the
 // leaf's parent ("~/Library/Application Support") exists on macOS but "$HOME/.config" often does
 // not on Linux. Phase N Stage 3.2 replaced it with SDL's, which already creates parents and
@@ -84,7 +88,7 @@ std::unordered_map<std::string, std::string>& eden_prefs_disk() {
     static std::unordered_map<std::string, std::string> table = [] {
         std::unordered_map<std::string, std::string> t;
         const std::string& p = eden_prefs_path();
-        if (p.empty()) return t;
+        if (p.empty() || g_ephemeral) return t;
         FILE* f = fopen(p.c_str(), "rb");
         if (!f) return t;
         char line[1024];
@@ -108,7 +112,7 @@ std::unordered_map<std::string, std::string>& eden_prefs_disk() {
 // version is also the correct one.
 void eden_prefs_flush() {
     const std::string& p = eden_prefs_path();
-    if (p.empty()) return;
+    if (p.empty() || g_ephemeral) return;
     std::string tmp = p + ".tmp";
     FILE* f = fopen(tmp.c_str(), "wb");
     if (!f) return;
@@ -133,6 +137,9 @@ void eden_prefs_flush() {
 bool eden_prefs_available() { return !eden_prefs_path().empty(); }
 
 }  // namespace
+
+// Call before the first NSUserDefaults access (the table is read lazily, once).
+extern "C" void eden_prefs_set_ephemeral(int on) { g_ephemeral = (on != 0); }
 
 @implementation NSUserDefaults {
     std::unordered_map<std::string, id> *_store;   // calloc'd to null; allocated by -init

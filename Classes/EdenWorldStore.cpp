@@ -470,6 +470,8 @@ bool EdenWorldStore::open(const char* path, bool writable, bool checkCrc, bool h
     checkCrc_ = checkCrc && !headerOnly_;
     f_ = fopen_utf8(path, writable ? "r+b" : "rb");
     if (!f_) return fail(fmt("cannot open %s", path));
+    // X.12: header-only reads 32 B per record; stdio's 4 KB refill after every seek turned a 16 MB Quarry scan into ~the whole file (575 ms on the Air 2)
+    if (headerOnly_) setvbuf(f_, nullptr, _IONBF, 0);
     size_ = file_size(f_);
     // 1. File header
     uint8_t h[FILE_HEADER];

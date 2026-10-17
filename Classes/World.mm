@@ -17,6 +17,7 @@
 
 #import "Alert.h"
 #import "GLDialog.h"
+#import "ConsoleMenu.h"   // C.3 (Menu.h only forward-declares it)
 #import "SignRenderer.h"
 #import "CmdScript.h"
 #include <iostream>
@@ -689,11 +690,17 @@ BOOL World::update(float etime){
 		menu->settings->update(etime);
 		return FALSE;
 	}
+	// C.3: the Console is a play-only screen; leaving play closes it.
+	if(menu->showconsole&&game_mode!=GAME_MODE_PLAY) menu->console->close();
 	if(game_mode==GAME_MODE_MENU){
 		menu->update(etime);
 	}else if(game_mode==GAME_MODE_PLAY){
 		
 		if(etime>1.0f/20.0f)etime=1.0f/20.0f;
+		// C.3: the Console runs FIRST (a submitted line executes in the input phase, like a build
+		// tap) and claims every touch; the play step below then runs as usual with no player
+		// input. Unlike Settings it freezes nothing.
+		if(menu->showconsole) menu->console->update(etime);
         cam->update(etime);
 		
         pass_begin(P_U_TERRAIN);
@@ -828,6 +835,7 @@ void World::renderFrame(BOOL draw){
         pass_begin(P_R_HUD);
 		hud->render(); //render hud last
 		if(menu->showsettings) menu->settings->render();   // Stage 5.5, see update()
+		if(menu->showconsole) menu->console->render();      // C.3, over the HUD
         pass_end(P_R_HUD);
         pass_end(P_RENDER);
 

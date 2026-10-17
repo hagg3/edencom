@@ -227,6 +227,21 @@ int eden_gl_context_create(int drawable_width, int drawable_height) {
         std::fprintf(stderr, "[eden-gl] SDL_CreateWindow failed: %s\n", SDL_GetError());
         return 0;
     }
+#if !defined(EDEN_PLATFORM_IOS)
+    // X.20: EDEN_WINDOW_DISPLAY=N opens the window centred on the Nth display (0-based), so a
+    // --shot can be taken on a 1x and a 2x monitor from the same terminal. Diagnostic only.
+    if (const char* d = SDL_getenv("EDEN_WINDOW_DISPLAY")) {
+        int n = 0;
+        SDL_DisplayID* ids = SDL_GetDisplays(&n);
+        const int i = SDL_atoi(d);
+        if (ids && i >= 0 && i < n) {
+            SDL_SetWindowPosition(g_window, SDL_WINDOWPOS_CENTERED_DISPLAY(ids[i]),
+                                  SDL_WINDOWPOS_CENTERED_DISPLAY(ids[i]));
+            SDL_SyncWindow(g_window);
+        }
+        SDL_free(ids);
+    }
+#endif
 
     eden_mem_trace("gl:window");
     g_gl = SDL_GL_CreateContext(g_window);

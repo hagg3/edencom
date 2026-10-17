@@ -92,8 +92,9 @@ fit, a row taller than the view still shows; `rowOffset()`; content drags walk t
     unit, so every label was magnified 1.8x through `GL_MAG_FILTER NEAREST` (doubled, uneven pixels;
     the "dialogs are slightly blurry" report). `GLW::Label`, `SettingsMenu`'s `sm_text` and `statusbar` (the IS_IPAD branch) now build
     through `Texture2D(string, dims, align, font, density)` with `eden_ui_raster_density()`
-    (`port/src/seam/DisplayProfile_web.mm`: drawable height / ortho height, clamped 1–4, **1 headless**
-    so no hash moves). The texture remembers its `_density`; `drawText` and `drawAtPoint` divide the quad by it
+    (`port/src/seam/DisplayProfile_web.mm`: drawable height / ortho height, clamped 0.5–4, **1 headless**
+    so no hash moves; the floor was 1 until X.20, 2026-10-17, which minified every label 0.625x through
+    NEAREST in a default window on a 1x Mac monitor). The texture remembers its `_density`; `drawText` and `drawAtPoint` divide the quad by it
     (`drawText` also snaps the origin to a device pixel), so the layout in ortho units is unchanged. Any other
     `new Texture2D(NSString*, …)` site (SharedList, stubbed on native) still rasterises at 1 texel/unit and
     can opt in the same way.
@@ -154,7 +155,13 @@ fit, a row taller than the view still shows; `rowOffset()`; content drags walk t
   *bottom of the text-input area* meets the keyboard — so a field also takes
   `setKeepVisible(rect)`, which the sixth call (`eden_text_input_keep_visible`) folds into
   that area on iOS only. `GLDialog` passes its whole panel, which keeps its buttons above the
-  keyboard; desktops ignore it so the IME candidate window stays anchored on the field.  - **Rebind capture is armed in the model, not in the screen** (`eden_keybind_capture_begin`).
+  keyboard; desktops ignore it so the IME candidate window stays anchored on the field.
+  **C.4 (2026-10-16)** added three calls for a screen that lays itself out instead:
+  `eden_text_input_keyboard_top()` (the keyboard's top in point space; iOS only, from a
+  `UIKeyboardWillChangeFrameNotification` observer in `native/src/seam/IOSKeyboard_native.mm`),
+  `eden_text_input_start_code()` (no autocorrect/autocapitalisation; `TextField::setCodeMode`) and the
+  Tab/Up/Down key bytes a code field hands the screen through `takeKey()`. The Console is the one user
+  ([console.md](console.md), *The on-screen keyboard*).  - **Rebind capture is armed in the model, not in the screen** (`eden_keybind_capture_begin`).
     The engine's `Input` carries touches and nothing else, so the key that closes a capture arrives
     on a path no GL screen can see: on native it comes through SDL and
     `native/src/seam/Input_native.cpp` feeds it to `eden_keybind_capture_feed()` **ahead of every
@@ -305,13 +312,17 @@ Responsibilities:
   glReadPixels → PNG in Documents + MD5 hash → `FileManager::setImageHash`). Port (H.16): `takeScreenshot()` in
   `Classes/Util.mm` reads the real drawable size (`eden_gl_context_get_drawable_size`; `GL_VIEWPORT` answers the point space for picking, so never size from it, H.16b), centre-crops to 3:2, box-downsizes to a long side ≤ 1440 and
   writes `<world>.png` with its own zlib PNG encoder (`photoEncodePNG`; the stock body is under `#if 0`
-  because the shim's `UIImagePNGRepresentation` is a nil stub). Gate: `--photo-selftest`.
+  because the shim's `UIImagePNGRepresentation` is a nil stub). Gate: `--photo-selftest`. A mouse click in camera mode is the shutter too: `eden_click_begin` forwards it without resolving a tool mode (X.24); `--shot` takes its photo that way.
 - Golden-cube counter, health/damage flash (`flash`, `flashcolor`), underwater tint
   (`underLiquid`), FPS counter, fade-in on load (`fade_out`, `justLoaded`).
 - `worldLoaded()` resets per-world UI state.
 
 `Hud::update` consumes touches (marks `inuse`) **before** `Player::processInput` sees
 them — the ordering in `World::update` is the arbitration.
+
+**Crosshair.** `Hud::render` draws a gapped dark+light cross at the screen centre after `sb->render()` when
+Settings › Interface › Crosshair (`eden_get_crosshair()`) is on, `mode` is not `MODE_NONE`/`MODE_PICK_BLOCK`/
+`MODE_PICK_COLOR`, and no picker is fading (`at2`/`at3`). Camera mode and `hideui` return earlier, so it is hidden there too.
 
 ## Menu system (`Classes/Menu.mm` + satellites)
 
@@ -337,7 +348,7 @@ them — the ordering in `World::update` is the arbitration.
   `rect_create`, the arrows …) are still computed by `layoutForScreen()` and nothing reads them.
   **Share** (`kit_share`, beside Rename; **S.5, 2026-10-10**, native only — `WorldShare::offered`)
   opens `Classes/WorldShare.{h,mm}`'s GLDialog chain: **Export** / **Upload** / **Remove original**
-  (only for an `.emod` with its `.eden` kept) → a format picker (own format first, Legacy64z,
+  (only for an `.emod` with its `.eden` kept) → a format picker (Automatic = own format, first; Legacy64z,
   NewDawn256z, NewFormat256z) → the signs question, only when pruning would drop any → a confirm
   showing the pre-flight size and loss sentence → a time-sliced job on the status bar. Export
   writes `Documents/Exports/<name>.eden.gz`; Upload is networking.md § Upload. The stock
@@ -524,6 +535,15 @@ them — the ordering in `World::update` is the arbitration.
 - `statusbar` instances show progress ("Loading World… 47%", "Converting World…").
   `statusbar::current()` (5.6) returns the live message for a screen that draws it in the kit.
 
+### The Console screen (Stage C / C.3)
+
+`Classes/ConsoleMenu` is the one screen that runs over a **running** world: it is `Menu::console` /
+`showconsole`, updated first in `World::update`'s play step and drawn after the HUD, and it claims every
+touch while the play step goes on. Its layout is two: the `railFrame()` panel (Console / Variables / Help
+tiles, `UIICON_TERMINAL` is the Console tile and the pause button's icon) and a top-docked strip. The
+pause menu has seven buttons now (`PM_CONSOLE` before Quit). See [console.md](console.md) for the
+behaviour, the routing (`eden_console_menu_*`, `eden_ui_captures_keys`) and the cost notes.
+
 ## Dead/auxiliary UI code
 - `Classes/Toolbar.mm` and `Classes/Gamepad.mm` — compiled, but each file's body is one `/* … */`
   comment (stock archaeology), so they contribute nothing. Port gamepad support is SDL's
@@ -580,3 +600,23 @@ changing anything here; the summary:
   against an input path that still had its hard-coded `switch (sc)` and merely also consulted the
   model. It measures "stopped" against an unbound control key rather than a fixed epsilon, since a
   flying player drifts and the drift is a property of the world, not of the binding.
+
+## Version tag
+`GLW::drawVersionTag()` (GLWidgets.mm) draws "Emod <version>" (white, 1u black shadow) in the top-left
+corner: from `Menu::render` after `renderKit()` (main menu only, not its sub-screens) and at the end of
+`Hud::render` (hidden with the UI and in camera mode). The string is `EMOD_VERSION_STRING`, defined by
+`native/CMakeLists.txt` from the repo-root `VERSION.txt` (fallback "dev"); the iOS Info.plist takes the
+same value. Change it with `./bump-version.sh`. (Not `VERSION`: on case-insensitive filesystems
+`#include <version>` finds it.)
+
+## Hide-HUD, screenshot and build-size keys (H.5, H.7)
+Three native-only `kKeybinds[]` rows (`Settings_web.mm`): **F1** `hideHud` flips `hud->hideui`
+(`Hud::render` already skips the HUD when set), **F2** `screenshot` sets `MODE_CAMERA` + `take_screenshot`
+so `Hud::render`'s camera branch takes the shot, flashes, plays the shutter and returns to build mode
+(one path with the on-screen camera button), **X** `buildSize` toggles `hud->build_size` 1↔2 (never 0, the
+retired half-size brush). X does nothing unless Experiments › *Double-size build brush* (`double_brush`,
+`DOUBLE_BRUSH` in `Player.mm`, default off) is on; turning it off resets the size to 1. While on, the build
+button shows the `blocktoggle` icon (`ICO_SIZETOGGLE2` small→big, `ICO_SIZETOGGLE1` big→small) as a badge.
+`buildBrush2` (`Player.mm`) places a 2×2×2 block at the aimed cell, filling only air or shallow liquid cells,
+skipping the whole brush if it would pass the world top, spending one golden cube at most, with one sound per
+tap; the player-box test (`Player::test(...,2)`) was already in place.

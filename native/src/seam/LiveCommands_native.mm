@@ -22,6 +22,9 @@
 //                              then z, then y), one `[live] cells` line
 //   cmdprobe                   print CmdScript::describe() (live / started / refused ... counts)
 //   cmdtrace 0|1               print every command-block statement as it runs
+//   /<console line>            a Console line (Classes/Console.h) with the anchor fixed at =0 =0 =0, so
+//                              relative = absolute; output echoes as `[live] <text>` (errors `[live] ! <text>`).
+//                              `/cells` and `/quit` are the harness-only console verbs registered below.
 //   quit                       end the session (an SDL quit event: what closing the window does)
 //
 // `set` goes through Terrain::updateChunks + setColor — the same pair buildBlock ends in — and, for
@@ -32,6 +35,7 @@
 #include "../../../Classes/World.h"
 #include "../../../Classes/Constants.h"
 #include "../../../Classes/CmdScript.h"
+#include "../../../Classes/Console.h"
 #include <SDL3/SDL.h>
 #include <algorithm>
 #include <cstdio>
@@ -115,8 +119,54 @@ void open_world(const char* name) {
     g_awaitPlay = true;
 }
 
+void mirror_line(int kind, const char* text) {
+    std::printf(kind == CmdScript::Sink::ERR ? "[live] ! %s\n" : "[live] %s\n", text);
+    std::fflush(stdout);
+}
+
+std::string cells_text(const int a[6]) {
+    Terrain* t = World::getWorld->terrain;
+    std::string out;
+    char b[24];
+    for (int y = std::min(a[1], a[4]); y <= std::max(a[1], a[4]); ++y)
+        for (int z = std::min(a[2], a[5]); z <= std::max(a[2], a[5]); ++z)
+            for (int x = std::min(a[0], a[3]); x <= std::max(a[0], a[3]); ++x) {
+                std::snprintf(b, sizeof(b), "%d:%d ", t->getLand(x, z, y), t->getColor(x, z, y));
+                out += b;
+            }
+    return out;
+}
+
+void verb_cells(Console::Ctx& c) {
+    int a[6];
+    if (c.args.size() != 6) { c.error("usage: cells X Y Z X2 Y2 Z2 (absolute, Vector order)"); return; }
+    for (int i = 0; i < 6; ++i) a[i] = atoi(c.args[i].c_str());
+    c.print("cells %s", cells_text(a).c_str());
+}
+
+void verb_quit(Console::Ctx&) { SDL_Event e; SDL_zero(e); e.type = SDL_EVENT_QUIT; SDL_PushEvent(&e); }
+
+void register_harness_verbs() {
+    static bool done = false;
+    if (done) return;
+    done = true;
+    Console::init();
+    Console::addCommand("cells", "X Y Z X2 Y2 Z2", "Harness: every cell of a box as type:colour.", Console::CF_DIAG | Console::CF_WORLD,
+                        {CmdScript::ARG_NUMBER, CmdScript::ARG_NUMBER, CmdScript::ARG_NUMBER, CmdScript::ARG_NUMBER, CmdScript::ARG_NUMBER, CmdScript::ARG_NUMBER}, verb_cells);
+    Console::addCommand("quit", "", "Harness: end the session.", Console::CF_DIAG, {}, verb_quit);
+    Console::setMirror(mirror_line);
+}
+
 // Returns true if the command consumed a unit of the per-frame `set` budget.
 bool run(const std::string& line) {
+    if (!line.empty() && line[0] == '/') {
+        World* w = World::getWorld;
+        if (!(w && w->terrain && w->player && game_mode() == 1)) { std::fprintf(stderr, "[live] not in a world, dropped: %s\n", line.c_str()); return false; }
+        register_harness_verbs();
+        Console::setAnchorFixed(0, 0, 0);
+        Console::run(line.c_str() + 1);
+        return false;
+    }
     char cmd[16] = {0};
     int off = 0;
     if (std::sscanf(line.c_str(), "%15s %n", cmd, &off) < 1) return false;
@@ -152,15 +202,7 @@ bool run(const std::string& line) {
     } else if (!std::strcmp(cmd, "cells")) {
         int a[6];
         if (std::sscanf(rest, "%d %d %d %d %d %d", &a[0], &a[1], &a[2], &a[3], &a[4], &a[5]) == 6) {
-            std::string out;
-            char b[24];
-            for (int y = std::min(a[1], a[4]); y <= std::max(a[1], a[4]); ++y)
-                for (int z = std::min(a[2], a[5]); z <= std::max(a[2], a[5]); ++z)
-                    for (int x = std::min(a[0], a[3]); x <= std::max(a[0], a[3]); ++x) {
-                        std::snprintf(b, sizeof(b), "%d:%d ", w->terrain->getLand(x, z, y), w->terrain->getColor(x, z, y));
-                        out += b;
-                    }
-            std::printf("[live] cells %s\n", out.c_str());
+            std::printf("[live] cells %s\n", cells_text(a).c_str());
             std::fflush(stdout);
         }
     } else if (!std::strcmp(cmd, "cmdprobe")) { std::printf("[live] cmd %s\n", CmdScript::describe()); std::fflush(stdout); }

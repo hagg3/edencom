@@ -98,6 +98,23 @@ P_ASPECT_RATIO = SCREEN_WIDTH / SCREEN_HEIGHT        # ALWAYS derived — see be
 - **Desktop defaults are 125% + Adaptive**: half-size UI, and no letterboxing — a wider window shows
   more world (vertical FOV is fixed, so a wider aspect widens the horizontal field) instead of the
   same world with bigger buttons.
+- **On the desktop profile the point space snaps to whole device pixels per point (X.20,
+  2026-10-17).** Measured: 125% in the default 1136×640 window gave 0.625 px per ortho unit on a 1x
+  monitor and 1.25 on a 2x one, and every engine image is @2x art (1 texel per ortho unit) sampled
+  `GL_NEAREST`, so texels were dropped or doubled unevenly and text (then rasterised at ≥ 1 texel per
+  unit) was minified — the Mac "blurry UI" report. The native host now passes the box in pixels too
+  (`eden_display_set_viewport_px`, `native/src/seam/DisplayMode_native.cpp`); `eden_display_snap`
+  picks the whole `p` px/point whose height `box_px / p` is log-nearest the `ui_scale` target, preferring
+  p = 1 or even (art exact: 2:1 down at 1, 1:1 at 2, 2× at 4) — an odd p ≥ 3 must be 25% closer; the
+  host then letterboxes to exactly point space × p (bars < p px), and `eden_ui_raster_density()` is
+  p/2 on the nose. The point space may be odd (960×525). Consequences: `ui_scale` is coarser (in a
+  maximised 1080p window 100/125/150% all land on p = 2; 200% gets p = 3), and dragging a window's
+  height across a threshold steps the UI size. Touch is never snapped (finger-tuned sizes; the iPad
+  was not blurry), nor is anything that only calls `eden_display_set_viewport` (headless, selftests).
+  Gate: `--display-selftest` §7. Jersey 10 (the display face) is a pixel font on a 75-unit grid;
+  `face_scale` in `TextRaster_native.cpp` snaps its raster scale so a grid cell is a whole number of device
+  px (X.22a; size moves ≤ ½ cell, measure and raster share it). Residual (X.23): at p = 1 the art is a
+  NEAREST 2:1 reduction (the 3D world shares the non-mip texture path, so its MIN filter was left).
 - **A density floor keeps small windows usable.** `ui_scale` alone gives a fixed point space, i.e. a
   UI that is a fixed *fraction* of the canvas — so shrinking the window shrinks every HUD icon with
   it. That is right on a monitor and wrong the moment the window gets phone-shaped, and nothing
@@ -119,7 +136,7 @@ P_ASPECT_RATIO = SCREEN_WIDTH / SCREEN_HEIGHT        # ALWAYS derived — see be
   `eden_set_low_memory(1)` (before `eden_settings_init`) when `navigator.deviceMemory ≤ 4`, when a
   prior threaded-build load-failure downgrade is remembered, or on `?lowmem=1`. While set,
   Settings_web.mm's profile-default seeder takes `dpr_cap` / `render_scale` (and `fps_cap` if the
-  row sets it) from `kProfiles[EDEN_PROFILE_LOWMEM]` — 1× pixel ratio, 75% render scale, 45 fps —
+  row sets it) from `kProfiles[EDEN_PROFILE_LOWMEM]` — 1× pixel ratio, 75% render scale, 45 fps (30 on iOS, which dropped the 45 entry in P.14: its `fps_cap` list is `Uncapped,30,60`, profile indices are remapped in the seeder and stored ones migrate once via the `fps_cap_v2` pref) —
   instead of the desktop/touch row underneath; `ui_scale` / layout / control chrome are unaffected.
   Still a *default*: a row the player has touched wins. It also makes `World::loadWorld` refuse a
   256z world (docs/execution-flow.md "World loading flow").

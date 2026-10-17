@@ -1,0 +1,142 @@
+# C.1 gate 1 (WORKING/dev-console-plan.md §8): command-block parser equivalence, read by
+# `eden_native --console-selftest` (--console-corpus=PATH; default ../port/tools/fixtures/cmds/corpus.txt).
+#
+# Each line is parsed twice: with the block options (CmdScript::parse) and with the console options
+# (parseLine: no triggers, `=N` absolute coordinates, the selftest's stand-in registry with the verbs
+# `echo`, `help` and `video.fov`). The first word says which of them accept it (0 bad statements):
+#   B  both: the statement vectors must be field-equal (op, v, abs, type, color, hasPos, f, text, ext, args)
+#   b  blocks only: the line must start with a trigger header, the console's only error is
+#      "Triggers only work in a command block", and the rest is field-equal
+#   c  the console only: every statement the block calls bad is a registry verb or uses `=`;
+#      the rest is field-equal
+#   x  neither
+# '#' starts a comment line; blank lines are skipped. Sound bounds assume NUM_SOUNDS = 79.
+
+# cmd.html: the examples
+B say WELCOME TRAVELER;wait 1;set 0 3 0 lamp;gold 1
+B set 0 3 0 glass
+B set 5 0 0 stone
+B tp 0 20 0
+B set ~ ~3 ~ glass
+# cmd.html: the recipes (Lock and key is one line in the editor)
+b @near 6;say WELCOME TO MY WORLD;sound 8
+b @step;say CHECKPOINT!;heal;flash
+B unless 0 1 0 gold;say PLACE A GOLDEN CUBE ON TOP;if 0 1 0 gold;fill 2 0 0 2 3 1 air
+b @step;say RUN.;wait 3;explode 0 0 0;explode 0 3 0
+b @touch;night;set 0 8 0 firework;wait 2;set 3 8 3 firework;wait 2;run 5 0 0
+b @step;tp 0 20 0;flash
+
+# every verb
+B say
+B say   spaced   out   text
+B tp -3 4 5
+B set 0 0 0 air
+B set 1 2 3 lamp 9
+B fill 0 0 0 2 2 2 brick
+B fill -1 0 -1 1 2 1 brick 19
+B paint 0 0 0 30
+B explode 0 3 0
+B fire 1 0 0
+B spawn moof
+B spawn charger 1 2 3
+B spawn 6
+B day;noon;night;midnight
+B time 0.5
+B heal;flash
+B hurt 25
+B hurt 400
+B gold 5
+B gold 5000
+B sound 8
+B wait 1
+B run 0 -1 0
+B if 0 -1 0 grass;set 0 1 0 glass
+B unless 0 -1 0 2;set 0 1 0 glass
+B if 0 0 0 1;if 0 1 0 2;say both
+
+# boundaries: colour 0..54
+B set 0 0 0 glass 0
+B set 0 0 0 glass 54
+x set 0 0 0 glass 55
+x set 0 0 0 glass 1.5
+B paint 1 2 3 54
+x paint 1 2 3 55
+x paint 1 2 3 -1
+# fill: 4096 cells and one row more
+B fill 0 0 0 15 15 15 stone
+B fill 0 0 0 -15 -15 -15 air
+x fill 0 0 0 16 15 15 stone
+# time 0..1
+B time 0
+B time 1
+x time 1.01
+x time -0.1
+x time
+# sound 0..78
+B sound 0
+B sound 78
+x sound 79
+x sound 1.5
+# wait: capped at 600, not refused
+B wait 600
+B wait 601
+B wait .01
+x wait -1
+x wait
+# block ids and names
+B set 0 0 0 127
+x set 0 0 0 128
+B set 0 0 0 darkmatter
+x set 0 0 0 voidstone
+# coordinates: '~', rounding, the 100000 limit
+B tp ~1 ~ ~-1
+B set 0.4 1.6 -0.6 glass
+B tp 100000 0 0
+x tp 100001 0 0
+x tp 1 2
+x tp a b c
+# case and spacing
+B SET 0 0 0 GLASS
+B Say Hello World
+B    set   0  1   0   lamp   9
+B say a;;say b;
+B ;;;say only;;;
+
+# triggers
+b @touch;say hi
+b @near 6;say x
+b @timer .1; if 0 -1 0 2; run 0 -2 0; set 0 -1 0 0
+b @step
+x @timer 0;say x
+x @near;say x
+x @frob;say x
+x say a;@step
+x say a;@step;say b
+
+# unknowns
+x frob 1 2
+x spawn dragon
+x colour
+x frob 1 2; fill 0 0 0 16 16 16 stone; say ok; @step; set 0 0 0 voidstone; wait 9999; colour
+
+# the console only: `=` coordinates
+c tp =65536 =40 =65536
+c set =1 0 =2 glass
+c fill =0 =0 =0 1 1 1 air
+c spawn moof =10 =20 =30
+c run =65531 =34 =65523
+c if =1 =2 =3 stone;set 0 1 0 glass
+c tp =-5 =0.6 =7
+x tp = 0 0
+x tp =~1 0 0
+x set =a 0 0 glass
+x tp =20000000 0 0
+# the console only: registry verbs (after every built-in verb, so blocks never change meaning)
+c video.fov 95
+c echo hello there
+c help set
+c help
+c if 0 -1 0 grass;video.fov 100
+c say hi;echo done
+x video.fov 90;frob
+x echo hi;@step

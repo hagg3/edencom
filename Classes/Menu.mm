@@ -8,6 +8,7 @@
 
 #import "Menu.h"
 #import "WorldPropertiesMenu.h"   // H.15 (Menu.h only forward-declares it)
+#import "ConsoleMenu.h"           // C.3 (likewise)
 #import "GLDialog.h"
 #import "Graphics.h"
 #import "Globals.h"
@@ -377,6 +378,8 @@ Menu::Menu(){
     shownewworld=FALSE;
     props=new WorldPropertiesMenu();
     showprops=FALSE;
+    console=new ConsoleMenu();
+    showconsole=FALSE;
 	
     
    /*  WorldNode* new_world;
@@ -1045,6 +1048,7 @@ void Menu::render(){
 	// (sbar's text is drawn by the kit as the status line; fnbar's job, naming the selection, is
 	// the selected row's).
 	renderKit();
+    GLW::drawVersionTag();
     if(AUTO_LOAD&&loading==0){
        
         

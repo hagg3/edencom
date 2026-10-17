@@ -86,6 +86,13 @@
 cmake_minimum_required(VERSION 3.21)
 project(EdenNative LANGUAGES C CXX)
 
+# The game's version: the repo-root VERSION.txt file (written by ./bump-version.sh). It reaches the
+# menu/HUD corner tag (EMOD_VERSION_STRING, GLW::drawVersionTag) and the iOS Info.plist.
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/../VERSION.txt" EMOD_VERSION LIMIT_COUNT 1)
+string(STRIP "${EMOD_VERSION}" EMOD_VERSION)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../VERSION.txt")
+message(STATUS "Emod version ${EMOD_VERSION}")
+
 # ---------------------------------------------------------------------------------------------
 # iOS (Phase N Stage 4.1) — the stage Phase N exists for
 # ---------------------------------------------------------------------------------------------
@@ -386,6 +393,8 @@ set(EDEN_NATIVE_SOURCES
   # Stage S / S.2: --codec-bench (zstd vs zlib per-column timing; no engine dependency).
   src/seam/CodecBench_native.cpp
   src/seam/WorldTools_native.cpp
+  # C.9: the player's README.txt written into the documents directory at startup.
+  src/seam/PlayerReadme_native.cpp
   # ROADMAP 5.9: the eden_net_* seam the world browser polls (job table, worker threads, .part
   # files, offline fixtures). The blocking GET under it is per platform — see the block after
   # this list for which backend each target links.
@@ -397,7 +406,8 @@ set(EDEN_NATIVE_SOURCES
 if(APPLE)
   # Real Foundation HAS NSAutoreleasePool, but not one this port can drain deterministically from
   # a non-UIKit run loop — see that file's header. Non-Apple uses the shim's own, listed above.
-  list(APPEND EDEN_NATIVE_SOURCES src/shim/foundation/NSAutoreleasePool_native.mm)
+  list(APPEND EDEN_NATIVE_SOURCES src/shim/foundation/NSAutoreleasePool_native.mm
+    src/seam/PrefsEphemeral_apple.mm)   # X.21: selftests use a private, empty prefs suite
 else()
   list(APPEND EDEN_NATIVE_SOURCES
     # Preferences: web's shim writes through to localStorage via EM_JS, which does not exist here.
@@ -465,6 +475,14 @@ if(APPLE)
     LANGUAGE CXX COMPILE_OPTIONS "-x;objective-c++;-fobjc-arc")
   target_compile_features(eden_apple_net PRIVATE cxx_std_17)
   set(EDEN_AUDIO_OBJECTS $<TARGET_OBJECTS:eden_apple_audio> $<TARGET_OBJECTS:eden_apple_net>)
+  # C.4: the iOS keyboard-frame observer (real UIKit, which the main target's include path shadows).
+  if(IOS)
+    add_library(eden_ios_keyboard OBJECT src/seam/IOSKeyboard_native.mm)
+    set_source_files_properties(src/seam/IOSKeyboard_native.mm PROPERTIES
+      LANGUAGE CXX COMPILE_OPTIONS "-x;objective-c++;-fobjc-arc")
+    target_compile_features(eden_ios_keyboard PRIVATE cxx_std_17)
+    list(APPEND EDEN_AUDIO_OBJECTS $<TARGET_OBJECTS:eden_ios_keyboard>)
+  endif()
 else()
   set(EDEN_AUDIO_OBJECTS "")
 endif()
@@ -730,6 +748,7 @@ set_property(SOURCE "${EDEN_PARENT_DIR}/Classes/TerrainGenerator.mm" APPEND PROP
 # EDEN_LD_WRAP is deliberately NOT defined: Apple's ld64 has no --wrap. See the guard comment in
 # port/src/seam/Settings_web.mm.
 target_compile_definitions(eden_native PRIVATE
+  EMOD_VERSION_STRING="${EMOD_VERSION}"
   # NOTE THE ABSENCE OF `TARGET_OS_IPHONE`, which web-port-final:web/CMakeLists.txt does define. It must NOT be
   # forced here: real Foundation pulls in <TargetConditionals.h>, which defines it (to 0), and
   # overriding that would tell every Apple system header it is building for iOS. The PVRT headers

@@ -187,7 +187,9 @@ CFStringRef FileMD5HashCreateWithPath(CFStringRef filePath, size_t chunkSizeForR
   for (int i = 0; i < 16; i++) snprintf(hex + i * 2, 3, "%02x", digest[i]);
   hex[32] = '\0';
 
-  return (CFStringRef)[NSString stringWithUTF8String:hex];
+  // A "Create" function: the caller owns the result (+1), as with CoreFoundation. FileManager::setImageHash
+  // stores it unretained and releases it later, so an autoreleased string dangled (X.18).
+  return (CFStringRef)[[NSString alloc] initWithUTF8String:hex];
 }
 
 }  // extern "C"

@@ -268,10 +268,12 @@ void Hud::genColorTable(){
 // The engine's own action icons stay, drawn on the left of each button — design-system.md's
 // "Action icons" rule: the same painted objects the 2010 HUD used for these actions.
 extern "C" int eden_gl_settings_available(void);   // port/src/seam/Settings_web.mm (both targets)
+extern "C" int eden_get_crosshair(void);           // Settings_web.mm: Settings > Interface > Crosshair
+extern "C" void eden_console_menu_open(void);      // Menu_web.mm (C.3): opens ConsoleMenu over the world
 
-enum { PM_RESUME, PM_SAVE, PM_HOME, PM_PHOTO, PM_SETTINGS, PM_QUIT, PM_COUNT };
+enum { PM_RESUME, PM_SAVE, PM_HOME, PM_PHOTO, PM_SETTINGS, PM_CONSOLE, PM_QUIT, PM_COUNT };
 static const char* kPauseLabels[PM_COUNT] = {
-    "Resume", "Save Game", "Warp Home", "Take Photo", "Settings", "Quit to Menu"
+    "Resume", "Save Game", "Warp Home", "Take Photo", "Settings", "Console", "Quit to Menu"
 };
 
 struct HudPauseKit {
@@ -531,7 +533,7 @@ void Hud::layoutForScreen(){
 
 void Hud::layoutPauseMenu(){
     using namespace GLW;
-    ::Button* r[PM_COUNT]={&rresume,&rsave,&rhome,&rcam,&rsettings,&rexit};
+    ::Button* r[PM_COUNT]={&rresume,&rsave,&rhome,&rcam,&rsettings,&rconsole,&rexit};
     const bool withSettings=eden_gl_settings_available()!=0;
     const int n=withSettings?PM_COUNT:PM_COUNT-1;
     // Gap > 8pt on purpose: inbox2/inbox3 add 4pt of slop on every side, and a smaller gap would
@@ -761,7 +763,7 @@ BOOL Hud::update(float etime){
                 if(inmenu==TRUE){
                     rcam.pressed=rtCam.pressed=FALSE;rhome.pressed=rtHome.pressed=FALSE;
                     rsave.pressed=rtSave.pressed=FALSE;rexit.pressed=rtExit.pressed=FALSE;
-                    rresume.pressed=rsettings.pressed=FALSE;
+                    rresume.pressed=rsettings.pressed=rconsole.pressed=FALSE;
                     if(mode==MODE_PICK_BLOCK){
                         mode=MODE_BUILD;
                         
@@ -826,6 +828,7 @@ BOOL Hud::update(float etime){
             if(inmenu){
                 if(inbox3(touches[i].mx,touches[i].my,&rresume)||
                    inbox3(touches[i].mx,touches[i].my,&rsettings)||
+                   inbox3(touches[i].mx,touches[i].my,&rconsole)||
                    inbox3(touches[i].mx,touches[i].my,&rcam)||
                    inbox3(touches[i].mx,touches[i].my,&rhome)||
                    inbox3(touches[i].mx,touches[i].my,&rsave)||
@@ -838,6 +841,7 @@ BOOL Hud::update(float etime){
                     printg("something touched in menu\n");
                     inbox3(touches[i].mx,touches[i].my,&rresume);
                     inbox3(touches[i].mx,touches[i].my,&rsettings);
+                    inbox3(touches[i].mx,touches[i].my,&rconsole);
                     inbox3(touches[i].mx,touches[i].my,&rcam);
                     inbox3(touches[i].mx,touches[i].my,&rhome);
                     inbox3(touches[i].mx,touches[i].my,&rsave);
@@ -1139,6 +1143,15 @@ BOOL Hud::handlePickMenu(int x,int y){
         Input::getInput()->clearAll();
         return TRUE;
     }
+    if(inbox2(x,y,&rconsole)){
+        // C.3: the Console takes over from the pause menu; closing it returns to play (the key opens
+        // it from play too), not to this menu. The world keeps running behind it.
+        inmenu=false;
+        rconsole.pressed=FALSE;
+        eden_console_menu_open();
+        Input::getInput()->clearAll();
+        return TRUE;
+    }
     if(inbox2(x,y,&rcam)||inbox2(x,y,&rtCam)){
         
         rcam.pressed=rtCam.pressed=FALSE;
@@ -1359,6 +1372,7 @@ void Hud::renderColorPickScreen(){
     glEnable(GL_BLEND);
 }
 static void hud_draw_tool_caption(int type,CGRect r);   // D.3c, after HudPickerKit below
+extern bool DOUBLE_BRUSH;   // Player.mm, H.7
 void Hud::renderBlockAndBorder(CGRect recto){
     int type=blocktype;
     if(hud_picker_is_tool(type)){
@@ -1839,10 +1853,11 @@ void Hud::renderMenuScreen(){
         k->built=true;
         k->title.set("Paused", du(34), UITextAlignmentCenter);
         for(int j=0;j<PM_COUNT;j++) k->btn[j].setLabel(kPauseLabels[j], du(22));
+        k->btn[PM_CONSOLE].setIcon(UIICON_TERMINAL);   // C.3
     }
-    ::Button* r[PM_COUNT]={&rresume,&rsave,&rhome,&rcam,&rsettings,&rexit};
+    ::Button* r[PM_COUNT]={&rresume,&rsave,&rhome,&rcam,&rsettings,&rconsole,&rexit};
     // An rt* rect may carry the press (handlePickMenu tests both), so either lights the button.
-    const bool rtp[PM_COUNT]={false,rtSave.pressed,rtHome.pressed,rtCam.pressed,false,rtExit.pressed};
+    const bool rtp[PM_COUNT]={false,rtSave.pressed,rtHome.pressed,rtCam.pressed,false,false,rtExit.pressed};
 
     // Same GL set-up as GLDialog::render, minus the projection: the HUD's ortho (Graphics::
     // beginHud) is already SCREEN*2, the space GLW draws in.
@@ -1858,7 +1873,7 @@ void Hud::renderMenuScreen(){
 
     Resources* res=Resources::getResources;
     Texture2D* icon[PM_COUNT]={NULL,res->getTex(ICO_SAVE),res->getTex(ICO_HOME),
-                               res->getTex(ICO_SCREENSHOT),NULL,res->getTex(ICO_EXIT)};
+                               res->getTex(ICO_SCREENSHOT),NULL,NULL,res->getTex(ICO_EXIT)};
     for(int j=0;j<PM_COUNT;j++){
         if(r[j]->size.width<=0) continue;
         k->btn[j].setRect(CGRectMake(r[j]->origin.x,r[j]->origin.y,r[j]->size.width,r[j]->size.height));
@@ -2186,6 +2201,15 @@ void Hud::render(){
         
     }
 	glColor4f(1.0, 1.0, 1.0, 1.0f);
+    // H.7: with the Experiments "Double-size build brush" on, a corner badge shows what the size key
+    // does next (blocktoggle2: small to big, blocktoggle1: big to small).
+    if(DOUBLE_BRUSH&&(mode==MODE_BUILD||mode==MODE_PICK_BLOCK)&&!hud_picker_is_tool(blocktype)){
+        CGRect br=RectFromButton(rbuild);
+        br.origin.x+=br.size.width*0.55f;
+        br.size.width*=0.45f;
+        br.size.height*=0.45f;
+        Resources::getResources->getTex(build_size==2?ICO_SIZETOGGLE1:ICO_SIZETOGGLE2)->drawInRect2(br);
+    }
     float offsetx;
     float offsety;
 
@@ -2283,6 +2307,31 @@ void Hud::render(){
 	glColor4f(1.0, 1.0, 1.0, 1.0);
     
 	sb->render();
+    // Crosshair: a small cross with a gap at the screen centre (where mouse mine/build aims), drawn
+    // dark first then light so it reads on any background. Hidden with no tool in hand and while a
+    // picker is open.
+    if(eden_get_crosshair()&&mode!=MODE_NONE&&mode!=MODE_PICK_BLOCK&&mode!=MODE_PICK_COLOR&&at2<=0&&at3<=0){
+        float cw=SCREEN_WIDTH,ch=SCREEN_HEIGHT;
+        if(IS_IPAD){
+            if(IS_RETINA){cw=SCREEN_WIDTH*2;ch=SCREEN_HEIGHT*2;}
+            else{cw=IPAD_WIDTH;ch=IPAD_HEIGHT;}
+        }
+        const float u=IS_IPAD?2.0f:1.0f;   // 1 px on a 1x phone, 2 on the 2x UI scale
+        const float gap=3*u,len=7*u;
+        const float cx=floorf(cw*0.5f),cy=floorf(ch*0.5f);
+        glDisable(GL_TEXTURE_2D);
+        glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+        for(int pass=0;pass<2;pass++){
+            const float t=(pass==0?1.5f:0.5f)*u;   // shadow is wider than the light core
+            if(pass==0)glColor4f(0,0,0,0.55f);else glColor4f(1,1,1,0.9f);
+            Graphics::drawRect(cx-gap-len,cy-t,cx-gap,cy+t);
+            Graphics::drawRect(cx+gap,cy-t,cx+gap+len,cy+t);
+            Graphics::drawRect(cx-t,cy-gap-len,cx+t,cy-gap);
+            Graphics::drawRect(cx-t,cy+gap,cx+t,cy+gap+len);
+        }
+        glEnable(GL_TEXTURE_2D);
+        glColor4f(1.0,1.0,1.0,1.0);
+    }
 	if(mode==MODE_PICK_BLOCK||at2>0){
 		renderBlockScreen();
 	}
@@ -2370,6 +2419,7 @@ void Hud::render(){
     glColor4f(1.0f,1.0f,1.0f,1.0f);
   
     glEnable(GL_TEXTURE_2D);
+    GLW::drawVersionTag();
     
     Graphics::endHud();
     

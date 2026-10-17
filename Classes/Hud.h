@@ -93,7 +93,7 @@ public:
     // Stage 5.5: the in-game menu is a GL-kit panel. Two actions stock never had (Resume, and
     // Settings on targets where the GL settings screen is live); the kit state lives behind a
     // pointer so this header stays includable without GLWidgets.h.
-    Button rresume,rsettings;
+    Button rresume,rsettings,rconsole;   // C.3: rconsole opens the Console (ConsoleMenu)
     struct HudPauseKit* pauseKit;
     
     float var1,var2,var3;

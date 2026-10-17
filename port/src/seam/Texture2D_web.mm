@@ -487,7 +487,9 @@ Texture2D::Texture2D(NSString* string, CGSize dimensions, UITextAlignment alignm
         initFromString(string, dimensions, alignment, font);   // reports the error
         return;
     }
-    if (!(density > 1.0f)) density = 1.0f;
+    // X.20: below 1 is honoured too (a 1x monitor's small window): a 1:1 raster at fewer texels
+    // beats a 1-texel-per-unit one minified through NEAREST.
+    if (!(density > 0.0f)) density = 1.0f;
     // A label that would outgrow the texture cap gets less density, never a clipped raster.
     if (dimensions.width  * density > kMaxTextureSize_Eden) density = kMaxTextureSize_Eden / (float)dimensions.width;
     if (dimensions.height * density > kMaxTextureSize_Eden) density = kMaxTextureSize_Eden / (float)dimensions.height;
@@ -1001,11 +1003,15 @@ void Texture2D::drawSky(CGRect rect, CGFloat depth) {
         rect.size.width *= SCALE_WIDTH;
         rect.size.height *= SCALE_HEIGHT;
     }
+    // X.8: stock wrote `* 32` here because the sky draws inside Terrain::render's atlas texture
+    // matrix, glScalef(1, 1/32, 1), so 0..32 spanned the whole sky_box.png. D.2t made that scale
+    // 1/ATLAS_TILES (128 since H.14) and left this at 32: only the top quarter of the gradient (the
+    // deep blue) reached the screen, the pale horizon band the fog colour blends into never did.
     GLfloat coordinates[] = {
-        0, ety * 32,
-        _maxS * rect.size.width / 128, ety * 32,
-        0, sty * 32,
-        _maxS * rect.size.width / 128, sty * 32
+        0, ety * ATLAS_TILES,
+        _maxS * rect.size.width / 128, ety * ATLAS_TILES,
+        0, sty * ATLAS_TILES,
+        _maxS * rect.size.width / 128, sty * ATLAS_TILES
     };
     GLfloat vertices[] = {
         rect.origin.x, rect.origin.y, depth,

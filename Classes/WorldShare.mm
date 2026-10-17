@@ -32,7 +32,7 @@ struct ShareState {
 };
 ShareState& st() { static ShareState s; return s; }
 
-const char* const kTargets[] = {"Eden (own format)", "Legacy64z", "NewDawn256z", "NewFormat256z", "Cancel"};
+const char* const kTargets[] = {"Automatic", "Legacy64z", "NewDawn256z", "NewFormat256z", "Cancel"};
 
 void status(const std::string& s, float secs) {
     if (World::getWorld && World::getWorld->menu)
@@ -173,7 +173,7 @@ void target_cb(int chosen) {
 
 void pick_target() {
     GLDialog::show(st().upload ? "Upload format" : "Export format",
-                   st().upload ? "The world's own format is the default." : "Saved as a .eden.gz in the Exports folder.",
+                   st().upload ? "Automatic keeps the world's own format (the default)." : "Saved as a .eden.gz in the Exports folder.",
                    kTargets, 5, target_cb);
 }
 

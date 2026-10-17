@@ -45,3 +45,11 @@ and `PVRTglesExt.cpp`, among others) plus `cmake/EngineSources.cmake`.
   (UIKit image loading), CocosDenshion (OpenAL), and UITouch handling — see
   [engine-vs-game.md](engine-vs-game.md) for the seam map. The native port covers every one of them
   with a seam or shim (`../port/CLAUDE.md`).
+
+## Which "original" source tree this is
+The original-Eden checkout used for archaeology is Ari Ronen's last commit `23121e6` (2015-03-09) plus four
+2018 community commits (`aa224c6`, `4344e0e`, `b66d89e`, `40bcaae`: "Runs in Xcode", new burning
+behaviours, a larger light range, an autosave, larger-iPhone fixes). Emod's tag `pristine-engine` is a
+*different* community 2.1.1 build (`FLY_MODE=true`, `P_ZNEAR .012f`, the `app2`/`files2.edengame.net` URLs,
+no `Autosave.mm`); 20 files differ. Anything sourced from those 2018 commits is a community change, not
+Ari's. Details: `WORKING/feature-archaeology-2026-10-13/sweep-findings.md`.

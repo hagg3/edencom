@@ -72,8 +72,8 @@ before. **Draw-culling only**: meshing and streaming are unchanged. Changing the
 immediately.
 **Graphics preset** (B.8; `graphics_preset` row, `kPresets[]` in `Settings_web.mm`): Custom / Low / Default / High is a
 shortcut that writes `view_distance` (and `render_scale`, except on iOS where that row is hidden) — Low = 4 chunks + 75%,
-Default = Auto + 100% (the pre-B.8 look; shots match within animation noise). High = Default plus `render_distance`
-(B.5b-2): radius 16 on desktop, still 9 on iOS until a device round measures more (T.B16 decides R10). Moving any of
+Default = Auto + 100% (the pre-B.8 look; shots match within animation noise). High = Default plus `render_radius`
+(B.5b-2): radius 16 on desktop, 10 on iOS (P.4 decision 6; T.B16 measured R10/R12 on the Air 2). Moving any of
 the three knobs by hand sets the preset to Custom. It does not touch `LOW_MEM_DEVICE`/`LOW_GRAPHICS`: those pick resources at
 load time and are not switchable mid-session.
 
