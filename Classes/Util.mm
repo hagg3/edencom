@@ -704,6 +704,18 @@ Point3D findWorldCoords(int mx,int my,int mode){
 	
 	//printg("wp1.x: %f wp1.z: %f \n",wp1.x,wp1.z);
 	NormalizeVector(&dir);
+	// H.12: behind the player the ray starts at the third-person eye. Slide its origin up to the
+	// player's eye (the camera pivot) so reach is still 15 blocks from the player and the blocks
+	// between camera and player can neither be picked nor block the ray. First person untouched.
+	if(World::getWorld->cam->mode==1){
+		Camera* c=World::getWorld->cam;
+		float skip=(c->px-wp1.x)*dir.x+(c->py-wp1.y)*dir.y+(c->pz-wp1.z)*dir.z;
+		if(skip>0){
+			wp1.x+=dir.x*skip;
+			wp1.y+=dir.y*skip;
+			wp1.z+=dir.z*skip;
+		}
+	}
 	
 	
 	for(int i=0;i<8*15;i++){

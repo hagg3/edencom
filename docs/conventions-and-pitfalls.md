@@ -73,7 +73,7 @@ Read this before writing any code. These are the implicit rules the codebase fol
 - **Disabled systems kept in-tree**: face merging (meshing), `TYPE_CUSTOM`
   half-blocks, the 1.x shadow columns (`getShadow` returns 1.0; superseded by H.2's
   `Classes/Shadow.mm`, which is live), FileArchive compression,
-  occlusion queries, third-person camera, noise-seeded runtime worldgen,
+  occlusion queries, noise-seeded runtime worldgen,
   biome-marker PNG input, `WetNode` liquid heights, TestFlight.
 - **Copy-paste blocks**: `refreshChunksInRadius` is 7 hand-unrolled loops;
   `destroyBlock`/`explodeBlock` are near-duplicates; door/portal/golden-cube render

@@ -96,6 +96,7 @@ int  eden_get_block_preview(void);
 void eden_toggle_build_size(void);
 void eden_toggle_hide_hud(void);
 void eden_take_screenshot(void);
+void eden_cycle_camera_view(void);   // H.12, Settings_web.mm
 void eden_gl_context_get_drawable_size(int* width, int* height);
 void eden_native_gl_get_letterbox(int* x, int* y, int* w, int* h);
 
@@ -172,7 +173,7 @@ int  g_contAction[kMaxModelActions];   // model row -> Action, or -1
 int  g_miHotbar[9];
 int  g_miConsole = -1;
 int  g_miMenu = -1, g_miBlockPicker = -1, g_miColorPicker = -1, g_miFireTool = -1;
-int  g_miFlyToggle = -1, g_miBlockPreview = -1, g_miBuildSize = -1, g_miHideHud = -1, g_miScreenshot = -1;
+int  g_miFlyToggle = -1, g_miBlockPreview = -1, g_miBuildSize = -1, g_miHideHud = -1, g_miScreenshot = -1, g_miCameraView = -1;
 bool g_modelResolved = false;
 
 void resolve_model(void) {
@@ -202,6 +203,7 @@ void resolve_model(void) {
     g_miBuildSize    = eden_keybind_index("buildSize");
     g_miHideHud      = eden_keybind_index("hideHud");
     g_miScreenshot   = eden_keybind_index("screenshot");
+    g_miCameraView   = eden_keybind_index("cameraView");
     // Resolved one by one rather than as "hotbar1 + n": the table's rows happen to be contiguous
     // today and nothing promises they stay that way.
     for (int n = 0; n < 9; ++n) {
@@ -922,6 +924,7 @@ void eden_native_input_handle_event(const SDL_Event& e) {
                 else if (mi == g_miBuildSize)    eden_toggle_build_size();
                 else if (mi == g_miHideHud)      eden_toggle_hide_hud();
                 else if (mi == g_miScreenshot)   eden_take_screenshot();
+                else if (mi == g_miCameraView)   eden_cycle_camera_view();
                 else {
                     for (int n = 0; n < 9; ++n)
                         if (mi == g_miHotbar[n]) { eden_select_hotbar_slot(n); break; }

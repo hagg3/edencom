@@ -196,6 +196,7 @@ static const Setting kSettings[] = {
   { "fire_chars_vines",  "Fire chars vines",  "Experiments", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Burning vines turn to dark stone.", NULL },
   { "creature_walk_voices", "Creature walking sounds", "Experiments", KIND_TOGGLE, -1,  0,   1,   1,   0,  "Creatures call out as they start walking.", NULL },
   { "double_brush",      "Double-size build brush", "Experiments", KIND_TOGGLE, -1,      0,   1,   1,   0,  "A key builds 2x2x2 blocks at a time.", NULL },
+  { "camera_view",       "Camera view",       "Experiments", KIND_ENUM,   -1,           0,   2,   1,   0,  "Third person shows your body. F5 cycles.", "First person,Third person,Third person (front)" },
 
   { "save_backup",       "Keep a save backup", "Saves",      KIND_TOGGLE, -1,           0,   1,   1,   1,  "Keep the previous save as a .bak.", NULL },
   // B.5b-1b (2026-10-12): the periodic save that replaced the walk reload's. Off leaves saving to
@@ -399,6 +400,7 @@ extern "C" void eden_set_fire_chars_vines(int on);
 extern bool CREATURE_WALK_VOICES;
 extern bool DOUBLE_BRUSH;
 extern "C" void eden_set_build_size(int size);
+extern "C" void eden_set_camera_view(int view);
 
 static SettingsMenu* eden_engine_settings(void) {
     if (!World::getWorld || !World::getWorld->menu) return NULL;
@@ -467,6 +469,8 @@ static void eden_apply_setting(int i, bool commitEngine) {
         eden_set_fire_chars_vines(v != 0.0f ? 1 : 0);
     } else if (std::strcmp(s.key, "creature_walk_voices") == 0) {
         CREATURE_WALK_VOICES = v != 0.0f;
+    } else if (std::strcmp(s.key, "camera_view") == 0) {
+        eden_set_camera_view((int)lroundf(v));
     } else if (std::strcmp(s.key, "double_brush") == 0) {
         DOUBLE_BRUSH = v != 0.0f;
         if (!DOUBLE_BRUSH) eden_set_build_size(1);
@@ -753,6 +757,15 @@ float eden_settings_toggle(int i) {
     if (i < 0 || i >= kSettingCount) return 0.0f;
     eden_settings_set(i, g_value[i] != 0.0f ? 0.0f : 1.0f);
     return g_value[i];
+}
+
+// H.12: the cameraView key (F5). Cycles through the setting, not around it, so the live mode, the
+// Settings row and the persisted value can never disagree (fly mode's key writes the global only).
+EDEN_EXPORT
+void eden_cycle_camera_view(void) {
+    const int i = eden_setting_index("camera_view");
+    if (i < 0) return;
+    eden_settings_set(i, (float)(((int)lroundf(g_value[i]) + 1) % 3));
 }
 
 // Is the ENGINE currently in its settings state? `Menu::showsettings` is the main menu's Options
@@ -1073,7 +1086,7 @@ enum {
     KC_S = 22, KC_V = 25, KC_W = 26, KC_X = 27, KC_B = 5,
     KC_1 = 30, KC_2 = 31, KC_3 = 32, KC_4 = 33, KC_5 = 34,
     KC_6 = 35, KC_7 = 36, KC_8 = 37, KC_9 = 38,
-    KC_ESCAPE = 41, KC_SPACE = 44, KC_GRAVE = 53, KC_F1 = 58, KC_F2 = 59,
+    KC_ESCAPE = 41, KC_SPACE = 44, KC_GRAVE = 53, KC_F1 = 58, KC_F2 = 59, KC_F5 = 62,
     KC_RIGHT = 79, KC_LEFT = 80, KC_DOWN = 81, KC_UP = 82,
     KC_LCTRL = 224, KC_LSHIFT = 225, KC_LALT = 226,
     KC_RCTRL = 228, KC_RSHIFT = 229, KC_RALT = 230,
@@ -1130,6 +1143,7 @@ static const Keybind kKeybinds[] = {
   { "blockPreview","Toggle block preview",  "Interface", KC_B,       0,         KB_MOMENTARY,  KB_BOTH },
   { "hideHud",     "Hide HUD",              "Interface", KC_F1,      0,         KB_MOMENTARY,  KB_NATIVE },
   { "screenshot",  "Screenshot",            "Interface", KC_F2,      0,         KB_MOMENTARY,  KB_NATIVE },
+  { "cameraView",  "Camera view",           "Interface", KC_F5,      0,         KB_MOMENTARY,  KB_NATIVE },
   { "fullscreen",  "Fullscreen",            "Interface", KC_L,       0,         KB_MOMENTARY,  KB_WEB  },
 
   { "hotbar1", "Hotbar 1", "Hotbar", KC_1, 0, KB_MOMENTARY, KB_BOTH },

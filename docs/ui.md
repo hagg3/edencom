@@ -620,3 +620,9 @@ button shows the `blocktoggle` icon (`ICO_SIZETOGGLE2` small→big, `ICO_SIZETOG
 `buildBrush2` (`Player.mm`) places a 2×2×2 block at the aimed cell, filling only air or shallow liquid cells,
 skipping the whole brush if it would pass the world top, spending one golden cube at most, with one sound per
 tap; the player-box test (`Player::test(...,2)`) was already in place.
+
+**Camera view (H.12).** Experiments › *Camera view* (`camera_view`, enum First person / Third person /
+Third person (front), default first) and a native-only `kKeybinds[]` row **F5** `cameraView` (Interface)
+that cycles it. The key goes **through** the setting (`eden_cycle_camera_view`, `Settings_web.mm`), so the
+live `CAMERA_VIEW`, the Settings row and the persisted value never disagree; touch devices use the row. No
+gamepad binding. Engine side: [player-input-camera.md](player-input-camera.md) § Camera.

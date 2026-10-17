@@ -846,8 +846,10 @@ BOOL Player::preupdate(float etime){
     
     if(!dead)
         return this->update(etime);
-    else
+    else{
+        HidePlayerBody();   // H.12
         return TRUE;
+    }
 }
 
 BOOL Player::update(float etime){
@@ -1158,8 +1160,17 @@ BOOL Player::update(float etime){
 	cam->mode=0;
 	//NSLog(@"%d %d %d",pos.x,pos.y,pos.z);
 	if(THIRD_PERSON){
-	cam->pitch=0;
-	cam->mode=1;
+	//cam->pitch=0;   // H.12: stock had no vertical look in third person
+	cam->mode=CAMERA_VIEW;
+	}
+	// H.12: here, not in Camera::update (which runs before preupdate and would see last frame's pos).
+	cam->updateThirdPerson(etime);
+	if(THIRD_PERSON){
+		float hspeed2=vel.x*vel.x+vel.z*vel.z;
+		int motion=(!onground&&!FLY_MODE)?PB_JUMP:(hspeed2>.25f?PB_WALK:PB_IDLE);
+		UpdatePlayerBody(M_GREEN,MakeVector(pos.x,pos.y-boxheight/2,pos.z),yaw,motion,etime);
+	}else{
+		HidePlayerBody();
 	}
 	
 	itouch* touches=Input::getInput()->getTouches();
@@ -2238,7 +2249,10 @@ extern Vector fpoint;
 void Player::render(){
     Graphics::startPreview();
     
-	if(THIRD_PERSON){
+	// H.12: the fallback body, only when the creature PODs are not loaded (Creatures off, or no
+	// GL_OES_matrix_palette); otherwise RenderModels draws a Green in Model.mm's PLAYER_BODY slot.
+	// TYPE_CLOUD with buildsize -1 is what reaches Graphics::drawCube's player-box scale branch.
+	if(THIRD_PERSON&&!PlayerBodyAvailable()){
 	float bx= pos.x-boxbase/2;
 	float by= pos.y-boxheight/2;
 	float bz= pos.z-boxbase/2;
@@ -2248,7 +2262,8 @@ void Player::render(){
 	//glScalef(0, <#GLfloat y#>, <#GLfloat z#>)
         glPushMatrix();
       
-        Graphics::drawCube(bx,by,bz,TYPE_GRADIENT,1);
+        //Graphics::drawCube(bx,by,bz,TYPE_GRADIENT,1);
+        Graphics::drawCube(bx,by,bz,TYPE_CLOUD,-1);
        
         glPopMatrix();
 	//[Graphics drawTexCube:bx:by:bz:boxbase:Resources::getResources->getTex:0]];

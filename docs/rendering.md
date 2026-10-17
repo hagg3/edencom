@@ -357,8 +357,11 @@ iOS-only **present guard**: it rebinds the view's renderbuffer if anything else 
 ## Camera (`Camera.mm`)
 First-person: position = player pos (eye offset), yaw/pitch from touch-look. `render()`
 builds the modelview (rotate, then translate by `-(pos - chunkOffset*16)`); `render2()`
-is the same matrix used by the picking raycast. `mode`/`THIRD_PERSON` exists but is
-compile-time disabled.
+is the same matrix used by the picking raycast. Third person (H.12: `CAMERA_VIEW`, `cam->mode` 1 behind,
+2 front) derives eye and target from `Camera::viewPoints()`, which feeds **both** the frustum lookAt and
+the scene lookAt — stock built the frustum from the first-person pair, culling the third-person frame
+against a view it was not drawn with. Keep the two lookAts the same pair. Details:
+[player-input-camera.md](player-input-camera.md) § Camera.
 
 ## Frustum culling (`Frustum.mm`)
 `setFrustum(viewproj)` extracts 6 planes each frame (called from `Camera::render`);

@@ -803,6 +803,18 @@ int eden_get_fly_mode(void) {
     return FLY_MODE ? 1 : 0;
 }
 
+// H.12: Experiments › Camera view (0 first person, 1 third behind, 2 third front). Set through
+// Settings_web.mm's camera_view row; the F5 key cycles that row (eden_cycle_camera_view).
+EDEN_EXPORT
+void eden_set_camera_view(int view) {   // CAMERA_VIEW: Classes/Globals.h
+    CAMERA_VIEW = (view >= 0 && view <= 2) ? view : 0;
+}
+
+EDEN_EXPORT
+int eden_get_camera_view(void) {
+    return CAMERA_VIEW;
+}
+
 // Audit row 17/G1 (touch-draggable controls card): a "move controls" mode for the on-screen
 // joystick pad, driven from eden-input.js's existing touch pipeline rather than a new one — the
 // page tracks the drag itself (same touchstart/touchmove/touchend it already has) and only pushes

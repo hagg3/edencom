@@ -148,7 +148,8 @@ while a `GLDialog` is active only the dialog updates, and while the in-game Sett
 4. `RenderModels` — creatures. `SignRenderer::render()` (D.3b, port) draws signs after the
    opaque pass, before the sorted transparent one.
 5. `terrain->render2` — transparent terrain (water/lava/glass/leaves...), flowers.
-6. Effects, fireworks, player (third-person body is normally invisible), HUD last.
+6. Effects, fireworks, player (the build preview; in third person the fallback body box when the
+   creature PODs are not loaded — the Green body itself draws in step 4), HUD last.
 
 Port additions: the 3D pass is bracketed by `eden_scene_pass_begin/end` (render scale: it may draw
 offscreen and be upscaled; the HUD draws at full resolution — rendering.md "Scene-pass bracket"),

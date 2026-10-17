@@ -15,7 +15,7 @@ truth for what the settings screen shows — `eden_settings_count()`/`_label()`�
 twice under `#if` for per-platform defaults) in the groups `Gameplay`, `Audio`, `Controls`, `Video`,
 `Interface` (shown on the Video tab), `Experiments` (opt-in, non-stock: fly, `fps_normalize`,
 `advanced_movement`, `crouch` — see [player-input-camera.md](player-input-camera.md) — fire rules,
-creature walking sounds) and `Saves` (`save_backup`, `autosave`, `upgrade_256z`). The GL screen's seven
+creature walking sounds, the double-size brush, `camera_view` (H.12)) and `Saves` (`save_backup`, `autosave`, `upgrade_256z`). The GL screen's seven
 tabs and the hidden web-only rows are in [../../docs/ui.md](../../docs/ui.md) (`SettingsMenu`). Rows that
 are visible but inert on native: `crosshair`, `advanced_movement`, and `save_backup` since S.8
 (docs/save-load.md).

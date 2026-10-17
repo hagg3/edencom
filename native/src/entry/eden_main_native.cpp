@@ -137,6 +137,11 @@
 //                        one; mining and TNT taking the anchor's signs; a command block's steel mined
 //                        taking only its CMB1 record (+ its signs); save + reload. Either container
 //                        (--world-format=emod). --signs-mutate=bottom|nohook are the mutation legs.
+//   --camera-selftest    H.12: the third-person camera. Picking at screen centre hits the same block
+//                        in all three views (13 ahead: inside reach only if the third-person ray starts
+//                        at the player), a block behind the player neither picks nor blocks, pull-in in
+//                        front of a wall and back out, the frustum is the drawn view's, F5 cycles the
+//                        camera_view setting, the body slot is posed but never picked or counted.
 //   --cmds-selftest      D.4c: with --world=NAME (the 3-bit adder, in --docs) and --at near its keypad:
 //                        the parser on literal scripts, every CMB1 script parses, the adder shows
 //                        3 + 4 = 7 on its own display, then every command, the caps (8 deep, 32 at
@@ -292,6 +297,7 @@ extern block8* blockarray;                   // Terrain.mm: --mesh-bench's raw w
 #include "../../../Classes/Terrain.h"
 #include "../../../Classes/Player.h"
 #include "../../../Classes/Camera.h"
+#include "../../../Classes/Frustum.h"   // --camera-selftest (H.12): ViewTestAABB
 #include "gl_es1_shim.h"   // also gives glGetString (renamed to the shim's guarded form)
 #include "platform_shims.h"
 #include "../eden_app_identity.h"   // Emod is not Eden — see that file
@@ -2616,6 +2622,145 @@ int run_classic_selftest() {
     }
 
     std::printf("[eden-classic] %s (%d failure(s))\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
+    return g_selftestFailures ? 1 : 0;
+}
+
+// ---------------------------------------------------------------------------------------------
+// --camera-selftest  (Stage H / H.12, the third-person camera)
+// ---------------------------------------------------------------------------------------------
+// Headless: the GL shim keeps the ES1 matrix stack in software, so findWorldCoords' unproject and
+// the frustum both work with no window. The camera fields are set directly before each probe (the
+// next tick's Player::update would overwrite them), on a pivot in open air looking +x, with a target
+// block T 13 ahead (inside first-person reach, OUTSIDE reach if the third-person ray started at the
+// camera 4 back) and, for the middle legs, a block B 2 behind (between the camera and the player).
+extern "C" void eden_cycle_camera_view(void);
+extern "C" void eden_set_camera_view(int view);
+extern "C" int  eden_get_camera_view(void);
+extern "C" float eden_settings_get(int i);
+extern "C" void eden_settings_set(int i, float v);
+extern int fwc_result;
+int run_camera_selftest() {
+    g_selftestTag = "eden-camera";
+    const char* name = g_opt.world.empty() ? "camera-selftest" : g_opt.world.c_str();
+    if (!open_world(name, g_opt.height)) return 1;
+    teleport_for_movement();
+    eden_set_fly_mode(1);   // hold still between the ticks below
+    tick(120);
+    char d[256];
+    Terrain* ter = World::getWorld->terrain;
+    Camera* cam = World::getWorld->cam;
+    const Vector pp = World::getWorld->player->pos;
+
+    // A pivot with air from 8 behind to 16 ahead (and a block either side), well above the ground.
+    int ax = -1, az = -1, ay = -1;
+    for (int k = 0; k < 64 && ay < 0; ++k) {
+        const int x = (int)pp.x + (k % 8) * 5, z = (int)pp.z + (k / 8) * 5;
+        int g = -1;
+        for (int y = T_HEIGHT - 1; y >= 0 && g < 0; --y) if (ter->getLand(x, z, y) > 0) g = y;
+        const int y = (g < 0 ? 30 : g) + 6;
+        if (y + 3 >= T_HEIGHT) continue;
+        bool clear = true;
+        for (int dx = -8; dx <= 16 && clear; ++dx)
+            for (int dz = -1; dz <= 1 && clear; ++dz)
+                for (int dy = -1; dy <= 1 && clear; ++dy)
+                    if (ter->getLand(x + dx, z + dz, y + dy) != 0) clear = false;
+        if (clear) { ax = x; az = z; ay = y; }
+    }
+    if (ay < 0) { check(false, "an open-air pivot near the player", ""); return 1; }
+    const float px = ax + 0.5f, py = ay + 0.5f, pz = az + 0.5f;
+    auto aim = [&](int mode, float dist) {
+        cam->px = px; cam->py = py; cam->pz = pz;
+        cam->yaw = 0; cam->pitch = 0; cam->mode = mode; cam->dist = dist;
+    };
+    auto pick = [&](int mode) -> int {   // the block x hit at screen centre, or -1
+        aim(mode, 4.0f);
+        const Point3D h = findWorldCoords((int)(SCREEN_HEIGHT / 2), (int)(SCREEN_WIDTH / 2), FC_DESTROY);
+        return h.x < 0 ? -1 : (int)h.x;
+    };
+
+    ter->updateChunks(ax + 13, az, ay, TYPE_STONE);   // T
+    tick(4);
+    const int h0 = pick(0), h1 = pick(1), h2 = pick(2);
+    std::snprintf(d, sizeof(d), "pivot %d,%d,%d; T at x %d; hit x view0 %d view1 %d view2 %d", ax, az, ay, ax + 13, h0, h1, h2);
+    check(h0 == ax + 13, "first person reaches T 13 blocks ahead", d);
+    check(h1 == ax + 13, "third person behind aims and reaches the same block", d);
+    check(h2 == ax + 13, "third person front picks along the player's look", d);
+
+    ter->updateChunks(ax - 2, az, ay, TYPE_STONE);    // B, between the camera and the player
+    tick(4);
+    const int hb = pick(1);
+    std::snprintf(d, sizeof(d), "hit x %d (B at %d)", hb, ax - 2);
+    check(hb == ax + 13, "a block behind the player neither picks nor blocks", d);
+
+    aim(1, 4.0f);
+    cam->updateThirdPerson(1.0f / 60);
+    const float pulled = cam->dist;
+    // B's near face is 1.5 behind the pivot; the 0.25 march first lands in it at 1.75, less 0.3.
+    std::snprintf(d, sizeof(d), "dist %.2f (B 1.5 behind the pivot: 1.45 expected)", pulled);
+    check(std::fabs(pulled - 1.45f) < 0.01f, "the camera pulls in in front of a wall", d);
+
+    // Culling: the frustum must be the one the frame is drawn with.
+    auto inside = [&](float x) {
+        const float b[6] = { x - 0.1f, py - 0.1f, pz - 0.1f, x + 0.1f, py + 0.1f, pz + 0.1f };
+        return !(ViewTestAABB(b, 0) & VT_OUTSIDE);
+    };
+    glMatrixMode(GL_MODELVIEW);
+    glPushMatrix();
+    glLoadIdentity();
+    aim(1, 4.0f);
+    cam->render();
+    const bool behindIn = inside(px - 1.5f), aheadIn = inside(px + 3.0f), pastEyeIn = inside(px - 6.0f);
+    glLoadIdentity();
+    aim(0, 4.0f);
+    cam->render();
+    const bool behindIn0 = inside(px - 1.5f);
+    glPopMatrix();
+    std::snprintf(d, sizeof(d), "view1: 1.5 behind %d, 3 ahead %d, 2 behind the eye %d; view0: 1.5 behind %d",
+                  behindIn, aheadIn, pastEyeIn, behindIn0);
+    check(behindIn && aheadIn && !pastEyeIn, "third-person culling uses the third-person frustum", d);
+    check(!behindIn0, "first-person culling is unchanged", d);
+
+    ter->updateChunks(ax - 2, az, ay, TYPE_NONE);
+    tick(4);
+    aim(1, pulled);
+    for (int k = 0; k < 60; ++k) cam->updateThirdPerson(1.0f / 60);
+    std::snprintf(d, sizeof(d), "dist %.2f after 1 s", cam->dist);
+    check(std::fabs(cam->dist - 4.0f) < 0.01f, "the camera eases back out in the open", d);
+    ter->updateChunks(ax + 13, az, ay, TYPE_NONE);
+
+    // The mode through the real setting and key path, and the body slot.
+    int si = -1;
+    for (int i = 0; i < eden_settings_count(); ++i) if (!std::strcmp(eden_settings_key(i), "camera_view")) si = i;
+    if (si < 0) { check(false, "the camera_view setting exists", ""); return 1; }
+    eden_settings_set(si, 0);
+    int seen[4];
+    for (int k = 0; k < 3; ++k) { eden_cycle_camera_view(); seen[k] = eden_get_camera_view() * 10 + (int)eden_settings_get(si); }
+    std::snprintf(d, sizeof(d), "view*10+setting: %d %d %d", seen[0], seen[1], seen[2]);
+    check(seen[0] == 11 && seen[1] == 22 && seen[2] == 0, "F5 cycles 0->1->2->0 and the setting tracks it", d);
+
+    SpawnCreatureAt(M_MOOF, MakeVector(pp.x + 6, pp.y, pp.z + 6));   // so the count below is not 0 == 0
+    eden_settings_set(si, 1);
+    tick(10);
+    Vector bp;
+    const bool avail = PlayerBodyAvailable(), shown = PlayerBodyShown(&bp);
+    std::snprintf(d, sizeof(d), "cam mode %d; PODs %s; slot %s", cam->mode, avail ? "loaded" : "not loaded (fallback box)",
+                  shown ? "posed" : "empty");
+    check(cam->mode == 1 && shown == avail, "view 1 drives the camera and the body slot", d);
+    if (shown) {
+        const Vector feet = World::getWorld->player->pos;
+        const int hit = PointTestModels(feet.x, feet.y + 0.5f, feet.z);
+        const int n1 = CountActiveCreatures();
+        HidePlayerBody();
+        const int n0 = CountActiveCreatures();
+        std::snprintf(d, sizeof(d), "PointTestModels at the player %d; creatures %d posed, %d hidden", hit, n1, n0);
+        check(hit == -1 && n1 == n0, "the body is not a creature (no pick, no count)", d);
+    }
+    eden_settings_set(si, 0);
+    tick(4);
+    std::snprintf(d, sizeof(d), "cam mode %d, slot %s", cam->mode, PlayerBodyShown(nullptr) ? "posed" : "empty");
+    check(cam->mode == 0 && !PlayerBodyShown(nullptr), "view 0 is first person with no body", d);
+
+    std::printf("[eden-camera] %s (%d failure(s))\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
     return g_selftestFailures ? 1 : 0;
 }
 
@@ -9576,6 +9721,7 @@ static int parse_one_arg(const char* a) {
         else if (!std::strcmp(a, "--trailer-no-dirty-mark")) g_opt.trailerNoDirty = true;
         else if (!std::strcmp(a, "--trailer-keep"))  g_opt.trailerKeep = true;
         else if (!std::strcmp(a, "--signs-selftest")) { g_opt.mode = "signs-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--camera-selftest")) { g_opt.mode = "camera-selftest"; g_opt.headless = true; }
         else if (starts_with(a, "--signs-mutate="))  g_opt.signsMutate = a + 15;
         else if (!std::strcmp(a, "--cmds-selftest"))  { g_opt.mode = "cmds-selftest"; g_opt.headless = true; }
         else if (starts_with(a, "--cmds-mutate="))   g_opt.cmdsMutate = a + 14;
@@ -9973,6 +10119,7 @@ static int eden_main_after_args(int argc, char** argv) {
         else if (!std::strcmp(g_opt.mode, "photo-selftest")) rc = run_photo_selftest();
         else if (!std::strcmp(g_opt.mode, "trailer-selftest")) rc = run_trailer_selftest();
         else if (!std::strcmp(g_opt.mode, "signs-selftest")) rc = run_signs_selftest();
+        else if (!std::strcmp(g_opt.mode, "camera-selftest")) rc = run_camera_selftest();
         else if (!std::strcmp(g_opt.mode, "sign-shot"))     rc = run_sign_shot();
         else if (!std::strcmp(g_opt.mode, "cmds-selftest")) rc = run_cmds_selftest();
         else if (!std::strcmp(g_opt.mode, "console-selftest")) rc = run_console_selftest();

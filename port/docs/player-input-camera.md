@@ -116,6 +116,15 @@ button entirely — its hit-test loop and its render/draw call are both wrapped 
 `if (CROUCH_ENABLED)` (`extern BOOL CROUCH_ENABLED`) — so there's no dead button sitting on screen,
 matching how `FLY_MODE` hides its own up/down affordances when off.
 
+## Camera view (H.12)
+Experiments › *Camera view* (`camera_view`, `KIND_ENUM` 0–2) applies through `eden_apply_setting()` →
+`eden_set_camera_view()` (`src/seam/Input_web.mm`, beside `eden_set_fly_mode`), which writes the engine's
+`CAMERA_VIEW`. The **F5** `cameraView` keybind (`KB_NATIVE`, resolved as `g_miCameraView` in
+`native/src/seam/Input_native.cpp`'s one-shot chain) calls `eden_cycle_camera_view()` (`Settings_web.mm`),
+which advances `(v+1)%3` **through `eden_settings_set`** — deliberately not fly mode's pattern, whose key
+writes the global and lets the Settings row drift. A new mode-style key should write through its setting
+the same way. Gate: `--camera-selftest`.
+
 ## Middle-click eyedropper (`eden_pick_block_at_crosshair`, `src/seam/Input_web.mm`)
 Middle-click raycasts the crosshair block and copies its type into the current hotbar
 slot (`Terrain::getLand`). **Fixed 2026-07-31:** it read type only and dropped the

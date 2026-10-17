@@ -239,6 +239,10 @@ jobs:
           if $B --props-selftest --props-mutate=nogen --docs="$PWD/props-docs-nogen" > gate-props-mutate-nogen.log 2>&1; then
             echo "::error::--props-selftest --props-mutate=nogen PASSED: the gate cannot see that mutation"; exit 1
           fi
+          # H.12: the third-person camera (centre pick + reach in all views, pull-in, the frustum,
+          # F5 through the camera_view setting, the body slot never picked or counted).
+          rm -rf camera-docs && mkdir -p camera-docs
+          run_gate "camera selftest" $B --camera-selftest --docs="$PWD/camera-docs"
 
           # THE WORLD FILE IS NOT NAMED AFTER THE WORLD. This engine gives every world a random
           # 40-character filename and keeps the display name inside the header — so the artifact
@@ -347,6 +351,7 @@ jobs:
           update: true
           install: >-
             git
+            diffutils
             mingw-w64-clang-x86_64-clang
             mingw-w64-clang-x86_64-cmake
             mingw-w64-clang-x86_64-ninja
@@ -490,6 +495,10 @@ jobs:
           if $B --props-selftest --props-mutate=nogen --docs="$PWD/props-docs-nogen" > gate-props-mutate-nogen.log 2>&1; then
             echo "::error::--props-selftest --props-mutate=nogen PASSED: the gate cannot see that mutation"; exit 1
           fi
+          # H.12: the third-person camera (centre pick + reach in all views, pull-in, the frustum,
+          # F5 through the camera_view setting, the body slot never picked or counted).
+          rm -rf camera-docs && mkdir -p camera-docs
+          run_gate "camera selftest" $B --camera-selftest --docs="$PWD/camera-docs"
 
           # See the Linux job for why the leak probe is a stage obligation. Windows has the one
           # honest gap in the statistic — the mingw CRT publishes no live-bytes figure, so

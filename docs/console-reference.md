@@ -231,6 +231,7 @@ A variable is `group.name`. **`NAME`** prints it, **`NAME VALUE`** sets it. Name
 | `experiments.fire_chars_vines` | on / off | off | at once | Burning vines turn to dark stone. |
 | `experiments.creature_walk_voices` | on / off | off | at once | Creatures call out as they start walking. |
 | `experiments.double_brush` | on / off | off | at once | A key builds 2x2x2 blocks at a time. |
+| `experiments.camera_view` | First person, Third person, Third person (front) | First person | at once | Third person shows your body. F5 cycles. |
 
 #### `saves.`
 
@@ -263,6 +264,7 @@ A variable is `group.name`. **`NAME`** prints it, **`NAME VALUE`** sets it. Name
 | `keys.blockPreview` | a key name, or none | - | at once | Toggle block preview |
 | `keys.hideHud` | a key name, or none | - | at once | Hide HUD |
 | `keys.screenshot` | a key name, or none | - | at once | Screenshot |
+| `keys.cameraView` | a key name, or none | - | at once | Camera view |
 | `keys.hotbar1` | a key name, or none | - | at once | Hotbar 1 |
 | `keys.hotbar2` | a key name, or none | - | at once | Hotbar 2 |
 | `keys.hotbar3` | a key name, or none | - | at once | Hotbar 3 |

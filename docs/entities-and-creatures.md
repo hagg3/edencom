@@ -18,7 +18,14 @@ everything is creature-specific.
 - `EntityData` (`Vector.h`) — the 60-byte serialized subset (`MAX_CREATURES_SAVED` slots in the
   save file: 200 for an ordinary world, derived from the file; see
   [eden-file-format.md](eden-file-format.md)).
-- `guys[300]` — static entity pool (`nguys`); `creatureData[MAX_CREATURES_SAVED_MAX]` (400, in
+- `guys[300]` — static entity pool (`nguys`), plus two extra slots outside it: `guys[nguys]` is the
+  translucent placement ghost (`PlaceModel(-1/-2)`), `guys[PLAYER_BODY]` (`nguys+1`, H.12) the
+  third-person player body (`UpdatePlayerBody`/`HidePlayerBody`/`PlayerBodyAvailable` in `Model.h`). Every
+  loop in `Model.mm` is `i < nguys`, which is what keeps both out of saving, `UpdateModels`,
+  `PointTestModels` (the player cannot mine/paint/burn their own body) and `CountActiveCreatures`; an
+  `i <= nguys` loop would break that. `RenderModels` draws the body after the ghost (opaque, no frustum
+  test). The body never goes through `setState`: `walkVoiceLast[]` is sized `nguys+1`, and setState would
+  play creature walk voices. `creatureData[MAX_CREATURES_SAVED_MAX]` (400, in
   `FileManager.mm`) — save staging.
 - PowerVR: `CPVRTModelPOD models[NUM_CREATURES]` — one animated `.pod` scene per
   species, VBO-uploaded via `m_puiVbo`; textures/skins resolved through

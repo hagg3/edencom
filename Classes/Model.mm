@@ -253,7 +253,13 @@ typedef struct _entity{
     
 }Entity;
 #define nguys 300
-static Entity guys[nguys+1];
+// H.12: guys[nguys] is the placement ghost; guys[PLAYER_BODY] is the third-person player body.
+// Both sit OUTSIDE every `i<nguys` loop, which is what keeps the body out of saving, AI updates,
+// PointTestModels (the player cannot mine/paint/burn themself) and CountActiveCreatures. A future
+// `i<=nguys` loop would start treating the body as a creature. Never pass it to setState
+// (walkVoiceLast[] is sized nguys+1).
+#define PLAYER_BODY (nguys+1)
+static Entity guys[nguys+2];
 static Vector min[NUM_CREATURES];
 static Vector max[NUM_CREATURES];
 
@@ -759,6 +765,7 @@ void LoadModels2(){
         guys[i].model_type=-1;
     }
     guys[nguys].model_type=-1;
+    guys[PLAYER_BODY].model_type=-1;   // H.12
     for(int i=0;i<MAX_CREATURES_SAVED;i++){
         if( creatureData[i].type>-1&&creatureData[i].type<NUM_CREATURES&&creatureData[i].color>=0&&creatureData[i].color<256){
             
@@ -2534,6 +2541,16 @@ bool RenderModels()
         guys[nguys].pos.x+=World::getWorld->fm->chunkOffsetX*CHUNK_SIZE;
         glDisable(GL_BLEND);
     }
+    // H.12: the third-person body. No frustum test (it is always at the camera); skipped when the
+    // pull-in has put the camera inside it.
+    if(guys[PLAYER_BODY].model_type!=-1&&World::getWorld->cam->dist>=1.0f){
+        glColor4f(1,1,1,1);
+        guys[PLAYER_BODY].pos.z-=World::getWorld->fm->chunkOffsetZ*CHUNK_SIZE;
+        guys[PLAYER_BODY].pos.x-=World::getWorld->fm->chunkOffsetX*CHUNK_SIZE;
+        DrawModel(PLAYER_BODY);
+        guys[PLAYER_BODY].pos.z+=World::getWorld->fm->chunkOffsetZ*CHUNK_SIZE;
+        guys[PLAYER_BODY].pos.x+=World::getWorld->fm->chunkOffsetX*CHUNK_SIZE;
+    }
 	glDisableClientState(GL_NORMAL_ARRAY);
     glDisable(GL_LIGHTING);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -2856,8 +2873,54 @@ void DrawModel(int mi)
 	
 }
 
-
-
-
-
-
+// H.12 ---------------------------------------------------------------------------------------
+// The third-person player body: a creature model in the PLAYER_BODY slot, posed by the player
+// rather than by UpdateModels. Frame advance is UpdateModels' own start/end wrap; the state is
+// set directly (not via setState: no walk voices, and walkVoiceLast[] has no slot for it).
+bool PlayerBodyAvailable(){
+    return CREATURES_ON&&models[M_GREEN].nNumMesh>0;
+}
+void HidePlayerBody(){
+    guys[PLAYER_BODY].model_type=-1;
+}
+bool PlayerBodyShown(Vector* pos){   // for --camera-selftest
+    if(guys[PLAYER_BODY].model_type==-1)return false;
+    if(pos)*pos=MakeVector(guys[PLAYER_BODY].pos.x,guys[PLAYER_BODY].pos.y,guys[PLAYER_BODY].pos.z);
+    return true;
+}
+void UpdatePlayerBody(int type,Vector feet,float yaw,int motion,float etime){
+    if(!PlayerBodyAvailable()||type<0||type>=NUM_CREATURES){
+        HidePlayerBody();
+        return;
+    }
+    Entity* e=&guys[PLAYER_BODY];
+    int state=motion==PB_JUMP?DEFAULT_JUMP:(motion==PB_WALK?DEFAULT_WALK:DEFAULT_IDLE_START);
+    if(e->model_type!=type){
+        ResetModel(PLAYER_BODY);
+        e->model_type=type;
+        e->state=-1;
+        e->blinktimer=-1;
+    }
+    int start=getFrame(type,state,0);
+    int end=getFrame(type,state,1);
+    if(e->state!=state){
+        e->state=state;
+        e->frame=start;
+    }else{
+        e->frame+=etime*60;
+        if(e->frame>=end)e->frame=start+(e->frame-end);
+        if(e->frame>=end||e->frame<start)e->frame=start;
+    }
+    e->blinktimer+=etime;
+    if(e->blinktimer>=.2f)
+        e->blinktimer=-(float)((arc4random()%4+1));
+    // Creatures move along angle+90deg (Move), i.e. they face angle+90deg: face the player's yaw.
+    e->angle=e->targetangle=D2R(yaw-90);
+    e->pos.x=feet.x;
+    e->pos.y=feet.y-min[type].y*scale;
+    e->pos.z=feet.z;
+    e->color=0;
+    e->flash=0;
+    e->ragetimer=0;
+    e->onfire=FALSE;
+}

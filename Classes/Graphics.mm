@@ -871,7 +871,9 @@ void Graphics::drawCube(float x,float y,float z,int type,int buildsize){
     x=(int)x;
     y=(int)y;
     z=(int)z;
-    if(THIRD_PERSON&&type==TYPE_CLOUD){
+    // H.12: buildsize -1 marks Player::render's fallback body, so a cloud-block build preview
+    // in third person keeps its 1x1x1 shape.
+    if(THIRD_PERSON&&type==TYPE_CLOUD&&buildsize==-1){
         glScalef(.6666f, 1.85f, .66666f);
     }else{
         glScalef(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);

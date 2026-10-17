@@ -136,15 +136,50 @@ results — callers read them immediately after the call.
   [port/docs/player-input-camera.md](../port/docs/player-input-camera.md) for the input wiring.
 
 ### Rendering
-`Player::render` draws nothing in first person (third-person `THIRD_PERSON` is
-compile-time off); it exists for the held-block preview and debug markers
-(`lol`/`lol1`/`lol2` vectors are debug visualization buffers).
+`Player::render` draws nothing of the player in first person; it exists for the held-block
+preview and debug markers (`lol`/`lol1`/`lol2` vectors are debug visualization buffers). In third
+person (H.12) it draws the **fallback** body only when `!PlayerBodyAvailable()` (Creatures off, or no
+`GL_OES_matrix_palette`): `drawCube(..., TYPE_CLOUD, -1)`, which is what reaches `Graphics::drawCube`'s
+`THIRD_PERSON && TYPE_CLOUD && buildsize==-1` branch scaling a cube to the collision box
+(`0.667 × 1.85 × 0.667`). Stock passed `TYPE_GRADIENT`, so its branch never fired; the `buildsize==-1`
+marker keeps a cloud-block build preview 1×1×1. Otherwise the body is a Green creature in `Model.mm`'s
+`PLAYER_BODY` slot ([entities-and-creatures.md](entities-and-creatures.md)), posed each frame from
+`Player::update` (`!onground && !FLY_MODE` → jump, horizontal speed > 0.5 → walk, else idle; feet at
+`pos.y - boxheight/2`, so crouching lowers it) and hidden in first person and while dead.
 
 ## Camera (`Camera.mm`)
 Follows the player exactly: `px/py/pz` = player pos + eye height; `update` smooths
 nothing (direct copy); `render` applies pitch/yaw rotations then translates by
 `-(pos − chunkOffset·16)` and hands the view-projection to `setFrustum` for culling.
-`render2` reproduces the matrix for the picking unproject. `reset()` on world load.
+`render2` reproduces the matrix for the picking unproject (in absolute coords: no `chunkOffset`,
+because `findWorldCoords` walks absolute blocks). `reset()` on world load.
+
+**Third person (H.12).** `int CAMERA_VIEW` (`Globals.h`; 0 first person, 1 behind, 2 front) is the
+runtime switch; `THIRD_PERSON` (`Constants.h`) is `(CAMERA_VIEW!=0)` and `Player::update` copies the view
+into `cam->mode`. Stock's four `THIRD_PERSON` sites were all broken (eye 6 below the player, a frustum from
+the first-person lookAt, a picking camera that was a *different* camera, pitch forced to 0); they are
+repaired rather than replaced:
+- `Camera::viewPoints(eye, at)` is the single source of the (eye, target) pair. The **pivot** is the
+  first-person eye (`px/py/pz`); the view direction is the engine's own non-unit
+  `(cosYaw·(1−|sinP|), sinP, sinYaw·(1−|sinP|))`, normalized (`viewDir`). Behind: eye = pivot − d·dist,
+  looking at the pivot. Front: eye = pivot + d·dist, looking back. `render()` feeds the pair to the
+  frustum **and** the scene (the scene minus `chunkOffset` on x/z), so they cannot disagree.
+- Behind, the eye sits **on** the first-person ray, so the screen-centre ray is the first-person ray:
+  aim does not move when the view toggles. `render2()` uses `viewPoints()` for mode 1; mode 2 falls
+  through to the first-person matrix (the front camera looks back at the player, so taps and the
+  crosshair aim along the player's own look).
+- **Pick origin** (`findWorldCoords`, `Util.mm`): in mode 1 the ray origin slides forward to the pivot
+  (`skip = dot(pivot − wp1, dir)`), so reach stays 15 blocks from the player's eye and blocks between the
+  camera and the player can neither be picked nor block the ray.
+- **Pull-in** (`Camera::updateThirdPerson`, called from `Player::update` after the camera fields are
+  written — `Camera::update` runs before `preupdate` and would see last frame's position): marches from
+  the pivot toward the eye in 0.25 steps up to 4.0 (`CAM_TP_DIST`, stock's `n=4.0f`); the first block that
+  is not air or shallow liquid (`Player.mm`'s preview test; `-1` counts as passable) caps `dist` at
+  `max(t − 0.3, 0.6)`. Shrinks instantly, grows back at 8 blocks/s. The body is not drawn while
+  `dist < 1`.
+- Underwater tint and the ambience beds stay **player**-based, so in third person the screen can show the
+  camera above water while the tint says under.
+- Gate: `--camera-selftest` (native/README.md).
 
 ## Common pitfalls
 - The same touch can be claimed by HUD, camera-look, and block-edit logic; the

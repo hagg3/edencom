@@ -18,7 +18,11 @@
 #define IPHONE5_WIDTH 568
 #define IPHONE_HEIGHT 320
 #define GRAVITY 20.0f
-#define THIRD_PERSON 0
+// H.12: was `#define THIRD_PERSON 0`. Now the runtime camera view (0 first person, 1 third
+// person behind, 2 third person front; declared in Globals.h, defined in Globals.mm), so the stock
+// THIRD_PERSON sites in Camera/Player/Graphics come alive instead of a second camera being added.
+extern int CAMERA_VIEW;
+#define THIRD_PERSON (CAMERA_VIEW!=0)
 
 #define EXPLOSION_RADIUS 5
 

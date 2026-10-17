@@ -22,6 +22,12 @@ void addMoreCreaturesIfNeeded();
 // position. See Model.mm's ResetModel/addMoreCreaturesIfNeeded for the fields this reuses.
 bool SpawnCreatureAt(int type,Vector pos);
 int CountActiveCreatures();
+// H.12: the third-person player body (Model.mm's PLAYER_BODY slot, outside every creature loop).
+enum { PB_IDLE = 0, PB_WALK, PB_JUMP };
+void UpdatePlayerBody(int type,Vector feet,float yaw,int motion,float etime);
+void HidePlayerBody(void);
+bool PlayerBodyAvailable(void);
+bool PlayerBodyShown(Vector* pos);   // the slot is posed this frame (pos = its model origin)
 void setViewNow();
 void killCreature(int idx);
 float wrapx(float x);

@@ -19,6 +19,7 @@ BOOL IS_IPAD;  //This flag gets set for ipad AND 'retina' devices, which is basi
 BOOL IS_RETINA;
 BOOL SUPPORTS_RETINA=FALSE;
 BOOL CREATURES_ON;
+int CAMERA_VIEW=0;   // H.12
 BOOL LOW_MEM_DEVICE;
 BOOL LOW_GRAPHICS;
 

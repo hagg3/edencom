@@ -14,10 +14,14 @@
 #import "Frustum.h"
 #import "Graphics.h"
 #import "Terrain.h"
+#import "Liquids.h"
 
 #define CAM_SPEED 4.0f
 #define YAW_SPEED .5f
 #define PITCH_SPEED .5f
+#define CAM_TP_DIST 4.0f      // H.12: stock's own n=4.0f
+#define CAM_TP_MIN .6f
+#define CAM_TP_GROW 8.0f      // blocks/s back out after a pull-in (shrinking is instant)
 
 
 Camera::Camera(){
@@ -36,6 +40,7 @@ void Camera::reset(){
 	px=10;
 	pitch=0;
 	mode=0;
+	dist=CAM_TP_DIST;
 	GLfloat projviewf[16];
 	glGetFloatv( GL_PROJECTION_MATRIX, projviewf );
 	GLfloat modelviewf[16];
@@ -116,18 +121,14 @@ void Camera::render2(){
      glPopMatrix();*/
     
 	if(mode==1){
-		
-		//glLoadIdentity();
-		//glRotatef(270,0,0,1);
-		
-		cosYaw=cos(D2R(yaw+180));
-		sinYaw=sin(D2R(yaw+180));
-		/*float sinPitch=2*sin(D2R(pitch));
-         float lx=px+cosYaw;
-         float ly=py+sinPitch;
-         float lz=pz+sinYaw;*/
-		float n=8;
-		gluLookAt(px+n*cosYaw, py+15, pz+n*sinYaw, px, py, pz, 0, 1, 0);	
+		// H.12: stock's arm here was a different camera from render()'s (eye 8 back and 15 up).
+		// The picking matrix is now the drawn frame's, in absolute coords like the mode==0 arm
+		// (findWorldCoords walks absolute blocks, so no chunkOffset here). mode==2 (front view)
+		// deliberately falls through to the first-person matrix: the front camera looks back at
+		// the player, so taps and the crosshair aim along the player's own look, as in first person.
+		Vector eye,at;
+		viewPoints(&eye,&at);
+		gluLookAt(eye.x, eye.y, eye.z, at.x, at.y, at.z, 0, 1, 0);
 	}else{
          gluLookAt(px, py, pz, alook.x, alook.y, alook.z, 0, 1, 0);	
         
@@ -150,7 +151,11 @@ void Camera::render(){
 	
 	
 	glPushMatrix();
-	gluLookAt(px, py, pz, look.x, look.y, look.z, 0, 1, 0);	
+	// H.12: the frustum is built from the same (eye, target) as the scene below. Stock always fed
+	// it the first-person pair, so in third person everything was culled against the wrong frustum.
+	Vector eye,at;
+	viewPoints(&eye,&at);
+	gluLookAt(eye.x, eye.y, eye.z, at.x, at.y, at.z, 0, 1, 0);	
 	GLfloat projviewf[16];
 	glGetFloatv( GL_PROJECTION_MATRIX, projviewf );
 	GLfloat modelviewf[16];
@@ -176,19 +181,13 @@ void Camera::render(){
 	
 	glPopMatrix();
 
-	if(mode==1){
-		
-		//glLoadIdentity();
-		//glRotatef(270,0,0,1);
-		
-		cosYaw=cos(D2R(yaw+180));
-		sinYaw=sin(D2R(yaw+180));
-		/*float sinPitch=2*sin(D2R(pitch));
-		float lx=px+cosYaw;
-		float ly=py+sinPitch;
-		float lz=pz+sinYaw;*/
-		float n=4.0f;
-		gluLookAt(px+n*cosYaw-World::getWorld->fm->chunkOffsetX*CHUNK_SIZE, py-6.0f, pz+n*sinYaw-World::getWorld->fm->chunkOffsetZ*CHUNK_SIZE, px-World::getWorld->fm->chunkOffsetX*CHUNK_SIZE, py, pz-World::getWorld->fm->chunkOffsetZ*CHUNK_SIZE, 0, 1, 0);
+	if(mode!=0){
+		// H.12: stock's arm put the eye 6 units BELOW the player (py-6.0f), looking up at them.
+		//float n=4.0f;
+		//gluLookAt(px+n*cosYaw-World::getWorld->fm->chunkOffsetX*CHUNK_SIZE, py-6.0f, pz+n*sinYaw-World::getWorld->fm->chunkOffsetZ*CHUNK_SIZE, px-World::getWorld->fm->chunkOffsetX*CHUNK_SIZE, py, pz-World::getWorld->fm->chunkOffsetZ*CHUNK_SIZE, 0, 1, 0);
+		float ox=World::getWorld->fm->chunkOffsetX*CHUNK_SIZE;
+		float oz=World::getWorld->fm->chunkOffsetZ*CHUNK_SIZE;
+		gluLookAt(eye.x-ox, eye.y, eye.z-oz, at.x-ox, at.y, at.z-oz, 0, 1, 0);
 	}else{
        //gluLookAt(px, py, pz, look.x, look.y, look.z, 0, 1, 0);
         
@@ -197,3 +196,61 @@ void Camera::render(){
 		
 }
 
+// H.12 ---------------------------------------------------------------------------------------
+// The orbit uses the engine's own (non-unit) first-person look vector, normalized, and puts the
+// third-person eye ON the first-person ray through the pivot (px,py,pz = the player's eye). So
+// the screen-centre ray behind the player is the first-person ray: aim does not move when the
+// view is toggled, and findWorldCoords only has to slide its origin up to the pivot.
+void Camera::viewDir(Vector* d){
+	float sinPitch=sin(D2R(pitch));
+	d->x=cos(D2R(yaw))*(1.0f-absf(sinPitch));
+	d->y=sinPitch;
+	d->z=sin(D2R(yaw))*(1.0f-absf(sinPitch));
+	NormalizeVector(d);
+}
+void Camera::viewPoints(Vector* eye,Vector* at){
+	Vector d;
+	if(mode==1){
+		viewDir(&d);
+		*eye=MakeVector(px-d.x*dist,py-d.y*dist,pz-d.z*dist);
+		*at=MakeVector(px,py,pz);
+	}else if(mode==2){
+		viewDir(&d);
+		*eye=MakeVector(px+d.x*dist,py+d.y*dist,pz+d.z*dist);
+		*at=MakeVector(px+d.x*(dist-1.0f),py+d.y*(dist-1.0f),pz+d.z*(dist-1.0f));
+	}else{
+		float cosYaw=cos(D2R(yaw));
+		float sinYaw=sin(D2R(yaw));
+		float sinPitch=sin(D2R(pitch));
+		*eye=MakeVector(px,py,pz);
+		*at=MakeVector(px+cosYaw*(1.0f-absf(sinPitch)),py+sinPitch,pz+sinYaw*(1.0f-absf(sinPitch)));
+	}
+}
+// Occlusion pull-in: march from the pivot toward where the eye wants to be; the first block a
+// camera cannot sit in caps dist. Passable is Player.mm's preview test (air, or shallow liquid);
+// -1 (not loaded) counts as passable. Shrinks instantly, grows back at CAM_TP_GROW.
+void Camera::updateThirdPerson(float etime){
+	if(mode==0){
+		dist=CAM_TP_DIST;
+		return;
+	}
+	Vector d;
+	viewDir(&d);
+	float s=(mode==1)?-1.0f:1.0f;
+	float target=CAM_TP_DIST;
+	for(float t=.25f;t<=CAM_TP_DIST+.001f;t+=.25f){
+		float x=px+s*d.x*t, y=py+s*d.y*t, z=pz+s*d.z*t;
+		if(y<0)continue;
+		int type=World::getWorld->terrain->getLand((int)floorf(x),(int)floorf(z),(int)floorf(y));
+		if(type>0&&!(blockinfo[type]&IS_LIQUID&&getLevel(type)<4)){
+			target=t-.3f;
+			if(target<CAM_TP_MIN)target=CAM_TP_MIN;
+			break;
+		}
+	}
+	if(target<dist)dist=target;
+	else{
+		dist+=CAM_TP_GROW*etime;
+		if(dist>target)dist=target;
+	}
+}
