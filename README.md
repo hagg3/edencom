@@ -1,11 +1,9 @@
 # Eden: Community Edition (Emod)
 
-Eden: World Builder was a voxel sandbox for iPhone and iPad, made by Ari Ronen (Kingly Games) and
-released in 2010. You walked around a big blocky world, dug it up, built things, set fire to them,
-and flooded the rest. A lot of people grew up on it. It was pulled from the App Store a while ago,
-and the iOS version it shipped on doesn't run on much anymore.
+Eden: World Builder is a voxel sandbox for iPhone and iPad, made by Ari Ronen (Kingly Games) and
+released in 2010. A lot of people grew up on it. 
 
-Emod is a community fork that gets the original game running again, natively, on modern machines:
+Emod is a community fork that gets the 2.1 source code (released in 2018) running cross-platform and on modern devices.
 
 - **macOS, Linux and Windows** (SDL3 + OpenGL)
 - **iOS / iPadOS** (unsigned builds you sideload; see Releases)
