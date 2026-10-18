@@ -39,6 +39,9 @@
 #import "Globals.h"
 #import "Util.h"
 #import "World.h"
+#import "MpWorld.h"   // MP.3a: the creature gate
+#import "MpServers.h"   // MP.8: eden_mp_matchmakers_validate
+#import "GLDialog.h"
 
 #include <algorithm>
 #include <cmath>
@@ -65,12 +68,14 @@ extern "C" {
     float       eden_settings_get(int i);
     void        eden_settings_set(int i, float v);
     float       eden_settings_toggle(int i);
+    const char* eden_settings_text(int i);
+    void        eden_settings_set_text(int i, const char* text);
     int         eden_settings_loaded(void);
     void        eden_settings_menu_close(void);
     void        eden_keybind_reset_all(void);
 }
 
-enum { SM_KIND_TOGGLE = 0, SM_KIND_RANGE = 1, SM_KIND_ENUM = 2 };
+enum { SM_KIND_TOGGLE = 0, SM_KIND_RANGE = 1, SM_KIND_ENUM = 2, SM_KIND_TEXT = 4 };
 
 enum  {
 
@@ -214,6 +219,7 @@ void SettingsMenu::controlSize(int si,float* w,float* h) const{
     switch(eden_settings_kind(si)){
     case SM_KIND_TOGGLE: *w=Toggle::designW(); *h=Toggle::designH(); break;
     case SM_KIND_ENUM:   *w=du(29)*2.0f+du(110); *h=du(29); break;
+    case SM_KIND_TEXT:   *w=du(190); *h=du(29); break;
     default:             *w=du(200)+du(48); *h=du(29); break;
     }
 }
@@ -240,6 +246,15 @@ void SettingsMenu::refreshValue(int k){
         int n=eden_settings_enum_count(si);
         if(idx<0) idx=0; if(n>0&&idx>=n) idx=n-1;
         m_stepper[k].setValueText(eden_settings_enum_label(si,idx), GLW::du(20));
+        break;
+    }
+    case SM_KIND_TEXT:{   // "None, Add" / "2 addresses, Edit" (the native raster is ASCII: no middle dot)
+        int n=0;
+        const char* t=eden_settings_text(si);
+        for(bool word=false;*t;t++){ if(*t==','){ word=false; } else if(*t!=' '&&!word){ word=true; n++; } }
+        if(n==0) std::snprintf(buf,sizeof(buf),"None, Add");
+        else std::snprintf(buf,sizeof(buf),"%d address%s, Edit",n,n==1?"":"es");
+        m_textBtn[k].setLabel(buf, GLW::du(18));
         break;
     }
     default:{
@@ -360,6 +375,10 @@ void SettingsMenu::layout(){
             m_stepper[k].setRect(cr);
             m_stepper[k].setHitRect(CGRectMake(cr.origin.x,rr.origin.y,cr.size.width,rr.size.height));
             break;
+        case SM_KIND_TEXT:
+            m_textBtn[k].setRect(cr);
+            m_textBtn[k].setHitRect(touch?CGRectMake(cr.origin.x,rr.origin.y,cr.size.width,rr.size.height):CGRectMake(0,0,0,0));
+            break;
         default:{
             const CGRect sr=CGRectMake(cr.origin.x,cr.origin.y,du(200),cr.size.height);
             m_slider[k].setRect(sr);
@@ -389,6 +408,35 @@ void SettingsMenu::stepRow(int k,int dir){
     }
     // An enum can drive others (the graphics preset sets view distance): refresh the whole tab.
     for(int j=0;j<m_nRows;j++) if(j==k||eden_settings_kind(m_si[j])!=SM_KIND_TOGGLE) refreshValue(j);
+}
+
+// MP.8: Experiments > Matchmakers. A prompt over the current string; Save validates the whole list
+// (the same address rule as the server form) and rejects it with a one-button dialog naming the
+// bad entries. Stored under mp_matchmakers as the cleaned "host:port, host:port" text.
+static SettingsMenu* s_textOwner=NULL;
+static int s_textRow=-1;
+static void sm_noop(int){}
+
+void SettingsMenu::editText(int k){
+    if(!GLDialog::textEntryAvailable()) return;
+    s_textOwner=this;
+    s_textRow=k;
+    static const char* const kBtn[]={"Save","Cancel"};
+    GLDialog::prompt("Matchmakers","Addresses of matchmakers, separated by commas (host or host:port, default port 27020). Empty turns it off.",
+                     eden_settings_text(m_si[k]),512,kBtn,2,textPromptCb);
+}
+
+void SettingsMenu::textPromptCb(int chosen,const char* text){
+    SettingsMenu* s=s_textOwner;
+    if(!s||chosen!=0||s_textRow<0||s_textRow>=s->m_nRows) return;
+    char clean[600], err[160];
+    if(!eden_mp_matchmakers_validate(text?text:"",clean,sizeof(clean),err,sizeof(err))){
+        static const char* const kOk[]={"OK"};
+        GLDialog::show("Matchmakers",err,kOk,1,sm_noop);
+        return;
+    }
+    eden_settings_set_text(s->m_si[s_textRow],clean);
+    s->refreshValue(s_textRow);
 }
 
 static const int usage_id=3;
@@ -443,6 +491,8 @@ void SettingsMenu::update(float etime){
                     if(m_slider[k].beginDrag(mx)) commitSlider(k);
                 }else if(kind==SM_KIND_ENUM){
                     m_stepper[k].setPressed(m_stepper[k].hitDec(mx,my),m_stepper[k].hitInc(mx,my));
+                }else if(kind==SM_KIND_TEXT){
+                    m_textBtn[k].setPressed(m_textBtn[k].hit(mx,my));
                 }
             }
             // Anywhere else in the content may become a scroll (a touch drag); until it travels
@@ -475,7 +525,7 @@ void SettingsMenu::update(float etime){
             touches[i].down=M_NONE;
             m_back.setPressed(false);
             m_defaults.setPressed(false);
-            for(int k=0;k<SM_MAX_ROWS;k++) m_stepper[k].setPressed(false,false);
+            for(int k=0;k<SM_MAX_ROWS;k++){ m_stepper[k].setPressed(false,false); m_textBtn[k].setPressed(false); }
             if(capturing){ m_keys->cancelCapture(); continue; }
 
             if(i==m_dragTouch){
@@ -529,6 +579,8 @@ void SettingsMenu::update(float etime){
                 }else if(kind==SM_KIND_ENUM){
                     if(m_stepper[k].hitDec(mx,my))      { stepRow(k,-1); break; }
                     else if(m_stepper[k].hitInc(mx,my)) { stepRow(k,+1); break; }
+                }else if(kind==SM_KIND_TEXT){
+                    if(m_textBtn[k].hit(mx,my)){ editText(k); break; }
                 }
             }
         }
@@ -555,7 +607,7 @@ void SettingsMenu::load(){
 	World::getWorld->hud->use_joystick=TRUE;
     World::getWorld->terrain->tgen->genCaves=FALSE;
     World::getWorld->bestGraphics=properties[S_AUTOJUMP].value;
-    CREATURES_ON=properties[S_CREATURES].value;
+    CREATURES_ON=MpWorld::gateCreatures(properties[S_CREATURES].value);   // MP.3a: never in a session
 
     World::getWorld->bestGraphics=TRUE;
     if(LOW_MEM_DEVICE||LOW_GRAPHICS){
@@ -644,6 +696,7 @@ bool SettingsMenu::showRow(const char* key,CGRect* control){
                 switch(eden_settings_kind(si)){
                 case SM_KIND_TOGGLE: *control=m_toggle[k].rect(); break;
                 case SM_KIND_ENUM:   *control=m_stepper[k].rect(); break;
+                case SM_KIND_TEXT:   *control=m_textBtn[k].rect(); break;
                 default:             *control=m_slider[k].rect(); break;
                 }
             }
@@ -709,6 +762,7 @@ void SettingsMenu::render(){
             m_toggle[k].render();
             break;
         case SM_KIND_ENUM: m_stepper[k].render(); break;
+        case SM_KIND_TEXT: m_textBtn[k].render(); break;
         default:{
             m_slider[k].render();
             const CGRect sr=m_slider[k].rect();

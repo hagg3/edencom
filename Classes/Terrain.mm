@@ -21,6 +21,7 @@
 #import "CmdScript.h"
 #import "FileManagerHelper.h"   // fmh_defaultBandCount (Stage R / R.2b)
 #import "Shadow.h"              // H.2 baked shadows
+#import "MpWorld.h"             // MP.3a: the session world (no file behind the window)
 
 // Repo-root Lighting.h is the built one (Eden.xcodeproj / web CMake); the Classes/ copy next to
 // this file is a stale snapshot with no prototypes, hence these explicit decls.
@@ -89,16 +90,20 @@ BurnNode* burnList;
 // the burn-expiry branch in update() then turns ice into water and vines into dark stone.
 bool FIRE_MELTS_ICE=false;
 bool FIRE_CHARS_VINES=false;
+// MP.3a: both are forced off in a multiplayer session (a client-only rule the server and retail don't
+// have, engine plan §11); MpWorld re-applies on entering and leaving one.
 static void eden_apply_fire_flags(void){
     static const int ice[]={TYPE_ICE,TYPE_ICE_RAMP1,TYPE_ICE_RAMP2,TYPE_ICE_RAMP3,TYPE_ICE_RAMP4,
                             TYPE_ICE_SIDE1,TYPE_ICE_SIDE2,TYPE_ICE_SIDE3,TYPE_ICE_SIDE4};
+    const bool session=MpWorld::active();
     for(size_t i=0;i<sizeof(ice)/sizeof(ice[0]);i++){
-        if(FIRE_MELTS_ICE)blockinfo[ice[i]]|=IS_FLAMMABLE; else blockinfo[ice[i]]&=~IS_FLAMMABLE;
+        if(FIRE_MELTS_ICE&&!session)blockinfo[ice[i]]|=IS_FLAMMABLE; else blockinfo[ice[i]]&=~IS_FLAMMABLE;
     }
-    if(FIRE_CHARS_VINES)blockinfo[TYPE_VINE]|=IS_FLAMMABLE; else blockinfo[TYPE_VINE]&=~IS_FLAMMABLE;
+    if(FIRE_CHARS_VINES&&!session)blockinfo[TYPE_VINE]|=IS_FLAMMABLE; else blockinfo[TYPE_VINE]&=~IS_FLAMMABLE;
 }
 extern "C" void eden_set_fire_melts_ice(int on){FIRE_MELTS_ICE=on!=0;eden_apply_fire_flags();}
 extern "C" void eden_set_fire_chars_vines(int on){FIRE_CHARS_VINES=on!=0;eden_apply_fire_flags();}
+extern "C" void eden_reapply_fire_flags(void){eden_apply_fire_flags();}
 static TreeNode troot={};
 static int do_reload=0;
 
@@ -1037,6 +1042,7 @@ void Terrain::burnBlock(int x,int z,int y,BOOL causedByExplosion){
 		node->y=y;
 		node->z=z;
 		node->type=type;
+		node->mpLit=0;
 		if(type==TYPE_TNT||type==TYPE_FIREWORK||blockinfo[type]&IS_BLOCKTNT){
             if((type==TYPE_TNT||blockinfo[type]&IS_BLOCKTNT)&&causedByExplosion){
                 
@@ -1584,6 +1590,21 @@ void Terrain::updateChunks(int x,int z,int y,int type){
 		pos[i]++;
 		
 	}
+}
+// MP.3b: factored from CmdScript.mm's setCell (D.4c), which keeps its refusals and calls this.
+void Terrain::setCellState(int x,int z,int y,int type,int color){
+    void addlight(int xx,int zz,int yy,float brightness,Vector color);
+    extern Vector colorTable[256];
+    const int cur=getLand(x,z,y);
+    if(cur<0)return;
+    const int paint=color<0?0:color;
+    if(blockinfo[cur]&IS_LIQUID)liquids->removeSource(x,z,y,cur);
+    if(cur==TYPE_LIGHTBOX)addlight(x,z,y,-1.0f,colorTable[getColor(x,z,y)&255]);
+    if(type==TYPE_LIGHTBOX)addlight(x,z,y,1.0f,colorTable[paint&255]);
+    updateChunks(x,z,y,type);                    // air also drops what hangs on the block
+    if(type!=TYPE_NONE||paint)setColor(x,z,y,(color8)paint);
+    if(type==TYPE_WATER||type==TYPE_LAVA)liquids->addSource(x,z,y);
+    if(cur==TYPE_LIGHTBOX||type==TYPE_LIGHTBOX)refreshChunksInRadius(x,z,y,LIGHT_RADIUS);
 }
 /*- (void)updateCustom:(int)x :(int)z :(int)y:(int)type:(int)color{
    	int pos[3]={x/2,y/2,z/2};
@@ -2212,6 +2233,9 @@ BOOL Terrain::update(float etime){
 		node->time-=etime;
 		int tz=getLandc(node->x ,node->z ,node->y);
 		if(node->time<=0||tz==TYPE_NONE){
+			// MP.4 (E10): our own burn's mine goes out when its fuse runs out on time, never when the
+			// cell went air first (a server restore's or a peer's mine).
+			if(node->mpLit&&node->time<=0&&tz!=TYPE_NONE)MpWorld::burnFuseOut(node->x,node->y,node->z);
 			if(prev==NULL)
 				burnList=node->next;
 			else
@@ -2678,7 +2702,8 @@ void Terrain::prepareAndLoadGeometry(){
                     // Reopened per slice on purpose: holding a handle across frames would outlive
                     // the rename an autosave does under it (FileManager::saveWorld writes a
                     // .savetmp and renames), leaving the slice reading a file nobody points at.
-                    NSFileHandle* saveFile=[NSFileHandle fileHandleForReadingAtPath:file_name];
+                    // MP.3a: a session has no file (its name, "mp:host:port", is not a path).
+                    NSFileHandle* saveFile=world->fm->sessionWorld?nil:[NSFileHandle fileHandleForReadingAtPath:file_name];
 
                     qsort(stale,nstale,sizeof(StaleColumn),compare_stale_column);
 
@@ -2786,8 +2811,8 @@ void Terrain::prepareAndLoadGeometry(){
             }
             qsort(ring,nring,sizeof(StaleColumn),compare_stale_column);
             NSString* file_name=[NSString stringWithFormat:@"%@/%@",world->fm->documents,world_name];
-            // Reopened per frame, for the reason the bulk slice gives.
-            NSFileHandle* saveFile=[NSFileHandle fileHandleForReadingAtPath:file_name];
+            // Reopened per frame, for the reason the bulk slice gives. None in a session (MP.3a).
+            NSFileHandle* saveFile=world->fm->sessionWorld?nil:[NSFileHandle fileHandleForReadingAtPath:file_name];
             for(int i=0,taken=0;i<nring&&taken<RING_COLUMN_BUDGET;i++){
                 const int cx=ring[i].cx,cz=ring[i].cz;
                 // Skip it if it or a lateral has a mesh job in flight; the job finishes in a frame

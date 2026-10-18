@@ -261,6 +261,8 @@ A variable is `group.name`. **`NAME`** prints it, **`NAME VALUE`** sets it. Name
 | `keys.buildSize` | a key name, or none | - | at once | Build brush size |
 | `keys.menu` | a key name, or none | - | at once | Menu / pause |
 | `keys.console` | a key name, or none | - | at once | Console |
+| `keys.chat` | a key name, or none | - | at once | Chat |
+| `keys.chatCommand` | a key name, or none | - | at once | Chat command |
 | `keys.blockPreview` | a key name, or none | - | at once | Toggle block preview |
 | `keys.hideHud` | a key name, or none | - | at once | Hide HUD |
 | `keys.screenshot` | a key name, or none | - | at once | Screenshot |

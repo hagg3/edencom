@@ -17,6 +17,7 @@
 #import "Model.h"
 #import "SignTool.h"
 #include "WorldTrailer.h"
+#import "MpWorld.h"   // MP.3a: no scripts or world edits in a session
 
 #include <cctype>
 #include <cmath>
@@ -509,13 +510,7 @@ bool setCell(int ex, int ey, int ez, int type, int color) {
     if (cur == type && (type == TYPE_NONE || t->getColor(ex, ez, ey) == paint)) return true;   // already so
     if (cur == TYPE_BEDROCK || (blockinfo[cur] & (IS_DOOR | IS_PORTAL))) { g_stats.refusedCells++; return false; }
     if (type != TYPE_NONE && (inPlayer(ex, ey, ez) || cmdAt(ex, ey, ez))) { g_stats.refusedCells++; return false; }
-    if (blockinfo[cur] & IS_LIQUID) t->liquids->removeSource(ex, ez, ey, cur);
-    if (cur == TYPE_LIGHTBOX) addlight(ex, ez, ey, -1.0f, colorTable[t->getColor(ex, ez, ey) & 255]);
-    if (type == TYPE_LIGHTBOX) addlight(ex, ez, ey, 1.0f, colorTable[paint & 255]);
-    t->updateChunks(ex, ez, ey, type);                    // air also drops what hangs on the block
-    if (type != TYPE_NONE) t->setColor(ex, ez, ey, (color8)paint);
-    if (type == TYPE_WATER || type == TYPE_LAVA) t->liquids->addSource(ex, ez, ey);
-    if (cur == TYPE_LIGHTBOX || type == TYPE_LIGHTBOX) t->refreshChunksInRadius(ex, ez, ey, LIGHT_RADIUS);
+    t->setCellState(ex, ez, ey, type, type == TYPE_NONE ? -1 : paint);   // MP.3b: the shared write sequence
     g_stats.cells++;
     return true;
 }
@@ -781,6 +776,19 @@ int CmdScript::runLine(const char* src, int ax, int ay, int az, int source, Sink
         if (sink) sink->line(Sink::ERR, "No world is open");
         return RUN_NO_WORLD;
     }
+    // MP.3a: a multiplayer session has no command blocks and no console world edits -- they would be
+    // edits nobody else sees, or teleports that belong to the server (engine plan §11). The rest runs.
+    if (MpWorld::active()) {
+        for (const Stmt& s : prog->stmts) {
+            switch (s.op) {
+                case OP_TP: case OP_SET: case OP_FILL: case OP_PAINT: case OP_EXPLODE: case OP_FIRE: case OP_SPAWN:
+                case OP_TIME: case OP_GOLD: case OP_RUN: case OP_IF: case OP_UNLESS:
+                    if (sink) sink->line(Sink::ERR, "Not in a multiplayer world: that changes the world (line not run)");
+                    return RUN_BAD;
+                default: break;
+            }
+        }
+    }
     // The job pool caps lines that wait; a line with no `wait` always runs (a frame-budget pause
     // ends next frame).
     bool waits = false;
@@ -839,7 +847,7 @@ bool CmdScript::busy(const TrailerPos& block) { return g_liveOn.count(key(block)
 
 int CmdScript::press(const TrailerPos& block) {
     World* w = World::getWorld;
-    if (!w || !w->fm || w->fm->trailer()->findCmd(block) < 0) return PRESS_NONE;
+    if (!w || !w->fm || MpWorld::active() || w->fm->trailer()->findCmd(block) < 0) return PRESS_NONE;   // MP.3a
     g_stats.presses++;
     if (busy(block)) return PRESS_BUSY;
     Resources::getResources->playSound(S_DOOR_CLOSED);   // the button clunks in (the 2026 game's sound)
@@ -865,6 +873,8 @@ bool CmdScript::tap(int mx, int my) {
 void CmdScript::update(float etime) {
     World* w = World::getWorld;
     if (!w || !w->terrain || !w->terrain->loaded || !w->fm) return;
+    // MP.3a: no block triggers in a session; console lines are gated in runLine and still resume here.
+    const bool session = MpWorld::active();
     WorldTrailer* t = w->fm->trailer();
     g_now += etime;
     g_work = 0;
@@ -879,7 +889,7 @@ void CmdScript::update(float etime) {
     }
 
     // 2. Triggers. Only scripts that start with '@' can have one; the rest are never parsed here.
-    if (t->cmdCount()) {
+    if (t->cmdCount() && !session) {
         Player* p = w->player;
         const float feet = p->pos.y - p->boxheight / 2;
         for (size_t i = 0; i < t->cmdCount(); ++i) {

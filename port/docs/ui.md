@@ -32,6 +32,18 @@ See [conventions-and-pitfalls.md](conventions-and-pitfalls.md) #6.
 
 `NSUserDefaults` is Apple's on macOS/iOS and a file-backed replacement on Linux/Windows (`native/src/shim/foundation/NSUserDefaults_native.mm`; the web version wrote `localStorage`).
 
+## The menu key over the main menu (`src/seam/Menu_web.mm`)
+`Input_native.cpp` sends the `menu` keybind (Escape) down a chain of `eden_*_back()` calls, each 1 when it
+consumed the key: Console → Settings → New World → World Properties → **`eden_menu_home_back()`** (I.7:
+the world list returns to the home screen; 0 on home, mid-load, under a `GLDialog`, or with any screen
+over the list) → otherwise the HUD's menu tap. A new screen over the main menu adds its `_back` before
+the home one. MP.6: **`eden_server_list_back()`** sits just before it (form → cancel a join → home).
+
+Text-input kinds (MP.6): `eden_text_input_start_kind(kind, …)` maps `EDEN_TEXT_KIND_CODE`/`USERNAME`/`PASSWORD`
+to SDL3's text-input types (password = `SDL_TEXTINPUT_TYPE_TEXT_PASSWORD_HIDDEN`, so the OS keyboard hides it and
+skips autocorrect); `GLW::TextField::setKind()` picks it, `setSecure()` draws one `*` per code point
+(`GLDialog::setPromptSecure` for prompts).
+
 ## Retired DOM surfaces
 The web build's DOM screens — pause menu, loading overlay, load-failure dialog, alert/dialog seams, Storage tab,
 the JS/wasm boundary conventions, the Load/New World menu, the `public/*.js` dependency graph and its
@@ -75,6 +87,17 @@ SCREEN_WIDTH  = round_even(SCREEN_HEIGHT * aspect)   # the real window's aspect 
 P_ASPECT_RATIO = SCREEN_WIDTH / SCREEN_HEIGHT        # ALWAYS derived — see below
 ```
 
+- **The safe area (I.2).** The host reports the window's unsafe insets in window points
+  (`eden_display_set_safe_insets(l,t,r,b)`; native: `SDL_GetWindowSafeArea` in
+  `DisplayMode_native.cpp` after each point-space derivation and on
+  `SDL_EVENT_WINDOW_SAFE_AREA_CHANGED`, or `--safe-area=`/`--device=`). `eden_safe_rect()` converts
+  them through the letterbox (a bar already covering an edge cancels that inset) into engine points,
+  y up, rounded outward, live (never cached); a change re-runs the Hud/Menu layout. The engine reads
+  it as `GLW::safeRect()` (`docs/ui.md`). `eden_display_debug_ignore_safe_area()` is the selftest's
+  "would it fail without insets" switch; `eden_debug_safe_area_violations()` (DebugState_web.mm) is the check.
+- **Window points per engine point (I.3).** `eden_display_window_pt_per_point()` is the letterboxed
+  box's height in window points over `SCREEN_HEIGHT` (the snapped case uses px-per-point), 1 when no
+  box is known (headless). `GLW::touchFloor()` divides 44 by it, so the touch floor is 44 OS points.
 - **Two profiles, `desktop` and `touch`**, from the input-mode arbitration
   (`eden_effective_input_is_touch()` — one detector, one user override, for both concepts; native
   sets the detector once at boot, [player-input-camera.md](player-input-camera.md)). A
@@ -180,3 +203,10 @@ resize down to phone proportions) — that pass is what found the two anchor bug
 density floor, none of which the headless suite could see. The touch profile has since run on real
 hardware (the native iOS build on an iPad Air 2, 2026-09-07 onward — the device pass that retired the
 16:9 pin above).
+
+## Settings rows of kind TEXT (MP.8)
+
+`kSettings[]` rows are toggle / range / enum, plus (since MP.8) `KIND_TEXT` (= 4): the value is a string in `g_text[]`, persisted as an
+NSString under the row's key (`eden_settings_text` / `eden_settings_set_text`), with no float meaning; `eden_settings_set`,
+`eden_settings_reset_all` (clears it) and the Console bridge (`bridgeSettings` skips kind 4; `--console-selftest` gate 3 too) know it.
+`SettingsMenu` draws it as a `GLW::Button` that opens `GLDialog::prompt`. The only row is Experiments › Matchmakers (`mp_matchmakers`).

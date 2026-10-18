@@ -13,6 +13,7 @@
 #import "GLDialog.h"
 #import "Player.h"
 #import "Liquids.h"
+#import "MpWorld.h"   // MP.4: signs out
 #include "WorldTrailer.h"
 
 #include <cmath>
@@ -123,7 +124,17 @@ void SignTool::answer(int chosen, const char* text) {
         r = t->addSign(pos, g_pending.face, colour, g_pending.facing, clean.c_str());
         if (r == WorldTrailer::TR_OK) Resources::getResources->playSound(S_BUILD_WOOD);
     }
-    if (r != WorldTrailer::TR_OK) w->fm->reportTrailerRefusal(r);
+    if (r != WorldTrailer::TR_OK) { w->fm->reportTrailerRefusal(r); return; }
+    // MP.4 (engine plan §10): a placed or edited sign goes to the server as it now stands. An
+    // emptied one (removed) sends nothing, as retail: the server drops signs with their block.
+    const int now = blank ? -1 : t->findSign(pos, g_pending.face);
+    if (now >= 0) {
+        const TrailerSign& sg = t->sign((size_t)now);
+        char text[96];
+        memcpy(text, sg.text, 95);
+        text[95] = 0;
+        MpWorld::intentSign(sg.x, sg.y, sg.z, sg.a, sg.b, sg.c, text);
+    }
 }
 
 void SignTool::anchorBecameAir(int x, int z, int y) {

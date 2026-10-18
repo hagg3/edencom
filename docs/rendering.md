@@ -307,7 +307,7 @@ builds one dynamic VBO per frame: boards, posts and command-block buttons as unt
 boxes (one `glDrawArrays`), then one textured quad per sign's text. Text textures come from the text
 raster seam (`eden_rasterize_text_rgba`, one call per wrapped line, body face), outlined here by
 dilating the coverage, 256 texels across the board, mipmapped; an LRU cache keyed by (board kind, text),
-≤ 64 textures / 8 MB, nearest signs first, ≤ 4 built a frame. Shapes (D.4b resized them to Minecraft's
+≤ 256 textures / 24 MB (64 / 8 MB until 2026-10-17: past the 64 nearest a dense server spawn drew blank boards), nearest signs first, ≤ 4 built a frame. Shapes (D.4b resized them to Minecraft's
 2:1, the user 2026-10-10): a standing sign (a = 3) is a 1 × 0.5 board on a 0.5 post facing `c`; a wall
 sign is a 7/8 × 1/2 board centred on the face, 1/32 off it; on a face of a block with a `CMB1` record it
 fills the skin's 0.75 panel instead.

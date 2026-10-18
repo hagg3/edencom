@@ -23,6 +23,7 @@
 #include "EdenWorldExport.h"  // X.9: Legacy64z export for the .emod "Convert to 64z"
 #import "WorldProps.h"        // H.15: readWorldProperties / applyWorldProperties
 #import "Alert.h"            // showAlertConvertHeight (S.5e)
+#import "MpWorld.h"          // MP.3a: the session world
 
 // See FileManager.h. Both NULL on web — its Foundation shim already answers both questions the
 // way this port wants — and both installed by the native entry point.
@@ -186,6 +187,7 @@ FileManager::FileManager(){
 	single=this;
     genflat=FALSE;
     worldUnbounded=FALSE;
+    sessionWorld=FALSE;
     imgHash=NULL;
     convertingWorld=FALSE;
 	// PORT SEAM (Phase N Stage 2). Was NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,
@@ -510,6 +512,11 @@ void FileManager::saveWorld(Vector warp){
 	writeDirectory=FALSE;
 	Terrain* ter=World::getWorld->terrain;
 	NSString* name=ter->world_name;
+	// MP.3a: a session commits to RAM (engine plan §3.2); nothing reaches disk.
+	if(sessionWorld){
+		this->commitSession(warp);
+		return;
+	}
 	NSString* file_name=[NSString stringWithFormat:@"%@/%@",documents,name];
 	// Stage S / S.4: an `.emod` world appends a committed batch instead of rewriting a file -- no
 	// scratch copy, journal, backup slot or threshold apply (docs/save-load.md, "`.emod` worlds").
@@ -533,6 +540,10 @@ void FileManager::saveWorldKeepDynamics(){
     F3Scope _f3save(&g_f3.save_ms); g_f3.save_calls++;
 	writeDirectory=FALSE;
 	NSString* name=World::getWorld->terrain->world_name;
+	if(sessionWorld){   // MP.3a: the evict-save and the autosave, to RAM
+		if(!MpWorld::testNoEvictCommit)this->commitSession(World::getWorld->player->pos);
+		return;
+	}
 	if(isEmodName(name)){
 		this->saveEmodWorld(World::getWorld->player->pos);
 		return;
@@ -1785,7 +1796,9 @@ void FileManager::loadWorld(NSString* name,BOOL fromArchive){
 		ter->clearBlocks();
 	Player* player=World::getWorld->player;
     this->closeWorld();   // a previous session's `.emod` store (warp, re-load); no-op for `.eden`
-    worldTrailer.clear(); // D.3a: a brand-new world has none; the two load branches below read theirs
+    // D.3a: a brand-new world has none; the two load branches below read theirs. MP.3a: a session's
+    // trailer is filled from SIGNP and outlives its warps and reloads (MpWorld::endSession clears it).
+    if(!sessionWorld)worldTrailer.clear();
     if(emod::WorldSource::isArchiveName(cpstring(name))){
         // An archive that was not converted can't be played, and must never reach the .eden branch
         // below: its "header" is compressed bytes, which that branch would try to "upgrade" in place.
@@ -1797,7 +1810,9 @@ void FileManager::loadWorld(NSString* name,BOOL fromArchive){
         imgHash=NULL;
     }
     World::getWorld->player->reset();
-	if(!worldExists(cpstring(name),fromArchive)){
+	if(sessionWorld){
+        this->loadSessionWorld();   // MP.3a: no file, no convert gate, no directory
+    }else if(!worldExists(cpstring(name),fromArchive)){
      
         
         extern int g_terrain_type;
@@ -2249,6 +2264,57 @@ BOOL FileManager::loadEmodWorld(NSString* name){
     LoadModels2();
     this->loadTrailer(name,traw.empty()?NULL:&traw[0],traw.size());
     return TRUE;
+}
+
+// ---- MP.3a: the multiplayer session world (Classes/MpWorld.h; engine plan §2) -----------------
+// The `.emod` loader's shape with nothing read: the header is MpWorld's (synthesised from SPAWN, then
+// kept up to date by commitSession), seed 0 (the flat recipe = the server's base profile), always 256z
+// (World::loadWorld set the height), unbounded, no creatures, no golden cubes.
+void FileManager::loadSessionWorld(){
+    Terrain* ter=World::getWorld->terrain;
+    Player* player=World::getWorld->player;
+    const WorldFileHeader* h=(const WorldFileHeader*)MpWorld::header();
+    this->clearDirectory();
+    this->clearColumnSpans();
+    fm_resetGenerator();
+    file_version=FILE_VERSION_256Z;
+    eden_set_creature_slots(MAX_CREATURES_SAVED_MAX);
+    if(imgHash!=NULL){[imgHash release];imgHash=NULL;}
+    ter->level_seed=0;
+    ter->tgen->LEVEL_SEED=0;
+    World::getWorld->hud->goldencubes=0;
+    ter->home=h->home;
+    player->pos=h->pos;
+    player->yaw=h->yaw;
+    worldUnbounded=TRUE;
+    for(int i=0;i<4;i++)
+        for(int j=0;j<4;j++)
+            regionSkyColors[i][j]=defaultRegionSkyColors[i][j];
+    oldOffsetX=chunkOffsetX;
+    oldOffsetZ=chunkOffsetZ;
+    chunkOffsetX=windowOriginChunk(player->pos.x);
+    chunkOffsetZ=windowOriginChunk(player->pos.z);
+    int r=T_RADIUS;
+    for(int x=chunkOffsetX;x<chunkOffsetX+2*r;x++){
+        for(int z=chunkOffsetZ;z<chunkOffsetZ+2*r;z++){
+            readColumn(x,z,nil);   // seed 0, no directory: generateColumn's flat branch + the overlay hook
+            World::getWorld->terrain->counter++;
+        }
+    }
+    for(int i=0;i<MAX_CREATURES_SAVED_MAX;i++)creatureData[i].type=-1;
+    LoadModels2();
+}
+
+// What saveWorld*/the evict-save do in a session: the header follows the player (a warp's target is its
+// pos, as `.emod` stores it), then every modified resident column is diffed into the overlay.
+void FileManager::commitSession(Vector warp){
+    Terrain* ter=World::getWorld->terrain;
+    WorldFileHeader* h=(WorldFileHeader*)MpWorld::header();
+    h->pos=warp;
+    h->home=ter->home;
+    h->yaw=World::getWorld->player->yaw;
+    MpWorld::commitModified();
+    g_seconds_since_save=0;
 }
 
 // ---- Stage D / D.3a: the trailer model ------------------------------------------------------

@@ -15,6 +15,7 @@
 #import "Terrain.h"
 #import "Globals.h"
 #import "Frustum.h"
+#import "MpWorld.h"   // MP.5: MpWorld::active()
 
 
 #import "Resources.h"
@@ -259,7 +260,9 @@ typedef struct _entity{
 // `i<=nguys` loop would start treating the body as a creature. Never pass it to setState
 // (walkVoiceLast[] is sized nguys+1).
 #define PLAYER_BODY (nguys+1)
-static Entity guys[nguys+2];
+// MP.5: the remote players' bodies, after the player body and under the same rules.
+#define REMOTE_BODY(i) (nguys+2+(i))
+static Entity guys[nguys+2+MAX_REMOTE_BODIES];
 static Vector min[NUM_CREATURES];
 static Vector max[NUM_CREATURES];
 
@@ -766,6 +769,7 @@ void LoadModels2(){
     }
     guys[nguys].model_type=-1;
     guys[PLAYER_BODY].model_type=-1;   // H.12
+    for(int i=0;i<MAX_REMOTE_BODIES;i++)guys[REMOTE_BODY(i)].model_type=-1;   // MP.5
     for(int i=0;i<MAX_CREATURES_SAVED;i++){
         if( creatureData[i].type>-1&&creatureData[i].type<NUM_CREATURES&&creatureData[i].color>=0&&creatureData[i].color<256){
             
@@ -2551,6 +2555,17 @@ bool RenderModels()
         guys[PLAYER_BODY].pos.z+=World::getWorld->fm->chunkOffsetZ*CHUNK_SIZE;
         guys[PLAYER_BODY].pos.x+=World::getWorld->fm->chunkOffsetX*CHUNK_SIZE;
     }
+    // MP.5: the other players of a multiplayer session (no frustum test: at most MAX_REMOTE_BODIES).
+    for(int i=0;i<MAX_REMOTE_BODIES;i++){
+        Entity* r=&guys[REMOTE_BODY(i)];
+        if(r->model_type==-1)continue;
+        glColor4f(1,1,1,1);
+        r->pos.z-=World::getWorld->fm->chunkOffsetZ*CHUNK_SIZE;
+        r->pos.x-=World::getWorld->fm->chunkOffsetX*CHUNK_SIZE;
+        DrawModel(REMOTE_BODY(i));
+        r->pos.z+=World::getWorld->fm->chunkOffsetZ*CHUNK_SIZE;
+        r->pos.x+=World::getWorld->fm->chunkOffsetX*CHUNK_SIZE;
+    }
 	glDisableClientState(GL_NORMAL_ARRAY);
     glDisable(GL_LIGHTING);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -2878,7 +2893,7 @@ void DrawModel(int mi)
 // rather than by UpdateModels. Frame advance is UpdateModels' own start/end wrap; the state is
 // set directly (not via setState: no walk voices, and walkVoiceLast[] has no slot for it).
 bool PlayerBodyAvailable(){
-    return CREATURES_ON&&models[M_GREEN].nNumMesh>0;
+    return (CREATURES_ON||MpWorld::active())&&models[M_GREEN].nNumMesh>0;   // MP.5: a session loads models without creatures
 }
 void HidePlayerBody(){
     guys[PLAYER_BODY].model_type=-1;
@@ -2888,15 +2903,12 @@ bool PlayerBodyShown(Vector* pos){   // for --camera-selftest
     if(pos)*pos=MakeVector(guys[PLAYER_BODY].pos.x,guys[PLAYER_BODY].pos.y,guys[PLAYER_BODY].pos.z);
     return true;
 }
-void UpdatePlayerBody(int type,Vector feet,float yaw,int motion,float etime){
-    if(!PlayerBodyAvailable()||type<0||type>=NUM_CREATURES){
-        HidePlayerBody();
-        return;
-    }
-    Entity* e=&guys[PLAYER_BODY];
+// MP.5: one body slot posed from (type, feet, yaw, motion); the player's and every remote player's.
+static void PoseBody(int idx,int type,Vector feet,float yaw,int motion,float etime){
+    Entity* e=&guys[idx];
     int state=motion==PB_JUMP?DEFAULT_JUMP:(motion==PB_WALK?DEFAULT_WALK:DEFAULT_IDLE_START);
     if(e->model_type!=type){
-        ResetModel(PLAYER_BODY);
+        ResetModel(idx);
         e->model_type=type;
         e->state=-1;
         e->blinktimer=-1;
@@ -2923,4 +2935,27 @@ void UpdatePlayerBody(int type,Vector feet,float yaw,int motion,float etime){
     e->flash=0;
     e->ragetimer=0;
     e->onfire=FALSE;
+}
+void UpdatePlayerBody(int type,Vector feet,float yaw,int motion,float etime){
+    if(!PlayerBodyAvailable()||type<0||type>=NUM_CREATURES){
+        HidePlayerBody();
+        return;
+    }
+    PoseBody(PLAYER_BODY,type,feet,yaw,motion,etime);
+}
+void UpdateRemoteBody(int slot,int type,Vector feet,float yaw,int motion,float etime){
+    if(slot<0||slot>=MAX_REMOTE_BODIES)return;
+    if(!PlayerBodyAvailable()||type<0||type>=NUM_CREATURES){
+        guys[REMOTE_BODY(slot)].model_type=-1;
+        return;
+    }
+    PoseBody(REMOTE_BODY(slot),type,feet,yaw,motion,etime);
+}
+void HideRemoteBody(int slot){
+    if(slot>=0&&slot<MAX_REMOTE_BODIES)guys[REMOTE_BODY(slot)].model_type=-1;
+}
+int RemoteBodiesShown(){
+    int n=0;
+    for(int i=0;i<MAX_REMOTE_BODIES;i++)if(guys[REMOTE_BODY(i)].model_type!=-1)n++;
+    return n;
 }

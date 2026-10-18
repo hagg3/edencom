@@ -124,7 +124,8 @@ public:
     // Every sign index on this block (any face), in record order.
     std::vector<int> signsOn(const TrailerPos& block) const;
 
-    Result addSign(const TrailerPos& anchor, int face, int colour, int facing, const char* text);
+    // asIs: keep a/b/c whatever they are, as a loaded file does (a server's signs: MpWorld::applySign).
+    Result addSign(const TrailerPos& anchor, int face, int colour, int facing, const char* text, bool asIs = false);
     Result setSignText(size_t i, const char* text);
     Result setSignColour(size_t i, int colour);
     Result removeSign(size_t i);

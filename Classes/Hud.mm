@@ -18,6 +18,9 @@ extern bool pendingRespawnSound;
 
 #import "Alert.h"
 #import "GLDialog.h"
+#import "MpWorld.h"   // MP.3a: pause-menu gates
+#import "ChatFeed.h"   // MP.7: the feed and the chat button
+#import "Menu.h"
 
 extern float SCREEN_WIDTH; 
 extern float SCREEN_HEIGHT;
@@ -270,6 +273,7 @@ void Hud::genColorTable(){
 extern "C" int eden_gl_settings_available(void);   // port/src/seam/Settings_web.mm (both targets)
 extern "C" int eden_get_crosshair(void);           // Settings_web.mm: Settings > Interface > Crosshair
 extern "C" void eden_console_menu_open(void);      // Menu_web.mm (C.3): opens ConsoleMenu over the world
+extern "C" int  eden_chat_open(int slash);          // Menu_web.mm (MP.7): the Console screen on its Chat tile
 
 enum { PM_RESUME, PM_SAVE, PM_HOME, PM_PHOTO, PM_SETTINGS, PM_CONSOLE, PM_QUIT, PM_COUNT };
 static const char* kPauseLabels[PM_COUNT] = {
@@ -360,6 +364,10 @@ void Hud::layoutForScreen(){
     rmenu.origin.y=sT-45;
     rmenu.size.width=45;
     rmenu.size.height=45;
+    rchat.origin.x=s0x+50;   // MP.7
+    rchat.origin.y=sT-45;
+    rchat.size.width=45;
+    rchat.size.height=45;
    // }else{
     //    rjumprender.origin.y+=13;
     //    rjumprender.origin.x-=7;
@@ -547,29 +555,55 @@ void Hud::layoutPauseMenu(){
     using namespace GLW;
     ::Button* r[PM_COUNT]={&rresume,&rsave,&rhome,&rcam,&rsettings,&rconsole,&rexit};
     const bool withSettings=eden_gl_settings_available()!=0;
-    const int n=withSettings?PM_COUNT:PM_COUNT-1;
+    // MP.3a: a multiplayer session has no world file, no home and no thumbnail (engine plan §11), so
+    // Save Game (which also sets home), Warp Home and Take Photo go the way Settings does without a GL screen.
+    const bool session=MpWorld::active();
+    auto hidden=[&](int k){ return (k==PM_SETTINGS&&!withSettings)||(session&&(k==PM_SAVE||k==PM_HOME||k==PM_PHOTO)); };
+    int n=0;
+    for(int k=0;k<PM_COUNT;k++) if(!hidden(k)) n++;
     // Gap > 8pt on purpose: inbox2/inbox3 add 4pt of slop on every side, and a smaller gap would
     // let one release land on two buttons — handlePickMenu runs every matching action.
-    const float btnH=std::max(du(34),touchFloor());
+    const float btnH=controlH(34);
     const float gap=std::max(du(10),10.0f), pad=du(14), titleH=du(40);
     const float bw=du(240);
-    const float ph=pad+titleH+n*btnH+(n-1)*gap+pad;
-    const float pw=bw+pad*2.0f;
-    // I.2: centred on the safe rect. Whether the column FITS is I.4's job, not this one.
-    const CGRect safe=safeRect();
+    const CGRect safe=safeRect();   // I.2: centred on the safe rect
+    // I.4: one column when it fits the safe rect, else Resume full-width on top and the rest in
+    // pairs (a 320-point phone needs 7 rows otherwise). The gap between columns is the same > 8pt.
+    float ph=pad+titleH+n*btnH+(n-1)*gap+pad;
+    const bool twoCol=ph>safe.size.height;
+    int rows=n;
+    if(twoCol){
+        rows=1+(n-1+1)/2;
+        ph=pad+titleH+rows*btnH+(rows-1)*gap+pad;
+    }
+    const float colW=twoCol?bw*0.75f:bw;   // each of the pair: wide enough for "Quit to Menu"
+    const float fullW=twoCol?colW*2.0f+gap:bw;
+    const float pw=fullW+pad*2.0f;
     const float px=safe.origin.x+(safe.size.width-pw)*0.5f, py=safe.origin.y+(safe.size.height-ph)*0.5f;
     pauseKit->panel=CGRectMake(px,py,pw,ph);
     pauseKit->titleTop=py+ph-pad;
     float y=py+ph-pad-titleH-btnH;
+    int slot=0;   // visible-button counter
     for(int k=0;k<PM_COUNT;k++){
-        if(k==PM_SETTINGS&&!withSettings){
+        if(hidden(k)){
             r[k]->origin.x=r[k]->origin.y=-10000;          // off-screen: never hit
             r[k]->size.width=r[k]->size.height=0;
             continue;
         }
-        r[k]->origin.x=px+pad; r[k]->origin.y=y;
-        r[k]->size.width=bw;   r[k]->size.height=btnH;
-        y-=btnH+gap;
+        if(!twoCol){
+            r[k]->origin.x=px+pad; r[k]->origin.y=y;
+            r[k]->size.width=bw;   r[k]->size.height=btnH;
+            y-=btnH+gap;
+        }else if(slot==0){
+            r[k]->origin.x=px+pad; r[k]->origin.y=y;
+            r[k]->size.width=fullW; r[k]->size.height=btnH;
+        }else{
+            const int row=1+(slot-1)/2, col=(slot-1)%2;
+            r[k]->origin.x=px+pad+col*(colW+gap);
+            r[k]->origin.y=y-row*(btnH+gap);
+            r[k]->size.width=colW; r[k]->size.height=btnH;
+        }
+        slot++;
     }
     // The label is on the button now: each text rect IS its button (see the block comment above).
     rtSave=rsave; rtHome=rhome; rtCam=rcam; rtExit=rexit;
@@ -772,6 +806,10 @@ BOOL Hud::update(float etime){
                 }
                 
             }
+            if(MpWorld::active()&&!inmenu&&inbox2(touches[i].mx,touches[i].my,&rchat)){   // MP.7
+                eden_chat_open(0);
+                rchat.pressed=FALSE;
+            }
             if(inbox2(touches[i].mx,touches[i].my,&rmenu)){	
                 inmenu=!inmenu;
                 if(inmenu==TRUE){
@@ -870,6 +908,11 @@ BOOL Hud::update(float etime){
                 }
             }
             if(inbox3(touches[i].mx,touches[i].my,&rmenu)){
+                touches[i].inuse=usage_id2;
+                touches[i].down=M_NONE;
+                Resources::getResources->playSound(S_MENU_BUTTON_PRESS);
+            }
+            if(MpWorld::active()&&!inmenu&&inbox3(touches[i].mx,touches[i].my,&rchat)){   // MP.7: claims the touch
                 touches[i].inuse=usage_id2;
                 touches[i].down=M_NONE;
                 Resources::getResources->playSound(S_MENU_BUTTON_PRESS);
@@ -2320,6 +2363,11 @@ void Hud::render(){
 	
 	glColor4f(1.0, 1.0, 1.0, 1.0);
     
+	MpWorld::renderPeerTags();   // MP.5
+    if(MpWorld::active()){   // MP.7: the chat feed (inert) and the touch button
+        ChatFeed::renderHud(World::getWorld->menu&&World::getWorld->menu->showconsole);
+        if(!inmenu) ChatFeed::renderButton(CGRectMake(rchat.origin.x,rchat.origin.y,rchat.size.width,rchat.size.height),rchat.pressed);
+    }
 	sb->render();
     // Crosshair: a small cross with a gap at the screen centre (where mouse mine/build aims), drawn
     // dark first then light so it reads on any background. Hidden with no tool in hand and while a
@@ -2440,7 +2488,7 @@ void Hud::render(){
 }
 
 void Hud::asetHome(){
-    
+    if(MpWorld::active())return;   // MP.3a: the server's SPAWN is a session's home
     Vector thome;
     Vector pp=World::getWorld->player->pos;
     thome.x=pp.x-.5f;
@@ -2458,6 +2506,7 @@ void Hud::asetHome(){
 
 }
 void Hud::awarpHome(){
+    if(MpWorld::active())return;   // MP.3a: no Warp Home in a session (death still respawns at SPAWN)
     delayedtimer=2;
     delayedaction=6;
     

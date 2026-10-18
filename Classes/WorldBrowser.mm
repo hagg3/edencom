@@ -697,6 +697,7 @@ struct BrowserImpl {
         m->sbar->setStatus([NSString stringWithFormat:@"Downloaded %@", node->display_name], 4);
         dlStatus.clear();
         open = false;                        // back to the menu, the new world selected (the DOM does the same)
+        m->showhome = FALSE;                 // I.7: on My Worlds, even when opened from the home screen
         search.blur();
         dropPreview();
     }
@@ -751,9 +752,8 @@ static void wb_layout(BrowserImpl* d) {
         d->search.setPlaceholder(d->official() ? "Search world names" : "Search names, authors, tags");
         d->noPreview.set("No preview", du(16), UITextAlignmentCenter, 0, FACE_BODY);
     }
-    const float tf = touchFloor();
-    d->pitch = std::max(du(28), tf);
-    d->btnH = std::max(du(30), tf);
+    d->pitch = controlH(28);
+    d->btnH = controlH(30);
     const float m = du(12), pad = du(12), gap = du(8);
     const CGRect safe = safeRect();   // I.2
     float pw = std::min((float)safe.size.width - 2.0f * m, du(900));
@@ -834,11 +834,14 @@ static void wb_layout(BrowserImpl* d) {
     }
     for (int r = 0; r < vis; r++) {
         const int v = s.first + r;
-        const std::string t = v < (int)s.view.size() ? s.all[(size_t)s.view[(size_t)v]].name : std::string();
-        if (!d->rowBuilt[r] || t != d->rowText[r]) {
+        const Entry* re = v < (int)s.view.size() ? &s.all[(size_t)s.view[(size_t)v]] : NULL;
+        const std::string t = re ? re->name : std::string();
+        const std::string key = re ? re->name + "\n" + re->date : std::string();   // I.5: date inline
+        if (!d->rowBuilt[r] || key != d->rowText[r]) {
             d->rowBuilt[r] = true;
-            d->rowText[r] = t;
+            d->rowText[r] = key;
             d->rows[r].setTitle(t.c_str(), du(19));
+            d->rows[r].setDetail(re ? re->date.c_str() : "", du(14));
         }
         d->rows[r].setSelected(v == s.selected && v < (int)s.view.size());
     }

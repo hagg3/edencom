@@ -239,6 +239,7 @@ typedef struct bnode{
 	int pid;
 	int sid;
 	int type;
+	int mpLit;   // MP.4: lit by this player in a session (its fuse running out sends the follow-up mine)
 	struct bnode* next;
 }BurnNode;
 

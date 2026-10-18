@@ -83,6 +83,240 @@ compressed, the innermost stream converted), lands `<id>.emod` (or `<id>-N.emod`
 download (`<saves>/.emod-download`; previews go to `.emod-preview.png`). The S.5 pre-flight free-space
 check applies (docs/save-load.md "Converting, importing, pairing").
 
+## Multiplayer transport and session (Stage MP, MP.1/MP.2)
+Plain C++ in `port/src/net/` (no `Classes/` includes; compiled into `eden_native` via `EDEN_SHARED_OTHER`,
+`ws2_32` on Windows). Wire spec: `ewb-server/docs/protocol.md`; plan: `WORKING/multiplayer-engine-plan-2026-10-17.md` §4.
+- `NetSock` — non-blocking TCP (POSIX + Winsock): `tcpConnect` with a deadline and `CONN_DNS/REFUSED/TIMEOUT/OTHER`,
+  `sendSome`/`recvSome` (`IO_WOULDBLOCK`, `IO_ERROR`, 0 = closed), loopback listen/accept for the selftests.
+- `LineFramer` — `\n` framer. Cap 8192 bytes per line, 64 MB for a line starting `SNAPZ:`. A `\r` is kept (protocol).
+- `Snapz` — `SNAPZ:<count>:<b64>`: unpadded base64, raw DEFLATE, exactly `count*20` bytes of five LE int32
+  (`x y z flag type`). Rejects a count the payload cannot hold (deflate caps at ~1032:1), short/long/trailing data.
+  Records come out in wire order; merging a cell's flag 0 / flag 3 and bucketing by column is `MpWorld::mergeSnapz` (below).
+- `MpSession` — one connection. `start()` runs a thread: connect (3 s) -> `JOIN:name:type:password:zr` (+ `SIGNQ`,
+  `REGION` back to back, as retail) -> welcome (10 s) -> `PING` every 10 s, `PONG` silence > 30 s is `Lost`. Output is
+  `MpSideEvent` (stage, welcome, rename, chat, spawn, caps, peer movement, pong RTT, the one terminal `Error`) and
+  `MpWorldEvent` (`ACTION`, `SIGNP`, `SNAPZ`, in server order) queues drained by the main thread. `MpError` carries the
+  UI plan §7 causes (`ServerFull`, `WrongPassword`, `InvalidName`+reason, `NoWelcome`, `ServerClosed`+last `[Server]` line,
+  `Lost`, ...). Name/password with `:` are refused locally; `characterType` is clamped to 0..10; `zr` is sent verbatim.
+- Gates: `--net-selftest`, `--mp-selftest` (offline against an in-process mock, every CI leg) and `port/tools/mp-live-gate.sh`
+  (both with `--server=` against a local `edenserver`). `feedLine()` runs one recorded line through the same parser with no
+  socket (`--mp-replay`). The join flow that starts one is `native/src/seam/MpLink_native.mm` (MP.3b, below); it runs
+  `MpSession` with `joinBurst` off, so `SIGNQ` and `REGION` go out after `SPAWN`, at its lattice point.
+
+## The session world (Stage MP, MP.3a)
+`Classes/MpWorld.{h,mm}`; plan `WORKING/multiplayer-engine-plan-2026-10-17.md` §2, §3, §11. A multiplayer session has
+**no file**. `FileManager::sessionWorld` is set by `MpWorld::beginSession(host, port, name)` and cleared by `endSession()`
+(`World::exitToMenu`). The world's name is `mp:<host>:<port>`, which is never a path: every site that would open
+`<docs>/<world_name>` checks `sessionWorld` first (`prepareAndLoadGeometry`'s two file handles, `takeScreenshot`).
+- **The world** is the flat recipe (`TerrainGenerator::generateColumn`'s `LEVEL_SEED==0` branch: bedrock 0, stone 1-15,
+  dirt 16-31, grass 32 — `ewb-server`'s base profile) at **256z** (`World::loadWorld` skips the height probe), seed 0,
+  unbounded, Render distance **capped at 9** (one 128-block `REGION` lattice point covers that window, §6.1).
+  `FileManager::loadSessionWorld` is the `.emod` loader's shape with nothing read: pos/home/yaw from `MpWorld::header()`
+  (synthesised: `SPAWN` via `setSpawn`, else `(65536.5, 34, 65536.5)`), default region skies, no creatures, 0 golden cubes.
+- **The overlay**: per chunk column (`cx<<15|cz`), a sorted `std::vector<uint32_t>` of `idx16<<16 | type8<<8 | colour8`,
+  `idx = x*4096 + z*256 + y` (CC order at 256z). A cell equal to flat (recipe type, colour 0) is never stored. Cap
+  `MpWorld::overlayCapBytes` (48 MB, `--mp-overlay-mb`): past it the non-resident columns farthest from the player go whole
+  (the next `REGION` refills them).
+- **Merging** (main thread): `mergeSnapz` takes one frame, buckets it by column and does one sorted merge a column. A *burst*
+  is the frames up to and including the first with < 3000 records; the first record of a cell in a burst replaces what the
+  overlay held, later ones (its flag 0 / flag 3 partner, possibly in the next frame) refine it. Flag 3 alone = the recipe's
+  block, painted. Out-of-range cells (x or z outside 0..524,287, y outside 0..255) and bad values are dropped and counted.
+  `applyAction` (overlay half of §8.2: a peer's build only into air or liquid, a mine makes air, a paint needs a block,
+  a burn does nothing; `server` restores are raw) and `applySign` (SIGNP → the session trailer, text cut to 95) are the
+  other two inputs. These are the offline path (`--mp-replay` legs 1, 2, 5); a live session queues (MP.3b, below).
+- **Landing**: the flat branch calls `MpWorld::applyDelta(column, cx, cz)` after the recipe and **before** the `GBLOCK` copy
+  and `addChunk`, so `blockarray`, R.2's `typesEmpty`, light, shadows and portals all see final voxels. `resetForReuse` zeroes
+  `pcolors`, so a recycled slot never leaks paint. During the initial load this runs on the load pthread against a frozen
+  overlay (nothing merges while `doneLoading==1`).
+- **Commit to RAM**: `saveWorld()`/`saveWorld(warp)` (bulk reload, warp, Save, exit) and `saveWorldKeepDynamics()` (the ring's
+  evict-save, autosave) call `FileManager::commitSession`: the header follows the player, then `MpWorld::commitModified()` diffs
+  every resident column with a `modified` chunk against flat into its delta and clears `modified`. So local results nobody
+  sent (fire, liquids, blasts) survive a walk out and back, as in singleplayer. Nothing reaches disk; the session trailer is
+  kept across warps (`loadWorld` only clears it outside a session).
+- **Off in a session (E11)**: creatures (`MpWorld::gateCreatures` under `SettingsMenu`'s write; the player's choice comes back
+  on exit), command-block triggers and presses, console lines with a world verb (`tp set fill paint explode fire spawn time gold
+  run if unless`: refused whole) and `world.*` writes, sky paint, Warp Home / Save Game (which sets home) / Take Photo (hidden in
+  the pause menu; death still respawns at the session's home = `SPAWN`), golden-cube pick-up (a streamed one is walked through)
+  and placement (purse 0), the H.8 fire rules (`eden_reapply_fire_flags`).
+- **Gate**: `--mp-replay=port/tools/fixtures/mp/replay-1.lines` (every CI leg, iOS-sim included). The fixture is a real
+  `edenserver` stream recorded by `port/tools/mp-replay.py record` (a builder edits near the spawn and a far point, a recorder
+  joins, asks two `REGION`s and sees five live `ACTION` relays; the spawn reply is three frames with a flag 0/3 pair across a
+  boundary). Its `.expect` is `mp-replay.py expect`'s own decode over flat (`--check` in CI). Legs: 1 the joined window's hash
+  equals it; 2 local edits survive a walk out of the window and back (`--mp-mutate=noevictcommit` fails); 5 a teleport's bulk
+  reload equals the expected window there and a fresh join at it (`--mp-mutate=nolandhook` fails 1 and 5); plus the gates above
+  and "nothing written to the save directory".
+
+## The live world (Stage MP, MP.3b)
+Plan §5-§7; code `Classes/MpWorld.mm` (second half), `Terrain::setCellState`, `native/src/seam/MpLink_native.mm`.
+- **The link.** `MpWorld::Link` (`pump`, `sendLine`, `release`) is the host's half; MpWorld owns it from `setLink` and calls
+  `pump()` once a frame from `MpWorld::tick()`, which `World::update` calls first in **every** mode (menu, play, under a
+  `GLDialog` or Settings): so no host loop needs a hook. `release()` comes from `dropLink()`/`endSession()` (deferred to the
+  end of the tick when called inside `pump`). The native link drains `MpSession`'s queues into `enqueueSnapz/Action/Sign`.
+- **The queue.** The world stream is applied in server order, FIFO: an event the budget defers holds back everything behind
+  it. A SNAPZ frame merges its columns that are not resident at once (`mergeRecs`, cheap) and walks its resident cells one
+  at a time (a cell's adjacent flag 0/3 records coalesce); an `ACTION` on a resident cell is §8.2's rule on the chunk's state;
+  `SIGNP` upserts the trailer (`SignRenderer` reads it each frame). Bursts end explicitly: the pacer queues an `EndBurst`
+  behind a frame of < 3000 records, or after 300 ms of quiet.
+- **Step 5c** (`MpWorld::update`, after `CmdScript::update`, before `prepareAndLoadGeometry`; also in the two modal
+  early-outs): play only, never while `doneLoading`. Budget **2 ms or 24 dirtied chunks** (a write counts its chunk and the
+  6 neighbours `updateChunks` queues; one write may overshoot by 6). A backlog older than 2 s shows "Syncing..." in the HUD
+  status bar. Before the window loads, `tick()` drains into the overlay at **8 ms** a frame (the join's Syncing step).
+- **Resident writes** go through `Terrain::setCellState(x,z,y,type,colour)` (factored out of `CmdScript`'s `setCell`, which
+  keeps its refusals): liquid source out/in, lightbox light out/in, `updateChunks` (air drops signs and `CMB1`), the paint,
+  `refreshChunksInRadius` for lights. No particles or sounds. That is how restores and a peer's builds land; a peer's mine,
+  burn and paint use the engine's primitives since MP.4 (next section).
+  The chunk goes `modified`; the overlay of a resident column is only made exact by a commit.
+- **The pacer** (VuencLink `region.rs`'s rules): the point is `128·floor(p/128+½)` on each axis, switched when the player is
+  more than 72 blocks from it; re-asked every time it becomes current (never deduplicated); one request in flight; 750 ms
+  after a reply ends; no frame within 3 s = *unanswered* (not empty), re-asked after the gap, 3 times, then left until the
+  point changes; points outside 0..0xFFFFFF never sent. `serverSpawn` (a mid-session `SPAWN`) warps and sets the point.
+- **Reconcile** (§6.3) when a reply that answered our `REGION` is applied: every cell of the columns within ±208 of the point
+  that the burst didn't name (nor an `ACTION` relayed inside it) goes back to flat — resident columns are committed first,
+  then written cell by cell under the budget; non-resident ones lose the entries in one pass. Spared: cells
+  `noteLocalEdit` (MP.4's intent sites) stamped at or after that `REGION` went out; stamps older than it are pruned.
+  `--mp-reconcile=0` turns it off; an unsolicited burst (legacy push, a late reply) merges without reconcile.
+- **The join** (`MpLink_native.mm`, §7): Connecting → welcome → `CAPS:region` then ≤ 500 ms for `SPAWN` (no CAPS in 1 s =
+  the legacy push: no `REGION`) → `beginSession`, `setSpawn`, `SIGNQ`, `startRegions` → Syncing until `joinReady()` (the
+  first reply applied, or its point unanswered 3 times) → `openSession` (Loading) → Play (`setPlaying`; an `[mp] mp.join`
+  line with the phase times). A failure before Loading puts "Couldn't join: ..." on the menu status bar; in play (or once a
+  load that failed lands) the "Disconnected" dialog offers **Reconnect** (a fresh join after `exitToMenu`) and **Exit**.
+  Entry: `eden_mp_join(host, port, name, type, password)`; `--mp-join=HOST[:PORT]` (interactive, or `--headless` as a gate).
+- **Gates**: `--mp-replay` leg 3 (a `server` restore and peer edits land in the frame they drain; a refused local mine and a
+  re-`REGION` → grass again; a cell edited after the `REGION` is spared, and reconciled by the next reply; walking 80 blocks
+  asks the next point, 3 unanswered asks, then quiet; walking back re-asks; `--mp-mutate=noreconcile` fails) and leg 4
+  (614,400 records through the whole join flow, an `mp.join` line; a 2,000-cell relay storm, an `mp.storm` line; ≤ 24
+  chunks a frame). Live: `port/tools/mp-replay.py live --edenserver PATH` (Emod's joined window hash = the tool's decode of
+  a recorder client's reply). Mac numbers 2026-10-17: 614k records decode 23 ms, sync 25 ms over 3 frames (worst 12.7 ms),
+  playable 100 ms; storm 32 frames, worst 1.7 ms; live join to a local server 101 ms.
+
+## Edits out and in (Stage MP, MP.4)
+Plan §8-§10; code `MpWorld::intent*` (end of `Classes/MpWorld.mm`), `applyActionLive`, `Terrain::update`'s burn list,
+`SignTool::answer`.
+- **Out, at the intent sites.** `Player::processInput`'s build (tap, jump-and-build, every sub-cell of the H.7 double brush),
+  mine, burn and paint, and the portal exit's two clearing mines, call `MpWorld::intentBuild/Mine/Burn/Paint(x, z, y)` (Terrain
+  order) in place of the `Terrain` call. Outside a session that is the plain call. In one, the target and y ± 1 are read
+  before and after, and each cell that changed sends one line: became air → `ACTION:x:y:z:1`; another type → `…:0:<type>`
+  then `…:3:<colour>` if painted; same type, another colour → `…:3:<colour>`. Paint left on air (`destroyBlock` keeps it for
+  TNT colour) is not an edit. So a door or portal goes out as both halves (U1: retail unknown), a ramp as its oriented id.
+  Each sent cell is stamped `noteLocalEdit` (reconcile's exemption).
+- **Burns (E10).** `intentBurn` sends `…:2` only for an `IS_FLAMMABLE` target (the server deletes whatever it is told to
+  burn) and sets the cell's `BurnNode::mpLit`. In `Terrain::update`, a node with `mpLit` whose fuse runs out on time
+  (`time <= 0` with the cell still solid) calls `MpWorld::burnFuseOut` → `…:1`, before the blast. A node ended by its cell
+  going air first (a restore's or a peer's mine) sends nothing, so a refused burn is never mined again by our echo. Spread,
+  blasts, fills and the 300-fire valve are never sent: the server simulates them, reconcile settles the difference.
+- **Signs in** (fixed 2026-10-17): `applySign` adds a server's sign with `addSign(…, asIs)`, keeping `a/b/c` as sent (server sidecars
+  carry `b = 0`, which the editor's range check refused, so those signs never appeared), and cleans the text to SGN1's 95
+  printable ASCII (a UTF-8 sequence → one `?`; the server allows 256 bytes of any non-control text).
+- **Signs.** `SignTool::answer`, after a successful place or edit, sends `SIGNP:x:y:z:a:b:c:text` (the sign as stored: the
+  wire's y is the trailer's z, §10). An emptied sign (removed) sends nothing, as retail.
+- **In.** A `server` restore and a peer's build stay state-level (`setCellState`). A peer's mine is `destroyBlock` (break
+  particles, door/portal pairs, light, liquid source; a mine on air is nothing), a burn `burnBlock(FALSE)` on a flammable
+  resident cell (the fire, blast, firework or fill runs here, as on every retail client; nothing is sent, `mpLit` stays 0),
+  a paint `paintBlock` on a non-air cell (doors in pairs; colour 0 strips). Non-resident cells keep the overlay rules.
+  These are engine primitives, never `intent*`, so a relayed edit cannot be sent again.
+- **Gates.** `--mp-replay` leg 6 (the lines each intent sends, E10's three cases, the sign line, a peer's paint/mine/burn
+  through the engine, nothing sent while applying them; `--mp-mutate=echo` fails it; an `mp.edits` line). Live:
+  `port/tools/mp-replay.py edits --edenserver PATH` runs a watcher and a builder Emod plus a recorder socket: the watcher's
+  window from the relays alone, and both after a closing reconcile, equal the tool's decode of a fresh `REGION`; every
+  `ACTION` the builder sent is relayed exactly once and the watcher sends none (`--mutate echo` fails); the sign reaches the
+  watcher, the relay and `eden_signs.txt` unchanged.
+
+## Remote players (Stage MP, MP.5)
+
+Other players arrive as `POS` / `VEL` / `POSVEL:name:type:…` lines (the server never echoes a sender's own), become side events
+(`MpSideEvent::Peer`), and `MpLink_native` hands them to `MpWorld::peerSeen` (skipping our own name). Engine order (y up), blocks/second.
+- **Peers** (`MpWorld.mm`, up to `MAX_REMOTE_BODIES` = 16, the rest not drawn): last report (`target`, `vel`) and a shown `pos`.
+  Each frame (`update()`, play only) `pos` glides (rate 10/s) to `target + vel × age` (age capped at 0.6 s); farther than 12 blocks = snap.
+  Yaw follows the horizontal velocity heading (the player's yaw convention), motion = jump if |vy| > 2, walk if h-speed² > 0.25.
+  A peer is dropped by the server's `<name> has left.` (a `[Server]` chat line → `peerLeft`) or after 30 s without any line.
+- **Avatars**: `Model.mm` `REMOTE_BODY(i)` slots after the H.12 `PLAYER_BODY`, same rules (outside every `i<nguys` loop, never saved, never
+  picked, `PoseBody` shared with `UpdatePlayerBody`). `characterType` 0..10 → one of the 7 shipped models (`MpWorld::avatarModel`:
+  Green, Moof, Batty, Nergle, Stumpy, Charger, Stalker, then Green, Moof, Batty, Nergle; the meaning of vanilla's types is unsettled).
+  **A session now loads the creature models** (`World.mm`: `CREATURES_ON || MpWorld::active()` at load, unload and `RenderModels`) although
+  creatures stay off (E11); `PlayerBodyAvailable` accepts the same.
+- **Name tags**: `MpWorld::renderPeerTags` from `Hud::render` (before the status toast; not in camera mode or with the UI hidden): the head
+  point is projected by hand from `Camera::viewPoints`, `eden_fov_degrees` and `P_ASPECT_RATIO` into the HUD point space; a `GLW::Label` in a
+  dark pill, 64 blocks range. **Tags are not occluded** by terrain.
+- **POSVEL out**: `update()` sends the player's `pos` + `vel` at ≤ 4 Hz while either moved (> 0.01), else 1 Hz (which keeps the server's saved
+  position fresh and peers' 30 s timer from firing). `--mp-replay` leg 7 pins the rates, the format, the glide, the snap and leaving.
+- **Left for later:** no avatar for the vanilla-only models; peers show no hit/burn/edit animation; tags ignore terrain; who is online is
+  "seen" only (MP.7's list).
+
+## Server list and join screens (Stage MP, MP.6)
+
+The home **Multiplayer** tile opens `Classes/ServerListMenu` (list, detail pane, Connecting window, error dialogs) and
+`Classes/ServerFormMenu` (Add/Edit server, Profile). They reach the network side only through the C seam
+`Classes/MpServers.h` (implemented by `native/src/seam/MpServers_native.mm` over `port/src/net/ServerList`, and by
+`MpLink_native.mm` for the join's progress), so `Classes/` still never includes `port/src/net`.
+- **`servers.txt`** sits in the documents root (`eden_platform_documents_root()`, so `--docs` isolates harness runs):
+  header `emod-servers 1`, then `label<TAB>host<TAB>port<TAB>password<TAB>cache`; `cache` is `k=v;…` (keys `name`, `motd`,
+  `flags`, `players`, `max`, `locked`, `seen`), values percent-escaped (`% ; = TAB CR LF`). Unknown keys and unparsable lines
+  are kept and written back. ≤ 100 rows; written tmp + rename (Windows removes first). A password containing `:` is
+  refused (the JOIN line is `:`-separated).
+- **Probe** (`probeServer`, `ServerProber`): TCP connect (ping = connect time, 3 s), send `INFO\n`, read one line for 1.5 s.
+  `INFO:` → Online (name, motd, players/max, locked, flags; remote text is capped and cleaned), `[Server] Server full.` →
+  Full, anything else or silence → "Online, no details" (a vanilla server). Never sends JOIN. ≤ 8 probes in flight on
+  lazily started worker threads that only turn sockets into plain results (drained on the main thread by
+  `eden_mp_servers_poll`); a generation counter drops results after a cancel. Probes run on open and on Refresh only, no
+  polling. A good INFO overwrites the row's cache (`seen` = now); a blank label takes the INFO name.
+- **Profile**: `mp_name` / `mp_character` (0..6) in NSUserDefaults; the first join asks for a name first.
+- **Join**: `eden_mp_join` → `MpLink_native`, whose stages (`EDEN_MP_JOIN_*`: Connecting, Joining, Receiving world,
+  Loading world + %, Playing, Failed + `EDEN_MP_ERR_*` + sentence) drive the Connecting window. A locked row without a
+  remembered password prompts first (secure field, "Join and remember"); a wrong password marks the row locked and prompts
+  again. Cancel works until Loading. Escape/Back goes form → cancel join → home (`eden_server_list_back`).
+- **Harness**: `--mp-mock` / `eden_mp_servers_mock(1)` is a 7-row fixture with canned probe results (no sockets, nothing
+  written; 2 = empty list). `--shot` captures `mp-*`; `--ui-selftest` drives add/validate/save, profile-first join,
+  Connecting + Cancel against a silent listener, delete, the secure prompt and the keyboard rule; `--mp-selftest` covers
+  the file format, address/name rules and the probe against mock sockets.
+- **Left for later:** the `INFO` verb on the server side (MP.9; until then every server reads "Online, no details"); the
+  pause menu still says "Exit" in a session. The text raster is ASCII-only, so non-ASCII remote names/MOTDs degrade.
+
+## Matchmakers (Stage MP, MP.8)
+
+- **Setting**: Experiments › Matchmakers, `mp_matchmakers`, the port's first **`KIND_TEXT`** row (`Settings_web.mm`: value in
+  `g_text[]`, persisted as an NSString under the key, `eden_settings_text` / `eden_settings_set_text`; not a Console cvar, and
+  `eden_settings_set` ignores it). Comma-separated `host[:port]`, default port **27020**, ≤ 8 addresses, ≤ 512 bytes, empty = off.
+  `SettingsMenu` shows a button ("None, Add" / "2 addresses, Edit") that opens `GLDialog::prompt`; Save validates the whole list
+  with `parseMatchmakers` (the server form's address rule) and a bad entry rejects it with a dialog naming it. The stored text is
+  the cleaned `host:port, host:port` form.
+- **Fetch** (`port/src/net/ServerList`): `fetchMatchList` = connect (3 s), `LIST\n`, read `SERVER:<name>:<ip>:<port>:<locked>[:<players>[:<flag6>]]`
+  lines (the 4-, 6- and 7-field forms) to `END` (5 s), close. `MatchFetcher` runs one short-lived thread per address (≤ 8), results
+  are plain data on a locked queue drained by `eden_mp_matchmakers_poll`; a generation counter drops results after a cancel. It runs
+  when the Matchmakers tab is shown and on Refresh, never polled. Rows from all matchmakers merge, de-duplicated by `ip:port`, players
+  descending then name; a matchmaker that fails adds to "n of m matchmakers did not answer" (the empty state).
+- **Screen**: with at least one address the list screen's titlebar shows a `TabRail` **My servers · Matchmakers** in place of the
+  title. A listing is a row with no ping (name; `host:port - via <matchmaker>`; players; lock), the pane says what little it knows, the bar
+  is **Save** (copies the row into `servers.txt` with its name, lock state and a probe, then shows My servers with it selected) ·
+  Refresh · **Join** (a direct connect: a locked listing prompts for the password, a failure offers "Save server"). Plan §2.3's per-matchmaker
+  group headings are not drawn; the source is on each row's second line.
+- Seam: `Classes/MpServers.h` `eden_mp_matchmaker*`; `--mp-mock` gives two addresses and four canned listings.
+  Gates: `--ui-selftest` (setting cleaned / rejected / capped, tab, sort, Save), `--shot` `mp-list-matchmakers`.
+
+## Chat (Stage MP, MP.7)
+
+- **`Classes/ChatFeed`** owns the chat: a 200-line scrollback (`Console::Line` kinds `K_CHAT` / `K_SERVER` / `K_SELF` / `K_CMD` / `K_NOTICE`),
+  the HUD feed, sending and the touch button. `MpLink_native.mm` feeds it (`addWire`: relayed chat as `name: text`, `[Server]` lines
+  with the welcome and MOTD kept in the scrollback); `MpWorld::beginSession` resets it.
+- **Sending**: `send()` strips control bytes, trims, cuts at 256 bytes (UTF-8-safe), and sends `MSG:text` through `MpWorld::link()`. Plain
+  text is echoed at once as `You: text` and passes a client bucket (0.5/s, burst 5, the server's defaults); a refused line (`TOO_FAST`)
+  stays in the field with a red notice line. A line starting `/` is a server command: exempt from the bucket, echoed as `> /cmd`,
+  and `/login …` is echoed `> /login ****` and never kept in the Up/Down history (50 lines).
+- **HUD feed** (`ChatFeed::renderHud`, from `Hud::render` after the peer tags, so Hide HUD hides it): top-left of the safe rect under the
+  pause gear, ≤ 45% of the safe width / 420 pt, the newest 5 lines (3 on a screen under 360 pt high), each on a dark 85% backing, fading
+  after 10 s; `[Server]` amber, own lines lime. It claims no touches. It is not drawn while the Console screen is open.
+- **Panel**: the Console screen. In a session the rail has five tiles, **Chat · Players · Console · Variables · Help**, and `T`
+  (keybind `chat`), `/` (`chatCommand`; opens with `/` typed) and the touch chat button (right of the pause gear, lime dot for unseen
+  lines) open it on Chat via `eden_chat_open`; the `` ` `` key and the pause menu's Console button still open it on the Console tile. The
+  Chat tab is the Console tab's scrollback + field with `ChatFeed`'s lines; Chat and Console keep separate drafts in the one field.
+  Desktop closes the panel after a send (and on Enter in an empty field); touch keeps it open. On touch the field is prose (autocorrect
+  on) until the text starts with `/`; desktop stays in code mode so Tab (complete a player name) and Up/Down (history) reach it.
+- **Players tile**: you, then the players `MpWorld` currently tracks (joined, moved or spoke; dropped on `has left.` or 30 s of silence),
+  with the distance in blocks. A tap puts `/msg name ` in the chat field. The protocol has no who-is-on query, so this is "seen",
+  not "online".
+- Not built (plan §8.4): the hold-Tab player overlay, "server reports n" in the Players header (needs MP.9's `INFO`), the model name per
+  player, and Chat-specific `--shot` pages (`hud-chat`, `chat`, `players`; they need a live session).
+- Gates: `--mp-replay` leg 8 (lines in, `MSG:` out, `:` safe, the bucket, `/login`, the panel, Players, the feed's cap and fade).
+
 ## Client files (stock; seam-excluded on the port)
 - `Classes/ShareUtil.mm` — endpoint knowledge and orchestration. Current endpoints
   (the `static NSString*` URLs near the top; note this community fork repointed them, and the file

@@ -47,7 +47,7 @@ with OpenGL by the game itself. There is **no UIKit UI** beyond the GL view (and
   controls `GLW::Toggle` (split pill), `GLW::Slider` (SUNKEN track + RAISED thumb, a
   beginDrag/dragTo/endDrag protocol that reports only snapped changes), `GLW::Stepper` (`[-] value
   [+]`, which is also the kit's cycler) and `GLW::TextField` (below). **Stage 5.6 (2026-10-06)
-  added** `GLW::ListRow` (a selectable list entry: hairline separator, the CSS selection TINT plus a
+  added** `GLW::ListRow` (I.5 `setDetail`: a right-aligned muted date, drawn only when it fits; a selectable list entry: hairline separator, the CSS selection TINT plus a
   4u lime bar), `GLW::ScrollView` (a list's scroll model + `.eden-scrollbar`; **row-snapped**,
   because the kit has no clipping — no scissor through the translator's letterboxed, render-scaled
   FBO path — so a half-visible row would draw outside its box), `Button::setTone()` (positive /
@@ -64,7 +64,7 @@ generated `Classes/UIIcons.h`, white art tinted at draw time; loaded on first us
 P.15 a non-mip load builds no chain, and its `LINEAR_MIPMAP_LINEAR` filter then sampled an incomplete
 texture: every icon a black square until U.5 caught it — LINEAR + clamped unlike the engine's NEAREST art), `GLW::IconRail` (the vertical `.eden-tabrail`: 64u RAISED icon
 tiles in a 72u rail, selected/held PRESSED, disabled tiles muted and inert, no count cap — it scrolls
-by whole tiles of its own when they overflow, with no visible bar), the toggle restyled to the
+by whole tiles of its own when they overflow; I.6: a dark fade + chevron over the clipped end says so), the toggle restyled to the
 reference (heavy 2u gray-800 keyline, gray-500 off half, `Toggle::designW()/designH()` = 104×34u) with
 a **muted** state (lighter, still opaque, display-only), `Button::sizeToFit(padX)` (`.eden-btn--sm`
 shrink-wrap from `Label::width()`, 64u floor; `fitWidth()` for right-aligning) and
@@ -83,7 +83,17 @@ fit, a row taller than the view still shows; `rowOffset()`; content drags walk t
   is missing. **Density (2026-10-05):**
   `GLW::touchFloor()` is the 44pt floor on the touch profile and 0 otherwise, and the floor
   raises HIT BOXES, not art — `Button`/`Toggle`/`Slider`/`Stepper` take `setHitRect()` — so a
-  desktop screen lays rows out at ~30u and a touch one at 44pt. **It applies the `SCALE_*` corrections itself**, so
+  desktop screen lays rows out at ~30u and a touch one at 44pt. **I.3 (2026-10-17; modified):
+  the 44 is OS points** (iOS pt, macOS pt), converted by the seam's
+  `eden_display_window_pt_per_point()`: ~36 engine points on an iPhone 16 (1.23 iOS pt each), 38
+  on an iPhone SE, 24 on an iPad Air 2 (1.80), 44 headless. It was 44 *engine* points = 54/79 iOS
+  pt, the phone's "huge padding" finding. `GLW::controlH(designU)` = `max(du(designU),
+  touchFloor())` is the one height token (Menu, WorldBrowser, pause menu, Console, GLDialog). `u()`'s
+  0.70 floor stays: 0.55 on touch was tried from shots and dropped (hint text ~10 iOS pt, the
+  `railFrame` panel narrower than the phone, labels built at the old scale clipped). Every kit
+  control's `render()` feeds `GLW::debugRecordControls`/`debugControlsOutside`, `--fit-selftest`'s
+  recorder. The collapsed Console strip now anchors to `safeRect()` (the gate found it under the
+  island). **It applies the `SCALE_*` corrections itself**, so
   the caller works entirely in point space with y up — the `sm_fill`/`gldialog_fill` idiom that used
   to be copy-pasted into every screen. Adding a widget? Add it here, not in a screen.
   - **Text is rasterised at the drawable's real density (N.4.8, 2026-10-04; modified from stock).**
@@ -189,6 +199,18 @@ fit, a row taller than the view still shows; `rowOffset()`; content drags walk t
 >   re-runnable and **must stay idempotent** — `Hud.mm`'s file-static margins (`marginLeft2`,
 >   `marginVert`, `marginLeft`) are mutated by the layout body and are reset at the top of the
 >   method so a second call does not compound them.
+> - **Edge anchors use the SAFE rect (I.2, 2026-10-17; modified from stock).** `GLW::safeRect()` is
+>   the point space less the window's unsafe insets (Dynamic Island, rounded corners, home bar;
+>   `eden_safe_rect()` in `DisplayProfile_web.mm`), the whole screen where there are none, so every
+>   number is stock without insets. `Hud::layoutForScreen` anchors the right-hand mode column,
+>   jump/crouch (render + hit), `rmenu`, the status line, the picker/colour grids (centred on the
+>   safe rect; the picker's page strip is clamped above the home bar) and calls
+>   `Joystick::layoutForScreen()`, which puts the pad 20 points in from the safe corner (its knob
+>   clamps are now pad-relative, and the stick vector's y reads `default_pos.origin.y`: stock read
+>   `.x`, equal only while the pad sat at 20,20). `GLW::railFrame()`, `GLDialog`, `WorldBrowser`'s
+>   panel, the main-menu window and logo, the Console's keyboard frame, the toast and the version
+>   tag frame themselves in it; the pause column centres in it (whether it *fits* is I.4). The world
+>   and full-screen scrims stay full-bleed. Gate: `--touch-selftest --device=iphone16`.
 > - **The two hand-tuned widescreen offsets are now width-derived.** The block/colour picker's
 >   `marginLeft2 += 57` and the in-game menu card's `+50 / SCREEN_WIDTH-300` were tuned for the
 >   88 extra points the iPhone-5 profile had over the 480 one. They keep those exact values at 568
@@ -356,8 +378,34 @@ Settings › Interface › Crosshair (`eden_get_crosshair()`) is on, `mode` is n
   the dialogs for `--browser-selftest`. **Get Worlds is,
   since Stage 5.9 (2026-10-07)**, wherever the host can fetch (`Menu::browserOffered()` =
   `WorldBrowser::available()`, false only with the `NetNone` backend): a titlebar button beside New (the "Worlds" title
-  yields when the two would collide) opening `WorldBrowser` — below. `controlRect(name)` (incl.
+  yields when the two would collide) opening `WorldBrowser` — below; since I.7 a tile on the home screen. `controlRect(name)` (incl.
   `"getworlds"`)/`rowRect(i)` exist for the harness.
+  **The home screen (I.7, 2026-10-17, modified from stock).** Boot lands on a home screen
+  (`Menu::showhome`, `layoutHome`/`renderHome`/`updateHome`, kit state in `MenuKit`): the logo (it
+  left the list) and under it a gray `BEVEL_WINDOW` panel (`MenuKit::homePanel`, the surface the list
+  sits in) headed "Community Edition" in kit text: a two-column grid of RAISED text buttons —
+  **My Worlds** (green, `TONE_POSITIVE`) → the list above and **Get Worlds** (cyan, `TONE_INFO`;
+  disabled where `browserOffered()` is false) as the tall row, **Multiplayer** (since MP.6 opens the
+  server list, below) and **Settings** under them. The panel is centred in the space under the logo; on a short
+  window the tall row flattens and the padding tightens first. Tile labels never wrap: when the wider
+  word of a pair does not fit, both shrink to it (`layoutHome`, redone only when the tile width
+  changes). (The MENU_* art tiles of the first I.7 cut are gone; `menu_home_tile` is unused.) The list ("My Worlds"
+  titlebar: **Back** · title · New) has no logo and fills the safe rect's height; Settings and Get
+  Worlds left it. Back or Escape (`eden_menu_home_back()`, last in `Input_native.cpp`'s menu-key chain)
+  returns home; Escape on home does nothing. **Quit to Menu** (`Menu::activate`) and a finished Get
+  Worlds download (`addImported`) land on the list; the browser's Back returns to home. Harness keys
+  `"home.myworlds"`, `"home.multiplayer"`, `"home.getworlds"`, `"home.settings"`, `"back"`; the old
+  `"settings"`/`"getworlds"` answer the home's controls.
+  **Multiplayer screens (MP.6, 2026-10-17, new):** `ServerListMenu` (usage_id 19, `Menu::servers`/`showservers`/
+  `openServers()`; updates/renders in the browser's slot, so the loading ladder still draws) is a `railFrame` list of
+  two-line rows (label + MOTD/address/status, players, ping bars + ms, `UIICON_LOCK`/`LOCK_OPEN`, "?" when unknown), a
+  detail pane when the area is ≥ 300 pt tall and ≥ du(560) wide (desktop/iPad, not phones), a bar ("Playing as …" ·
+  Edit · Refresh · Join) and an empty state. `ServerFormMenu` (usage_id 18) is Add/Edit server (Name, Address, Password
+  secure, Remember; foot Delete · Move up/down · Join now) and Profile (name, Character stepper) with live red/amber
+  hints; with a keyboard up the foot hides and the focused row is the lowest shown. The Connecting window and the
+  password/error prompts are `GLDialog`s (`setPromptSecure`). `Menu::activate` reopens the list when a session ends,
+  and `Menu::update` opens it when a join is in progress (`--mp-join`). Remote text is drawn by the ASCII-only raster,
+  so separators are ", " and bullets '*'. Harness: `controlRect`/`rowRect`/`debugConnecting`/`debugError`/`debugPassword`.
   **Native delete actually deletes since 5.6**: its `showAlertDeleteConfirm()` was a no-op ("not
   confirming is the safe default"), so the stock button did nothing at all; it is now a
   `GLDialog` (Delete · Cancel).
@@ -541,8 +589,18 @@ Settings › Interface › Crosshair (`eden_get_crosshair()`) is on, `mode` is n
 `showconsole`, updated first in `World::update`'s play step and drawn after the HUD, and it claims every
 touch while the play step goes on. Its layout is two: the `railFrame()` panel (Console / Variables / Help
 tiles, `UIICON_TERMINAL` is the Console tile and the pause button's icon) and a top-docked strip. The
-pause menu has seven buttons now (`PM_CONSOLE` before Quit). See [console.md](console.md) for the
+pause menu has seven buttons now (`PM_CONSOLE` before Quit); I.4: when one column exceeds the safe rect (a phone) `Hud::layoutPauseMenu` lays out Resume full-width then pairs. See [console.md](console.md) for the
 behaviour, the routing (`eden_console_menu_*`, `eden_ui_captures_keys`) and the cost notes.
+
+**MP.7 (a multiplayer session):** the rail gains **Chat** and **Players** tiles in front (`UIICON_MESSAGE_SQUARE`, `UIICON_USERS`; the UI atlas is
+now 512×512, 8×8 cells), tab ids `TAB_CHAT = 3`, `TAB_PLAYERS = 4` appended, rail order mapped by `tabOfTile`/`tileOfTab`. Chat is the
+Console tab over `ChatFeed`'s lines (`srcLines()`; the label cache is flushed when the source changes) and `openChat()` is its entry
+(`eden_chat_open`: T, `/`, the HUD's `rchat` button). The HUD feed and the button are `ChatFeed::renderHud` / `renderButton`, drawn from
+`Hud::render`; `Hud::rchat` is claimed on the down edge like `rmenu`. Details: [networking.md](networking.md) "Chat".
+
+**MP.8 / the home screen:** the home **Multiplayer** tile wears an amber **BETA** pill straddling its top-right corner (`Menu::renderHome`,
+`MenuKit::betaTag`). The server list's titlebar swaps its title for a `TabRail` (My servers · Matchmakers) when Experiments › Matchmakers
+has addresses ([networking.md](networking.md) "Matchmakers"). `SettingsMenu` draws a `KIND_TEXT` row as a button that opens a prompt.
 
 ## Dead/auxiliary UI code
 - `Classes/Toolbar.mm` and `Classes/Gamepad.mm` — compiled, but each file's body is one `/* … */`
@@ -603,7 +661,7 @@ changing anything here; the summary:
 
 ## Version tag
 `GLW::drawVersionTag()` (GLWidgets.mm) draws "Emod <version>" (white, 1u black shadow) in the top-left
-corner: from `Menu::render` after `renderKit()` (main menu only, not its sub-screens) and at the end of
+corner: from `Menu::render` after `renderKit()`/`renderHome()` (main menu only, not its sub-screens) and at the end of
 `Hud::render` (hidden with the UI and in camera mode). The string is `EMOD_VERSION_STRING`, defined by
 `native/CMakeLists.txt` from the repo-root `VERSION.txt` (fallback "dev"); the iOS Info.plist takes the
 same value. Change it with `./bump-version.sh`. (Not `VERSION`: on case-insensitive filesystems

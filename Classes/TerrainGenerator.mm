@@ -11,6 +11,7 @@
 #import "Util.h"
 #import "TerrainGen2.h"
 #import "ClassicNoiseTables.h"
+#import "MpWorld.h"   // MP.3a: the session overlay's landing hook
 #include <vector>
 
 
@@ -339,6 +340,9 @@ void TerrainGenerator::generateColumn(int cx,int cz,BOOL bgthread){
                 }
             }
         }*/
+        // MP.3a: a multiplayer session's column is flat + what the server said differs (Classes/MpWorld.h),
+        // written here so the GBLOCK copy and addChunk (R.2's typesEmpty) below see the final voxels.
+        if(MpWorld::active())MpWorld::applyDelta(column,ocx,ocz);
               for(int x=0;x<CHUNK_SIZE;x++){
             for(int z=0;z<CHUNK_SIZE;z++){
                 for(int y=0;y<T_HEIGHT;y++)

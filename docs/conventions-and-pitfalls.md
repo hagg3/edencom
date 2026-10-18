@@ -118,7 +118,10 @@ Read this before writing any code. These are the implicit rules the codebase fol
 - 200 persisted creature slots in a 64z save (400 in a 256z one, and the real number is
   **derived from the file**, not the version — a save can legitimately have none); 300 live;
   1000 portals; 80 fireworks; 32k vertices per chunk stream (excess silently dropped).
-- No multiplayer of any kind; "sharing" is file upload/download.
+- No multiplayer of any kind; "sharing" is file upload/download. *(Port: Stage MP adds a client —
+  [networking.md](networking.md).)*
+- *(Port)* The native text raster (`TextRaster_native.cpp`) draws ASCII only: "•", "·", "…" and
+  non-ASCII remote names/MOTDs come out as mojibake, so UI strings use `*`, ", " and "...".
 - Worlds from 2.2.7+ App Store builds ("New Dawn", 256-block-tall, header `version` 5 or 6) load
   and play natively as of 2026-08-06 — see [world-and-terrain.md](world-and-terrain.md) "Runtime
   world height". They never loaded "height-truncated" as the README claimed: before the Stage-0
@@ -138,6 +141,13 @@ Read this before writing any code. These are the implicit rules the codebase fol
 | `colorTable` generation | Every painted block in every existing world re-tints |
 | A block type's flags (`IS_LIQUID`/`IS_OBJECT`) or `TYPE_CLOUD`/`GLASS`/`WEAVE` | Whether it casts a baked shadow (`g_shadow_caster[]`, `Classes/Shadow.mm`, built from the flags), and so CI's "geometry 64z shadows" `full` if the bundled map holds it |
 | `CHUNK_SIZE` | `SIZEOF_COLUMN` (file format!), progress divisors, `INDICES_MAX` sizing |
+| A save site, or anything that opens `<docs>/<world_name>` (MP.3a) | The multiplayer session redirect: `FileManager::sessionWorld` → `commitSession` (commit to RAM). A session's name `mp:<host>:<port>` is not a path; a new file open must check `sessionWorld` (`--mp-replay`'s last check fails if a session writes to the save directory) |
+| A new path that writes `pblocks` on landing, or the flat branch of `generateColumn` | `MpWorld::applyDelta` must stay after the recipe and before the `GBLOCK` copy/`addChunk`; `--mp-replay` leg 1 |
+| A new world-changing feature (block-painting creature, console verb, script op, inventory) | Is it an E11 gate in a session (`MpWorld::active()`; engine plan §11)? An edit nobody else sees is a silent desync |
+| `Terrain::setCellState`, `CmdScript::setCell`, or `World::update`'s order around step 5c (MP.3b) | Both callers share the write sequence (`--cmds-selftest`, `--console-selftest`, `--mp-replay` legs 3-4); remote edits must stay after local ones and before meshing, and the two modal early-outs must keep calling `MpWorld::update` |
+| A mine/build path a remote edit could take (MP.3b/MP.4) | A relayed edit must never reach an intent site that sends (echo); remote applies call `setCellState`/engine primitives, never `MpWorld::intent*` (`--mp-replay` leg 6, `--mp-mutate=echo`) |
+| A new player edit path (a tool, a gesture, a world-changing move like the portal exit) | Is it an intent site? In a session it must go through `MpWorld::intent*` (or send its own line), else reconcile reverts it on the next `REGION` and nobody else sees it |
+| `BurnNode` or the burn list's expiry in `Terrain::update` | `mpLit` (MP.4): the follow-up mine goes out only on a timed expiry with the cell still solid (`--mp-replay` leg 6's TNT and restore cases) |
 | `T_SIZE`/`T_RADIUS`/`CHUNKS_PER_SIDE` (window; **runtime** since B.5b-2) | **not** the file format (no save field depends on it; 2026-10-11; `GSIZE` is the literal 2880 since B.5g). Same rules as the height: anything sized at compile time uses `CHUNKS_PER_SIDE_MAX`/`T_SIZE_MAX`; set by `eden_set_window_radius()` before `allocateMemory`; per-frame loops over the window cost (2R)²·bands. Inventory: `WORKING/render-distance-runtime-plan-2026-10-11.md` §2 |
 | `T_HEIGHT`/`CHUNKS_PER_COLUMN` (now **runtime** globals) | Anything sized at COMPILE time must use `T_HEIGHT_MAX`/`CHUNKS_PER_COLUMN_MAX`/`MAX_CREATURES_SAVED_MAX` instead — a file-scope VLA is a build error, a stack one is not |
 | `WorldFileHeader`/`EntityData`/`ColumnIndex` | All existing saves + the bundled `Eden.emod`/`Eden.eden` + the upload server; the header is also an `.emod` `WORLD_HEADER` record checked against `sizeof(WorldFileHeader)` |

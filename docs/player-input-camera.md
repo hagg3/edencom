@@ -10,7 +10,9 @@ Touch handling, the block-pick raycast, player physics/collision, and the camera
 - `Classes/Util.mm` — `findWorldCoords` raycast, SAT polyhedra collision
   (`collidePolyhedra`, `makeBox/makeRamp/makeSide`), math helpers.
 - `Classes/Camera.mm` — view matrix.
-- `Classes/Joystick.mm` — virtual stick used by the HUD. `padbounds` (the pad's screen rect) is a
+- `Classes/Joystick.mm` — virtual stick used by the HUD. `Joystick::layoutForScreen()` (I.2, run by
+  `Hud::layoutForScreen`) puts the pad 20 points in from the safe rect's bottom-left (`docs/ui.md`).
+  `padbounds` (the pad's screen rect) is a
   plain global, mutable from outside this file; the web port's "move controls" feature (audit row
   17/G1, `port/src/seam/Input_web.mm`'s `eden_joystick_*` exports) set it from a drag gesture.
   Those exports are still compiled but no native UI calls them (a native Controls page is ROADMAP W.6).
@@ -71,7 +73,11 @@ results — callers read them immediately after the call.
   - Short tap (not moved, released quickly) in BUILD/MINE/PAINT/BURN mode →
     raycast → `terrain->buildBlock/destroyBlock/paintBlock/burnBlock` (with a
     collision pre-check so you can't build inside yourself: `Player::test` collides
-    the candidate block's polyhedron against the player's box).
+    the candidate block's polyhedron against the player's box). Since MP.4 these sites
+    (and jump-and-build, the double brush, the portal exit's two mines) call
+    `MpWorld::intentBuild/Mine/Paint/Burn` instead, which is the same call outside a
+    multiplayer session and also sends the changed cells inside one
+    ([networking.md](networking.md) "Edits out and in").
   - Drag → camera look (`yaw += dx·YAW_SPEED`, `pitch += dy·PITCH_SPEED`,
     optionally inverted; pitch clamped).
   - "Jump and build" assist (`jumpandbuild`) places a block underneath after a jump

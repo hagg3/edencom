@@ -88,7 +88,9 @@ private:
     void layout();                     // panel/rail/rows from SCREEN_* (per frame; labels only on change)
     void controlSize(int si, float* w, float* h) const;
     void refreshValue(int k);          // row k's value text / widget value from the model
-    void stepRow(int k, int dir);      // KIND_ENUM stepper, one step
+    void stepRow(int k, int dir);
+    void editText(int k);              // MP.8: the Matchmakers prompt
+    static void textPromptCb(int chosen, const char* text);      // KIND_ENUM stepper, one step
     void commitSlider(int k);
     bool rowMuted(int k) const;        // its parent toggle is off
     bool rowShown(int k) const;        // inside the scroll window this frame
@@ -111,6 +113,7 @@ private:
     GLW::Toggle  m_toggle[SM_MAX_ROWS];
     GLW::Slider  m_slider[SM_MAX_ROWS];
     GLW::Stepper m_stepper[SM_MAX_ROWS];
+    GLW::Button  m_textBtn[SM_MAX_ROWS];      // MP.8: a KIND_TEXT row's "None, Add" / "2 addresses, Edit"
     CGRect m_panel, m_content;
     float  m_titleY;
     float  m_builtU;                   // u() the labels were built at; a change rebuilds them

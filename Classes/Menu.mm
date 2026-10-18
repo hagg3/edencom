@@ -9,6 +9,8 @@
 #import "Menu.h"
 #import "WorldPropertiesMenu.h"   // H.15 (Menu.h only forward-declares it)
 #import "ConsoleMenu.h"           // C.3 (likewise)
+#import "ServerListMenu.h"        // MP.6 (likewise)
+#import "MpWorld.h"
 #import "GLDialog.h"
 #import "Graphics.h"
 #import "Globals.h"
@@ -62,6 +64,14 @@ static float fade_out=0;
 struct MenuKit {
     GLW::Label      title, status, empty, emptyHint;
     GLW::Button     settings, create, play, del, getWorlds;
+    // I.7: the home screen. `settings` and `getWorlds` above moved there (the Settings button and
+    // the Get Worlds tile); the list's titlebar has `back` in Settings' old place.
+    GLW::Button     back, myWorlds, multiplayer;
+    GLW::Label      subtitle, capWorlds, capMulti, capGet, betaTag;   // betaTag: the Multiplayer tile's BETA badge
+    float           homeTopY;   // the bottom of the logo (the space under it is the home screen's)
+    CGRect          homePanel;  // the gray WINDOW the home screen's tiles sit in
+    float           homeSubY;   // the heading's top edge, inside homePanel
+    float           homeTileW;  // the tile width the labels were last fitted to
     GLW::ListRow    rows[MK_MAX_ROWS];
     std::string     rowText[MK_MAX_ROWS];   // what each row's label was built from, so a label
     bool            rowBuilt[MK_MAX_ROWS];  // is re-rasterised only when its text changes
@@ -72,9 +82,9 @@ struct MenuKit {
     std::string     shownStatus;
     WorldNode*      lastSelected;
     int             listTouch, barTouch, downRow;
-    MenuKit() : pitch(30), btnH(30), titleY(0), built(false), lastSelected(NULL),
+    MenuKit() : pitch(30), btnH(30), titleY(0), homeTopY(0), homeSubY(0), homeTileW(0), built(false), lastSelected(NULL),
                 listTouch(-1), barTouch(-1), downRow(-1) {
-        panel=list=CGRectMake(0,0,0,0);
+        panel=list=homePanel=CGRectMake(0,0,0,0);
         for(int k=0;k<MK_MAX_ROWS;k++) rowBuilt[k]=false;
     }
 };
@@ -103,10 +113,20 @@ void Menu::layoutKit(){
     MenuKit* k=kit;
     if(!k->built){
         k->built=true;
-        k->title.set("Worlds",du(32),UITextAlignmentCenter);
+        k->title.set("My Worlds",du(32),UITextAlignmentCenter);   // I.7: was "Worlds"
+        k->back.setLabel("Back",du(22));
         k->settings.setLabel("Settings",du(22));
+        k->myWorlds.setLabel("My Worlds",du(26));
+        k->multiplayer.setLabel("Multiplayer",du(22));
+        k->getWorlds.setLabel("Get Worlds",du(26));
+        k->getWorlds.setTone(GLW::Button::TONE_INFO);
+        k->myWorlds.setTone(GLW::Button::TONE_POSITIVE);
+        k->subtitle.set("Community Edition",du(22),UITextAlignmentCenter);
+        k->capWorlds.set("My Worlds",du(22),UITextAlignmentCenter);
+        k->capMulti.set("Multiplayer",du(22),UITextAlignmentCenter);
+        k->capGet.set("Get Worlds",du(22),UITextAlignmentCenter);
+        k->betaTag.set("BETA",du(12),UITextAlignmentCenter);
         k->create.setLabel("New",du(22));
-        k->getWorlds.setLabel("Get Worlds",du(22));
         k->play.setLabel("Play",du(22));
         k->play.setTone(GLW::Button::TONE_POSITIVE);
         k->del.setLabel("Delete",du(22));
@@ -115,16 +135,15 @@ void Menu::layoutKit(){
         k->empty.set("No worlds yet",du(24),UITextAlignmentCenter);
         k->emptyHint.set("Choose New to make one.",du(15),UITextAlignmentCenter,0,FACE_BODY);
     }
-    const float tf=touchFloor();
-    k->pitch=std::max(du(30),tf);
-    k->btnH=std::max(du(30),tf);
+    k->pitch=controlH(30);
+    k->btnH=controlH(30);
     const float pad=du(12), gap=du(10), margin=du(12), statusH=du(26), barW=du(20);
 
-    // The window lives between the logo (rect_name, laid out by layoutForScreen) and the status
-    // line, and is as tall as its list needs — at least four rows, so a short list does not make a
-    // stub of a window, and at most what fits.
+    // The window lives between the top of the safe rect (I.7: the logo is the home screen's now)
+    // and the status line, and is as tall as its list needs — at least four rows, so a short list
+    // does not make a stub of a window, and at most what fits.
     const CGRect safe=safeRect();   // I.2: above the home bar, clear of the island
-    const float top=rect_name.origin.y-gap;
+    const float top=safe.origin.y+safe.size.height-margin;
     const float bottom=safe.origin.y+margin+statusH;
     float cw=du(520);
     const float maxCw=safe.size.width-margin*2.0f-pad*2.0f;
@@ -146,12 +165,11 @@ void Menu::layoutKit(){
     k->panel=CGRectMake(safe.origin.x+(safe.size.width-pw)*0.5f,py,pw,ph);
     const float left=k->panel.origin.x+pad, right=left+cw;
 
-    // Titlebar: Settings at the left, the title centred on the window, [Get Worlds] New at the
-    // right. The title gives way when Get Worlds would run into it (renderKit).
+    // Titlebar: Back at the left (I.7; Settings until then), the title centred on the window, New
+    // at the right. The title gives way when it would run into a button (renderKit).
     const float barY=py+ph-pad-k->btnH;
-    k->settings.setRect(CGRectMake(left,barY,du(112),k->btnH));
+    k->back.setRect(CGRectMake(left,barY,du(112),k->btnH));
     k->create.setRect(CGRectMake(right-du(80),barY,du(80),k->btnH));
-    k->getWorlds.setRect(CGRectMake(right-du(80)-gap-du(140),barY,du(140),k->btnH));
     k->titleY=barY+(k->btnH+k->title.height())*0.5f;
 
     // The list and its scrollbar, side by side, the bar flush right.
@@ -176,8 +194,7 @@ void Menu::layoutKit(){
     rect_rename.setEnabled(idle&&selected_world!=NULL);   // H.15: Properties
     kit_share.setEnabled(idle&&WorldShare::offered(selected_world));
     k->create.setEnabled(idle);
-    k->settings.setEnabled(idle);
-    k->getWorlds.setEnabled(idle&&browserOffered());
+    k->back.setEnabled(idle);
 
     // Keep the selection on screen when it moved under us (New, a web accessor, a delete).
     if(selected_world!=k->lastSelected){
@@ -223,7 +240,6 @@ void Menu::tapRow(int index){
 
 CGRect Menu::controlRect(const char* which){
     layoutKit();
-    if(!strcmp(which,"settings")) return kit->settings.rect();
     if(!strcmp(which,"new"))      return kit->create.rect();
     if(!strcmp(which,"play"))     return kit->play.rect();
     if(!strcmp(which,"delete"))   return kit->del.rect();
@@ -232,7 +248,13 @@ CGRect Menu::controlRect(const char* which){
     if(!strcmp(which,"share"))    return kit_share.rect();
     if(!strcmp(which,"list"))     return kit->list;
     if(!strcmp(which,"scrollbar"))return kit->scroll.barRect();
-    if(!strcmp(which,"getworlds"))return kit->getWorlds.rect();
+    if(!strcmp(which,"back"))     return kit->back.rect();
+    // I.7: the home screen's controls; "settings" and "getworlds" moved there from the list.
+    layoutHome();
+    if(!strcmp(which,"settings")||!strcmp(which,"home.settings"))   return kit->settings.rect();
+    if(!strcmp(which,"getworlds")||!strcmp(which,"home.getworlds")) return kit->getWorlds.rect();
+    if(!strcmp(which,"home.myworlds"))    return kit->myWorlds.rect();
+    if(!strcmp(which,"home.multiplayer")) return kit->multiplayer.rect();
     return CGRectMake(0,0,0,0);
 }
 
@@ -246,6 +268,137 @@ bool Menu::rowRect(int index,CGRect* r){
 
 int Menu::firstVisibleRow(){ return kit->scroll.first(); }
 int Menu::visibleRows(){ return kit->scroll.visible(); }
+
+// ---------------------------------------------------------------------------------------------
+// Stage I / I.7: the home screen
+// ---------------------------------------------------------------------------------------------
+// The logo (rect_name), "Community Edition" under it, a row of three tiles and Settings beneath,
+// over the same parallax background. A tile is a RAISED kit button with no label of its own: the
+// menu art (stock's 70 px corner icons, MENU_* in Resources.h) sits in its upper part and a
+// caption under it. My Worlds wears the plain world block the carousel drew (MENU_BLOCK_SELECTED),
+// Get Worlds the art of stock's "load shared world" corner (MENU_LOAD_WORLD), and Multiplayer the
+// art of stock's "share" corner (MENU_SHARE_WORLD).
+void Menu::layoutHome(){
+    using namespace GLW;
+    if(!kit->built) layoutKit();
+    MenuKit* k=kit;
+    const CGRect safe=safeRect();
+    const float margin=du(12), btnH=controlH(30);
+
+    // A gray WINDOW under the logo (the same surface the world list sits in), headed by "Community
+    // Edition" and holding a two-column grid: My Worlds | Get Worlds as tall tiles (world sharing is
+    // Eden's signature; My Worlds is green like Play, Get Worlds is tinted), then Multiplayer |
+    // Settings. On a short window the tall row flattens and the padding tightens before the window
+    // would run into the logo.
+    k->homeTopY=rect_name.origin.y-du(2);
+    const float bottom=safe.origin.y+margin;
+    const float avail=k->homeTopY-bottom;
+    const float bh=btnH, bg=du(10), sh=k->subtitle.height();
+    float pad=du(12), gap=du(10), gh=bh*1.6f;
+    if(pad*2.0f+sh+gap+gh+bg+bh>avail) gh=bh;
+    if(pad*2.0f+sh+gap+gh+bg+bh>avail){ pad=du(8); gap=du(5); }
+    const float groupH=gh+bg+bh;
+    const float ph=pad*2.0f+sh+gap+groupH;
+    const float gw=std::min((float)du(360),(float)(safe.size.width-margin*2.0f-pad*2.0f));
+    const float cw=(gw-bg)*0.5f;
+    const float pw=gw+pad*2.0f;
+    float py=bottom+std::max(0.0f,(avail-ph)*0.5f);
+    k->homePanel=CGRectMake(safe.origin.x+(safe.size.width-pw)*0.5f,py,pw,ph);
+    k->homeSubY=py+ph-pad;
+    const float x0=k->homePanel.origin.x+pad;
+    float y=py+pad+bh;
+    k->multiplayer.setRect(CGRectMake(x0,py+pad,cw,bh));
+    k->settings.setRect(CGRectMake(x0+cw+bg,py+pad,cw,bh));
+    y+=bg;
+    k->myWorlds.setRect(CGRectMake(x0,y,cw,gh));
+    k->getWorlds.setRect(CGRectMake(x0+cw+bg,y,cw,gh));
+
+    // A label never wraps on a tile: when the pair's wider word would not fit, both shrink to it
+    // (a wrapped "My / Worlds" in a 30u tile is what a narrow window used to show). Rasterised
+    // only when the tile width changes.
+    if(k->homeTileW!=cw){
+        k->homeTileW=cw;
+        const float room=cw-du(20);
+        struct Pair { const char* a; const char* b; float pt; GLW::Button* x; GLW::Button* y; };
+        Pair pairs[2]={ {"My Worlds","Get Worlds",du(26),&k->myWorlds,&k->getWorlds},
+                        {"Multiplayer","Settings",du(22),&k->multiplayer,&k->settings} };
+        for(int i=0;i<2;i++){
+            float pt=pairs[i].pt;
+            GLW::Label m;
+            const char* words[2]={pairs[i].a,pairs[i].b};
+            for(int w=0;w<2;w++){
+                m.set(words[w],pt,UITextAlignmentCenter);
+                if(m.width()>room&&m.width()>0.0f) pt=std::max(du(11),pt*room/m.width());
+            }
+            pairs[i].x->setLabel(pairs[i].a,pt);
+            pairs[i].y->setLabel(pairs[i].b,pt);
+        }
+    }
+
+    const bool idle=(loading==0);
+    k->myWorlds.setEnabled(idle);
+    k->multiplayer.setEnabled(idle);   // MP.6: the server list
+    k->getWorlds.setEnabled(idle&&browserOffered());
+    k->settings.setEnabled(idle);
+}
+
+// A tile's art and caption, inside the button it sits on (drawn first).
+static void menu_home_tile(const GLW::Button& b,int art,const GLW::Label& cap){
+    using namespace GLW;
+    const CGRect r=b.rect();
+    const float pad=r.size.width*0.10f;
+    const float capH=cap.height();
+    float a=(float)std::min(r.size.width-pad*2.0f,r.size.height-pad*2.0f-capH-pad*0.5f);
+    if(a<0) a=0;
+    const float cx=r.origin.x+r.size.width*0.5f;
+    const float artY=r.origin.y+pad+capH+pad*0.5f+((r.size.height-pad*2.0f-capH-pad*0.5f)-a)*0.5f;
+    // Disabled: the art greyed the way the kit greys a disabled label (a translucent ghost reads
+    // as a rendering bug — design-system.md); pressed: darkened with the face.
+    const float tint=!b.enabled()?0.45f:(b.pressed()?0.7f:1.0f);
+    glColor4f(tint,tint,tint,1.0f);
+    Resources::getResources->getMenuTex(art)->drawInRect2(CGRectMake(cx-a*0.5f,artY,a,a));
+    glColor4f(1.0f,1.0f,1.0f,1.0f);
+    const float capTop=r.origin.y+pad+capH;
+    if(!b.enabled())     cap.drawCentered(cx,capTop,kKeyline);
+    else if(b.pressed()) cap.drawChrome(cx,capTop,kTextPressed,kBlack);
+    else                 cap.drawChrome(cx,capTop,kText,kWhite);
+}
+
+void Menu::renderHome(){
+    using namespace GLW;
+    layoutHome();
+    MenuKit* k=kit;
+
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+    glDisableClientState(GL_COLOR_ARRAY);
+
+    // The window, its heading on the gray surface in the kit's text colour, then the tiles.
+    bevel(k->homePanel,BEVEL_WINDOW);
+    k->subtitle.drawCentered(k->homePanel.origin.x+k->homePanel.size.width*0.5f,k->homeSubY,kText);
+    k->myWorlds.render();
+    k->multiplayer.render();
+    {   // BETA badge: an amber pill straddling the Multiplayer button's top-right corner
+        const CGRect r=k->multiplayer.rect();
+        const float h=k->betaTag.height()+du(6), w=k->betaTag.width()+du(16);
+        const float x=r.origin.x+r.size.width-w+du(4), y=r.origin.y+r.size.height-h*0.5f;
+        const Color amber={0xf5/255.0f,0xa6/255.0f,0x23/255.0f,1.0f};
+        fill(x-1,y-1,w+2,h+2,kBlack);
+        fill(x,y,w,h,amber);
+        k->betaTag.drawCentered(x+w*0.5f,y+h-du(3),kBlack);
+    }
+    k->getWorlds.render();
+    k->settings.render();
+    glColor4f(1.0f,1.0f,1.0f,1.0f);
+}
+
+void Menu::showHome(bool home){
+    showhome=home?TRUE:FALSE;
+    if(!home) refreshfn();
+}
 
 // Split out of the constructor so the point space can change after the Menu exists — see the same
 // method on Hud for why (web port audit D1/D4: SCREEN_WIDTH/SCREEN_HEIGHT are derived from the real
@@ -353,6 +506,7 @@ Menu::Menu(){
 
 	world_list=NULL;
 	selected_world=NULL;
+    session_world_name=nil;   // MP.3a
 	this->loadWorlds();
 	
 	WorldNode* node=world_list;
@@ -382,6 +536,9 @@ Menu::Menu(){
     showprops=FALSE;
     console=new ConsoleMenu();
     showconsole=FALSE;
+    servers=new ServerListMenu();
+    showservers=FALSE;
+    showhome=TRUE;   // I.7: boot lands on the home screen
 	
     
    /*  WorldNode* new_world;
@@ -468,6 +625,10 @@ Menu::Menu(){
 }
 void Menu::activate(){
     fade_out=0;
+    showhome=FALSE;   // I.7: Quit to Menu lands on My Worlds (the player was just in one of them)
+    // MP.6 (UI plan §1): leaving a session lands on the server list, so Rejoin is one tap. exitToMenu
+    // activates the menu before MpWorld::endSession, so the session still reads as active here.
+    if(MpWorld::active()){ showservers=FALSE; openServers(); }   // a fresh open re-probes the list
 	sbar->setStatus(@"Choose world to load" ,99999);
 	if(selected_world!=NULL)
 	fnbar->setStatus(selected_world->display_name ,9999);
@@ -710,6 +871,49 @@ bool Menu::renameSelected(const char* utf8){
     sbar->setStatus([NSString stringWithFormat:@"Renamed to %@",nn],2);
     return true;
 }
+// I.7: the home screen's input. Same claim protocol as the list (usage_id, acted on at release); one press at a time.
+void Menu::updateHome(float etime){
+    layoutHome();
+    MenuKit* k=kit;
+    sbar->update(etime);
+    itouch* touches=Input::getInput()->getTouches();
+    GLW::Button* const tiles[]={&k->myWorlds,&k->multiplayer,&k->getWorlds,&k->settings};
+    for(int i=0;i<MAX_TOUCHES;i++){
+        if(touches[i].inuse==0&&touches[i].down==M_DOWN){
+            touches[i].inuse=usage_id;
+            for(GLW::Button* b:tiles) b->setPressed(b->enabled()&&b->hit(touches[i].mx,touches[i].my));
+        }
+        if(touches[i].inuse==usage_id&&touches[i].down==M_RELEASE){
+            const float mx=touches[i].mx, my=touches[i].my;
+            touches[i].inuse=0;
+            touches[i].down=M_NONE;
+            GLW::Button* chosen=NULL;
+            for(GLW::Button* b:tiles){
+                if(b->pressed()&&b->hit(mx,my)) chosen=b;
+                b->setPressed(false);
+            }
+            if(!chosen||loading) continue;
+            if(chosen==&k->myWorlds){
+                showHome(false);
+                return;
+            }
+            if(chosen==&k->getWorlds){
+                openBrowser();
+                return;
+            }
+            if(chosen==&k->multiplayer){
+                openServers();   // MP.6
+                return;
+            }
+            if(chosen==&k->settings){
+                settings->resetView();
+                showsettings=TRUE;
+                return;
+            }
+        }
+    }
+}
+
 void Menu::update(float etime){
 	menu_back->update(etime);
 	WorldShare::update();   // S.5: a running export/upload advances a slice per menu frame
@@ -749,9 +953,24 @@ void Menu::update(float etime){
 		if(!browser->isOpen()) showbrowser=FALSE;   // Back, or a download handed back a world
 		return;
 	}
+	// MP.6: a join started from elsewhere (--mp-join, the Disconnected dialog's Reconnect) shows its
+	// Connecting window on the server list.
+	if(!showservers){
+		const int js=eden_mp_join_state(NULL);
+		if(js>=EDEN_MP_JOIN_CONNECTING&&js<=EDEN_MP_JOIN_RECEIVING) openServers();
+	}
+	if(showservers){
+		servers->update(etime);
+		if(!servers->isOpen()) showservers=FALSE;   // Back (to home)
+		return;
+	}
 	if(showlistscreen){
 		shared_list->update(etime);
 		
+	}
+	if(showhome){
+		updateHome(etime);   // I.7
+		return;
 	}
 	// Stage 5.6: the kit menu's input (the stock carousel's block rects, arrows and corner buttons
 	// are no longer hit-tested; see the block comment at the top of this file). Same usage_id claim
@@ -767,9 +986,8 @@ void Menu::update(float etime){
 		if(touches[i].inuse==0&&touches[i].down==M_DOWN){
 			touches[i].inuse=usage_id;
 			const float mx=touches[i].mx, my=touches[i].my;
-			k->settings.setPressed(k->settings.hit(mx,my));
+			k->back.setPressed(k->back.hit(mx,my));
 			k->create.setPressed(k->create.hit(mx,my));
-			k->getWorlds.setPressed(k->getWorlds.hit(mx,my));
 			k->play.setPressed(k->play.hit(mx,my));
 			k->del.setPressed(k->del.hit(mx,my));
 			if(propertiesOffered()) rect_rename.setPressed(rect_rename.hit(mx,my));
@@ -795,16 +1013,14 @@ void Menu::update(float etime){
 			const float mx=touches[i].mx, my=touches[i].my;
 			touches[i].inuse=0;
 			touches[i].down=M_NONE;
-			const bool settingsHit=k->settings.pressed()&&k->settings.hit(mx,my);
+			const bool backHit=k->back.pressed()&&k->back.hit(mx,my);
 			const bool createHit=k->create.pressed()&&k->create.hit(mx,my);
-			const bool getHit=k->getWorlds.pressed()&&k->getWorlds.hit(mx,my);
 			const bool playHit=k->play.pressed()&&k->play.hit(mx,my);
 			const bool delHit=k->del.pressed()&&k->del.hit(mx,my);
 			const bool propsHit=propertiesOffered()&&rect_rename.pressed()&&rect_rename.hit(mx,my);
 			const bool shareHit=shareShown()&&kit_share.pressed()&&kit_share.hit(mx,my);
 			kit_share.setPressed(false);
-			k->settings.setPressed(false); k->create.setPressed(false); k->play.setPressed(false);
-			k->getWorlds.setPressed(false);
+			k->back.setPressed(false); k->create.setPressed(false); k->play.setPressed(false);
 			k->del.setPressed(false); rect_rename.setPressed(false);
 
 			if(i==k->barTouch){ k->scroll.endDrag(); k->barTouch=-1; continue; }
@@ -829,13 +1045,8 @@ void Menu::update(float etime){
 				WorldShare::begin(selected_world);
 				return;
 			}
-			if(settingsHit){
-				settings->resetView();
-				showsettings=TRUE;
-				return;
-			}
-			if(getHit){
-				openBrowser();
+			if(backHit&&!loading){
+				showHome(true);   // I.7
 				return;
 			}
 			if(playHit&&selected_world&&loading==0){
@@ -945,16 +1156,15 @@ void Menu::renderKit(){
     glDisableClientState(GL_COLOR_ARRAY);
 
     bevel(k->panel,BEVEL_WINDOW);
-    k->settings.render();
+    k->back.render();
     k->create.render();
-    const bool offerGet=browserOffered();
-    if(offerGet) k->getWorlds.render();
-    // The title is centred on the window; beside Get Worlds it may not fit between the buttons
-    // (Label has no measure call, so this is the width estimate its own wrap uses, 0.42 em/char).
+    // The title is centred on the window and gives way when it would run into Back or New on a
+    // narrow screen (I.7: Get Worlds left this titlebar for the home screen).
     const float cx=k->panel.origin.x+k->panel.size.width*0.5f;
-    const float halfTitle=du(32)*0.42f*6.0f*0.5f;
-    const float titleRoom=(offerGet?k->getWorlds.rect().origin.x:k->create.rect().origin.x)-du(6);
-    if(cx+halfTitle<=titleRoom) k->title.drawCentered(cx,k->titleY,kText);
+    const float halfTitle=k->title.width()*0.5f;
+    const float titleRoom=std::min(k->create.rect().origin.x-cx,
+                                   cx-(k->back.rect().origin.x+k->back.rect().size.width))-du(6);
+    if(halfTitle<=titleRoom) k->title.drawCentered(cx,k->titleY,kText);
 
     bevel(k->list,BEVEL_CONTENT);
     const int vis=k->scroll.visible();
@@ -1042,10 +1252,16 @@ void Menu::render(){
 		glColor4f(1.0, 1.0, 1.0, 1.0f);
 	//[Graphics drawRect:20:20:SCREEN_WIDTH-20:SCREEN_HEIGHT-20];
 	
+    // I.7: the logo is the home screen's; the world list ("My Worlds") is drawn without it.
+    if(showservers){
+        servers->render();   // MP.6: in this slot, so the loading ladder below runs for a join
+    }else if(showhome){
     if(IS_IPAD&&!IS_RETINA)
         Resources::getResources->getMenuTex(MENU_LOGO)->drawText(rect_name);
     else
 	Resources::getResources->getMenuTex(MENU_LOGO)->drawInRect2(rect_name);
+	renderHome();
+    }else
 	// Stage 5.6: the kit window replaces the carousel, the corner icons and the two statusbar lines
 	// (sbar's text is drawn by the kit as the status line; fnbar's job, naming the selection, is
 	// the selected row's).
@@ -1058,8 +1274,10 @@ void Menu::render(){
     }
 	if(loading){
 		if(loading==2){
-			if(selected_world!=NULL){
-				
+			if(session_world_name){
+				loading=4;   // MP.3a: a session world has no file and no list entry
+			}else if(selected_world!=NULL){
+
 				//NSString* wname=selected_world->file_name;
                 if(World::getWorld->fm->worldExists(cpstring(selected_world->file_name),TRUE)){
 				//[[World getWorld] loadWorld:wname];
@@ -1104,13 +1322,13 @@ void Menu::render(){
 		}else if(loading==4){
             if(LOW_MEM_DEVICE){
                 if(fade_out>=1.0f){
-                    NSString* wname=selected_world->file_name;
+                    NSString* wname=session_world_name?session_world_name:selected_world->file_name;   // MP.3a
            
                     World::getWorld->loadWorld(wname);
                 }
             }else{
-                NSString* wname=selected_world->file_name;
-                
+                NSString* wname=session_world_name?session_world_name:selected_world->file_name;   // MP.3a
+
                 World::getWorld->loadWorld(wname);
             }
 
@@ -1141,6 +1359,12 @@ void Menu::render(){
 	glDisable(GL_BLEND);
     Graphics::endMenu();
     
+}
+
+void Menu::openServers(){
+    if(showservers) return;
+    servers->open();
+    showservers=TRUE;
 }
 
 void Menu::openNewWorld(){

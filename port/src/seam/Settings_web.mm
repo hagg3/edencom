@@ -39,6 +39,7 @@
 #import "../../../Classes/Input.h"
 #import "../../../Classes/SimpleAudioEngine.h"
 #import "../../../Classes/Shadow.h"          // H.2: the shadows row
+#include <string>
 #include <cstdlib>   // getenv (S.5e: EDEN_UPGRADE_256Z)
 #import "DisplayProfile_web.h"
 #include "../shim/foundation/platform_shims.h"   // EDEN_EXPORT (Phase N Stage 1)
@@ -67,7 +68,9 @@ enum {
 // KIND_KEY (3) is NOT used by any kSettings[] row — it is the row-kind constant the GL keybinds
 // screen dispatches on, and it lives here so the kind space stays one enumeration. See the
 // KEYBINDS section near the bottom of this file for why a keybind is a parallel table.
-enum { KIND_TOGGLE = 0, KIND_RANGE = 1, KIND_ENUM = 2, KIND_KEY = 3 };
+// MP.8: KIND_TEXT (4) is a string row (Experiments > Matchmakers): its value lives in g_text[], not
+// g_value[], persists as an NSString, and has no float meaning (min/max/step/def are unused).
+enum { KIND_TOGGLE = 0, KIND_RANGE = 1, KIND_ENUM = 2, KIND_KEY = 3, KIND_TEXT = 4 };
 
 struct Setting {
     const char* key;      // persistence key AND the JS-side id
@@ -197,6 +200,8 @@ static const Setting kSettings[] = {
   { "creature_walk_voices", "Creature walking sounds", "Experiments", KIND_TOGGLE, -1,  0,   1,   1,   0,  "Creatures call out as they start walking.", NULL },
   { "double_brush",      "Double-size build brush", "Experiments", KIND_TOGGLE, -1,      0,   1,   1,   0,  "A key builds 2x2x2 blocks at a time.", NULL },
   { "camera_view",       "Camera view",       "Experiments", KIND_ENUM,   -1,           0,   2,   1,   0,  "Third person shows your body. F5 cycles.", "First person,Third person,Third person (front)" },
+  // MP.8: comma-separated matchmaker addresses (host[:port], default 27020); empty = no Matchmakers tab.
+  { "mp_matchmakers",    "Matchmakers",       "Experiments", KIND_TEXT,   -1,           0,   0,   0,   0,  "Lists other servers. Off when empty.", NULL },
 
   { "save_backup",       "Keep a save backup", "Saves",      KIND_TOGGLE, -1,           0,   1,   1,   1,  "Keep the previous save as a .bak.", NULL },
   // B.5b-1b (2026-10-12): the periodic save that replaced the walk reload's. Off leaves saving to
@@ -211,6 +216,7 @@ static const Setting kSettings[] = {
 static const int kSettingCount = (int)(sizeof(kSettings) / sizeof(kSettings[0]));
 
 static float g_value[kSettingCount];
+static std::string g_text[kSettingCount];   // KIND_TEXT rows only
 static bool  g_loaded = false;
 // Row #14: did NSUserDefaults actually have a value for this (port-owned) row at load time? Used
 // by eden_apply_input_profile() to tell "the player explicitly chose this" apart from "still
@@ -576,6 +582,11 @@ static void eden_persist_setting(int i) {
     if (kSettings[i].engine >= 0) return;   // owned by SettingsMenu::save()
     NSUserDefaults* prefs = [NSUserDefaults standardUserDefaults];
     NSString* key = [NSString stringWithUTF8String:kSettings[i].key];
+    if (kSettings[i].kind == KIND_TEXT) {
+        [prefs setObject:[NSString stringWithUTF8String:g_text[i].c_str()] forKey:key];
+        [prefs synchronize];
+        return;
+    }
     // Stored as an int in thousandths so one NSNumber type covers toggles and ranges alike (the
     // NSUserDefaults shim persists NSNumber only — see its header comment).
     [prefs setObject:[NSNumber numberWithInt:(int)lroundf(g_value[i] * 1000.0f)] forKey:key];
@@ -619,6 +630,12 @@ void eden_settings_init(void) {
         }
         g_value[i] = kSettings[i].def;
         NSString* key = [NSString stringWithUTF8String:kSettings[i].key];
+        if (kSettings[i].kind == KIND_TEXT) {
+            NSString* t = [prefs stringForKey:key];
+            g_hadStored[i] = (t != nil);
+            if (t) g_text[i] = [t UTF8String];
+            continue;
+        }
         id stored = [prefs objectForKey:key];
         g_hadStored[i] = (stored != nil);
         if (stored) g_value[i] = [(NSNumber*)stored intValue] / 1000.0f;
@@ -727,11 +744,28 @@ EDEN_EXPORT
 void eden_settings_set(int i, float v) {
     if (i < 0 || i >= kSettingCount) return;
     const Setting& s = kSettings[i];
+    if (s.kind == KIND_TEXT) return;   // strings go through eden_settings_set_text
     if (v < s.min) v = s.min;
     if (v > s.max) v = s.max;
     g_value[i] = v;
     g_hadStored[i] = true;   // an explicit change now counts the same as a persisted one (row #14)
     eden_apply_setting(i, true);
+    eden_persist_setting(i);
+}
+
+// MP.8: a KIND_TEXT row's string. The setter stores whatever it is given (the caller validates:
+// SettingsMenu's Matchmakers prompt) and persists it as an NSString under the row's key.
+EDEN_EXPORT
+const char* eden_settings_text(int i) {
+    if (i < 0 || i >= kSettingCount || kSettings[i].kind != KIND_TEXT) return "";
+    return g_text[i].c_str();
+}
+
+EDEN_EXPORT
+void eden_settings_set_text(int i, const char* text) {
+    if (i < 0 || i >= kSettingCount || kSettings[i].kind != KIND_TEXT) return;
+    g_text[i] = text ? text : "";
+    g_hadStored[i] = true;
     eden_persist_setting(i);
 }
 
@@ -744,7 +778,10 @@ void eden_settings_set(int i, float v) {
 // window.EdenKeybinds.resetDefaults() together, then re-renders once.
 EDEN_EXPORT
 void eden_settings_reset_all(void) {
-    for (int i = 0; i < kSettingCount; ++i) eden_settings_set(i, kSettings[i].def);
+    for (int i = 0; i < kSettingCount; ++i) {
+        if (kSettings[i].kind == KIND_TEXT) { g_text[i].clear(); eden_persist_setting(i); continue; }
+        eden_settings_set(i, kSettings[i].def);
+    }
     eden_keybind_reset_all();   // Stage 5.2: keybinds moved into C, so "reset everything" means it
 }
 
@@ -1083,10 +1120,10 @@ static const char* eden_keybind_code_name_internal(int code) {
 // future SDL that renumbered scancodes would fail loudly instead of rebinding everyone's keyboard.
 enum {
     KC_A = 4, KC_C = 6, KC_D = 7, KC_E = 8, KC_F = 9, KC_L = 15, KC_O = 18,
-    KC_S = 22, KC_V = 25, KC_W = 26, KC_X = 27, KC_B = 5,
+    KC_S = 22, KC_T = 23, KC_V = 25, KC_W = 26, KC_X = 27, KC_B = 5,
     KC_1 = 30, KC_2 = 31, KC_3 = 32, KC_4 = 33, KC_5 = 34,
     KC_6 = 35, KC_7 = 36, KC_8 = 37, KC_9 = 38,
-    KC_ESCAPE = 41, KC_SPACE = 44, KC_GRAVE = 53, KC_F1 = 58, KC_F2 = 59, KC_F5 = 62,
+    KC_ESCAPE = 41, KC_SPACE = 44, KC_GRAVE = 53, KC_SLASH = 56, KC_F1 = 58, KC_F2 = 59, KC_F5 = 62,
     KC_RIGHT = 79, KC_LEFT = 80, KC_DOWN = 81, KC_UP = 82,
     KC_LCTRL = 224, KC_LSHIFT = 225, KC_LALT = 226,
     KC_RCTRL = 228, KC_RSHIFT = 229, KC_RALT = 230,
@@ -1139,6 +1176,9 @@ static const Keybind kKeybinds[] = {
 
   { "menu",        "Menu / pause",          "Interface", KC_ESCAPE,  0,         KB_MOMENTARY,  KB_BOTH },
   { "console",     "Console",               "Interface", KC_GRAVE,   0,         KB_MOMENTARY,  KB_NATIVE },
+  // MP.7: both act only in a multiplayer session (Menu_web.mm eden_chat_open).
+  { "chat",        "Chat",                  "Interface", KC_T,       0,         KB_MOMENTARY,  KB_NATIVE },
+  { "chatCommand", "Chat command",          "Interface", KC_SLASH,   0,         KB_MOMENTARY,  KB_NATIVE },
   { "settings",    "Open settings",         "Interface", KC_O,       0,         KB_MOMENTARY,  KB_WEB  },
   { "blockPreview","Toggle block preview",  "Interface", KC_B,       0,         KB_MOMENTARY,  KB_BOTH },
   { "hideHud",     "Hide HUD",              "Interface", KC_F1,      0,         KB_MOMENTARY,  KB_NATIVE },

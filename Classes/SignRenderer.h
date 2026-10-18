@@ -34,7 +34,7 @@
 
 class SignRenderer {
 public:
-    enum { RADIUS = 32, CMD_RADIUS = 64, MAX_TEXTURES = 64, MAX_TEX_BYTES = 8 << 20, BUILDS_PER_FRAME = 4 };
+    enum { RADIUS = 32, CMD_RADIUS = 64, MAX_TEXTURES = 256, MAX_TEX_BYTES = 24 << 20, BUILDS_PER_FRAME = 4 };
 
     // The pass. World::renderFrame calls it after the opaque terrain and the creatures, before the
     // sorted transparent pass, with the camera's modelview current. Restores what it touches.

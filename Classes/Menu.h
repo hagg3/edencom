@@ -29,6 +29,8 @@ class ShareMenu;
 class WorldPropertiesMenu;
 // C.3: the Console screen; ConsoleMenu.h pulls in Console.h/CmdScript.h, which Menu.h's includers don't need.
 class ConsoleMenu;
+// MP.6: the Multiplayer screen (Classes/ServerListMenu.h).
+class ServerListMenu;
 
 
 
@@ -68,6 +70,9 @@ public:
 	
 	int loading;
 	int loading_world_list;
+    // MP.3a: a multiplayer session's "mp:<host>:<port>" while it loads (MpWorld::openSession); nil otherwise.
+    // The loading branch below plays it instead of selected_world.
+    NSString* session_world_name;
 	BOOL delete_mode;
 	int is_sharing;
 	BOOL share_mode;
@@ -101,7 +106,7 @@ public:
     bool shareShown();
 
     // Stage 5.6: the main menu on the GL widget kit — a WINDOW under the logo holding a titlebar
-    // (Settings · Worlds · New), the world list (GLW::ListRow in a row-snapped GLW::ScrollView)
+    // (Settings · Worlds · New; since I.7 Back · My Worlds · New, and no logo), the world list (GLW::ListRow in a row-snapped GLW::ScrollView)
     // and an action bar (Delete · Rename · Play), with the status line under it. The stock
     // carousel's rects above (rect_options, rect_create, the arrows, ...) are still computed by
     // layoutForScreen() but no longer drawn or hit-tested. The kit's state lives in Menu.mm.
@@ -113,8 +118,21 @@ public:
     // "settings", "new", "play", "delete", "rename", "list", "scrollbar"; rowRect() answers for a
     // world index, and false if that row is scrolled out of view. "getworlds" since 5.9; "properties"
     // (= "rename", the same button) since H.15.
+    // I.7: "back" (the list's titlebar) and the home screen's "home.myworlds", "home.multiplayer",
+    // "home.getworlds", "home.settings"; the old "settings"/"getworlds" keys answer the home's
+    // Settings button and Get Worlds tile (they left the list's titlebar).
     CGRect controlRect(const char* which);
     bool   rowRect(int index, CGRect* r);
+
+    // Stage I / I.7: the home screen, the first thing after boot — the logo, a subtitle, three tiles
+    // (My Worlds -> the list above; Multiplayer -> ServerListMenu since MP.6; Get Worlds) and Settings
+    // beneath. The list ("My Worlds") is the screen with showhome FALSE: it has Back and no logo.
+    // Quit to Menu (activate()) and a Get Worlds download land on the list.
+    BOOL showhome;
+    void layoutHome();
+    void renderHome();
+    void updateHome(float etime);
+    void showHome(bool home);
     int    firstVisibleRow();
     int    visibleRows();
 
@@ -148,6 +166,14 @@ public:
     // player input. In play only (opened from the pause menu or the `console` key).
     ConsoleMenu* console;
     BOOL showconsole;
+
+    // Stage MP / MP.6: "Multiplayer" -- the saved server list, its forms and the join's Connecting
+    // window (Classes/ServerListMenu.h), opened by the home screen's tile. Drawn in place of the home
+    // screen / world list (not as an early-returning screen) so the loading ladder below still runs
+    // when a join reaches "Loading world". A session's Exit lands here (activate()).
+    ServerListMenu* servers;
+    BOOL showservers;
+    void openServers();
 
     void a_genFlat(BOOL b);
     void a_deleteCancel();

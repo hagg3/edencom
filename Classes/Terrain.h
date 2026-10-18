@@ -78,6 +78,11 @@ public:
     void destroyBlock(int x,int z,int y);
     void burnBlock(int x,int z,int y, BOOL causedByExplosion);
     void updateChunks(int x,int z,int y,int type);
+    // MP.3b: one cell to (type, color) with no refusals and no effects -- liquid source out/in,
+    // lightbox light out/in, updateChunks (air drops signs/CMB1), the paint, the light refresh.
+    // CmdScript's setCell (after its refusals) and MpWorld's remote apply share it. color<0 on air
+    // leaves the cell's colour alone (updateChunks already zeroes it); on a block it means 0.
+    void setCellState(int x,int z,int y,int type,int color);
     int getLand(int x,int z,int y);
     int getColor(int x,int z,int y);
     void refreshChunksInRadius(int x,int z,int y,int radius);

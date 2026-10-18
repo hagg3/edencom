@@ -395,6 +395,22 @@ void eden_safe_rect(float* x, float* y, float* w, float* h) {
     if (h) *h = H - T - B;
 }
 
+// I.3: window points per engine point, from the same letterboxed box eden_safe_rect() uses. A
+// window point is what the OS calls a point (an iOS pt, a macOS pt), so this is what turns the 44 pt
+// touch floor into engine points (GLW::touchFloor). 1 when no box is known (headless, the selftests'
+// default), which keeps the floor at 44 there.
+EDEN_EXPORT
+float eden_display_window_pt_per_point(void) {
+    const float W = SCREEN_WIDTH, H = SCREEN_HEIGHT;
+    if (g_cssW <= 0 || g_cssH <= 0 || W <= 0 || H <= 0) return 1.0f;
+    if (g_pxPerPoint > 0 && g_pxW > 0 && g_pxH > 0)
+        return (float)g_pxPerPoint * (float)g_cssH / (float)g_pxH;
+    const float aspect = W / H;
+    float bh = (float)g_cssW / aspect;
+    if (bh > (float)g_cssH) bh = (float)g_cssH;
+    return bh / H;
+}
+
 EDEN_EXPORT
 void eden_display_set_safe_insets(float l, float t, float r, float b) {
     l = std::fmax(0.0f, l); t = std::fmax(0.0f, t); r = std::fmax(0.0f, r); b = std::fmax(0.0f, b);

@@ -50,6 +50,11 @@ public:
                        const char* const* buttons, int n, void (*cb)(int chosen, const char* text),
                        int lines = 1);
     static bool textEntryAvailable();
+    // MP.6: call right after prompt() for a password -- the field draws bullets and raises the
+    // secure keyboard (GLW::TextField::setSecure). Cleared when the dialog closes.
+    static void setPromptSecure(bool on);
+    // The open prompt's field (the harness: its shownText() must never hold the password), or NULL.
+    static const GLW::TextField* promptField();
     // Closes whatever is up WITHOUT calling its callback — the harness's way out of a modal
     // (--shot), and the answer to "the screen under the dialog went away". Not a "Cancel":
     // a caller that needs its cancel branch to run must pick the button instead.

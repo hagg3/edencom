@@ -43,6 +43,8 @@ void GLDialog::reset() {
     m_body.clear();
     for (int j = 0; j < GLDIALOG_MAX_BUTTONS; j++) m_btn[j].setPressed(false);
     m_field.blur();                // stops the platform's text input (the iOS keyboard goes away)
+    if (m_field.secure()) { m_field.setSecure(false); m_field.setKind(EDEN_TEXT_KIND_PLAIN); }
+    m_field.setText("");           // MP.6: a password does not outlive its prompt
     m_hasField = false;
     m_promptCb = NULL;
     m_active = false;
@@ -79,6 +81,21 @@ bool GLDialog::buttonRect(int j, CGRect* r) {
 
 bool GLDialog::textEntryAvailable() { return eden_text_input_available() != 0; }
 
+void GLDialog::setPromptSecure(bool on) {
+    GLDialog* d = getDialog();
+    if (!d->m_active || !d->m_hasField) return;
+    const bool had = d->m_field.focused();
+    if (had) d->m_field.blur();    // re-announce with the secure keyboard kind
+    d->m_field.setSecure(on);
+    if (!on) d->m_field.setKind(EDEN_TEXT_KIND_PLAIN);
+    if (had) d->m_field.focus();
+}
+
+const GLW::TextField* GLDialog::promptField() {
+    GLDialog* d = getDialog();
+    return d->m_active && d->m_hasField ? &d->m_field : NULL;
+}
+
 void GLDialog::prompt(const char* title, const char* body, const char* initialText, int maxBytes,
                       const char* const* buttons, int n, void (*cb)(int, const char*), int lines) {
     show(title, body, buttons, n, NULL);
@@ -112,9 +129,9 @@ void GLDialog::layout() {
     using namespace GLW;
     const float pad   = du(16);
     const float gap   = du(8);
-    // Compact on a pointer, the 44pt floor on touch (GLW::touchFloor) — the same density rule as
+    // Compact on a pointer, the 44 OS-pt floor on touch (GLW::controlH) — the same density rule as
     // SettingsMenu. Title and buttons are the display face, so they run ~1.3x the body size.
-    const float rowH  = std::max(du(32), touchFloor());
+    const float rowH  = controlH(32);
     const float titlePt = du(30), bodyPt = du(14), btnPt = du(20);
 
     float pw = du(420);

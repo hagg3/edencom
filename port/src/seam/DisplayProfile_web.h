@@ -113,6 +113,9 @@ void eden_display_set_safe_insets(float l, float t, float r, float b);
 // the insets, converted through the letterbox (an inset the bars already cover costs nothing).
 // The whole point space when no insets are known. Derived live, never cached.
 void  eden_safe_rect(float* x, float* y, float* w, float* h);
+// I.3: window points (the OS's points: iOS pt, macOS pt) per engine point, through the letterbox.
+// 1 when no window box is known (headless). GLW::touchFloor() divides Apple's 44 pt by it.
+float eden_display_window_pt_per_point(void);
 // --touch-selftest's teeth: 1 = report the whole point space (the pre-I.2 layout) and re-lay-out.
 void  eden_display_debug_ignore_safe_area(int on);
 

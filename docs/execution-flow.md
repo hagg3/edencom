@@ -121,7 +121,11 @@ stateDiagram-v2
 ### update() in PLAY mode (`World::update`)
 Order matters and is load-bearing. Ahead of the steps, two port early-outs (modified from stock):
 while a `GLDialog` is active only the dialog updates, and while the in-game Settings modal is open
-(`menu->showsettings`) only `SettingsMenu` does — the world underneath is frozen.
+(`menu->showsettings`) only `SettingsMenu` does — the world underneath is frozen. **MP.3b:** before
+both, in every game mode, `MpWorld::tick()` pumps a multiplayer session's link, runs its `REGION` pacer
+and (before the session world has loaded) drains the world queue into the overlay; and both early-outs
+call `MpWorld::update` (step 5c) too, since a session can't freeze: the server keeps talking. Outside a
+session both are no-ops ([networking.md](networking.md) "The live world").
 1. `etime` clamped to max 1/20 s (physics stability).
 2. `cam->update`, `terrain->update` (fire/liquids/fireworks/sky), `hud->update`.
 3. `UpdateModels` (creatures) unless dead or `CREATURES_ON==false`.
@@ -134,6 +138,11 @@ while a `GLDialog` is active only the dialog updates, and while the in-game Sett
    `do_reload` path — never ordinary streaming) calls `CmdScript::reset()`: no run survives it.
    Console jobs (C.1, [console.md](console.md): typed lines still waiting) resume here too;
    `CmdScript::runLine` executes a line at once, in the input phase like a tap.
+5c. **`MpWorld::update(etime)` — not stock (MP.3b, 2026-10-17):** a multiplayer session's queued world
+   events (`SNAPZ`, `ACTION`, `SIGNP`) in server order, into the overlay and the resident window
+   (`Terrain::setCellState`), under a 2 ms / 24-chunk budget, plus reconcile. After this frame's local
+   edits (4, 5b), before meshing (6), so remote edits are meshed this frame and this frame's landings see
+   them. Play only, never while the load pthread runs.
 6. `terrain->prepareAndLoadGeometry()` — streaming + chunk re-meshing (CPU). A bulk window
    reload (the `count>140` path) is **spread over several frames** on a fixed per-frame chunk
    budget rather than done inside this one call — modified from stock, 2026-08-13; see
@@ -201,9 +210,10 @@ loading; `doneLoading` acts as the state: 0 idle → 1 loading → 2 finished.
 | Thread | What runs there |
 |---|---|
 | Main (stock CADisplayLink; port SDL loop) | Everything during gameplay: update, meshing, VBO upload, render, file streaming I/O, `.emod` commits |
-| Load pthread (`loadWorldThread`) | Only `Terrain::loadTerrain` during the initial world load |
+| Load pthread (`loadWorldThread`) | Only `Terrain::loadTerrain` during the initial world load. In a multiplayer session that includes reading `MpWorld`'s overlay through the flat branch's landing hook (MP.3a); the overlay is frozen then (nothing merges while `doneLoading==1`), so it is read-only work of the kind the thread already does |
 | Stock: NSURLConnection callbacks | Networking delegates (ShareUtil/FileDownload/FileUpload) on the main run loop — seam-excluded on the port |
 | Port: one detached `std::thread` per HTTP request | `eden_net_fetch`/`eden_net_post_file` (`Net_native.cpp`) run the backend (AppleNet/WinHTTP/libcurl) there; the main thread polls the job (`WorldBrowser`/`WorldShare`) |
+| Port: the multiplayer network thread (one `std::thread` per `MpSession`, `port/src/net/`, MP.2) | connects, reads/writes the socket, frames lines, inflates `SNAPZ` and classifies lines into plain data on mutex-guarded queues; never touches engine state. The main thread drains with `drainSide`/`drainWorld`. Started by the join flow (`native/src/seam/MpLink_native.mm`, MP.3b; `MpWorld::tick` pumps it each frame), stopped (joined) when `MpWorld::endSession`/`dropLink` releases the link. `--mp-replay` feeds recorded lines with no thread |
 | Port: SDL's audio device thread | mixes the `SDL_AudioStream`s that `eden_native_audio_tick()` feeds from the main thread; no engine code runs there |
 
 `MeshPool` (off-thread meshing) and worker column decode exist in the tree but are compiled

@@ -305,6 +305,15 @@ The port's second world container: an append-only log of per-column zstd records
   save as committed (alpinecraft's 40,032-byte trailer, measured). The version stamp is the `.eden`
   writer's rule.
 
+### A multiplayer session: commit to RAM (MP.3a, 2026-10-17)
+`FileManager::sessionWorld` (set by `MpWorld::beginSession`) redirects every save: `saveWorld(warp)` (after its
+`endDynamics`) and `saveWorldKeepDynamics()` call `commitSession(warp)`, which moves the session header's pos/home/yaw and
+runs `MpWorld::commitModified()`: each resident column with a `modified` chunk is diffed against the flat recipe into the
+in-memory overlay and its flags cleared, as a durable `.emod` commit would. Rule 7's save-before-stream holds unchanged, so a
+walk out and back keeps local results. `loadWorld` takes `loadSessionWorld()` (no file, no directory, no convert gate) and keeps
+the session trailer across warps. Nothing reaches disk; the world name `mp:<host>:<port>` is never a path (`takeScreenshot` and
+the streamer's file handles check `sessionWorld`). Leaving the session drops it. [networking.md](networking.md) "The session world".
+
 ### The trailer model (Stage D / D.3a, 2026-10-10)
 `Classes/WorldTrailer.{h,cpp}` parses the open world's trailer (signs `SGN1`, command blocks `CMB1`,
 unknown sections verbatim; format: eden-file-format.md "The trailer model"). `FileManager` owns one

@@ -82,6 +82,7 @@ public:
     Button rcrouchhit,rcrouchrender;
     
     Button rcam,rexit,rsave,rhome,rmenu;
+    Button rchat;   // MP.7: the touch chat button, right of the pause gear (a session only)
     
 	int leftymode;
 	//Gamepad* gamepad;

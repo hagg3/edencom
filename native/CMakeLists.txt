@@ -363,6 +363,13 @@ set(EDEN_SHARED_OTHER
   "${EDEN_PORT_DIR}/src/shim/audio/audiotoolbox_stub.cpp"  # failing AudioToolbox stubs, as on web
   "${EDEN_PORT_DIR}/src/shim/foundation/platform_shims.cpp" # arc4random + the portable clock + FS roots
   "${EDEN_PORT_DIR}/src/shim/gl/gl_fixed_function.cpp"      # the ES1 -> GL translator, Stage 0.2's split
+  # Stage MP (MP.1/MP.2): the multiplayer client's TCP seam, framer, SNAPZ codec and protocol session.
+  # Plain C++ over zlib; no engine includes (the network thread owns it). Winsock links below.
+  "${EDEN_PORT_DIR}/src/net/NetSock.cpp"
+  "${EDEN_PORT_DIR}/src/net/Snapz.cpp"
+  "${EDEN_PORT_DIR}/src/net/MpSession.cpp"
+  "${EDEN_PORT_DIR}/src/net/ServerList.cpp"                 # MP.6: servers.txt + the probe
+  "${EDEN_PORT_DIR}/src/net/NetSelftest.cpp"                # --net-selftest / --mp-selftest
 )
 if(APPLE)
   # NO objc_runtime.cpp: Apple's libobjc is the runtime here (see this file's header).
@@ -399,6 +406,10 @@ set(EDEN_NATIVE_SOURCES
   # files, offline fixtures). The blocking GET under it is per platform — see the block after
   # this list for which backend each target links.
   src/seam/Net_native.cpp
+  # MP.3b: the multiplayer join flow, MpSession (port/src/net) <-> Classes/MpWorld.
+  src/seam/MpLink_native.mm
+  # MP.6: the saved server list + probe (port/src/net/ServerList) behind Classes/MpServers.h.
+  src/seam/MpServers_native.mm
   src/seam/pvrt_matrix_palette_native.cpp
   src/shim/gl/gl_context_native.cpp
   src/shim/gl/gl_es1_extras_native.cpp
@@ -937,6 +948,9 @@ target_link_libraries(eden_native PRIVATE ZLIB::ZLIB)
 
 find_package(Threads REQUIRED)
 target_link_libraries(eden_native PRIVATE Threads::Threads)
+if(WIN32)
+  target_link_libraries(eden_native PRIVATE ws2_32)   # port/src/net/NetSock.cpp (Winsock)
+endif()
 
 # NOTE, because it is the quiet upside of this whole target: web-port-final:web/src/seam/pthread_sync_web.c is
 # NOT built here. That file exists because Emscripten's non-pthread build has a stub

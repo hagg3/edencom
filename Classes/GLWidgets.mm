@@ -19,8 +19,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <string>
+#include <utility>
+#include <vector>
 
 extern float SCREEN_WIDTH;
 extern float SCREEN_HEIGHT;
@@ -34,6 +37,8 @@ namespace GLW {
 // kit never see it.
 static float uiScale() { return IS_IPAD ? SCALE_WIDTH : 1.0f; }
 
+extern "C" int eden_effective_input_is_touch(void);   // port/src/seam/Settings_web.mm (both targets)
+
 // --- scale ---------------------------------------------------------------------------------
 // min(w/783, h/587) is the CSS rule verbatim. The clamp is not: the web clamps to 1..2.4 because
 // its denominator is raw CSS pixels, and this one is point space, which the display profile has
@@ -43,6 +48,9 @@ float u() {
     float uw = SCREEN_WIDTH  / 783.0f;
     float uh = SCREEN_HEIGHT / 587.0f;
     float v = (uw < uh) ? uw : uh;
+    // I.3 tried 0.55 on touch (a phone's 320-point space gives 0.545) and kept 0.70: at 0.55 the
+    // body/hint text drops to ~10 iOS pt, railFrame's du(783) panel leaves the phone's width unused,
+    // and labels built at the old scale clip. The density finding was the touch floor (touchFloor()).
     if (v < 0.70f) v = 0.70f;
     if (v > 2.40f) v = 2.40f;
     return v;
@@ -50,14 +58,53 @@ float u() {
 
 const float kTouchFloor = 44.0f;
 
-extern "C" int eden_effective_input_is_touch(void);   // port/src/seam/Settings_web.mm (both targets)
-float touchFloor() { return eden_effective_input_is_touch() ? kTouchFloor : 0.0f; }
+extern "C" float eden_display_window_pt_per_point(void);   // DisplayProfile_web.mm (I.3)
+// I.3: 44 OS points, not 44 engine points. An engine point is 1.23 iOS pt on an iPhone 16 and 1.80
+// on an iPad Air 2, so the old constant floor was 54 and 79 pt there: the "huge padding" finding.
+// Never above 44 (a window smaller than its point space would otherwise inflate it).
+float touchFloor() {
+    if (!eden_effective_input_is_touch()) return 0.0f;
+    const float k = eden_display_window_pt_per_point();
+    return k > 1.0f ? std::round(kTouchFloor / k) : kTouchFloor;
+}
 
 extern "C" void eden_safe_rect(float* x, float* y, float* w, float* h);   // DisplayProfile_web.mm (I.2)
+float controlH(float designU) { return std::max(du(designU), touchFloor()); }
+
 CGRect safeRect() {
     float x = 0, y = 0, w = SCREEN_WIDTH, h = SCREEN_HEIGHT;
     eden_safe_rect(&x, &y, &w, &h);
     return CGRectMake(x, y, w, h);
+}
+
+// I.3: --fit-selftest's recorder. While on, every control's render() appends its drawn rect, so a
+// harness can ask "did anything this frame draw outside the safe rect" without knowing the screen.
+static bool g_dbgRec = false;
+static std::vector<std::pair<std::string, CGRect> > g_dbgRects;
+static void debugRecord(const char* what, CGRect r) {
+    if (g_dbgRec && r.size.width > 0.0f && r.size.height > 0.0f) g_dbgRects.push_back(std::make_pair(std::string(what), r));
+}
+void debugRecordControls(bool on) { g_dbgRec = on; g_dbgRects.clear(); }
+int debugControlsOutside(CGRect sr, char* buf, int cap, int* total, const std::vector<CGRect>& excused) {
+    if (buf && cap > 0) buf[0] = 0;
+    int bad = 0, n = 0;
+    const float e = 0.5f;
+    for (size_t i = 0; i < g_dbgRects.size(); i++) {
+        const CGRect& r = g_dbgRects[i].second;
+        bool skip = false;
+        for (size_t j = 0; j < excused.size() && !skip; j++)
+            skip = std::fabs(excused[j].origin.x - r.origin.x) < e && std::fabs(excused[j].origin.y - r.origin.y) < e &&
+                   std::fabs(excused[j].size.width - r.size.width) < e && std::fabs(excused[j].size.height - r.size.height) < e;
+        if (skip) continue;
+        if (r.origin.x >= sr.origin.x - e && r.origin.y >= sr.origin.y - e &&
+            r.origin.x + r.size.width <= sr.origin.x + sr.size.width + e &&
+            r.origin.y + r.size.height <= sr.origin.y + sr.size.height + e) continue;
+        if (bad++ < 6 && buf && n < cap)
+            n += snprintf(buf + n, cap - n, "%s%s[%.0f,%.0f %.0fx%.0f]", bad > 1 ? " " : "",
+                          g_dbgRects[i].first.c_str(), r.origin.x, r.origin.y, r.size.width, r.size.height);
+    }
+    if (total) *total = (int)g_dbgRects.size();
+    return bad;
 }
 
 // A hit box: the explicit one if a screen set it, else the drawn rect.
@@ -92,6 +139,8 @@ const Color kTextPressed   = { 0.788f, 0.788f, 0.788f, 1.0f };         // #c9c9c
 const Color kTextMuted     = { 0x97/255.0f, 0x97/255.0f, 0x97/255.0f, 1.0f };   // --eden-gray-300
 const Color kWhite         = { 1.0f, 1.0f, 1.0f, 1.0f };
 const Color kBlack         = { 0.0f, 0.0f, 0.0f, 1.0f };
+const Color kTextError     = { 0xc0/255.0f, 0x39/255.0f, 0x2b/255.0f, 1.0f };   // --eden-red-500
+const Color kTextWarn      = { 0xa8/255.0f, 0x62/255.0f, 0x00/255.0f, 1.0f };
 
 // --- primitives ----------------------------------------------------------------------------
 void fill(float x, float y, float w, float h, Color c) {
@@ -464,9 +513,12 @@ bool Button::hit(float x, float y) const { return m_enabled && inBox(m_rect, m_h
 static const Color kPlayFace   = { 0xa9/255.0f, 0xe4/255.0f, 0xb0/255.0f, 1.0f };
 static const Color kGreen500   = { 0x89/255.0f, 0xc3/255.0f, 0x1f/255.0f, 1.0f };
 static const Color kRed100     = { 0xe8/255.0f, 0xa4/255.0f, 0x9b/255.0f, 1.0f };
+static const Color kCyan100    = { 0xa6/255.0f, 0xe3/255.0f, 0xf0/255.0f, 1.0f };   // TONE_INFO (Get Worlds)
+static const Color kCyan500    = { 0x2a/255.0f, 0xa8/255.0f, 0xc4/255.0f, 1.0f };
 static const Color kRed500     = { 0xc0/255.0f, 0x39/255.0f, 0x2b/255.0f, 1.0f };
 
 void Button::render() const {
+    debugRecord(m_text.empty() ? "button" : m_text.c_str(), m_rect);
     bevel(m_rect, m_pressed ? BEVEL_PRESSED : BEVEL_RAISED);
     if (m_tone != TONE_DEFAULT) {
         // Re-face inside the keyline (2u) — the bevel's shadow, keyline and far-corner inset stay.
@@ -474,12 +526,12 @@ void Button::render() const {
         const CGRect in = CGRectMake(m_rect.origin.x + 2*U, m_rect.origin.y + 2*U,
                                      m_rect.size.width - 4*U, m_rect.size.height - 4*U);
         if (m_pressed) {
-            fill(in, m_tone == TONE_POSITIVE ? kGreen500 : kRed500);
+            fill(in, m_tone == TONE_POSITIVE ? kGreen500 : m_tone == TONE_INFO ? kCyan500 : kRed500);
             insetTopLeft(in, 2*U, C(0x000000, 0.50f));
         } else {
             const float band = m_rect.size.height * 0.06f;
             fill(in.origin.x, in.origin.y, in.size.width, in.size.height - band,
-                 m_tone == TONE_POSITIVE ? kPlayFace : kRed100);
+                 m_tone == TONE_POSITIVE ? kPlayFace : m_tone == TONE_INFO ? kCyan100 : kRed100);
             insetBottomRight(in, 1*U, C(0x646464, 0.47f));
         }
     }
@@ -543,6 +595,7 @@ static const Color kToggleMutedLime    = { 0xc4/255.0f, 0xe1/255.0f, 0x8f/255.0f
 static const Color kToggleMutedLimeTop = { 0xe2/255.0f, 0xf8/255.0f, 0xba/255.0f, 1.0f };   // green-100 50% on white
 
 void Toggle::render() const {
+    debugRecord("toggle", m_rect);
     const float U = u();
     const CGRect r = m_rect;
     fill(r, kContentFace);
@@ -633,6 +686,7 @@ bool Slider::dragTo(float x) {
 }
 
 void Slider::render() const {
+    debugRecord("slider", m_rect);
     const float th = thumbH(m_rect) * (10.0f / 24.0f);
     const CGRect track = CGRectMake(m_rect.origin.x, m_rect.origin.y + (m_rect.size.height - th) * 0.5f,
                                     m_rect.size.width, th);
@@ -692,6 +746,7 @@ void Stepper::setHitRect(CGRect h) {
 }
 
 void Stepper::render() const {
+    debugRecord("stepper", m_rect);
     const float b = m_rect.size.height, g = du(4);
     const CGRect well = CGRectMake(m_rect.origin.x + b + g, m_rect.origin.y,
                                    m_rect.size.width - 2*b - 2*g, m_rect.size.height);
@@ -713,9 +768,15 @@ ListRow::ListRow() : m_selected(false), m_last(false) { m_rect = CGRectMake(0, 0
 
 void ListRow::setTitle(const char* utf8, float pt) { m_title.set(utf8, pt, UITextAlignmentLeft); }
 
+void ListRow::setDetail(const char* utf8, float pt) {
+    if (utf8 && *utf8) m_detail.set(utf8, pt, UITextAlignmentLeft, 0.0f, FACE_BODY);
+    else m_detail.clear();
+}
+
 bool ListRow::hit(float x, float y) const { return inRect(m_rect, x, y); }
 
 void ListRow::render() const {
+    debugRecord("row", m_rect);
     const float U = u();
     const CGRect r = m_rect;
     if (m_selected) {
@@ -725,6 +786,9 @@ void ListRow::render() const {
     if (!m_last) fill(r.origin.x, r.origin.y, r.size.width, 1*U, C(0x000000, 0.28f));
     if (!m_title.empty())
         m_title.draw(r.origin.x + du(10), r.origin.y + (r.size.height + m_title.height()) * 0.5f, kText);
+    if (!m_detail.empty() && m_title.width() + m_detail.width() + du(34) <= r.size.width)
+        m_detail.draw(r.origin.x + r.size.width - du(10) - m_detail.width(),
+                      r.origin.y + (r.size.height + m_detail.height()) * 0.5f, kTextMuted);
 }
 
 // --- ScrollView ----------------------------------------------------------------------------
@@ -887,6 +951,7 @@ void ScrollView::endDrag() { m_thumbDrag = m_contentDrag = m_contentScrolling = 
 
 void ScrollView::render() const {
     if (m_bar.size.width <= 0.0f || m_bar.size.height <= 0.0f) return;
+    debugRecord("scrollbar", m_bar);
     fill(m_bar, kTrack);
     bevel(m_bar, BEVEL_SUNKEN);
     // The thumb: --bevel-raised-sm, the slider thumb's recipe.
@@ -1017,7 +1082,32 @@ int IconRail::hit(float x, float y) const {
     return -1;
 }
 
+// I.6: the rail scrolls by whole tiles with no bar, so on a short screen the last tabs are simply
+// missing. A dark fade over the clipped end of the last/first visible tile plus a chevron says
+// "more this way". The kit has no clipping, so the fade is stacked bands, not a half-cut tile.
+static void railScrollCue(const CGRect& rail, const CGRect& tile, bool down, float inset) {
+    const float U = u();
+    const float fadeH = tile.size.height * 0.38f;
+    const int bands = 6;
+    const float bh = fadeH / bands;
+    for (int i = 0; i < bands; i++) {   // i = 0 innermost; the rail's edge is darkest
+        const float y = down ? tile.origin.y + (bands - 1 - i) * bh : tile.origin.y + tile.size.height - (bands - i) * bh;
+        fill(tile.origin.x, y, tile.size.width, bh + 0.5f, C(0x000000, 0.10f + 0.09f * i));
+    }
+    // The chevron: stacked 2u bars narrowing toward the tip, centred on the rail.
+    const float cx = rail.origin.x + rail.size.width * 0.5f;
+    const float bar = std::max(1.0f, 2.0f * U), w0 = std::max(10.0f * U, inset * 4.0f);
+    const float yEdge = down ? rail.origin.y + inset : rail.origin.y + rail.size.height - inset;
+    for (int k = 0; k < 4; k++) {
+        const float w = w0 - k * 2.0f * bar;
+        if (w <= 0) break;
+        const float y = down ? yEdge + (3 - k) * bar : yEdge - (3 - k) * bar - bar;
+        fill(cx - w * 0.5f, y, w, bar, kText);
+    }
+}
+
 void IconRail::render() const {
+    debugRecord("rail", m_rect);
     fill(m_rect, kRailFace);
     border(m_rect, 1 * u(), kKeyline);
     const float isz = du(kRailIcon) * (tileSize() / du(kRailTile));   // the icon scales with the tile
@@ -1031,6 +1121,11 @@ void IconRail::render() const {
         icon(m_icons[i], CGRectMake(t.origin.x + (t.size.width - isz) * 0.5f,
                                     t.origin.y + (t.size.height - isz) * 0.5f, isz, isz), ink);
     }
+    const int last = m_scroll.first() + m_scroll.visible() - 1;
+    if (count() > m_scroll.visible()) {   // I.6
+        if (last < count() - 1) railScrollCue(m_rect, tileRect(last), true, du(kRailPad) * 0.5f);
+        if (m_scroll.first() > 0) railScrollCue(m_rect, tileRect(m_scroll.first()), false, du(kRailPad) * 0.5f);
+    }
 }
 
 // --- TwoLineRow (U.1) ----------------------------------------------------------------------
@@ -1041,7 +1136,8 @@ void IconRail::render() const {
 static const float kRowPadY = 4.0f, kRowPadX = 5.0f, kRowGap = 10.0f, kRowHintGap = 1.0f;
 
 TwoLineRow::TwoLineRow() : m_width(0), m_controlW(0), m_controlH(0), m_indent(0), m_titlePt(0),
-                           m_hintPt(0), m_height(0), m_x(0), m_yTop(0), m_muted(false), m_last(false) {}
+                           m_hintPt(0), m_height(0), m_x(0), m_yTop(0), m_muted(false), m_last(false),
+                           m_hintColor(kText) {}
 
 void TwoLineRow::build(const char* title, const char* hint, float width, float controlW, float controlH,
                        float indent, float titlePt, float hintPt) {
@@ -1093,7 +1189,7 @@ void TwoLineRow::render() const {
         m_title.draw(x, y + lift, m_muted ? kTextMuted : kText);
         y -= titleHeight();
     }
-    if (!m_hint.empty()) m_hint.draw(x, y - du(kRowHintGap), m_muted ? kTextMuted : kText);
+    if (!m_hint.empty()) m_hint.draw(x, y - du(kRowHintGap), m_muted ? kTextMuted : m_hintColor);
 }
 
 void progressBar(CGRect r, float frac, float phase) {
@@ -1120,7 +1216,8 @@ void progressBar(CGRect r, float frac, float phase) {
 // --- TextField -----------------------------------------------------------------------------
 static TextField* s_focused = NULL;
 
-TextField::TextField() : m_pt(16.0f), m_maxBytes(49), m_lines(1), m_showingPlaceholder(false), m_code(false) {
+TextField::TextField() : m_pt(16.0f), m_maxBytes(49), m_lines(1), m_showingPlaceholder(false), m_code(false),
+                         m_secure(false), m_kind(EDEN_TEXT_KIND_PLAIN) {
     m_rect = CGRectMake(0, 0, 0, 0);
     m_keep = CGRectMake(0, 0, 0, 0);
 }
@@ -1129,16 +1226,24 @@ TextField::TextField() : m_pt(16.0f), m_maxBytes(49), m_lines(1), m_showingPlace
 void TextField::announce() const {
     eden_text_input_keep_visible(m_keep.origin.x, m_keep.origin.y, m_keep.size.width, m_keep.size.height);
     if (m_code) eden_text_input_start_code(m_rect.origin.x, m_rect.origin.y, m_rect.size.width, m_rect.size.height);
+    else if (m_kind != EDEN_TEXT_KIND_PLAIN)
+        eden_text_input_start_kind(m_kind, m_rect.origin.x, m_rect.origin.y, m_rect.size.width, m_rect.size.height);
     else        eden_text_input_start(m_rect.origin.x, m_rect.origin.y, m_rect.size.width, m_rect.size.height);
 }
 
 TextField::~TextField() { if (s_focused == this) blur(); }
 
 void TextField::rebuild() {
-    std::string shown = m_text;
+    std::string shown;
+    if (m_secure) {   // MP.6: one '*' per UTF-8 code point (the raster is ASCII-only, so no bullet
+                      // glyph); the text itself is never rasterised
+        for (size_t i = 0; i < m_text.size(); ++i)
+            if (((unsigned char)m_text[i] & 0xC0) != 0x80) shown += '*';
+    } else shown = m_text;
     m_showingPlaceholder = false;
     if (focused()) shown += "|";
     else if (shown.empty() && !m_placeholder.empty()) { shown = m_placeholder; m_showingPlaceholder = true; }
+    m_shown = shown;
     if (shown.empty()) { m_label.clear(); return; }
     if (m_lines > 1 && m_rect.size.width > du(12))
         m_label.set(shown.c_str(), m_pt, UITextAlignmentLeft, m_rect.size.width - du(12), FACE_DISPLAY, m_lines);
@@ -1262,6 +1367,7 @@ TextField::Event TextField::update() {
 }
 
 void TextField::render() const {
+    debugRecord("field", m_rect);
     fill(m_rect, kContentFace);
     bevel(m_rect, BEVEL_SUNKEN);
     if (m_label.empty()) return;

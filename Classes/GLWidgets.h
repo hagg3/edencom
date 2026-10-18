@@ -64,6 +64,8 @@ extern const Color kTextPressed;   // --eden-text-pressed
 extern const Color kTextMuted;     // --eden-text-muted (U.1: a muted row, a disabled rail tile)
 extern const Color kWhite;
 extern const Color kBlack;
+extern const Color kTextError;     // MP.6: a validation hint that blocks (--eden-red-500)
+extern const Color kTextWarn;      // MP.6: one that warns (an amber readable on white)
 
 // --- primitives ----------------------------------------------------------------------------
 void fill(CGRect r, Color c);
@@ -173,7 +175,7 @@ private:
 class Button {
 public:
     // `.eden-btn--positive` (Play: a green face) and `--danger` (a red one). Same bevel either way.
-    enum Tone { TONE_DEFAULT, TONE_POSITIVE, TONE_DANGER };
+    enum Tone { TONE_DEFAULT, TONE_POSITIVE, TONE_DANGER, TONE_INFO };
 
     Button();
     ~Button();
@@ -223,16 +225,27 @@ private:
 };
 
 // The design system's 44pt touch floor (`pointer: coarse` in the CSS). It raises the HIT BOX,
-// not the art (design-system.md, "Touch floor"): touchFloor() is 44 while the input profile is
-// touch and 0 otherwise, so a desktop screen can be as dense as its pointer allows. kTouchFloor
-// is the constant itself, for a caller that needs the number regardless of profile.
+// not the art (design-system.md, "Touch floor"): touchFloor() is 44 OS points (iOS pt, macOS pt)
+// in engine points while the input profile is touch (I.3: ~36 on an iPhone 16, ~24 on an iPad Air 2,
+// 44 headless or at 1:1), and 0 otherwise, so a desktop screen can be as dense as its pointer
+// allows. kTouchFloor is the 44 itself, for a caller that needs the number regardless of profile.
 extern const float kTouchFloor;
 float touchFloor();
+// I.3: the one height token for a button, list row or toolbar: the screen's design height (du units)
+// on a pointer, raised to touchFloor() on touch. Every screen used to spell this inline.
+float controlH(float designU);
 
 // I.2: the rect UI may anchor to (point space, y up): the screen less the safe-area insets (the
 // Dynamic Island, rounded corners, the home bar), the whole screen where there are none. The
 // world still renders full-bleed; edge-anchored HUD chrome and full-screen panels use this.
 CGRect safeRect();
+
+// I.3: --fit-selftest. While recording, every kit control's render() logs its drawn rect (the
+// recorder clears on each call to debugRecordControls). debugControlsOutside() counts the logged
+// rects not inside `sr` (a rect equal to one in `excused` is skipped), names up to six in `buf`, and
+// reports how many were logged in `total`.
+void debugRecordControls(bool on);
+int  debugControlsOutside(CGRect sr, char* buf, int cap, int* total, const std::vector<CGRect>& excused);
 
 // --- Toggle (Stage 5.4, U.1) ---------------------------------------------------------------
 // `.eden-toggle`: a SUNKEN split pill, no sliding knob. The left half is lime when on, the right
@@ -352,6 +365,9 @@ public:
     ListRow();
 
     void setTitle(const char* utf8, float pt);   // a texture upload: call on change, not per frame
+    // I.5: a right-aligned body-face detail (a publish date), drawn only when it fits beside the
+    // title. A texture upload like setTitle. Empty clears it.
+    void setDetail(const char* utf8, float pt);
     void setRect(CGRect r)   { m_rect = r; }
     CGRect rect() const      { return m_rect; }
     void setSelected(bool s) { m_selected = s; }
@@ -365,7 +381,7 @@ private:
     ListRow(const ListRow&);
     ListRow& operator=(const ListRow&);
 
-    Label  m_title;
+    Label  m_title, m_detail;
     CGRect m_rect;
     bool   m_selected, m_last;
 };
@@ -567,6 +583,8 @@ public:
     void setMuted(bool m)    { m_muted = m; }
     bool muted() const       { return m_muted; }
     void setLast(bool l)     { m_last = l; }
+    // MP.6: a form's validation hint (red: the reason Save is off; amber: a warning). kText by default.
+    void setHintColor(Color c) { m_hintColor = c; }
 
     void render() const;
 
@@ -580,6 +598,7 @@ private:
     float       m_width, m_controlW, m_controlH, m_indent, m_titlePt, m_hintPt;
     float       m_height, m_x, m_yTop;
     bool        m_muted, m_last;
+    Color       m_hintColor;
 };
 
 // `.eden-progress` (Stage 5.9): a SUNKEN track with the lime 12% fill growing from the left.
@@ -631,6 +650,16 @@ public:
     // no autocorrect, no autocapitalisation -- and keeps the Tab / Up / Down key bytes for the
     // screen (takeKey()). Other fields keep the defaults and drop those bytes.
     void setCodeMode(bool on) { m_code = on; }
+    // MP.6 (UI plan U12): the keyboard kind for a non-code field -- EDEN_TEXT_KIND_USERNAME (an
+    // address, a player name: no autocorrect) or EDEN_TEXT_KIND_PASSWORD. Code mode wins.
+    void setKind(int kind)   { m_kind = kind; }
+    // MP.6: a secure field draws one '*' per character (never rasterising the text); text()
+    // still answers the real string. Sets the password kind.
+    void setSecure(bool on)  { m_secure = on; if (on) m_kind = 3 /* EDEN_TEXT_KIND_PASSWORD */; rebuild(); }
+    bool secure() const      { return m_secure; }
+    // What the label was last built from: the bullets for a secure field (the harness's check
+    // that the raster never holds the password).
+    const std::string& shownText() const { return m_shown; }
     // The next Tab / Up / Down byte (EDEN_TEXT_KEY_*) seen by this frame's update(), 0 when none.
     // Keys not taken are dropped at the next update().
     int  takeKey();
@@ -662,6 +691,9 @@ private:
     Label       m_label;
     bool        m_showingPlaceholder;
     bool        m_code;
+    bool        m_secure;
+    int         m_kind;
+    std::string m_shown;
     std::string m_keys;          // code mode: this frame's Tab / Up / Down bytes, oldest first
 };
 
@@ -683,6 +715,11 @@ void drawVersionTag();
 #define EDEN_TEXT_KEY_TAB   0x09
 #define EDEN_TEXT_KEY_UP    0x11
 #define EDEN_TEXT_KEY_DOWN  0x12
+// MP.6: eden_text_input_start_kind()'s kinds.
+#define EDEN_TEXT_KIND_PLAIN    0
+#define EDEN_TEXT_KIND_CODE     1
+#define EDEN_TEXT_KIND_USERNAME 2
+#define EDEN_TEXT_KIND_PASSWORD 3
 extern "C" {
 // The raster seam's face switch (2026-10-05): 0 = body, 1 = display (Jersey 10). Sticky; Label
 // sets it around its own rasters and puts it back to 0. Native: TextRaster_native.cpp (bundled
@@ -703,6 +740,10 @@ void eden_text_input_keep_visible(float x, float y, float w, float h);
 // C.4: eden_text_input_start() for code -- the system keyboard comes up with autocorrect and
 // autocapitalisation off (SDL_StartTextInputWithProperties). Desktops: the same as start().
 void eden_text_input_start_code(float x, float y, float w, float h);
+// MP.6 (UI plan U12): start() with a keyboard kind (EDEN_TEXT_KIND_*): username = no autocorrect or
+// capitalisation, password = the hidden secure keyboard (SDL_TEXTINPUT_TYPE_TEXT_PASSWORD_HIDDEN).
+// start_code() is kind 1. Desktops: the same as start().
+void eden_text_input_start_kind(int kind, float x, float y, float w, float h);
 // C.4: the top edge of the on-screen keyboard in point space (y up), so a screen can lay itself
 // out above it. 0 = no on-screen keyboard over the window (always, on desktops); -1 = text input
 // started and a keyboard is expected but its frame is not known yet (lay out somewhere no keyboard

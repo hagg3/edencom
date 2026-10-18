@@ -171,6 +171,23 @@ jobs:
           # pack emod.py wrote; every target must reproduce its SHA-256s byte for byte, which is
           # the cross-target .emod gate (macOS, Linux, Windows here).
           run_gate "emod selftest" $B --emod-selftest --emod-fixtures=../port/tools/fixtures/emod --emod-work="$PWD/emod-work"
+          # MP.1/MP.2: the multiplayer TCP seam + protocol session against an in-process mock server on
+          # loopback (Winsock on Windows). The live leg against ewb-server is port/tools/mp-live-gate.sh.
+          run_gate "net selftest" $B --net-selftest
+          run_gate "mp selftest" $B --mp-selftest
+          # MP.3a: the session world offline -- a recorded edenserver stream (port/tools/fixtures/mp) into
+          # the overlay, landed, walked out and back, teleported (engine plan §15 legs 1, 2, 5); MP.3b adds
+          # step 5c, reconcile and the REGION pacer (leg 3) and a 600k-record join + relay storm (leg 4); each
+          # mutation must FAIL it. The .expect is mp-replay.py's own decode of the same lines (checked here once).
+          python3 ../port/tools/mp-replay.py expect ../port/tools/fixtures/mp/replay-1.lines --check
+          rm -rf mp-replay-docs && mkdir -p mp-replay-docs
+          run_gate "mp replay" $B --mp-replay=../port/tools/fixtures/mp/replay-1.lines --docs="$PWD/mp-replay-docs"
+          for m in noevictcommit nolandhook noreconcile echo; do
+            rm -rf mp-replay-docs-$m && mkdir -p mp-replay-docs-$m
+            if $B --mp-replay=../port/tools/fixtures/mp/replay-1.lines --mp-mutate=$m --docs="$PWD/mp-replay-docs-$m" > gate-mp-replay-mutate-$m.log 2>&1; then
+              echo "::error::--mp-replay --mp-mutate=$m PASSED: the gate cannot see that mutation"; exit 1
+            fi
+          done
           # Stage S / S.6: the bundled map. Every column of Eden.emod through the engine's own read +
           # decode, against the RLE Eden.eden it was baked from (0 may differ).
           run_gate "bundled map" $B --bundled-map-selftest --bundled-eden=../Eden.eden --bundled-emod=../Eden.emod
@@ -444,6 +461,19 @@ jobs:
           # pack emod.py wrote; every target must reproduce its SHA-256s byte for byte, which is
           # the cross-target .emod gate (macOS, Linux, Windows here).
           run_gate "emod selftest" $B --emod-selftest --emod-fixtures=../port/tools/fixtures/emod --emod-work="$PWD/emod-work"
+          # MP.1/MP.2: the multiplayer TCP seam + protocol session against an in-process mock server on
+          # loopback (Winsock on Windows). The live leg against ewb-server is port/tools/mp-live-gate.sh.
+          run_gate "net selftest" $B --net-selftest
+          run_gate "mp selftest" $B --mp-selftest
+          # MP.3a (see the linux job).
+          rm -rf mp-replay-docs && mkdir -p mp-replay-docs
+          run_gate "mp replay" $B --mp-replay=../port/tools/fixtures/mp/replay-1.lines --docs="$PWD/mp-replay-docs"
+          for m in noevictcommit nolandhook noreconcile echo; do
+            rm -rf mp-replay-docs-$m && mkdir -p mp-replay-docs-$m
+            if $B --mp-replay=../port/tools/fixtures/mp/replay-1.lines --mp-mutate=$m --docs="$PWD/mp-replay-docs-$m" > gate-mp-replay-mutate-$m.log 2>&1; then
+              echo "::error::--mp-replay --mp-mutate=$m PASSED: the gate cannot see that mutation"; exit 1
+            fi
+          done
           rm -rf evict-docs && mkdir -p evict-docs
           run_gate "evict selftest" $B --evict-selftest --docs="$PWD/evict-docs"
           # B.5b-1c: light per landed column (walked light + meshes = a full re-sweep + re-mesh, at
@@ -679,6 +709,16 @@ jobs:
           ./build/eden_native --background-selftest --world=bg --docs="$PWD/bg-docs"
           ./build/eden_native --browser-selftest --docs="$PWD/browser-docs"
           ./build/eden_native --emod-selftest --emod-fixtures=../port/tools/fixtures/emod --emod-work="$PWD/emod-work"
+          ./build/eden_native --net-selftest
+          ./build/eden_native --mp-selftest
+          rm -rf mp-replay-docs && mkdir -p mp-replay-docs
+          ./build/eden_native --mp-replay=../port/tools/fixtures/mp/replay-1.lines --docs="$PWD/mp-replay-docs"
+          for m in noevictcommit nolandhook noreconcile echo; do
+            rm -rf mp-replay-docs-$m && mkdir -p mp-replay-docs-$m
+            if ./build/eden_native --mp-replay=../port/tools/fixtures/mp/replay-1.lines --mp-mutate=$m --docs="$PWD/mp-replay-docs-$m" > mp-replay-mutate-$m.log 2>&1; then
+              echo "::error::--mp-replay --mp-mutate=$m PASSED"; exit 1
+            fi
+          done
           rm -rf evict-docs && mkdir -p evict-docs
           ./build/eden_native --evict-selftest --docs="$PWD/evict-docs"
           rm -rf ringlight-docs light-docs && mkdir -p ringlight-docs light-docs
@@ -1054,6 +1094,12 @@ jobs:
           launch console.log --console-selftest --console-corpus="$DATA/cmds-corpus.txt" --console-reference="$DATA/console-reference.md"
           grep -q 'eden-console. ALL PASS' console.log || {
             echo "::error::--console-selftest did not pass in the simulator"; cat console.log; exit 1; }
+          # MP.3a: the session world on ARM64 iOS (the replay and its .expect copied in, read by host path).
+          cp port/tools/fixtures/mp/replay-1.lines "$DATA/mp-replay-1.lines"
+          cp port/tools/fixtures/mp/replay-1.expect "$DATA/mp-replay-1.expect"
+          launch mp-replay.log --mp-replay="$DATA/mp-replay-1.lines"
+          grep -q 'eden-mp-replay. ALL PASS' mp-replay.log || {
+            echo "::error::--mp-replay did not pass in the simulator"; cat mp-replay.log; exit 1; }
 
           # (the touch gate moved below — it needs a real window, so it cannot use `launch`,
           #  which sets the dummy video driver)

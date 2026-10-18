@@ -13,6 +13,7 @@
 #import "TerrainGen2.h" //for sky color change
 #import "SignTool.h"
 #import "CmdScript.h"
+#import "MpWorld.h"   // MP.3a: session gates; MP.4: the intent sites
 #define MOVE_SPEED 35.0f
 #define CLIMB_SPEED 3.0f
 #define SPEED_M 4.5f
@@ -219,13 +220,12 @@ extern bool hitCustom;
 // stays a single block (each buildBlock spends one).
 bool DOUBLE_BRUSH=false;
 static void buildBrush2(int x,int z,int y){
-    Terrain* t=World::getWorld->terrain;
-    if(World::getWorld->hud->blocktype==TYPE_GOLDEN_CUBE){t->buildBlock(x,z,y);return;}
+    if(World::getWorld->hud->blocktype==TYPE_GOLDEN_CUBE){MpWorld::intentBuild(x,z,y);return;}
     if(y+1>=T_HEIGHT)return;
     for(int dy=0;dy<2;dy++)for(int dz=0;dz<2;dz++)for(int dx=0;dx<2;dx++){
         int c=getLandc(x+dx,z+dz,y+dy);
         if(c==TYPE_NONE||(c>0&&blockinfo[c]&IS_LIQUID&&getLevel(c)<4))
-            t->buildBlock(x+dx,z+dz,y+dy);
+            MpWorld::intentBuild(x+dx,z+dz,y+dy);   // MP.4: an intent site, per sub-cell
     }
 }
 
@@ -283,7 +283,7 @@ void Player::processInput(float etime){
                 } else if(World::getWorld->hud->build_size==2){
                     buildBrush2(buildpoint.x,buildpoint.z,buildpoint.y);
                 }else{
-                    World::getWorld->terrain->buildBlock(buildpoint.x,buildpoint.z,buildpoint.y);
+                    MpWorld::intentBuild(buildpoint.x,buildpoint.z,buildpoint.y);   // MP.4: an intent site
                 }
                 jumpandbuild=FALSE;
             }
@@ -450,7 +450,7 @@ void Player::processInput(float etime){
                     }
                     
 					if(point.x==-1&&fwc_result==-1){
-                        if(mode==MODE_PAINT){
+                        if(mode==MODE_PAINT&&!MpWorld::active()){   // MP.3a: no sky paint in a session (no wire form)
                             
                             extern Vector colorTable[256];
                             Resources::getResources->playSound(S_PAINT_BLOCK);
@@ -525,7 +525,7 @@ void Player::processInput(float etime){
                                 }
                               //  printg("building: %d,%d,%d\n",point.x,point.y,point.z);
                                 if(World::getWorld->hud->build_size==1){
-								World::getWorld->terrain->buildBlock(point.x,point.z,point.y);
+								MpWorld::intentBuild(point.x,point.z,point.y);   // MP.4: an intent site
                                 }else if(World::getWorld->hud->build_size==2){
                                     buildBrush2(point.x,point.z,point.y);
                                 }else if(World::getWorld->hud->build_size==0){
@@ -555,7 +555,7 @@ void Player::processInput(float etime){
                         printg("burning: %d,%d,%d\n",point.x,point.y,point.z);
 						Resources::getResources->playSound(S_ATTEMPT_FIRE);
                          
-						World::getWorld->terrain->burnBlock(point.x,point.z,point.y,FALSE);
+						MpWorld::intentBurn(point.x,point.z,point.y);   // MP.4: an intent site (E10)
 						if(blockinfo[type]&IS_FLAMMABLE){
                             if(type==TYPE_FIREWORK){
                                 Resources::getResources->playSound(S_FIREWORK_FUSE);
@@ -594,7 +594,7 @@ void Player::processInput(float etime){
                             }else
                             {
                                 printg("removing block: %d %d %d %d  yaw:%d\n",point.x,point.z,point.y,type,(int)yaw);
-                                World::getWorld->terrain->destroyBlock(point.x,point.z,point.y);
+                                MpWorld::intentMine(point.x,point.z,point.y);   // MP.4: an intent site
                             }
 							
 						}
@@ -609,7 +609,7 @@ void Player::processInput(float etime){
                            // [World::getWorld->terrain paintCustom:point.x:point.z:point.y:World::getWorld->hud.paintColor];
                         }else
                         {
-                            World::getWorld->terrain->paintBlock(point.x,point.z,point.y,World::getWorld->hud->paintColor);
+                            MpWorld::intentPaint(point.x,point.z,point.y,World::getWorld->hud->paintColor);   // MP.4: an intent site
                         }
                         
                        
@@ -1474,7 +1474,9 @@ BOOL Player::vertc(){
                         World::getWorld->hud->liquidColor=clr;
                         continue;
                     }else if(type==TYPE_GOLDEN_CUBE){
-                        
+                        // MP.3a: in a session a streamed golden cube is scenery you walk through (the purse
+                        // is per-world local state; engine plan §11, U5).
+                        if(MpWorld::active())continue;
                         World::getWorld->hud->goldencubes++;
                         World::getWorld->hud->flash=.95f;
                          Resources::getResources->playSound(S_TREASURE_PICKUP);
@@ -2225,8 +2227,8 @@ void Player::move(float etime){
             vel.x=ret.x2;
             vel.y=ret.y2;
             vel.z=ret.z2;
-            World::getWorld->terrain->destroyBlock(pos.x,pos.z,pos.y);
-            World::getWorld->terrain->destroyBlock(pos.x,pos.z,pos.y-1);
+            MpWorld::intentMine(pos.x,pos.z,pos.y);   // MP.4: the exit clears room, and says so in a session
+            MpWorld::intentMine(pos.x,pos.z,pos.y-1);
             printg("exiting at:(%d, %d, %d) \n",(int)pos.x,(int)(pos.y+boxbase/2),(int)pos.z);
             
         }

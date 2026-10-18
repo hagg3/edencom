@@ -96,6 +96,15 @@ function(eden_collect_engine_sources)
   list(APPEND _eden_sources "${EDEN_ECS_BASE_DIR}/Classes/Console.mm")
   #   Classes/ConsoleMenu.mm — Stage C / C.3: the Console screen (rail panel + strip) over Console.
   list(APPEND _eden_sources "${EDEN_ECS_BASE_DIR}/Classes/ConsoleMenu.mm")
+  #   Classes/MpWorld.mm — Stage MP / MP.3a: the multiplayer session world (overlay, landing hook,
+  #   commit to RAM, the E11 gates). Never includes port/src/net.
+  list(APPEND _eden_sources "${EDEN_ECS_BASE_DIR}/Classes/MpWorld.mm")
+  #   Classes/ChatFeed.mm — Stage MP / MP.7: the multiplayer chat (scrollback, HUD feed, sending, the touch button).
+  list(APPEND _eden_sources "${EDEN_ECS_BASE_DIR}/Classes/ChatFeed.mm")
+  #   Classes/ServerListMenu.mm, ServerFormMenu.mm — Stage MP / MP.6: the Multiplayer screen (saved
+  #   servers, Add/Edit/Profile, password prompt, Connecting, errors). Data only through MpServers.h.
+  list(APPEND _eden_sources "${EDEN_ECS_BASE_DIR}/Classes/ServerListMenu.mm")
+  list(APPEND _eden_sources "${EDEN_ECS_BASE_DIR}/Classes/ServerFormMenu.mm")
 
   list(LENGTH _eden_sources_rel _eden_total_count)
   list(LENGTH _eden_sources _eden_kept_count)

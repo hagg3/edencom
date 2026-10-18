@@ -20,11 +20,17 @@
 #import "Input.h"
 #import "Util.h"
 #import "World.h"
+#import "ChatFeed.h"     // MP.7: the Chat tab
+#import "MpServers.h"    // eden_mp_profile_name (the Players tab's own row)
+#import "Player.h"
+#import "MpWorld.h"
+#import "UIIcons.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <strings.h>
 
 static const int usage_id=17;   // distinct from Menu (7), SettingsMenu (3), GLDialog (9), Player (10), Keybinds (11), WorldBrowser (12), NewWorld (13), WorldProperties (14), Hud (15, 16)
 
@@ -51,18 +57,23 @@ static GLW::Color lineColor(int kind){
     case Console::ECHO:                 return rgb(0x3f6b0a);   // lime, dark enough for the white face
     case CmdScript::Sink::ERR:          return rgb(0xb3261e);
     case CmdScript::Sink::JOB:          return kTextSecondary;
+    case ChatFeed::K_SERVER:            return rgb(0xa15c00);   // MP.7: amber, dark enough for the white face
+    case ChatFeed::K_SELF:              return rgb(0x3f6b0a);
+    case ChatFeed::K_CMD:               return kTextSecondary;
+    case ChatFeed::K_NOTICE:            return rgb(0xb3261e);
     default:                            return kText;
     }
 }
 
 ConsoleMenu::ConsoleMenu()
- : m_open(false), m_collapsed(false), m_tab(TAB_CONSOLE), m_follow(true), m_newBelow(false), m_lastSerial(0),
+ : m_open(false), m_collapsed(false), m_tab(TAB_CONSOLE), m_railN(3), m_railSession(false), m_srcTab(0),
+   m_fieldTab(0), m_fieldCode(true), m_titleTab(-1), m_follow(true), m_newBelow(false), m_lastSerial(0),
    m_builtU(0), m_builtW(0), m_labelsU(0), m_labelsCollapsed(false), m_builtMatchW(-1), m_histPos(-1), m_titleY(0),
    m_touchScroll(-1), m_touchRail(-1), m_barDrag(false), m_downButton(CB_NONE), m_stripLines(3),
    m_autoStrip(false), m_noRail(false) {
     m_panel=m_content=m_bar=m_scrollArea=m_stripRect=m_inputRect=m_toolsRect=CGRectMake(0,0,0,0);
-    const int icons[TABS]={UIICON_TERMINAL,UIICON_SETTINGS,UIICON_INFO};
-    m_rail.setTiles(icons,TABS);
+    const int icons[3]={UIICON_TERMINAL,UIICON_SETTINGS,UIICON_INFO};
+    m_rail.setTiles(icons,3);
     m_field.setMaxBytes(511);
     m_field.setCodeMode(true);      // C.4: no autocorrect/autocapitalisation; Tab/Up/Down reach us
     m_field.setPlaceholder("Type a command - try help");
@@ -90,8 +101,21 @@ void ConsoleMenu::open(){
     m_rail.setHeld(-1);
     m_builtU=0;                     // re-flow: the screen may have changed shape since the last visit
     for(int t=0;t<TABS;t++){ for(size_t i=0;i<m_info[t].size();i++) delete m_info[t][i]; m_info[t].clear(); }   // rebuilt on show: cvars registered since
+    syncRail();
+    configureField();
+    if(m_tab==TAB_CHAT) ChatFeed::markSeen();
     layout();
     m_field.focus();                // typing is the point; the layout makes room for the keyboard
+}
+
+// MP.7: T / `/` / the touch button. The same screen as the `console` key, on the Chat tab.
+void ConsoleMenu::openChat(const char* prefill){
+    if(!MpWorld::active()) return;
+    if(!m_open) open();
+    showTab(TAB_CHAT);
+    setInput(prefill?prefill:"");
+    configureField();
+    m_field.focus();
 }
 
 void ConsoleMenu::close(){
@@ -121,10 +145,106 @@ void ConsoleMenu::toggle(){
 
 void ConsoleMenu::showTab(int t){
     if(t<0||t>=TABS) return;
+    if(t>=TAB_CHAT&&!MpWorld::active()) return;      // MP.7: the session tiles exist in a session only
     m_tab=t;
     m_infoScroll.setFirst(0);
     m_infoScroll.endDrag();
+    if(t==TAB_CHAT){ ChatFeed::markSeen(); m_follow=true; m_newBelow=false; }
+    configureField();
     layout();
+}
+
+// ---------------------------------------------------------------------------------------------
+// MP.7: the session tiles, the chat's lines, the field's mode
+// ---------------------------------------------------------------------------------------------
+int ConsoleMenu::tabOfTile(int tile) const{
+    static const int kSession[5]={TAB_CHAT,TAB_PLAYERS,TAB_CONSOLE,TAB_VARIABLES,TAB_HELP};
+    if(m_railSession) return tile>=0&&tile<5?kSession[tile]:-1;
+    return tile>=0&&tile<3?tile:-1;
+}
+
+int ConsoleMenu::tileOfTab(int tab) const{
+    if(!m_railSession) return tab>=0&&tab<3?tab:0;
+    switch(tab){ case TAB_CHAT: return 0; case TAB_PLAYERS: return 1; case TAB_CONSOLE: return 2; case TAB_VARIABLES: return 3; default: return 4; }
+}
+
+void ConsoleMenu::syncRail(){
+    const bool sess=MpWorld::active();
+    if(sess==m_railSession&&m_railN>0) return;
+    m_railSession=sess;
+    if(sess){
+        const int icons[5]={UIICON_MESSAGE_SQUARE,UIICON_USERS,UIICON_TERMINAL,UIICON_SETTINGS,UIICON_INFO};
+        m_rail.setTiles(icons,5);
+        m_railN=5;
+    }else{
+        const int icons[3]={UIICON_TERMINAL,UIICON_SETTINGS,UIICON_INFO};
+        m_rail.setTiles(icons,3);
+        m_railN=3;
+        if(m_tab>=TAB_CHAT) m_tab=TAB_CONSOLE;
+    }
+}
+
+const std::vector<Console::Line>& ConsoleMenu::srcLines() const{
+    return m_tab==TAB_CHAT?ChatFeed::lines():Console::scrollback();
+}
+
+unsigned ConsoleMenu::srcSerial() const{
+    return m_tab==TAB_CHAT?ChatFeed::serial():Console::scrollbackSerial();
+}
+
+// Chat and Console share the one field. Each tab keeps its own draft; the chat's byte cap is the
+// server's; the chat is prose (autocorrect on) on a touch device unless the line is a `/` command.
+// A hardware keyboard needs the code mode for Tab / Up / Down to reach us, so desktop stays in it.
+void ConsoleMenu::configureField(){
+    const int which=m_tab==TAB_CHAT?1:0;
+    if(which!=m_fieldTab && inputTab()){
+        std::string mine=m_field.text();
+        m_field.setText(m_otherText.c_str());
+        m_otherText=mine;
+        m_fieldTab=which;
+        m_histPos=-1;
+        m_matches.clear();
+        if(which){ m_field.setMaxBytes(ChatFeed::MAX_BYTES); m_field.setPlaceholder("Type a message, / for commands"); }
+        else      { m_field.setMaxBytes(511);                m_field.setPlaceholder("Type a command - try help"); }
+    }
+    if(which){
+        const std::string& t=m_field.text();
+        const bool code=touchFloor()<=0.0f||(!t.empty()&&t[0]=='/');
+        if(code!=m_fieldCode){ m_fieldCode=code; m_field.setCodeMode(code); }
+    }else if(!m_fieldCode){ m_fieldCode=true; m_field.setCodeMode(true); }
+}
+
+int ConsoleMenu::playerRows() const{ return (int)m_info[TAB_PLAYERS].size(); }
+
+// The Players tab: you, then every player seen (MpWorld's peers: joined, moved or spoke, and not
+// left or silent for 30 s). The protocol has no who-is-on query, so this is "seen", not "online".
+void ConsoleMenu::fillPlayerRows(){
+    std::vector<InfoRow*>& rows=m_info[TAB_PLAYERS];
+    const int n=MpWorld::peerCount();
+    std::vector<std::string> names, hints;
+    char me[40];
+    if(!eden_mp_profile_name(me,sizeof(me))) std::snprintf(me,sizeof(me),"You");
+    names.push_back(std::string(me)+" (you)");
+    hints.push_back("");
+    Vector pp=World::getWorld&&World::getWorld->player?World::getWorld->player->pos:MakeVector(0,0,0);
+    std::vector<std::pair<std::string,std::string> > others;
+    for(int i=0;i<n;i++){
+        MpWorld::PeerView v;
+        if(!MpWorld::peerView(i,&v)) continue;
+        char h[64];
+        const float dx=v.x-pp.x, dz=v.z-pp.z;
+        std::snprintf(h,sizeof(h),"%d blocks away",(int)std::sqrt(dx*dx+dz*dz));
+        others.push_back(std::make_pair(std::string(v.name),std::string(h)));
+    }
+    std::sort(others.begin(),others.end());
+    for(size_t i=0;i<others.size();i++){ names.push_back(others[i].first); hints.push_back(others[i].second); }
+    while(rows.size()>names.size()){ delete rows.back(); rows.pop_back(); }
+    while(rows.size()<names.size()) rows.push_back(new InfoRow());
+    for(size_t i=0;i<rows.size();i++){
+        rows[i]->title=names[i];
+        rows[i]->hint=hints[i];
+        rows[i]->insert=i==0?std::string():"/msg "+others[i-1].first+" ";
+    }
 }
 
 void ConsoleMenu::setCollapsed(bool c){
@@ -146,6 +266,29 @@ void ConsoleMenu::blurInput(){ m_field.blur(); }
 // running a line
 // ---------------------------------------------------------------------------------------------
 void ConsoleMenu::submit(){
+    if(m_tab==TAB_CHAT){
+        // MP.7: a chat line (or a `/` command, which the server runs). The field clears only on a
+        // send; a too-fast line stays for the next try.
+        switch(ChatFeed::send(m_field.text())){
+        case ChatFeed::SENT:
+            m_field.setText("");
+            m_histPos=-1; m_draft.clear();
+            m_follow=true; m_newBelow=false;
+            if(touchFloor()<=0.0f) close();      // desktop: Minecraft's habit; on touch the keyboard stays up
+            break;
+        case ChatFeed::TOO_FAST:
+            ChatFeed::addNotice("Chat line not sent (too fast). Wait a moment and send it again.");
+            m_follow=true;
+            break;
+        case ChatFeed::NO_SESSION:
+            ChatFeed::addNotice("Not connected to a server.");
+            break;
+        case ChatFeed::EMPTY:
+            if(touchFloor()<=0.0f) close();      // desktop: Enter on an empty field closes
+            break;
+        }
+        return;
+    }
     std::string line=m_field.text();
     while(!line.empty()&&std::isspace((unsigned char)line[line.size()-1])) line.erase(line.size()-1);
     size_t k=0;
@@ -160,6 +303,23 @@ void ConsoleMenu::submit(){
 }
 
 void ConsoleMenu::complete(){
+    if(m_tab==TAB_CHAT){   // MP.7: complete a player name from the seen set
+        std::string t=m_field.text();
+        const size_t sp=t.find_last_of(' ');
+        const std::string stem=sp==std::string::npos?t:t.substr(sp+1);
+        if(stem.empty()||stem[0]=='/') return;
+        std::vector<std::string> hit;
+        for(int i=0;i<MpWorld::peerCount();i++){
+            MpWorld::PeerView v;
+            if(MpWorld::peerView(i,&v)&&!strncasecmp(v.name,stem.c_str(),stem.size())) hit.push_back(v.name);
+        }
+        std::sort(hit.begin(),hit.end());
+        m_matches.clear();
+        if(hit.empty()) return;
+        if(hit.size()==1){ t=(sp==std::string::npos?std::string():t.substr(0,sp+1))+hit[0]+(sp==std::string::npos?": ":" "); m_field.setText(t.c_str()); }
+        else for(size_t i=0;i<hit.size();i++){ if(i) m_matches+="  "; m_matches+=hit[i]; }
+        return;
+    }
     const Console::Completion c=Console::complete(m_field.text());
     m_field.setText(c.line.c_str());
     m_matches.clear();
@@ -170,17 +330,18 @@ void ConsoleMenu::complete(){
 }
 
 void ConsoleMenu::historyStep(int dir){
-    const int n=(int)Console::historyCount();
+    const bool chat=m_tab==TAB_CHAT;
+    const int n=chat?(int)ChatFeed::historyCount():(int)Console::historyCount();
     if(dir<0){
         if(n==0) return;
         if(m_histPos<0){ m_draft=m_field.text(); m_histPos=n-1; }
         else if(m_histPos>0) m_histPos--;
-        m_field.setText(Console::historyGet((size_t)m_histPos).c_str());
+        m_field.setText((chat?ChatFeed::historyGet((size_t)m_histPos):Console::historyGet((size_t)m_histPos)).c_str());
     }else{
         if(m_histPos<0) return;
         m_histPos++;
         if(m_histPos>=n){ m_histPos=-1; m_field.setText(m_draft.c_str()); }
-        else m_field.setText(Console::historyGet((size_t)m_histPos).c_str());
+        else m_field.setText((chat?ChatFeed::historyGet((size_t)m_histPos):Console::historyGet((size_t)m_histPos)).c_str());
     }
 }
 
@@ -190,10 +351,17 @@ void ConsoleMenu::historyStep(int dir){
 // One Label per kept line, keyed by serial. The key moves with the world of lines (the oldest fall
 // off), so a line keeps its texture while it scrolls and a new one is the only upload.
 void ConsoleMenu::syncScrollback(){
-    const std::vector<Console::Line>& sb=Console::scrollback();
-    const unsigned serial=Console::scrollbackSerial();
+    const std::vector<Console::Line>& sb=srcLines();
+    const unsigned serial=srcSerial();
     const unsigned base=serial-(unsigned)sb.size();
     const float textW=m_scrollArea.size.width-du(16);
+    const int srcTab=m_tab==TAB_CHAT?1:0;
+    if(srcTab!=m_srcTab){   // MP.7: another source's serials: the cache is not this one's
+        m_srcTab=srcTab;
+        m_builtW=-1;
+        m_lastSerial=serial;
+        m_follow=true; m_newBelow=false;
+    }
     if(m_builtU!=u()||m_builtW!=textW){
         for(std::map<unsigned,Cached*>::iterator it=m_cache.begin();it!=m_cache.end();++it) delete it->second;
         m_cache.clear();
@@ -258,8 +426,18 @@ int ConsoleMenu::varRows() const  { return (int)m_info[TAB_VARIABLES].size(); }
 
 void ConsoleMenu::pickRow(int tab,int index){
     if(tab<=0||tab>=TABS||index<0||index>=(int)m_info[tab].size()) return;
-    m_tab=TAB_CONSOLE;
-    m_field.setText(m_info[tab][(size_t)index]->insert.c_str());
+    const std::string insert=m_info[tab][(size_t)index]->insert;
+    if(tab==TAB_PLAYERS){   // MP.7: a tap puts `/msg name ` in the chat (your own row does nothing)
+        if(insert.empty()) return;
+        showTab(TAB_CHAT);
+        m_field.setText(insert.c_str());
+        configureField();
+        m_histPos=-1;
+        m_field.focus();
+        return;
+    }
+    showTab(TAB_CONSOLE);
+    m_field.setText(insert.c_str());
     m_histPos=-1;
     m_field.focus();
 }
@@ -268,10 +446,11 @@ void ConsoleMenu::pickRow(int tab,int index){
 // layout
 // ---------------------------------------------------------------------------------------------
 void ConsoleMenu::buildLabels(){
-    m_title.set("Console",du(32),UITextAlignmentCenter);
+    m_title.set(m_tab==TAB_CHAT?"Chat":m_tab==TAB_PLAYERS?"Players":"Console",du(32),UITextAlignmentCenter);
+    m_titleTab=m_tab;
     m_back.setLabel("Back",du(20));       m_back.sizeToFit();
     m_collapse.setLabel(m_collapsed?"Expand":"Collapse",du(20)); m_collapse.sizeToFit();
-    m_run.setLabel("Run",du(20));         m_run.setTone(GLW::Button::TONE_POSITIVE); m_run.sizeToFit();
+    m_run.setLabel(m_tab==TAB_CHAT?"Send":"Run",du(20)); m_run.setTone(GLW::Button::TONE_POSITIVE); m_run.sizeToFit();
     m_tabBtn.setLabel("Tab",du(18));      m_tabBtn.sizeToFit(7.0f);
     m_up.setLabel("Up",du(18));           m_up.sizeToFit(7.0f);
     m_down.setLabel("Down",du(18));       m_down.sizeToFit(7.0f);
@@ -303,15 +482,15 @@ RailFrame ConsoleMenu::frame(float kbTop){
 }
 
 void ConsoleMenu::layout(){
-    const float sw=SCREEN_WIDTH, sh=SCREEN_HEIGHT;
+    syncRail();
     const float tf=touchFloor();
     const float pad=du(8);
-    const float toolH=std::max(du(30),tf);
+    const float toolH=controlH(30);
     const float lh=du(15)*1.28f+du(3);              // one unwrapped scrollback line
 
     // C.4: where the on-screen keyboard is (0: none). Only the views with the input care; the
     // Variables/Help tabs blur the field, so the keyboard is on its way down there.
-    const bool inputView=m_collapsed||m_tab==TAB_CONSOLE;
+    const bool inputView=m_collapsed||inputTab();
     const float kb=inputView&&m_field.focused()?eden_text_input_keyboard_top():0.0f;
     bool autoStrip=false;
     if(!m_collapsed&&kb<0) autoStrip=true;           // a keyboard is coming, height unknown: top-dock
@@ -327,22 +506,24 @@ void ConsoleMenu::layout(){
         m_field.setLines(strip()?1:2);
         m_builtU=0;
     }
-    const bool relabel=m_labelsU!=u()||m_labelsCollapsed!=m_collapsed||m_title.empty();
+    const bool relabel=m_labelsU!=u()||m_labelsCollapsed!=m_collapsed||m_title.empty()||m_titleTab!=m_tab;
     if(relabel){ buildLabels(); m_labelsU=u(); m_labelsCollapsed=m_collapsed; }
 
     if(strip()){
         // STRIP: top-docked, as wide as the screen less a margin, so the world shows underneath.
         // Above a keyboard it drops lines (down to one) rather than reach under it.
-        const float margin=du(12);
+        // I.3 (its --fit-selftest found it): inside the safe rect, clear of the island.
+        const CGRect safe=safeRect();
+        const float margin=du(12), top=safe.origin.y+safe.size.height;
         const float fieldH=m_field.heightForLines(1);
         const float rowH=std::max(fieldH,std::max(tf,du(30)));
-        const float panelW=sw-2*margin;
+        const float panelW=safe.size.width-2*margin;
         int lines=m_stripLines;
-        if(kb>0) while(lines>1&&pad+lh*lines+pad+rowH+pad>sh-margin-kb-du(6)) lines--;
+        if(kb>0) while(lines>1&&pad+lh*lines+pad+rowH+pad>top-margin-kb-du(6)) lines--;
         const float textH=lh*lines;
         const float panelH=pad+textH+pad+rowH+pad;
         m_noRail=false;
-        m_panel=CGRectMake(margin,sh-margin-panelH,panelW,panelH);
+        m_panel=CGRectMake(safe.origin.x+margin,top-margin-panelH,panelW,panelH);
         // Expand and Back, top right (the lines' width stops short of them, see below). The auto
         // strip has no Expand: the keyboard's going expands it.
         const float bw=m_back.fitWidth(), cw=m_autoStrip?0.0f:m_collapse.fitWidth()+du(6);
@@ -362,7 +543,7 @@ void ConsoleMenu::layout(){
         return;
     }
 
-    const RailFrame f=frame(m_tab==TAB_CONSOLE?kb:0.0f);
+    const RailFrame f=frame(inputTab()?kb:0.0f);
     m_panel=f.panel;
     const CGRect& T=f.titlebar;
     m_back.setRect(CGRectMake(T.origin.x,T.origin.y,0,T.size.height));
@@ -371,14 +552,15 @@ void ConsoleMenu::layout(){
     titlebarHit(m_collapse);
     m_titleY=f.titleY(m_title);
     m_rail.setRect(f.rail);
-    m_rail.setSelected(m_tab);
+    m_rail.setSelected(tileOfTab(m_tab));
     m_content=f.content;
     m_bar=f.bar;
 
-    if(m_tab!=TAB_CONSOLE){
-        // Variables / Help: TwoLineRows on the content surface, built the first time the tab shows.
+    if(!inputTab()){
+        // Variables / Help (and MP.7's Players): TwoLineRows on the content surface, built the first time the tab shows.
         std::vector<InfoRow*>& rows=m_info[m_tab];
-        if(rows.empty()) buildInfoRows(m_tab);
+        if(m_tab==TAB_PLAYERS) fillPlayerRows();
+        else if(rows.empty()) buildInfoRows(m_tab);
         std::vector<float> heights(rows.size());
         for(size_t i=0;i<rows.size();i++){
             InfoRow* r=rows[i];
@@ -419,11 +601,13 @@ void ConsoleMenu::layout(){
     // The anchor, then the completion candidates in what is left of the row.
     {
         char buf[64];
-        if(Console::anchorIsFixed()){ int x,y,z; Console::currentAnchor(&x,&y,&z); std::snprintf(buf,sizeof(buf),"anchor: %d %d %d",x,y,z); }
+        if(m_tab==TAB_CHAT) buf[0]=0;      // MP.7: the anchor is the Console's
+        else if(Console::anchorIsFixed()){ int x,y,z; Console::currentAnchor(&x,&y,&z); std::snprintf(buf,sizeof(buf),"anchor: %d %d %d",x,y,z); }
         else std::snprintf(buf,sizeof(buf),"anchor: under you");
-        if(m_anchorText!=buf||m_anchor.empty()||relabel){
+        if(m_anchorText!=buf||(m_anchor.empty()&&buf[0])||relabel){
             m_anchorText=buf;
-            m_anchor.set(buf,du(15),UITextAlignmentLeft,0.0f,FACE_BODY);
+            if(buf[0]) m_anchor.set(buf,du(15),UITextAlignmentLeft,0.0f,FACE_BODY);
+            else m_anchor.clear();
         }
     }
     const float anchorX=right-m_anchor.width();
@@ -433,8 +617,8 @@ void ConsoleMenu::layout(){
     m_scroll.setBarRect(CGRectMake(m_bar.origin.x,m_scrollArea.origin.y,m_bar.size.width,m_scrollArea.size.height));
 
     syncScrollback();
-    const std::vector<Console::Line>& sb=Console::scrollback();
-    const unsigned base=Console::scrollbackSerial()-(unsigned)sb.size();
+    const std::vector<Console::Line>& sb=srcLines();
+    const unsigned base=srcSerial()-(unsigned)sb.size();
     std::vector<float> heights(sb.size());
     for(size_t i=0;i<sb.size();i++){
         std::map<unsigned,Cached*>::iterator it=m_cache.find(base+(unsigned)i);
@@ -462,7 +646,7 @@ static bool inRectPt(CGRect r,float x,float y){
 // Which titlebar/tool button is under the point (CB_NONE if none). The strip has Expand, Back and Run;
 // the Console tab adds the tools and the "new lines" pill; Variables/Help have Back and Collapse.
 int ConsoleMenu::hitButton(float mx,float my) const{
-    const bool consoleTab=m_tab==TAB_CONSOLE;
+    const bool consoleTab=inputTab();
     if(m_back.hit(mx,my)) return CB_BACK;
     if(!m_autoStrip&&m_collapse.hit(mx,my)) return CB_COLLAPSE;
     if((strip()||consoleTab)&&m_run.hit(mx,my)) return CB_RUN;
@@ -483,7 +667,7 @@ void ConsoleMenu::scrolled(){
 
 // A tap on a scrollback line that echoes input puts the input back in the field.
 bool ConsoleMenu::lineBackToField(int index){
-    const std::vector<Console::Line>& sb=Console::scrollback();
+    const std::vector<Console::Line>& sb=srcLines();
     if(index<0||index>=(int)sb.size()) return false;
     const Console::Line& l=sb[(size_t)index];
     if(l.kind!=Console::ECHO||l.text.size()<3) return false;
@@ -496,9 +680,11 @@ bool ConsoleMenu::lineBackToField(int index){
 void ConsoleMenu::update(float etime){
     (void)etime;
     if(!m_open) return;
+    configureField();
     layout();
-    const bool consoleTab=m_tab==TAB_CONSOLE;
+    const bool consoleTab=inputTab();
     GLW::ScrollView& scroll=consoleTab?m_scroll:m_infoScroll;
+    if(m_tab==TAB_CHAT&&m_follow) ChatFeed::markSeen();
 
     if(int wheel=eden_ui_take_wheel()){
         if(!strip()){
@@ -510,7 +696,7 @@ void ConsoleMenu::update(float etime){
     // The field first: Return runs, Escape blurs (a second Escape closes, from the seam), a dismissed
     // soft keyboard keeps the line.
     if(consoleTab||m_collapsed){
-        if(m_field.update()==GLW::TextField::EV_COMMIT){ submit(); m_field.focus(); }
+        if(m_field.update()==GLW::TextField::EV_COMMIT){ submit(); if(m_open) m_field.focus(); }
         // C.4: a hardware keyboard's Tab / Up / Down, the same as the buttons.
         for(int k=m_field.takeKey();k;k=m_field.takeKey()){
             if(k==EDEN_TEXT_KEY_TAB) complete();
@@ -567,7 +753,7 @@ void ConsoleMenu::update(float etime){
                 switch(downB){
                 case CB_BACK:     close(); return;
                 case CB_COLLAPSE: setCollapsed(!m_collapsed); break;
-                case CB_RUN:      submit(); m_field.focus(); break;
+                case CB_RUN:      submit(); if(m_open) m_field.focus(); else return; break;
                 case CB_TAB:      complete(); m_field.focus(); break;
                 case CB_UP:       historyStep(-1); m_field.focus(); break;
                 case CB_DOWN:     historyStep(+1); m_field.focus(); break;
@@ -579,8 +765,9 @@ void ConsoleMenu::update(float etime){
                 const bool dragged=m_rail.scrolling();
                 m_rail.endDrag(); m_rail.setHeld(-1); m_touchRail=-1;
                 if(!dragged){
-                    const int t=m_rail.hit(mx,my);
-                    if(t>=0){ showTab(t); if(t==TAB_CONSOLE) m_field.focus(); else m_field.blur(); }
+                    const int tile=m_rail.hit(mx,my);
+                    const int t=tile>=0?tabOfTile(tile):-1;
+                    if(t>=0){ showTab(t); if(inputTab()) m_field.focus(); else m_field.blur(); }
                 }
                 continue;
             }
@@ -595,8 +782,8 @@ void ConsoleMenu::update(float etime){
             if(strip()) continue;
             if(consoleTab){
                 const float top=m_scrollArea.origin.y+m_scrollArea.size.height;
-                const int n=(int)Console::scrollback().size();
-                const unsigned base=Console::scrollbackSerial()-(unsigned)n;
+                const int n=(int)srcLines().size();
+                const unsigned base=srcSerial()-(unsigned)n;
                 for(int k=m_scroll.first();k<n&&k<m_scroll.first()+m_scroll.visible();k++){
                     std::map<unsigned,Cached*>::iterator it=m_cache.find(base+(unsigned)k);
                     if(it==m_cache.end()) continue;
@@ -622,8 +809,8 @@ int ConsoleMenu::visibleLines() const { return (int)m_visSerials.size(); }
 
 void ConsoleMenu::drawScrollback(CGRect area){
     m_visSerials.clear();
-    const std::vector<Console::Line>& sb=Console::scrollback();
-    const unsigned base=Console::scrollbackSerial()-(unsigned)sb.size();
+    const std::vector<Console::Line>& sb=srcLines();
+    const unsigned base=srcSerial()-(unsigned)sb.size();
     const int first=m_scroll.first();
     const int last=std::min((int)sb.size(),first+m_scroll.visible());
     const float top=area.origin.y+area.size.height;
@@ -638,8 +825,8 @@ void ConsoleMenu::drawScrollback(CGRect area){
 // The strip: the newest lines that fit its fixed text box, newest nearest the input.
 void ConsoleMenu::drawStrip(){
     m_visSerials.clear();
-    const std::vector<Console::Line>& sb=Console::scrollback();
-    const unsigned base=Console::scrollbackSerial()-(unsigned)sb.size();
+    const std::vector<Console::Line>& sb=srcLines();
+    const unsigned base=srcSerial()-(unsigned)sb.size();
     float y=m_stripRect.origin.y;                         // the box's bottom edge
     for(int k=(int)sb.size()-1;k>=0;k--){
         std::map<unsigned,Cached*>::iterator it=m_cache.find(base+(unsigned)k);
@@ -687,14 +874,15 @@ void ConsoleMenu::render(){
         m_collapse.render();
         if(railShown()) m_rail.render();
         bevel(m_content,BEVEL_CONTENT);
-        if(m_tab==TAB_CONSOLE){
+        if(inputTab()){
             drawScrollback(m_scrollArea);
             m_scroll.render();
             if(m_newBelow&&!m_follow) m_newPill.render();
             // tool row: candidates left, anchor, then Tab / Up / Down
             if(!m_matchLabel.empty()) m_matchLabel.draw(m_toolsRect.origin.x,m_toolsRect.origin.y+(m_toolsRect.size.height+m_matchLabel.height())*0.5f,kTextSecondary);
-            m_anchor.draw(m_tabBtn.rect().origin.x-du(10)-m_anchor.width(),
-                          m_toolsRect.origin.y+(m_toolsRect.size.height+m_anchor.lineHeight())*0.5f,kTextSecondary);
+            if(!m_anchor.empty())
+                m_anchor.draw(m_tabBtn.rect().origin.x-du(10)-m_anchor.width(),
+                              m_toolsRect.origin.y+(m_toolsRect.size.height+m_anchor.lineHeight())*0.5f,kTextSecondary);
             m_tabBtn.render(); m_up.render(); m_down.render();
             m_field.render();
             m_run.render();
@@ -733,5 +921,5 @@ CGRect ConsoleMenu::controlRect(const char* which){
 
 CGRect ConsoleMenu::tabRect(int t){
     layout();
-    return m_rail.tileRect(t);
+    return m_rail.tileRect(tileOfTab(t));
 }

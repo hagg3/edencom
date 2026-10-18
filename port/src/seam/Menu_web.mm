@@ -29,8 +29,10 @@
 #import "../../../Classes/Menu.h"
 #import "../../../Classes/WorldPropertiesMenu.h"   // H.15: eden_world_props_menu_back
 #import "../../../Classes/ConsoleMenu.h"           // C.3: eden_console_menu_*
+#import "../../../Classes/ServerListMenu.h"        // MP.6: eden_server_list_back
 #import "../../../Classes/FileManager.h"
 #import "../../../Classes/Hud.h"       // eden_hud_draw_menu_screen_hook
+#import "../../../Classes/MpWorld.h"    // MP.7: eden_chat_open needs a session
 #import "../../../Classes/GLDialog.h"  // C.3: eden_console_menu_toggle asks GLDialog::active()
 #import "../../../Classes/Terrain.h"   // eden_menu_load_percent reads terrain->counter
 #import "../../../Classes/SettingsMenu.h"
@@ -301,6 +303,34 @@ int eden_new_world_menu_back(void) {
     return 1;
 }
 
+// I.7: Escape on the world list ("My Worlds") goes back to the home screen, as its Back does. Last
+// in Input_native.cpp's chain, so any screen over the list has had the key first; 0 on the home
+// screen itself (Escape there does nothing), mid-load, under a dialog or in play.
+EDEN_EXPORT
+int eden_menu_home_back(void) {
+    World* w = World::getWorld;
+    Menu* m = menu_ptr();
+    if (!w || !m || w->game_mode != GAME_MODE_MENU) return 0;
+    if (m->showhome || m->loading || GLDialog::active()) return 0;
+    if (m->showsettings || m->shownewworld || m->showprops || m->showbrowser || m->showlistscreen ||
+        m->is_sharing || m->showservers) return 0;
+    m->showHome(true);
+    return 1;
+}
+
+// MP.6: Escape over the Multiplayer screen (UI plan §1): the form or Profile closes (discarding),
+// Connecting cancels, the list goes home. A focused field takes Escape itself (the text seam).
+EDEN_EXPORT
+int eden_server_list_back(void) {
+    World* w = World::getWorld;
+    Menu* m = menu_ptr();
+    if (!w || !m || w->game_mode != GAME_MODE_MENU || !m->showservers || !m->servers) return 0;
+    if (m->loading || GLDialog::active()) return 0;
+    const int r = m->servers->back() ? 1 : 0;
+    if (!m->servers->isOpen()) m->showservers = FALSE;
+    return r;
+}
+
 // H.15: the same for the World Properties screen (Back discards, as its button does).
 EDEN_EXPORT
 int eden_world_props_menu_back(void) {
@@ -338,6 +368,18 @@ int eden_console_menu_toggle(void) {
     // Not over another screen: a GL dialog, in-game Settings, or the pause menu owns the keys.
     if (!m->console->isOpen() && (m->showsettings || GLDialog::active() || eden_hud_in_menu())) return 0;
     m->console->toggle();
+    return 1;
+}
+
+// MP.7: T / `/` / the touch chat button. The Console screen on its Chat tile, in a session only;
+// `slash` opens with "/" already typed. 1 = opened (the key handler then drops the key's character).
+EDEN_EXPORT
+int eden_chat_open(int slash) {
+    Menu* m = menu_ptr();
+    if (!m || !m->console || !MpWorld::active() || !World::getWorld || World::getWorld->game_mode != GAME_MODE_PLAY) return 0;
+    if (!m->console->isOpen() && (m->showsettings || GLDialog::active() || eden_hud_in_menu())) return 0;
+    m->showconsole = TRUE;
+    m->console->openChat(slash ? "/" : "");
     return 1;
 }
 

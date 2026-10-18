@@ -354,6 +354,8 @@ bool photoEncodePNG(const unsigned char* rgb,int w,int h,std::vector<unsigned ch
     return true;
 }
 void takeScreenshot(){
+    // MP.3a: a session world has no file to give a thumbnail to (its name "mp:host:port" is not a path).
+    if(World::getWorld->fm->sessionWorld) return;
     // GL_VIEWPORT answers the engine's point space (the picking raycast needs that), not the
     // drawable's pixels; reading it sized the capture to the top-left of the frame (H.16b).
     int fw=0, fh=0;

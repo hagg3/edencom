@@ -74,6 +74,9 @@ int  eden_settings_menu_back(void);      // Settings_web.mm (U.3): Escape over t
 int  eden_new_world_menu_back(void);     // Menu_web.mm (U.5): Escape over the New World screen
 int  eden_world_props_menu_back(void);   // Menu_web.mm (H.15): Escape over World Properties
 int  eden_console_menu_back(void);       // Menu_web.mm (C.3): Escape over the Console (blur, then close)
+int  eden_menu_home_back(void);         // Menu_web.mm (I.7): Escape on the world list -> the home screen
+int  eden_server_list_back(void);       // Menu_web.mm (MP.6): Escape over the Multiplayer screen
+int  eden_chat_open(int slash);          // Menu_web.mm (MP.7): the Console screen on its Chat tile, in a session
 int  eden_console_menu_toggle(void);     // Menu_web.mm (C.3): the `console` key
 int  eden_ui_captures_keys(void);        // Menu_web.mm (C.3): the Console owns the keyboard, field focused or not
 #if defined(EDEN_PLATFORM_IOS)
@@ -171,7 +174,7 @@ static_assert((int)SDL_SCANCODE_RALT == 230,   "SDL scancodes are no longer HID 
 constexpr int kMaxModelActions = 64;
 int  g_contAction[kMaxModelActions];   // model row -> Action, or -1
 int  g_miHotbar[9];
-int  g_miConsole = -1;
+int  g_miConsole = -1, g_miChat = -1, g_miChatCmd = -1;   // MP.7
 int  g_miMenu = -1, g_miBlockPicker = -1, g_miColorPicker = -1, g_miFireTool = -1;
 int  g_miFlyToggle = -1, g_miBlockPreview = -1, g_miBuildSize = -1, g_miHideHud = -1, g_miScreenshot = -1, g_miCameraView = -1;
 bool g_modelResolved = false;
@@ -195,6 +198,8 @@ void resolve_model(void) {
     // One-shot actions: an EDGE, dispatched at the keydown site.
     g_miMenu         = eden_keybind_index("menu");
     g_miConsole      = eden_keybind_index("console");
+    g_miChat         = eden_keybind_index("chat");
+    g_miChatCmd      = eden_keybind_index("chatCommand");
     g_miBlockPicker  = eden_keybind_index("blockPicker");
     g_miColorPicker  = eden_keybind_index("colorPicker");
     g_miFireTool     = eden_keybind_index("fireTool");
@@ -673,6 +678,7 @@ const char kKeyTab = 0x09, kKeyUp = 0x11, kKeyDown = 0x12;
 bool        g_textActive = false;
 std::string g_textQueue;
 bool        g_dropGrave = false;        // C.3: see SDL_EVENT_TEXT_INPUT
+char        g_dropChat = 0;             // MP.7: the one 't' / '/' the chat key may deliver after the field took focus
 float       g_keep[4] = {0, 0, 0, 0};   // eden_text_input_keep_visible(), point space
 float       g_kbOverride = -2.0f;       // C.4: --ui-selftest / --shot's fake keyboard top; -2 = none
 #if defined(EDEN_PLATFORM_IOS)
@@ -713,7 +719,8 @@ extern "C" void eden_text_input_keep_visible(float x, float y, float w, float h)
 // C.4: `code` asks the system keyboard for no autocorrect and no autocapitalisation (the Console:
 // `set 0 0 0 stone` must not become "Set 0 0 0 stone"). It only matters where text input STARTS --
 // a re-announce of a running session keeps its keyboard -- and desktops ignore the properties.
-static void text_input_start(float x, float y, float w, float h, bool code) {
+// kind: EDEN_TEXT_KIND_* (Classes/GLWidgets.h): 0 plain, 1 code, 2 username, 3 password.
+static void text_input_start(float x, float y, float w, float h, int kind) {
     if (!g_textActive) release_held_input();   // the field owns the keyboard from here (D.4b)
     g_textActive = true;
     if (!g_window) return;
@@ -740,9 +747,13 @@ static void text_input_start(float x, float y, float w, float h, bool code) {
     g_textStartMs = SDL_GetTicks();
     g_textStartSerial = eden_ios_keyboard_serial();
 #endif
-    if (!code) { SDL_StartTextInput(g_window); return; }
+    if (kind == 0) { SDL_StartTextInput(g_window); return; }
+    // MP.6 (UI plan U12): an address or name is a username field, a password a hidden one; all
+    // three non-plain kinds have autocorrect and capitalisation off.
     const SDL_PropertiesID props = SDL_CreateProperties();
-    SDL_SetNumberProperty(props, SDL_PROP_TEXTINPUT_TYPE_NUMBER, SDL_TEXTINPUT_TYPE_TEXT);
+    SDL_SetNumberProperty(props, SDL_PROP_TEXTINPUT_TYPE_NUMBER,
+                          kind == 3 ? SDL_TEXTINPUT_TYPE_TEXT_PASSWORD_HIDDEN
+                                    : kind == 2 ? SDL_TEXTINPUT_TYPE_TEXT_USERNAME : SDL_TEXTINPUT_TYPE_TEXT);
     SDL_SetNumberProperty(props, SDL_PROP_TEXTINPUT_CAPITALIZATION_NUMBER, SDL_CAPITALIZE_NONE);
     SDL_SetBooleanProperty(props, SDL_PROP_TEXTINPUT_AUTOCORRECT_BOOLEAN, false);
     SDL_SetBooleanProperty(props, SDL_PROP_TEXTINPUT_MULTILINE_BOOLEAN, false);
@@ -750,8 +761,11 @@ static void text_input_start(float x, float y, float w, float h, bool code) {
     SDL_DestroyProperties(props);
 }
 
-extern "C" void eden_text_input_start(float x, float y, float w, float h)      { text_input_start(x, y, w, h, false); }
-extern "C" void eden_text_input_start_code(float x, float y, float w, float h) { text_input_start(x, y, w, h, true); }
+extern "C" void eden_text_input_start(float x, float y, float w, float h)      { text_input_start(x, y, w, h, 0); }
+extern "C" void eden_text_input_start_code(float x, float y, float w, float h) { text_input_start(x, y, w, h, 1); }
+extern "C" void eden_text_input_start_kind(int kind, float x, float y, float w, float h) {
+    text_input_start(x, y, w, h, kind < 0 || kind > 3 ? 0 : kind);
+}
 
 // C.4: the on-screen keyboard's top edge in point space (y up). iOS only: the observer in
 // IOSKeyboard_native.mm reports how much of the window's bottom the docked keyboard covers, in
@@ -861,6 +875,12 @@ void eden_native_input_handle_event(const SDL_Event& e) {
                 g_dropGrave = false;
                 if (e.text.text && (std::strcmp(e.text.text, "`") == 0 || std::strcmp(e.text.text, "~") == 0)) return;
             }
+            if (g_dropChat) {   // MP.7
+                const char want = g_dropChat;
+                g_dropChat = 0;
+                if (e.text.text && e.text.text[0] && !e.text.text[1] &&
+                    (e.text.text[0] == want || (want != '/' && (e.text.text[0] | 0x20) == want))) return;
+            }
             if (g_textActive && e.text.text) g_textQueue += e.text.text;
             return;
         }
@@ -914,8 +934,10 @@ void eden_native_input_handle_event(const SDL_Event& e) {
                 // 2=colours, 7=fire/burn.
                 // U.3: over the settings screen the menu key is its Back, not a HUD tap (which
                 // the screen claimed as a touch of its own and dropped). U.5: likewise New World.
-                if      (mi == g_miMenu)         { if (!eden_console_menu_back() && !eden_settings_menu_back() && !eden_new_world_menu_back() && !eden_world_props_menu_back()) hud_tap(0); }
+                if      (mi == g_miMenu)         { if (!eden_console_menu_back() && !eden_settings_menu_back() && !eden_new_world_menu_back() && !eden_world_props_menu_back() && !eden_server_list_back() && !eden_menu_home_back()) hud_tap(0); }
                 else if (mi == g_miConsole)      { if (eden_console_menu_toggle() && eden_ui_captures_keys()) g_dropGrave = true; }
+                else if (mi == g_miChat)         { if (eden_chat_open(0)) g_dropChat = 't'; }
+                else if (mi == g_miChatCmd)      { if (eden_chat_open(1)) g_dropChat = '/'; }
                 else if (mi == g_miBlockPicker)  hud_tap(1);
                 else if (mi == g_miColorPicker)  hud_tap(2);
                 else if (mi == g_miFireTool)     hud_tap(7);

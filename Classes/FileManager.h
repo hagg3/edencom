@@ -113,6 +113,9 @@ public:
     BOOL convertingWorld;
     BOOL genflat;
     BOOL worldUnbounded;   // X.6: world holds data outside the bundled 2880 square -> Player::update skips the edge clamp
+    // MP.3a: the open world is a multiplayer session (Classes/MpWorld.h): no file; loadWorld synthesises it
+    // from MpWorld's header, readColumn is the flat recipe + overlay, and the three saves commit to RAM.
+    BOOL sessionWorld;
     FileManager();
     BOOL worldExists(std::string name,BOOL appendArchive);
     void saveGenColumn(int cx,int cz,int origin);
@@ -226,6 +229,8 @@ private:
     void loadTrailer(NSString* name,const unsigned char* bytes,unsigned long long len);
     BOOL loadEmodWorld(NSString* name);
     void saveEmodWorld(Vector warp);
+    void loadSessionWorld();   // MP.3a
+    void commitSession(Vector warp);
     int oldOffsetX;
     int oldOffsetZ;
     // Per-column record span, in bytes, for the columns whose span is SHORTER than a full record.

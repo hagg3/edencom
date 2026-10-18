@@ -20,6 +20,7 @@
 #import "ConsoleMenu.h"   // C.3 (Menu.h only forward-declares it)
 #import "SignRenderer.h"
 #import "CmdScript.h"
+#import "MpWorld.h"       // MP.3a: the session world
 #include <iostream>
 #include <pthread.h>
 
@@ -351,7 +352,7 @@ void World::loadWorld(NSString* name){
         // `.emod` as if it had always been one. The `.eden` is only read; when it is done the
         // player is asked below whether to delete it. If conversion cannot run (no space, an
         // unsupported header) the `.eden` simply plays in place, as it always did.
-        if(fm->conversionActive()||fm->worldNeedsConversion(name)){
+        if(!fm->sessionWorld&&(fm->conversionActive()||fm->worldNeedsConversion(name))){
             // S.5e: first, the height it converts to (the "Keep 64z?" prompt, when there is one).
             int g=fm->convertHeightGate(name);
             if(g==0){
@@ -398,7 +399,8 @@ void World::loadWorld(NSString* name){
         // and the chunk table, and the only place it is written down is the save file's header.
         // Probe it here (the header, plus the directory below version 5 -- S.3b; a file we are about to open anyway); a world that does
         // not exist yet is 64z, which is what makes "new worlds stay 64z" true by construction.
-        int probed_height=fm->probeWorldHeight(name,TRUE);
+        // MP.3a: a session world is always 256z (the server's y is 0..255; engine plan §2).
+        int probed_height=fm->sessionWorld?T_HEIGHT_MAX:fm->probeWorldHeight(name,TRUE);
         // ROADMAP Phase M / M5.3: a 256z world costs ~+64 MB of window arrays plus 4x the chunk
         // objects and GL buffers on top of the 64z budget. On a device the page has flagged as
         // low-memory that is very likely never viable, and a clear "too large for this device"
@@ -414,7 +416,10 @@ void World::loadWorld(NSString* name){
         eden_set_world_height(probed_height);
         // B.5b-2: the window radius, under the height's rules (set before allocateMemory, fixed for
         // the session; Constants.h). It depends on the height on web (256z is held to 12 there).
-        eden_set_window_radius(eden_window_radius_for_world(probed_height));
+        // MP.3a: a session caps it at 9, the most one 128-block REGION lattice point covers (engine plan §6.1).
+        int radius=eden_window_radius_for_world(probed_height);
+        if(fm->sessionWorld&&radius>T_RADIUS_DEFAULT)radius=T_RADIUS_DEFAULT;
+        eden_set_window_radius(radius);
         if(LOW_MEM_DEVICE){
             menu->deactivate();
             
@@ -501,7 +506,7 @@ void World::loadWorld(NSString* name){
             
             
              
-            if(CREATURES_ON){
+            if(CREATURES_ON||MpWorld::active()){   // MP.5: a session loads the models for its remote players
                
                 LoadModels([[NSString stringWithFormat:@"%@/",[[NSBundle mainBundle] resourcePath]] cStringUsingEncoding:NSUTF8StringEncoding]);
             }
@@ -515,7 +520,7 @@ void World::exitToMenu(){
    // printg("hihihi\n");
 	terrain->unloadTerrain(TRUE);
     fm->closeWorld();   // Stage S: release the `.emod` store (after unloadTerrain saved into it)
-    if(CREATURES_ON){
+    if(CREATURES_ON||MpWorld::active()){
         UnloadModels();
     }
    // printg("loading menu textures\n");
@@ -544,8 +549,9 @@ void World::exitToMenu(){
 	Resources::getResources->playMenuTune();
 	target_game_mode=GAME_MODE_WAIT;
     game_mode=GAME_MODE_WAIT;
-    
+
     fm->compressLastPlayed();
+    MpWorld::endSession();   // MP.3a: leaving a session drops its overlay (nothing was saved)
    
 //printg("hi\n");
 	
@@ -677,10 +683,14 @@ BOOL World::update(float etime){
     
 	
 	Resources::getResources->update(etime);
+	// MP.3b: a session's socket pump, REGION pacer and join drain run every frame in every mode --
+	// the server keeps talking under a modal, a menu or a load (engine plan §5).
+	MpWorld::tick();
 	// A GL dialog (GLDialog.h) is a full-screen modal: while one is up it owns input and the
 	// screen underneath is frozen. Mirrors Menu's `if(showsettings){...;return;}` early-out.
 	if(GLDialog::active()){
 		GLDialog::getDialog()->update(etime);
+		MpWorld::update(etime);   // MP.3b: a session can't freeze; the world events still land
 		return FALSE;
 	}
 	// Stage 5.5: Settings opened from the in-game (pause) menu is the same kind of modal — the
@@ -688,6 +698,7 @@ BOOL World::update(float etime){
 	// this in play (it asks eden_gl_settings_available() first), so on web it never happens.
 	if(game_mode==GAME_MODE_PLAY&&menu->showsettings){
 		menu->settings->update(etime);
+		MpWorld::update(etime);   // MP.3b: as under a GLDialog
 		return FALSE;
 	}
 	// C.3: the Console is a play-only screen; leaving play closes it.
@@ -724,6 +735,7 @@ BOOL World::update(float etime){
          if(!player->dead)
 		effects->update(etime);
         CmdScript::update(etime); //D.4c: command-block scripts edit before this frame's meshing
+        MpWorld::update(etime);   //MP.3b step 5c: remote edits after this frame's local ones, before meshing
         pass_end(P_U_EFFECTS);
         
         pass_begin(P_U_MESH);
@@ -806,7 +818,7 @@ void World::renderFrame(BOOL draw){
         pass_end(P_R_OPAQUE);
        // glEnable(GL_TEXTURE_2D);
         pass_begin(P_R_MODELS);
-        if(CREATURES_ON)
+        if(CREATURES_ON||MpWorld::active())   // MP.5
             RenderModels();
         pass_end(P_R_MODELS);
         pass_begin(P_R_SIGNS);

@@ -28,6 +28,12 @@ void UpdatePlayerBody(int type,Vector feet,float yaw,int motion,float etime);
 void HidePlayerBody(void);
 bool PlayerBodyAvailable(void);
 bool PlayerBodyShown(Vector* pos);   // the slot is posed this frame (pos = its model origin)
+// MP.5: the other players of a multiplayer session, MAX_REMOTE_BODIES slots posed like the player body
+// (same rules: outside every creature loop). feet/yaw/motion as UpdatePlayerBody; type is a creature model.
+#define MAX_REMOTE_BODIES 16
+void UpdateRemoteBody(int slot,int type,Vector feet,float yaw,int motion,float etime);
+void HideRemoteBody(int slot);
+int RemoteBodiesShown(void);
 void setViewNow();
 void killCreature(int idx);
 float wrapx(float x);

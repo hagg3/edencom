@@ -32,6 +32,7 @@
 #define Eden_ConsoleMenu_h
 
 #import "GLWidgets.h"
+#import "Console.h"
 #include <map>
 #include <string>
 #include <vector>
@@ -42,6 +43,7 @@ public:
     ~ConsoleMenu();
 
     void open();                         // from play; focuses the input
+    void openChat(const char* prefill);  // MP.7: T, `/` and the touch button: the Chat tab with `prefill` typed
     void close();
     bool isOpen() const       { return m_open; }
     void back();                         // Escape: blur the field, else close
@@ -49,7 +51,8 @@ public:
     void update(float etime);            // World::update, FIRST in the frame
     void render();                       // after the HUD, in the HUD's ortho
 
-    enum { TAB_CONSOLE = 0, TAB_VARIABLES = 1, TAB_HELP = 2, TABS = 3 };
+    // MP.7: in a multiplayer session two tiles join in FRONT of the rail (Chat, Players); the ids append.
+    enum { TAB_CONSOLE = 0, TAB_VARIABLES = 1, TAB_HELP = 2, TAB_CHAT = 3, TAB_PLAYERS = 4, TABS = 5 };
     int  tab() const          { return m_tab; }
     void showTab(int t);
     bool collapsed() const    { return m_collapsed; }
@@ -74,6 +77,11 @@ public:
     bool   railShown() const { return !m_autoStrip && !m_collapsed && !m_noRail; }
     int    helpRows() const;
     int    varRows() const;
+    // MP.7 harness: the rail's tiles left to right (Chat, Players, Console, Variables, Help in a session).
+    int    railTabs() const   { return m_railN; }
+    int    playerRows() const;
+    bool   chatTab() const    { return m_tab==TAB_CHAT; }
+    bool   inputTab() const   { return m_tab==TAB_CONSOLE||m_tab==TAB_CHAT; }   // the tabs with the scrollback + input
 
 private:
     ConsoleMenu(const ConsoleMenu&);
@@ -94,10 +102,25 @@ private:
     bool lineBackToField(int index);
     int  hitButton(float x, float y) const;
     void scrolled();                     // the player moved the scrollback: re-derive "following"
+    // MP.7: the lines the scrollback tab shows (Console's, or the chat's) and the rail's tile <-> tab map.
+    const std::vector<Console::Line>& srcLines() const;
+    unsigned srcSerial() const;
+    int  tabOfTile(int tile) const;
+    int  tileOfTab(int tab) const;
+    void syncRail();                     // the rail has the session tiles while MpWorld::active()
+    void configureField();               // placeholder, byte cap and code mode for the shown tab
+    void fillPlayerRows();
 
     bool m_open;
     bool m_collapsed;
     int  m_tab;
+    int  m_railN;                        // MP.7: tiles on the rail (3, or 5 in a session)
+    bool m_railSession;
+    int  m_srcTab;                       // which tab's lines the label cache holds
+    int  m_fieldTab;                     // the tab the field was last configured for
+    bool m_fieldCode;
+    int  m_titleTab;
+    std::string m_otherText;             // the other tab's draft (Console <-> Chat share the one field)
     bool m_follow;                       // the scrollback sticks to the bottom
     bool m_newBelow;                     // lines arrived while scrolled up
     unsigned m_lastSerial;

@@ -1,0 +1,24 @@
+# mp-replay.py expect: the window state --mp-replay must reproduce (MP.3a/MP.3b). Do not edit by hand.
+spawn.x=65540.5
+spawn.y=34
+spawn.z=65530.5
+spawn.ox=4087
+spawn.oz=4087
+spawn.cells=3720
+spawn.hash=e194b82867313f3a
+dest.x=66548.5
+dest.y=40
+dest.z=66130.5
+dest.ox=4150
+dest.oz=4124
+dest.cells=118
+dest.hash=bfbb1591db9a5ef2
+overlay.cells=3840
+dropped=0
+reconcile.x=65536
+reconcile.z=65536
+reconcile.keep=65533:45:65537:13
+reconcile.cells=3719
+reconcile.hash=98e7ceab52e32401
+reconcile2.cells=3718
+reconcile2.hash=32e3382f292221b1

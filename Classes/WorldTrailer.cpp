@@ -246,9 +246,10 @@ bool WorldTrailer::fits() const {
     return n == 0 || (n + tail_.size() + ROW_PAYLOAD - 1) / ROW_PAYLOAD * ROW <= MAX_BYTES;
 }
 
-WorldTrailer::Result WorldTrailer::addSign(const TrailerPos& anchor, int face, int colour, int facing, const char* text) {
+WorldTrailer::Result WorldTrailer::addSign(const TrailerPos& anchor, int face, int colour, int facing, const char* text,
+                                           bool asIs) {
     if (!parsed_) return TR_OPAQUE;
-    if (face < 0 || face > 5 || colour < 1 || colour > 54 || facing < 0 || facing > 3 ||
+    if ((!asIs && (face < 0 || face > 5 || colour < 1 || colour > 54 || facing < 0 || facing > 3)) ||
         !okText(text, sizeof(((TrailerSign*)0)->text) - 1, true))
         return TR_BAD;
     if (findSign(anchor, face) >= 0) return TR_EXISTS;

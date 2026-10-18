@@ -215,7 +215,8 @@ Write path — always go through these, never poke arrays directly:
   hook. Load and column streaming never come through it, so out-of-window records are never
   touched; a block placed *in front* of a sign only hides it (docs/rendering.md).
   Command-block scripts (D.4c, `CmdScript::setCell`) write through the same pair as a build
-  (`updateChunks` + `setColor`, lightbox light out/in, liquid sources removed/added), so their `set
+  (`updateChunks` + `setColor`, lightbox light out/in, liquid sources removed/added — since MP.3b that
+  sequence is `Terrain::setCellState`, which a multiplayer session's remote edits share), so their `set
   … air` takes a command block's record too. They never write a non-resident cell (the toroidal
   arrays would wrap it onto another column: `CmdScript.mm`'s `resident()` checks the chunk's
   `pbounds`), bedrock, a door/portal half, the player's cell or (with a solid block) another command
@@ -246,7 +247,9 @@ All in `Terrain.mm`:
 - **`burnBlock(x,z,y,causedByExplosion)`** — adds a `BurnNode` to the global
   singly-linked `burnList` if the type `IS_FLAMMABLE`. Life: 6 s normal blocks; 4 s
   TNT (0.5–0.8 s if chained from an explosion). Registers a looping fire sound and a
-  fire particle emitter.
+  fire particle emitter. `BurnNode::mpLit` (MP.4, in-memory only) marks a fire the
+  local player lit in a multiplayer session: its timed expiry, with the cell still
+  solid, sends the follow-up mine (`MpWorld::burnFuseOut`, [networking.md](networking.md)).
 - **Fire propagation** (`Terrain::update`): 1 s after ignition
   (`BURN_SPREAD_TIME`) a burning block ignites its 6 neighbours. On expiry: TNT →
   `explode` (sphere radius `EXPLOSION_RADIUS=5`; if the TNT was painted, the
@@ -475,6 +478,10 @@ useless, now just iterates through chunk list" (`Terrain::renderTree`).
 - `Terrain()` constructed at app start; `allocateMemory()` only when entering a world;
   `deallocateMemory()` on exit to menu (frees blockarray/the light bricks/chunk objects).
 - `loadTerrain(name, fromArchive)` → `FileManager::loadWorld` does the real work.
+- **A multiplayer session (MP.3a)** has no file: every column is the flat recipe (`generateColumn`'s seed-0 branch) plus
+  `MpWorld`'s overlay, written by `MpWorld::applyDelta` in that branch after the recipe and before the `GBLOCK` copy and
+  `addChunk` (so `blockarray`, `typesEmpty`, light and shadows see final voxels). Always 256z, Render distance capped at 9,
+  unbounded. The streamer is unchanged; its saves commit to RAM. [networking.md](networking.md) "The session world".
 - `unloadTerrain(exitToMenu)` only clears portals/fireworks and resets the mesh cache
   (`troot`) when `exitToMenu==TRUE` — i.e. when actually leaving the world, not on the
   internal `unloadTerrain(FALSE)` calls (`warpToHome` among them) that keep chunk

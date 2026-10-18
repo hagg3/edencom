@@ -16,6 +16,7 @@
 #import "Resources.h"
 #import "Util.h"
 #include "WorldTrailer.h"
+#import "MpWorld.h"   // MP.3a: world.* writes are refused in a session
 
 #include <algorithm>
 #include <cctype>
@@ -312,6 +313,7 @@ void keyReset(int tag) { eden_keybind_set(tag, eden_keybind_default(tag)); }
 void bridgeSettings() {
     const int n = eden_settings_count();
     for (int i = 0; i < n; ++i) {
+        if (eden_settings_kind(i) == 4) continue;   // MP.8: KIND_TEXT rows (Matchmakers) are not cvars
         Cvar c = {};
         const std::string group = lower(eden_settings_group(i));
         const std::string name = group + "." + eden_settings_key(i);
@@ -699,6 +701,8 @@ void extRun(int index, const CmdScript::ExtCall& call) {
         const int i = index - CVAR_BASE;
         const CvarRec& r = g_cvars[i];
         if (call.args.empty()) { ctx.print("%s", describeCvar(r).c_str()); return; }
+        // MP.3a: a session world has no file to rename and no purse (engine plan §11).
+        if (MpWorld::active() && r.lname.compare(0, 6, "world.") == 0) { ctx.error("Not in a multiplayer world"); return; }
         if (r.c.kind != KIND_TEXT && call.args.size() > 1) { ctx.error("%s takes one value", r.name.c_str()); return; }
         std::string note;
         const std::string err = cvarSet(i, (r.c.kind == KIND_TEXT ? join(call.args) : call.args[0]).c_str(), &note);
