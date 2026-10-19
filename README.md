@@ -1,13 +1,6 @@
 # Eden: Community Edition (Emod)
 This project is a community-maintained fork of Eden: World Builder. Eden is a voxel sandbox for iPhone and iPad, created by Ari Ronen (Kingly Games) and released in 2010 on the App Store. It was the first mainstream voxel sandbox of its kind for iOS, and predated Minecraft: Pocket Edition for about a year.
 
-# Eden: Community Edition (Emod)
-This project is a community-maintained fork of Eden: World Builder. Eden is a voxel sandbox for iPhone and iPad, created by Ari Ronen (Kingly Games) and released in 2010 on the App Store. It was the first mainstream voxel sandbox of its kind for iOS, and predated Minecraft: Pocket Edition for about a year.
-
-Eden: World Builder is a voxel sandbox for iPhone and iPad, made by Ari Ronen (Kingly Games) and released in 2010. A lot of people grew up on it.
-
-Emod is a community fork that gets the 2.1 source code (released in 2018) running cross-platform and on modern devices.
-
 For support, queries and updates, join the official Eden Discord server, which is owned by Ari Ronen and managed by community members.[Discord](http://discord.gg/rjYXwBC).
 
 ## Rationale
