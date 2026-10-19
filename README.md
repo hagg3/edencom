@@ -1,27 +1,30 @@
 # Eden: Community Edition (Emod)
+This project is a community-maintained fork of Eden: World Builder. Eden is a voxel sandbox for iPhone and iPad, created by Ari Ronen (Kingly Games) and released in 2010 on the App Store. It was the first mainstream voxel sandbox of its kind for iOS, and predated Minecraft: Pocket Edition for about a year.
 
-Eden: World Builder was a voxel sandbox for iPhone and iPad, made by Ari Ronen (Kingly Games) and
-released in 2010. You walked around a big blocky world, dug it up, built things, set fire to them,
-and flooded the rest. A lot of people grew up on it. It was pulled from the App Store a while ago,
-and the iOS version it shipped on doesn't run on much anymore.
+For support, queries and updates, join the official Eden Discord server, which is owned by Ari Ronen and managed by community members.[Discord](http://discord.gg/rjYXwBC).
 
-Emod is a community fork that gets the original game running again, natively, on modern machines:
+## Rationale
+
+Despite sometimes being lumped in with the litany of 'Minecraft clones' on the App Store, Eden maintained a position in the top charts on iOS for years, and still sustains an active community today. The game's unique features set it apart from clones, including an in-game 'Shared Worlds' list allowing users to search and browse user-created worlds and upload their own. The game also features unique bouncy physics, ice slides, and touch first controls that make building straightforward on a phone or tablet.
+
+The source code for version 2.1 (released in 2015) was made available in 2018, and it is that code that this game is forked from. The game has received closed source updates since then - namely a new texture pack and 4x greater world height limit in 2021, and the addition of multiplayer as well as new block types; signs which can be painted; command blocks; and a space exploration themed adventure mode in 2026. Whilst we welcome the new additions to the game, especially given that they constitute an attempt at further carving out a niche for the game, we felt motivated to preserve and update a version of the game that is more faithful to the classic sandbox gameplay and art style. 
+
+Community Edition therefore implements a range of bug fixes and quality-of-life changes to the 2015 era code, as well as back-porting multiplayer and the new block types. At present, it currently contains the foundations for community add-on and modding support - i.e. a developer console. We have also made wide ranging improvements to the code, further optimizing what was already quite an efficient codebase in 2.1. 
+
+## Platform support
+
+As well as iOS, the code at present can be compiled and run on the following:
 
 - **macOS, Linux and Windows** (SDL3 + OpenGL)
 - **iOS / iPadOS** (unsigned builds you sideload; see Releases)
-- Android is planned, not started
+- Android support is planned.
 
-It's the real engine, not a remake. The original 2.1.1 source (released by Ari in 2018) is compiled
-as-is, and a thin layer underneath stands in for the iOS APIs it expected. The default world,
-the blocks, the creatures, the lighting and the water all behave the way you remember them,
-because it's the same code doing it.
+The original 2.1 engine has been iterated on, rather than remade. There is a light compatibility layer that stands in for iOS/ObjC APIs on non-Apple platforms.
 
-Join the Eden community on [Discord](http://discord.gg/rjYXwBC).
 
 ## Playing
 
-There are no prebuilt desktop downloads yet, so for now you build it (below). iOS test builds are
-posted under [Releases](https://github.com/hagg3/edencom/releases) as unsigned `.ipa` files.
+Cross-platform beta test builds are posted under [Releases](https://github.com/hagg3/edencom/releases) as unsigned `.ipa` files.
 
 Default controls on desktop (rebindable in Settings):
 
@@ -49,8 +52,6 @@ Your worlds are saved here, and are never shared with the old Eden app's data:
 - Windows: `%APPDATA%\Emod\Documents`
 
 ## What's different from the original
-
-The aim is to leave the game alone, but a few things had to change to keep it alive:
 
 - **A new world format, `.emod`.** Saves are append-only and checksummed, so a crash mid-save can't
   corrupt a world. Old `.eden` worlds still import and export.
