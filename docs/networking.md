@@ -317,6 +317,22 @@ The home **Multiplayer** tile opens `Classes/ServerListMenu` (list, detail pane,
   player, and Chat-specific `--shot` pages (`hud-chat`, `chat`, `players`; they need a live session).
 - Gates: `--mp-replay` leg 8 (lines in, `MSG:` out, `:` safe, the bucket, `/login`, the panel, Players, the feed's cap and fade).
 
+## Port-side files and gates
+
+Moved from `port/CLAUDE.md` (2026-10-20). `port/src/net/`: `NetSock` (TCP, POSIX + Winsock), `NetFramer.h`,
+  `Snapz`, `MpSession` (network thread + queues). Plain C++, no engine includes; gates `--net-selftest`/`--mp-selftest`,
+  `tools/mp-live-gate.sh`. See `../docs/networking.md` "Multiplayer transport and session". MP.3a's session
+  world/overlay is engine code (`Classes/MpWorld.*`); `MpSession::feedLine` drives the parser socket-free for
+  `--mp-replay`, whose fixture `tools/fixtures/mp/replay-1.{lines,expect}` is recorded and independently
+  checked by `tools/mp-replay.py` (`record` against a local edenserver, `expect --check` in Linux CI). MP.3b: the
+  join flow is `../native/src/seam/MpLink_native.mm` (an `MpWorld::Link`: MpWorld pumps it each frame from
+  `World::update`, so no host-loop hook; `--mp-join=HOST[:PORT]`, `eden_mp_join()`); `tools/mp-replay.py live` joins a
+  local edenserver headless and checks the window hash; MP.4's `tools/mp-replay.py edits` runs two Emods (`--mp-edits`
+  builder, `--mp-hold=FILE` watcher) and a recorder socket against one (converge, relayed once, no echo, the sign round-trips).
+  MP.6: `ServerList` (servers.txt format, address/name rules, `INFO` probe, `ServerProber` worker pool), reached from
+  the screens via the C seam `Classes/MpServers.h` = `../native/src/seam/MpServers_native.mm`; Escape on the list is
+  `eden_server_list_back()` (Menu_web.mm); `--mp-mock` is the canned fixture. MP.8: `fetchMatchList`/`MatchFetcher`/`parseMatchmakers` in the same file, `eden_mp_matchmaker*` in the seam, and `Settings_web.mm`'s first `KIND_TEXT` row (`mp_matchmakers`; not a cvar). MP.7: `Classes/ChatFeed` + the Console screen's Chat/Players tiles; keybinds `chat` (T) and `chatCommand` (/) dispatch `eden_chat_open` (Menu_web.mm); the UI atlas grew to 512x512 (`ui-icons.py`).
+
 ## Client files (stock; seam-excluded on the port)
 - `Classes/ShareUtil.mm` — endpoint knowledge and orchestration. Current endpoints
   (the `static NSString*` URLs near the top; note this community fork repointed them, and the file
@@ -382,3 +398,6 @@ implemented on the port.
   pinned above — the server is picky),
   the delegate/selector lifetimes (manual retain/release; over-releasing the
   manager after cancel is an easy crash).
+
+### Q.1a notes (2026-10-21)
+- **Q.1a:** F22 `MpWorld::enforceCap` keeps a running byte count instead of rescanning the overlay per erase. F23 (Get Worlds) the download temp is per job (`.emod-download-N`); the browser sweeps leftover `.emod-download*` files when it opens idle.

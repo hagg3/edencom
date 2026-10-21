@@ -517,3 +517,6 @@ useless, now just iterates through chunk list" (`Terrain::renderTree`).
   reaches no save file — settled 2026-10-11 — and `GSIZE` is the literal 2880 since B.5g; see
   `WORKING/render-distance-runtime-plan-2026-10-11.md` §1.2 and §2), the streaming
   threshold logic, chunk reuse (`resetForReuse` assumes the slot is being overwritten).
+
+### Q.1a notes (2026-10-21)
+- **F17:** `blocktntexplode`'s three `j`/`k` loops skip non-resident columns (`isColumnResident`), as `explode()` does (B.5b-1b rule).

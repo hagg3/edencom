@@ -684,3 +684,6 @@ Third person (front), default first) and a native-only `kKeybinds[]` row **F5** 
 that cycles it. The key goes **through** the setting (`eden_cycle_camera_view`, `Settings_web.mm`), so the
 live `CAMERA_VIEW`, the Settings row and the persisted value never disagree; touch devices use the row. No
 gamepad binding. Engine side: [player-input-camera.md](player-input-camera.md) § Camera.
+
+### Q.1a notes (2026-10-21)
+- **F5 (menu background):** the four undrawn cloud/mountain menu textures (`cloud_SM`, `mountains`, `cloud_MD`, `cloud_LG`) are no longer decoded; their `menutextures` slots hold `NULL` (positional). **F25 (Console screen):** `ConsoleMenu` keeps one rasterised-line cache per source tab (`m_cache` / `m_cacheOther`, swapped on a tab switch) instead of rebuilding.

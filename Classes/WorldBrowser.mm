@@ -33,6 +33,7 @@ extern "C" int eden_get_upgrade_256z(void);   // port/src/seam/Settings_web.mm (
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <ctime>
 #include <string>
 #include <vector>
@@ -583,14 +584,25 @@ struct BrowserImpl {
     // --- download + unpack + import ---------------------------------------------------------
     void tempPaths() {
         const std::string d = documents_dir();
-        dlFile = d + "/.emod-download";
         layerIn = d + "/.emod-unpack-a";
         layerOut = d + "/.emod-unpack-b";
     }
-    void cleanTemps() {
+    // Q.1 F23: the download temp is per job (`.emod-download-N`), so a cancelled job's late writer can't
+    // clobber the next one. `sweep` (browser open, idle) also deletes every leftover `.emod-download*`.
+    void cleanTemps(bool sweep = false) {
         tempPaths();
-        std::remove(dlFile.c_str());
-        std::remove((dlFile + ".part").c_str());
+        if (!dlFile.empty()) {
+            std::remove(dlFile.c_str());
+            std::remove((dlFile + ".part").c_str());
+        }
+        if (sweep) {
+            std::error_code ec;
+            for (std::filesystem::directory_iterator it(documents_dir(), ec), end; !ec && it != end; it.increment(ec)) {
+                const std::string n = it->path().filename().string();
+                if (n.compare(0, 15, ".emod-download-") == 0 || n == ".emod-download" || n == ".emod-download.part")
+                    std::remove(it->path().string().c_str());
+            }
+        }
         std::remove(layerIn.c_str());
         std::remove(layerOut.c_str());
     }
@@ -599,6 +611,8 @@ struct BrowserImpl {
         const Entry* e = selectedEntry();
         if (!e || dl != DL_IDLE) return;
         cleanTemps();
+        static unsigned g_dlSerial = 0;
+        dlFile = documents_dir() + "/.emod-download-" + std::to_string(++g_dlSerial);
         dlEntry = *e;
         dlSrc = src;
         dlFrac = 0;
@@ -718,7 +732,7 @@ bool WorldBrowser::isOpen() const { return d->open; }
 
 void WorldBrowser::open() {
     d->open = true;
-    d->cleanTemps();
+    d->cleanTemps(d->dl == DL_IDLE);
     d->dlStatus.clear();
     SourceState& s = d->cur();
     if (!s.loaded && !s.listJob) d->startList(d->src, false);

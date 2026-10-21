@@ -56,6 +56,8 @@ typedef struct {
 } WorldFileHeader;
 ```
 
+Since 2026-10-20 the sizes are compile-time checked: `static_assert`s next to the definitions pin `sizeof(WorldFileHeader)==192` and `sizeof(ColumnIndex)==16` (`Classes/FileManager.h`) and `sizeof(EntityData)==60` (`Classes/Vector.h`), so a reorder or resize fails the build instead of corrupting worlds.
+
 The comment in the header is emphatic: **192 bytes including padding is load-bearing**
 ("be careful modifying this to not corrupt old maps"). Stock's `saveColumn` (removed in S.8) even asserted
 `(chunk_offset−192) % SIZEOF_COLUMN == 0`. The `hash` links a world file to its

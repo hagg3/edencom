@@ -173,3 +173,6 @@ Two diagnostic hooks sit beside it, both off by default:
 Add an `fprintf` in the shim and rebuild, or use the diagnostics build's counters
 (`eden_gl_stats_*`, `--mem-trace`); `--shot` captures pixels. (The web-era note about browser GL
 introspection tools is history.)
+
+### Q.1a notes (2026-10-21)
+- **F4:** `EdenLoadPNG` reads the file with `[[NSData alloc] initWithContentsOfFile:]` and releases it right after `stbi_load_from_memory`, so the PNG bytes (≈ 5 MiB at the menu) no longer sit in an autorelease root.

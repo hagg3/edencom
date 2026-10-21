@@ -955,8 +955,8 @@ endif()
 # NOTE, because it is the quiet upside of this whole target: web-port-final:web/src/seam/pthread_sync_web.c is
 # NOT built here. That file exists because Emscripten's non-pthread build has a stub
 # pthread_create that never runs the routine, so World.mm's async world load would hang forever.
-# Native has real pthreads, so Classes/World.mm's load thread and Classes/MeshPool.mm's worker
-# pool both work unmodified — B3's off-thread mesher included.
+# Native has real pthreads, so Classes/World.mm's load thread works unmodified. MeshPool's worker
+# pool is compiled out (nothing defines EDEN_THREADED; Classes/MeshPool.mm:25), so meshing is inline.
 
 # ---------------------------------------------------------------------------------------------
 # The bundle: a FLAT directory of assets beside the executable

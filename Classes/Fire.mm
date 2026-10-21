@@ -214,6 +214,7 @@ int Fire::addFire(float x,float z,float y,int type,float life){
     //printg("fire added to model %f,%f,%f,\n",x,z,y);
 	if(list_size>=max_bb){
         printg("alert: list_size overflow\n");
+        return -1;   // Q.1 F14
     }
 	while(num_particles+n_particles>=max_fparticles){
         printg("alert: particle overflow\n");
@@ -267,7 +268,10 @@ int Fire::addFire(float x,float z,float y,int type,float life){
 	
 }
 int Fire::addSmoke(float x, float z, float y){
-    
+    if(list_size>=max_bb){   // Q.1 F14
+        printg("alert: list_size overflow\n");
+        return -1;
+    }
     while(num_particles+n_particles>max_fparticles){
         printg("alert: particle overflow\n");
 		this->removeNode(arc4random()%list_size);

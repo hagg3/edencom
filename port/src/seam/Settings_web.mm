@@ -91,6 +91,13 @@ static const Setting kSettings[] = {
   { "health",            "Health",            "Gameplay",  KIND_TOGGLE, ENG_HEALTH,     0,   1,   1,   1,  "Falls, fire and creatures hurt.",                     NULL },
   { "autojump",          "Auto-jump",         "Gameplay",  KIND_TOGGLE, ENG_AUTOJUMP,   0,   1,   1,   1,  NULL,                            NULL },
   { "creatures",         "Creatures",         "Gameplay",  KIND_TOGGLE, ENG_CREATURES,  0,   1,   1,   1,  "Off is faster.",                       NULL },
+  // Fly mode lives in Gameplay (was Experiments). The four sliders default to the original feel
+  // (accel 10x walk, drag .995/frame, rise/fall JUMP_SPEED*3, no speed cap); see FLY_* in Classes/Player.mm.
+  { "fly",               "Fly mode",          "Gameplay",  KIND_TOGGLE, -1,             0,   1,   1,   0,  "Space and Ctrl to rise and fall.",                   NULL },
+  { "fly_accel",         "Fly acceleration",  "Gameplay",  KIND_RANGE,  -1,          .05f,   1, .05f,   1,  "Lower is gentler and easier to hold still.", NULL, "fly" },
+  { "fly_max_speed",     "Fly top speed",     "Gameplay",  KIND_RANGE,  -1,             0, 100,   1,   0,  "Blocks per second. 0 is unlimited.", NULL, "fly" },
+  { "fly_braking",       "Fly braking",       "Gameplay",  KIND_RANGE,  -1,             0,   1, .05f,   0,  "Higher stops sooner when you let go.", NULL, "fly" },
+  { "fly_vertical",      "Fly rise/fall speed", "Gameplay", KIND_RANGE, -1,          .05f,   1, .05f,   1,  NULL, NULL, "fly" },
 
   { "music",             "Music",             "Audio",     KIND_TOGGLE, ENG_MUSIC,      0,   1,   1,   1,  NULL,                                                               NULL },
   { "sound",             "Sound effects",     "Audio",     KIND_TOGGLE, ENG_SOUND,      0,   1,   1,   1,  NULL,                                                               NULL },
@@ -189,9 +196,8 @@ static const Setting kSettings[] = {
   // public/eden-menu.js's own poll, and by public/eden-pausemenu.js's tick().
   { "legacy_menu",       "Legacy UI",         "Interface", KIND_TOGGLE, -1,             0,   1,   1,   0,  "The original 2010 menus.", NULL },
 
-  // Experiments: opt-in, off by default (except fly/fps_normalize, which keep their pre-existing
-  // defaults now that they've moved tabs — only their group changed, not their behavior).
-  { "fly",               "Fly mode",          "Experiments", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Space and Ctrl to rise and fall.",                   NULL },
+  // Experiments: opt-in, off by default (except fps_normalize, which keeps its pre-existing
+  // default now that it has moved tabs — only its group changed, not its behavior).
   { "fps_normalize",     "Frame-rate normalize", "Experiments", KIND_TOGGLE, -1,        0,   1,   1,   1,  "Same walk speed at any refresh rate.",     NULL },
   { "advanced_movement", "Advanced movement (bhop)", "Experiments", KIND_TOGGLE, -1,     0,   1,   1,   0,  "Zero-delay bunny-hop and wheel-jump.",    NULL },
   { "crouch",            "Crouch mode",       "Experiments", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Adds a crouch key for 1-block gaps.", NULL },
@@ -400,6 +406,7 @@ static void eden_apply_input_profile(void) {
 extern "C" void eden_keybind_reset_all(void);   // Stage 5.2, defined further down
 extern "C" void eden_set_block_preview(int on);
 extern "C" void eden_set_fly_mode(int on);
+extern float FLY_ACCEL_MULT, FLY_MAX_SPEED, FLY_BRAKING, FLY_VERTICAL_MULT;
 extern "C" void eden_set_crouch_enabled(int on);
 extern "C" void eden_set_fire_melts_ice(int on);
 extern "C" void eden_set_fire_chars_vines(int on);
@@ -467,6 +474,14 @@ static void eden_apply_setting(int i, bool commitEngine) {
         eden_set_block_preview(v != 0.0f ? 1 : 0);
     } else if (std::strcmp(s.key, "fly") == 0) {
         eden_set_fly_mode(v != 0.0f ? 1 : 0);
+    } else if (std::strcmp(s.key, "fly_accel") == 0) {
+        FLY_ACCEL_MULT = v;
+    } else if (std::strcmp(s.key, "fly_max_speed") == 0) {
+        FLY_MAX_SPEED = v;
+    } else if (std::strcmp(s.key, "fly_braking") == 0) {
+        FLY_BRAKING = v;
+    } else if (std::strcmp(s.key, "fly_vertical") == 0) {
+        FLY_VERTICAL_MULT = v;
     } else if (std::strcmp(s.key, "crouch") == 0) {
         eden_set_crouch_enabled(v != 0.0f ? 1 : 0);
     } else if (std::strcmp(s.key, "fire_melts_ice") == 0) {

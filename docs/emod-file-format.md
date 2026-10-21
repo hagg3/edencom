@@ -488,3 +488,6 @@ Results: `WORKING/archive/s1-results-2026-10-09.md`.
   - both heights.
 
   `emod.py selftest` round-trips them under zstd, zlib and none, then runs the gate.
+
+### Q.1a notes (2026-10-21)
+- **F12 (X.12 note):** header-only opens now also cover the world-name read, the height probe and the provenance pairing check; only `loadEmodWorld` full-CRCs.

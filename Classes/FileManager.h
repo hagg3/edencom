@@ -40,10 +40,12 @@ typedef struct{
 	char reserved[100-sizeof(int)-36-16-sizeof(int)];	 //subtract new stuff from reserve bytes,
     //192 bytes(including padding is the correct size, be careful modifying this to not corrupt old maps
 }WorldFileHeader;
+static_assert(sizeof(WorldFileHeader)==192, "WorldFileHeader is raw-memcpy'd to disk: 192 bytes");
 typedef struct{
 	int x, z;
 	unsigned long long chunk_offset;
 }ColumnIndex;
+static_assert(sizeof(ColumnIndex)==16, "ColumnIndex is raw-memcpy'd to disk: 16 bytes");
 typedef struct{
 	int n_vertices;
 

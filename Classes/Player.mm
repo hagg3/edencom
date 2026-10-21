@@ -35,6 +35,11 @@ static bool jumpandbuild;
 bool FLY_MODE=true;
 bool FLY_UP=true;
 bool FLY_DOWN=true;
+// Fly tuning (Settings › Gameplay). Defaults reproduce the original feel exactly.
+float FLY_ACCEL_MULT=1;      // × the stock 10× walk acceleration
+float FLY_MAX_SPEED=0;       // horizontal blocks/s cap; 0 = unlimited
+float FLY_BRAKING=0;         // 0 = stock .995 drag per 60 Hz frame, 1 = .80
+float FLY_VERTICAL_MULT=1;   // × the stock JUMP_SPEED*3 rise/fall
 // Web port crouch key (held, Source-engine style — set from src/seam/Input_web.mm). Halves
 // boxheight in Player::preupdate below so the player fits through 1-block-tall gaps/vents.
 bool CROUCH_HELD=false;
@@ -945,8 +950,8 @@ BOOL Player::update(float etime){
 
             vspeed*=.66f;
     }else if(FLY_MODE){
-        speed*=10;
-        hspeed*=10;
+        speed*=10*FLY_ACCEL_MULT;
+        hspeed*=10*FLY_ACCEL_MULT;
     }
     
 	static int mcc=0;
@@ -1057,8 +1062,18 @@ BOOL Player::update(float etime){
         vel.z+=flowdir.z*FLOW_SPEED*etime;
         
     }else if(FLY_MODE){
-        vel.x*=.995;
-        vel.z*=.995;
+        float drag=.995f+(.80f-.995f)*FLY_BRAKING;
+        if(FLY_BRAKING>0)drag=powf(drag,etime*60);   // stock path stays per-frame so default is bit-identical
+        vel.x*=drag;
+        vel.z*=drag;
+        if(FLY_MAX_SPEED>0){
+            float l2=vel.x*vel.x+vel.z*vel.z;
+            if(l2>FLY_MAX_SPEED*FLY_MAX_SPEED){
+                float k=FLY_MAX_SPEED/sqrtf(l2);
+                vel.x*=k;
+                vel.z*=k;
+            }
+        }
     }
     
 	//if(sinPitch*speed>0)vy=sinPitch*speed;
@@ -1107,10 +1122,10 @@ BOOL Player::update(float etime){
     }else if(FLY_MODE){
         vel.y=0;
         if(FLY_UP){
-            vel.y+=JUMP_SPEED*3;
+            vel.y+=JUMP_SPEED*3*FLY_VERTICAL_MULT;
             
         }if (FLY_DOWN) {
-            vel.y+=-JUMP_SPEED*3;
+            vel.y+=-JUMP_SPEED*3*FLY_VERTICAL_MULT;
             
         }
     }

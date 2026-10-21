@@ -11320,9 +11320,13 @@ static int eden_main_after_args(int argc, char** argv) {
     (void)argc;
     // X.21: every `--*-selftest` keeps its prefs in memory (no read of the user's real prefs file, no
     // write), so a stored setting cannot change a result (X.19's cause). Nothing has touched prefs yet.
-    if (g_opt.mode) {
-        const size_t ml = std::strlen(g_opt.mode);
-        if (ml > 9 && !std::strcmp(g_opt.mode + ml - 9, "-selftest")) eden_prefs_set_ephemeral(1);
+    // Q.1 F13: every scripted mode (not just `-selftest`) and `--live-cmds` runs ephemeral, so `--set=` /
+    // `--render-scale=` / console history from a script never reach the profile.
+    if (g_opt.mode || !g_opt.liveCmds.empty()) {
+        const size_t ml = g_opt.mode ? std::strlen(g_opt.mode) : 0;
+        const bool selftest = ml > 9 && !std::strcmp(g_opt.mode + ml - 9, "-selftest");
+        const bool plays = g_opt.mode && !std::strcmp(g_opt.mode, "mp-join");   // a real join keeps the profile
+        if (selftest || !plays) eden_prefs_set_ephemeral(1);
     }
     // `--touch-selftest --window=WxH` runs WINDOWED, and that is the whole point of the
     // combination: headless has no window, so the letterbox is degenerate and the mapping under
@@ -11366,7 +11370,11 @@ static int eden_main_after_args(int argc, char** argv) {
             std::printf("<!-- BEGIN generated:%s -->\n%s<!-- END generated:%s -->\n", sec, Console::referenceMarkdown(sec).c_str(), sec);
         return 0;
     }
-    migrate_legacy_saves(docs);
+    // Only the platform default save directory migrates. An explicit --docs= / EDEN_DOCUMENTS is a
+    // harness or a deliberate override: migrating into it MOVED a real save out of
+    // ~/Library/Application Support/Eden (2026-10-09) and, on macOS, hung unattended runs on the
+    // ~/Documents privacy prompt (2026-10-07) unless a `.migrated-from-documents` marker was made first.
+    if (g_opt.docs.empty() && !getenv("EDEN_DOCUMENTS")) migrate_legacy_saves(docs);
     // C.9: the player's README.txt. Harness runs leave their --docs directories as they found them.
     if (!g_opt.mode && g_opt.liveCmds.empty()) {
         const int r = eden_player_readme_write(docs.c_str());

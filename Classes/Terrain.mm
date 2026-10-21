@@ -553,12 +553,14 @@ void Terrain::warpToHome(){
     World::getWorld->player->groundPlayer();
 }
 void Terrain::addToUpdateList(int cx,int cy,int cz){
+    if(cy<0||cy>=CHUNKS_PER_COLUMN)return;   // Q.1 F16: threeToOne doesn't wrap cy
      //issue #1 continued
     chunksToUpdate[threeToOne(cx,cy,cz)]=TRUE;
     columnsToUpdate[getColIndex(cx,cz)]=TRUE;
     }
 
 void Terrain::addToUpdateList2(int cx,int cy,int cz){
+    if(cy<0||cy>=CHUNKS_PER_COLUMN)return;   // Q.1 F16: threeToOne doesn't wrap cy
      //issue #1 continued
     chunksToUpdate[threeToOne(cx,cy,cz)]=TRUE;
     columnsToUpdate[getColIndex(cx,cz)]=TRUE;
@@ -1344,7 +1346,7 @@ void Terrain::paintBlock(int x,int z,int y,int color){
         if(cur==TYPE_PORTAL_TOP){
             
             setColor(x,z,y-1,color);
-            portals->paintPortal(x,z,y,color);
+            portals->paintPortal(x,y,z,color);   // Q.1 F28: (x,y,z) y vertical
             pos[1]--;
             cx=pos[0]/CHUNK_SIZE;
             cy=pos[1]/CHUNK_SIZE;
@@ -1353,7 +1355,7 @@ void Terrain::paintBlock(int x,int z,int y,int color){
         }else{
             
             setColor(x,z,y+1,color);
-            portals->paintPortal(x,z,y+1,color);
+            portals->paintPortal(x,y+1,z,color);   // Q.1 F28
             
             pos[1]++;
             cx=pos[0]/CHUNK_SIZE;
@@ -1703,6 +1705,20 @@ float calcLight(int x,int z,int y,float shadow,int coord){
     if(shadow>1.5f)shadow=1.5f;
     return shadow;
 }
+// Q.1 F26: all three channels from one light_get (same LOW_MEM_DEVICE, y-range and [0,1.5] clamps as calcLight).
+void calcLight3(int x,int z,int y,float shadow,float out[3]){
+    if(LOW_MEM_DEVICE){out[0]=out[1]=out[2]=shadow;return;}
+    const Vector8* lv=(y>=0&&y<T_HEIGHT)?light_get((x+g_offcx)%T_SIZE,(z+g_offcz)%T_SIZE,y):NULL;
+    float a=shadow,b=shadow,c=shadow;
+    if(lv){
+        a+=(float)lv->x/64.0f;
+        b+=(float)lv->y/64.0f;
+        c+=(float)lv->z/64.0f;
+    }
+    out[0]=a<0?0:(a>1.5f?1.5f:a);
+    out[1]=b<0?0:(b>1.5f?1.5f:b);
+    out[2]=c<0?0:(c>1.5f?1.5f:c);
+}
 // The light at one voxel of the window, by TOROIDAL index (tx,tz in [0,T_SIZE)), for diagnostics
 // (eden_debug_light_state). Answers what calcLight would add, whatever the store looks like.
 Vector8 lightAtToroidal(int tx,int tz,int y){
@@ -1911,6 +1927,7 @@ void Terrain::blocktntexplode(int x,int z,int y,int btype){
    	for(int i=0;i<=er;i++){
         for(int j=x-boundleft;j<=x+boundright;j++){
             for(int k=z-boundforward;k<=z+boundbackward;k++){
+                if(!isColumnResident(j,k))continue;   // Q.1 F17
                 int yy=er-i;
                 
               //  int ox=j-x;
@@ -1964,6 +1981,7 @@ void Terrain::blocktntexplode(int x,int z,int y,int btype){
         
         for(int j=x-boundleft;j<=x+boundright;j++){
             for(int k=z-boundforward;k<=z+boundbackward;k++){
+                if(!isColumnResident(j,k))continue;   // Q.1 F17
                 if(abs(j-x)+abs(k-z)!=er*2)continue;
                  
                 int yy=er-i;
@@ -2013,6 +2031,7 @@ void Terrain::blocktntexplode(int x,int z,int y,int btype){
    	for(int i=0;i<=er;i++){
         for(int j=x-boundleft;j<=x+boundright;j++){
             for(int k=z-boundforward;k<=z+boundbackward;k++){
+                if(!isColumnResident(j,k))continue;   // Q.1 F17
                 int yy=er-i;
                 
                 //  int ox=j-x;
@@ -3301,11 +3320,15 @@ int compare_front2back (const void *a, const void *b)
     else
         return 0;
 }
+// Q.1 F19: the eye this frame's chunk face culling and transparent sort use. Set at the top of
+// Terrain::render from Camera::viewPoints, so in third person (H.12) it is the real eye, not the
+// pivot cam->px/py/pz, which sits up to CAM_TP_DIST away. First person: eye == pivot.
+Vector g_cullEye;
 int compare_back2front (const void *a, const void *b)
 {
     TerrainChunk* first=*((TerrainChunk**)(a));
     TerrainChunk* second=*((TerrainChunk**)(b));
-    Vector cam=World::getWorld->player->pos;
+    Vector cam=g_cullEye;   // Q.1 F19: was World::getWorld->player->pos
     Vector center=MakeVector((first->pbounds[3]+first->pbounds[0])/2.0f,
                              (first->pbounds[4]+first->pbounds[1])/2.0f,
                              (first->pbounds[5]+first->pbounds[2])/2.0f);
@@ -3463,6 +3486,7 @@ static void objBatchDraw(ObjectBatch* b,int verts,BOOL withNormals){
 // -------------------------------------------------------------------------------------------------
 
 void Terrain::render(){
+    { Vector at; World::getWorld->cam->viewPoints(&g_cullEye,&at); }   // Q.1 F19, before render2 too
     if(do_reload==-1)return;
    //  NSLog(@"rendering!!");
     Graphics::beginTerrain();
@@ -3741,36 +3765,48 @@ void Terrain::render(){
     float tessf=1.0f/(float)tess;
     // A cube emits 6 faces x tess^2 subquads x 6 vertices; at tess=2 that is 144 per object, which
     // is why max_render_objects of them never fitted the old max_render_objects*6*6 array.
+    // Q.1 F9: the rotated unit-cube corners/normals are the same for every golden cube; rotate once per frame.
+    static Vector gcV[144],gcN[144];
+    {
+        int idx=0;
+        for(int f=0;f<6;f++)
+            for(int x=0;x<tess;x++){
+                float xoff=x*tessf;
+                for(int y=0;y<tess;y++){
+                    float yoff=y*tessf;
+                    for(int qc=0;qc<6;qc++){
+                        int k=f*6+qc;
+                        Vector vc;
+                        if(f==0||f==1){
+                            vc=MakeVector(cubeVertices[k*3]*tessf+xoff-.5f,cubeVertices[k*3+1]*tessf+yoff-.5f,cubeVertices[k*3+2]-.5f);
+                        }else if(f==2||f==3){
+                            vc=MakeVector(cubeVertices[k*3]-.5f,cubeVertices[k*3+1]*tessf+yoff-.5f,cubeVertices[k*3+2]*tessf+xoff-.5f);
+                        }else{
+                            vc=MakeVector(cubeVertices[k*3]*tessf+yoff-.5f,cubeVertices[k*3+1]-.5f,cubeVertices[k*3+2]*tessf+xoff-.5f);
+                        }
+                        gcV[idx]=rotateVertice(gcrot,vc);
+                        gcN[idx]=rotateVertice(gcrot,MakeVector(cubeNormals[k*3],cubeNormals[k*3+1],cubeNormals[k*3+2]));
+                        idx++;
+                    }
+                }
+            }
+    }
     objVertices=objBatchStage(&g_goldenBatch,max_render_objects*6*tess*tess*6);
     for(int i=0;objVertices&&i<chunksr;i++){
         for(int j=0;j<renderList[i]->rtnum_objects;j++){
             if(renderList[i]->rtobjects[j].type!=TYPE_GOLDEN_CUBE)continue;
+            int gidx=0;
             for(int f=0;f<6;f++)
                 
                 for(int x=0;x<tess;x++){
-                    float xoff=x*tessf;
                     for(int y=0;y<tess;y++){
-                        float yoff=y*tessf;
                         for(int qc=0;qc<6;qc++){
-                            
-                            
-                            int k=f*6+qc;
-                            Vector vc;
-                            if(f==0||f==1){
-                            vc=MakeVector(cubeVertices[k*3]*tessf+xoff-.5f,cubeVertices[k*3+1]*tessf+yoff-.5f,cubeVertices[k*3+2]-.5f);
-                            }else if(f==2||f==3){
-                                 vc=MakeVector(cubeVertices[k*3]-.5f,cubeVertices[k*3+1]*tessf+yoff-.5f,cubeVertices[k*3+2]*tessf+xoff-.5f);
-                               
-                            }else if(f==4||f==5){
-                               vc=MakeVector(cubeVertices[k*3]*tessf+yoff-.5f,cubeVertices[k*3+1]-.5f,cubeVertices[k*3+2]*tessf+xoff-.5f);
-                            }
-                            vc=rotateVertice(gcrot,vc);
+                            Vector vc=gcV[gidx];
+                            Vector vn=gcN[gidx];
+                            gidx++;
                             vc.x+=.5f;
                             vc.y+=.5f;
                             vc.z+=.5f;
-                            Vector vn=MakeVector(cubeNormals[k*3],cubeNormals[k*3+1],cubeNormals[k*3+2]);
-                            
-                            vn=rotateVertice(gcrot,vn);
                             objVertices[vert].normal[0]=vn.x;
                             objVertices[vert].normal[1]=vn.y;
                             objVertices[vert].normal[2]=vn.z;
@@ -4328,9 +4364,7 @@ void Terrain::render2(){
             float skylight=.35f;
             if(!isNight||LOW_MEM_DEVICE)skylight=1.0f;
             float light[3];
-            light[0]=calcLight(flowerList[i].pos.x,flowerList[i].pos.z,flowerList[i].pos.y,skylight,0);
-            light[1]=calcLight(flowerList[i].pos.x,flowerList[i].pos.z,flowerList[i].pos.y,skylight,1);
-            light[2]=calcLight(flowerList[i].pos.x,flowerList[i].pos.z,flowerList[i].pos.y,skylight,2);
+            calcLight3(flowerList[i].pos.x,flowerList[i].pos.z,flowerList[i].pos.y,skylight,light);
             if(light[0]>1){
                 light[0]=1;
             }if(light[1]>1){

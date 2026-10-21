@@ -402,7 +402,18 @@ void SimpleAudioEngine::preloadEffect(const char* pszFilePath) {
 }
 
 void SimpleAudioEngine::unloadEffect(const char* pszFilePath) {
-    if (pszFilePath) g_clips.erase(std::string(pszFilePath));
+    if (!pszFilePath) return;
+    auto it = g_clips.find(std::string(pszFilePath));
+    if (it == g_clips.end()) return;
+    for (size_t i = 0; i < g_voices.size();) {   // Q.1 F8: a looping voice re-reads clip->pcm every tick
+        if (g_voices[i].clip == &it->second) {
+            SDL_DestroyAudioStream(g_voices[i].stream);
+            g_voices.erase(g_voices.begin() + (long)i);
+            continue;
+        }
+        ++i;
+    }
+    g_clips.erase(it);
 }
 
 float SimpleAudioEngine::getEffectsVolume() { return g_effectsVolume; }

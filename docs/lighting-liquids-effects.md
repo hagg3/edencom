@@ -303,3 +303,6 @@ GL lights for doors/creatures).
 commented out. So liquids that were flowing when a world was saved stay still after it loads until
 something disturbs them. Restoring the rescan re-floods worlds (every source in the window restarts),
 so it was parked on purpose (ROADMAP Stage H, report item 8).
+
+### Q.1a notes (2026-10-21)
+- **Q.1a:** F14 `Fire::addFire`/`addSmoke` return -1 when the node list is full; F15 `addFirework` overwrites the last slot when full (stock wrote one past the array); F26 `calcLight3` fetches the light once for all three channels (colours only).

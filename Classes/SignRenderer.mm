@@ -494,9 +494,10 @@ void SignRenderer::render() {
     if ((int)total > g_vboCap) {
         int cap = g_vboCap ? g_vboCap : 1024;
         while (cap < (int)total) cap *= 2;
-        glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)cap * sizeof(vertexObject), NULL, GL_DYNAMIC_DRAW);
         g_vboCap = cap;
     }
+    // Q.1 F10: orphan every frame, so the sub-uploads never stall on a buffer the GPU is still reading.
+    glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)g_vboCap * sizeof(vertexObject), NULL, GL_DYNAMIC_DRAW);
     const size_t flat0 = g_skin.size(), text0 = g_skin.size() + g_flat.size();
     if (!g_skin.empty())
         glBufferSubData(GL_ARRAY_BUFFER, 0, (GLsizeiptr)(g_skin.size() * sizeof(vertexObject)), g_skin.data());

@@ -159,3 +159,6 @@ Read this before writing any code. These are the implicit rules the codebase fol
 | A new engine source file | `cmake/EngineSources.cmake` (never `port/tools/engine-sources.txt`); a seam replacement for a stock file goes in `EDEN_NATIVE_SEAM_EXCLUDE` (`native/CMakeLists.txt`) |
 | Update order in `World::update` | Streaming/save/mesh/upload dependencies (see execution-flow.md) |
 | Anything in a `.h` under `Classes/` | Massive rebuild — headers include each other liberally (Terrain.h ↔ World.h ↔ Player.h circular, broken by forward decls) |
+
+### Q.1a notes (2026-10-21)
+- **Q.1a:** `threeToOne` doesn't wrap `cy`, so `addToUpdateList*` now reject `cy` outside `[0,CHUNKS_PER_COLUMN)` (F16). `Portal::paintPortal` takes `(x,y,z)` with y vertical, unlike the Terrain `(x,z,y)` convention; `paintBlock` passed them swapped (F28).

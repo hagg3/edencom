@@ -232,3 +232,6 @@ both swapped in `World::loadWorld`/`exitToMenu`.
 - **Caution:** atlas layout (coupled to `blockTypeFaces` and the 1/`ATLAS_TILES` texture-matrix
   scale), load/unload pairing (double-frees on the menu↔game boundary are a classic
   crash here).
+
+### Q.1a notes (2026-10-21)
+- **F5:** `loadMenuTextures` leaves `MENU_CLOUD`/`MENU_MOUNTAINS`/`MENU_CLOUD2`/`MENU_CLOUD3` as `NULL` (never drawn). **F8 (native audio):** `unloadEffect` destroys every voice playing the clip before erasing it (a looping voice re-reads `clip->pcm` each tick).

@@ -174,6 +174,7 @@ repaired rather than replaced:
   aim does not move when the view toggles. `render2()` uses `viewPoints()` for mode 1; mode 2 falls
   through to the first-person matrix (the front camera looks back at the player, so taps and the
   crosshair aim along the player's own look).
+- Chunk face culling and the transparent back-to-front sort use the same eye (`g_cullEye`, set once per frame in `Terrain::render`; Q.1 F19, `docs/rendering.md`). Before, they used the pivot, so a strip of camera-facing faces could be culled when eye and pivot were on opposite sides of a chunk plane.
 - **Pick origin** (`findWorldCoords`, `Util.mm`): in mode 1 the ray origin slides forward to the pivot
   (`skip = dot(pivot − wp1, dir)`), so reach stays 15 blocks from the player's eye and blocks between the
   camera and the player can neither be picked nor block the ray.

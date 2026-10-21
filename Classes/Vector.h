@@ -47,6 +47,7 @@ typedef struct{
     Vector extra4;
     
 }EntityData;
+static_assert(sizeof(EntityData)==60, "EntityData is raw-memcpy'd to disk: 60 bytes");
 
 typedef struct _vertexObject
 {

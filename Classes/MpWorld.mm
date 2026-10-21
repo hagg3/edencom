@@ -115,7 +115,13 @@ void enforceCap() {
     }
     std::sort(far.begin(), far.end());
     const size_t target = overlayCapBytes - overlayCapBytes / 10;
-    for (size_t i = far.size(); i-- > 0 && overlayBytes() > target;) g_overlay.erase(far[i].second);
+    size_t bytes = overlayBytes();   // Q.1 F22: running count, not a full rescan per erase
+    for (size_t i = far.size(); i-- > 0 && bytes > target;) {
+        auto it = g_overlay.find(far[i].second);
+        if (it == g_overlay.end()) continue;
+        bytes -= it->second.capacity() * sizeof(uint32_t) + 64;
+        g_overlay.erase(it);
+    }
 }
 
 void resetLive();   // MP.3b's queue, pacer and reconcile (below)

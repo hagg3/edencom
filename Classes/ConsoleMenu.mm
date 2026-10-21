@@ -68,7 +68,7 @@ static GLW::Color lineColor(int kind){
 ConsoleMenu::ConsoleMenu()
  : m_open(false), m_collapsed(false), m_tab(TAB_CONSOLE), m_railN(3), m_railSession(false), m_srcTab(0),
    m_fieldTab(0), m_fieldCode(true), m_titleTab(-1), m_follow(true), m_newBelow(false), m_lastSerial(0),
-   m_builtU(0), m_builtW(0), m_labelsU(0), m_labelsCollapsed(false), m_builtMatchW(-1), m_histPos(-1), m_titleY(0),
+   m_builtU(0), m_builtW(0), m_builtUOther(0), m_builtWOther(-1), m_labelsU(0), m_labelsCollapsed(false), m_builtMatchW(-1), m_histPos(-1), m_titleY(0),
    m_touchScroll(-1), m_touchRail(-1), m_barDrag(false), m_downButton(CB_NONE), m_stripLines(3),
    m_autoStrip(false), m_noRail(false) {
     m_panel=m_content=m_bar=m_scrollArea=m_stripRect=m_inputRect=m_toolsRect=CGRectMake(0,0,0,0);
@@ -81,6 +81,7 @@ ConsoleMenu::ConsoleMenu()
 
 ConsoleMenu::~ConsoleMenu(){
     for(std::map<unsigned,Cached*>::iterator it=m_cache.begin();it!=m_cache.end();++it) delete it->second;
+    for(std::map<unsigned,Cached*>::iterator it=m_cacheOther.begin();it!=m_cacheOther.end();++it) delete it->second;
     for(int t=0;t<TABS;t++) for(size_t i=0;i<m_info[t].size();i++) delete m_info[t][i];
 }
 
@@ -358,7 +359,10 @@ void ConsoleMenu::syncScrollback(){
     const int srcTab=m_tab==TAB_CHAT?1:0;
     if(srcTab!=m_srcTab){   // MP.7: another source's serials: the cache is not this one's
         m_srcTab=srcTab;
-        m_builtW=-1;
+        // Q.1 F25: keep each tab's rasterised lines; swap the other tab's in (rebuilt below only if u()/width changed)
+        m_cache.swap(m_cacheOther);
+        std::swap(m_builtU,m_builtUOther);
+        std::swap(m_builtW,m_builtWOther);
         m_lastSerial=serial;
         m_follow=true; m_newBelow=false;
     }

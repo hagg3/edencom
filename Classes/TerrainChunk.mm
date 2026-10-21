@@ -117,6 +117,7 @@ void TerrainChunk::resetForReuse(){
    // printg("leaking memory freeing small blocks\n");
  //   memset(sblocks,0,sizeof(SmallBlock*)*CHUNK_SIZE3);
     memset(pcolors,0,sizeof(color8)*CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE);
+    if(rtobjects){free(rtobjects);rtobjects=NULL;}   // Q.1 F6
     rtnum_objects=0;
     rtobjects=NULL;
     rtn_vertices=0;
@@ -1262,9 +1263,7 @@ int TerrainChunk::rebuild2(){   //here be dragons//
        
         //float shadow=0.5f;//getShadow(x+bounds[0],z+bounds[2],y+bounds[1]);
         if(skylight!=1.0f){
-        light[0]=calcLight(x+pbounds[0],z+pbounds[2],y+pbounds[1],skylight,0);
-        light[1]=calcLight(x+pbounds[0],z+pbounds[2],y+pbounds[1],skylight,1);
-        light[2]=calcLight(x+pbounds[0],z+pbounds[2],y+pbounds[1],skylight,2);
+        calcLight3(x+pbounds[0],z+pbounds[2],y+pbounds[1],skylight,light);
         }
         // H.2: the top face's light with the baked shadow (Shadow.h). Classic: one shade per face
         // (light_top); Smooth: one per corner (light_corner[vx*2+vz]). Unshaded, both are light[].
@@ -1772,14 +1771,17 @@ void TerrainChunk::prepareVBO(){
         free(verticesbg2);
         verticesbg=NULL;
         verticesbg2=NULL;
-        if(rtnum_objects>0){
-            if(rtobjects)
-            free(rtobjects);
-            rtobjects=NULL;
-            rtnum_objects=0;
-            //printg("not freeing %d objects2\n",rtnum_objects);
-
-        }
+        // Q.1 F6: free on the pointer, not the count (a zeroed count used to leak the array).
+        if(rtobjects){free(rtobjects);rtobjects=NULL;}
+        rtnum_objects=0;
+        //printg("not freeing %d objects2\n",rtnum_objects);
+        // Q.1 F7: rebuild2() returns early for a chunk with no faces after filling objects, so
+        // an objects-only chunk (a lone door, flower, golden cube) publishes them here or never.
+        // The earlier early returns leave num_objects counted but objects unallocated: publish 0.
+        rtobjects=objects;
+        rtnum_objects=objects?num_objects:0;
+        objects=NULL;
+        num_objects=0;
         needsVBO=FALSE;
        
     }
@@ -1791,13 +1793,8 @@ void TerrainChunk::prepareVBO(){
     rtvis_vertices=vis_vertices;
     
     
-    if(rtnum_objects>0){
-        //printg("not freeing %d objects\n",rtnum_objects);
-        if(rtobjects)
-            free(rtobjects);
-        rtobjects=NULL;
-        
-    }
+    //printg("not freeing %d objects\n",rtnum_objects);
+    if(rtobjects){free(rtobjects);rtobjects=NULL;}   // Q.1 F6
     rtnum_objects=num_objects;
     rtobjects=objects;
 
@@ -1990,6 +1987,7 @@ void TerrainChunk::unbuild(){
    
     clearMeshes();
     
+    if(rtobjects){free(rtobjects);rtobjects=NULL;}   // Q.1 F6: freed whatever rtnum_objects says
     rtnum_objects=0;//disable objects for now
 	rtn_vertices=n_vertices=0;
     rtn_vertices2=n_vertices2=0;
@@ -2038,6 +2036,7 @@ void TerrainChunk::unbuild(){
 // worker owns (the callers check mp_chunkBusy / the column read's own busy rule).
 void TerrainChunk::dropGeometry(){
     clearMeshes();
+    if(rtobjects){free(rtobjects);rtobjects=NULL;}   // Q.1 F6: freed whatever rtnum_objects says
     rtnum_objects=0;//disable objects for now
 	rtn_vertices=n_vertices=0;
     rtn_vertices2=n_vertices2=0;
@@ -2069,6 +2068,7 @@ TerrainChunk::~TerrainChunk(){
 	
     clearMeshes();
     
+    if(rtobjects){free(rtobjects);rtobjects=NULL;}   // Q.1 F6: freed whatever rtnum_objects says
     rtnum_objects=0;//disable objects for now
 	rtn_vertices=n_vertices=0;
     rtn_vertices2=n_vertices2=0;
@@ -2182,7 +2182,8 @@ int TerrainChunk::render(){
 	
     //glDrawArrays(GL_TRIANGLES, 0, n_vertices);
 
-    Camera* cam=World::getWorld->cam;
+    extern Vector g_cullEye;   // Q.1 F19: the eye, not the third-person pivot (Terrain.mm)
+    const Vector* cam=&g_cullEye;
    	/*0,0,1, //front face
 	
 		
@@ -2199,23 +2200,23 @@ int TerrainChunk::render(){
 	0,1,0, //top face*/
     bool rebuildIndices=FALSE;
     bool curVis[7];
-    curVis[5]=cam->py>=pbounds[1]&&rtnum_vertices[5]!=0;
+    curVis[5]=cam->y>=pbounds[1]&&rtnum_vertices[5]!=0;
     
-    curVis[1]=cam->pz>=pbounds[2]&&rtnum_vertices[1]!=0;
+    curVis[1]=cam->z>=pbounds[2]&&rtnum_vertices[1]!=0;
      
     
-    curVis[0]=cam->pz<=pbounds[5]&&rtnum_vertices[0]!=0;
+    curVis[0]=cam->z<=pbounds[5]&&rtnum_vertices[0]!=0;
    
     
     
     
-    curVis[3]=cam->px>=pbounds[0]&&rtnum_vertices[3]!=0;
+    curVis[3]=cam->x>=pbounds[0]&&rtnum_vertices[3]!=0;
     
     
-    curVis[2]=cam->px<=pbounds[3]&&rtnum_vertices[2]!=0;
+    curVis[2]=cam->x<=pbounds[3]&&rtnum_vertices[2]!=0;
     
     
-    curVis[4]=cam->py<=pbounds[4]&&rtnum_vertices[4]!=0;
+    curVis[4]=cam->y<=pbounds[4]&&rtnum_vertices[4]!=0;
     
     
     curVis[6]=rtnum_vertices[6]!=0;
@@ -2298,14 +2299,15 @@ void TerrainChunk::render2(){
 	glTexCoordPointer(2, GL_SHORT,  sizeof(vertexStructSmall),  (void*)offsetof(vertexStructSmall,texs));
 	glColorPointer(	4, GL_UNSIGNED_BYTE, sizeof(vertexStructSmall), (void*)offsetof(vertexStructSmall,colors));
 	
-     Camera* cam=World::getWorld->cam;
+     extern Vector g_cullEye;   // Q.1 F19
+     const Vector* cam=&g_cullEye;
 
-    BOOL v5=cam->py>=pbounds[1]&&rtnum_vertices2[5]!=0;
-    BOOL v1=cam->pz>=pbounds[2]&&rtnum_vertices2[1]!=0;
-    BOOL v0=cam->pz<=pbounds[5]&&rtnum_vertices2[0]!=0;
-    BOOL v3=cam->px>=pbounds[0]&&rtnum_vertices2[3]!=0;
-    BOOL v2=cam->px<=pbounds[3]&&rtnum_vertices2[2]!=0;
-    BOOL v4=cam->py<=pbounds[4]&&rtnum_vertices2[4]!=0;
+    BOOL v5=cam->y>=pbounds[1]&&rtnum_vertices2[5]!=0;
+    BOOL v1=cam->z>=pbounds[2]&&rtnum_vertices2[1]!=0;
+    BOOL v0=cam->z<=pbounds[5]&&rtnum_vertices2[0]!=0;
+    BOOL v3=cam->x>=pbounds[0]&&rtnum_vertices2[3]!=0;
+    BOOL v2=cam->x<=pbounds[3]&&rtnum_vertices2[2]!=0;
+    BOOL v4=cam->y<=pbounds[4]&&rtnum_vertices2[4]!=0;
 
     // Row #20 (perf-audit): faces 0-5 are laid out back-to-back in vertexBuffer2 by construction
     // (face_idx2[i]=num_vertices2[i-1]+face_idx2[i-1] above), so when EVERY face is being drawn —

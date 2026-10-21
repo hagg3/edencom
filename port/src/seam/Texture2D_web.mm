@@ -210,8 +210,9 @@ namespace {
 // tells us via `comp` even when we force 4) — needed to reproduce initFromImage's "Automatic"
 // pixel-format choice (RGBA8888 if the source had alpha, RGB565 if not).
 unsigned char* EdenLoadPNG(NSString* path, int* outW, int* outH, BOOL* outHasAlpha) {
-    NSData* fileData = [NSData dataWithContentsOfFile:path];
+    NSData* fileData = [[NSData alloc] initWithContentsOfFile:path];   // Q.1 F4: released below (was autoreleased into a pool-less root)
     if (!fileData || [fileData length] == 0) {
+        [fileData release];
         // Pass 12/13: this branch previously had NO diagnostic, unlike the stb-decode-failure
         // branch below — and a browser run showed draws succeeding (glErr=0, textured=N/N) with
         // a still-black canvas. Prime suspect: this branch is firing silently (path resolution
@@ -229,6 +230,7 @@ unsigned char* EdenLoadPNG(NSString* path, int* outW, int* outH, BOOL* outHasAlp
     int comp = 0;
     unsigned char* pixels = stbi_load_from_memory(
         (const unsigned char*)[fileData bytes], (int)[fileData length], outW, outH, &comp, 4);
+    [fileData release];   // stb has its own copy now
     if (!pixels) {
         printg("Texture2D_web: stb_image failed to decode '%s': %s\n",
                [path UTF8String], stbi_failure_reason());

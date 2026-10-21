@@ -406,7 +406,7 @@ void CalcEnvMap(vertexObject* vert){
                                 reflectedVec.y * reflectedVec.y +
                                 (reflectedVec.z+1) * (reflectedVec.z+1) ) * .5f;
     vert->texs[0]= .5f + reflectedVec.x * p;
-    vert->texs[1]= (.5f + reflectedVec.y * p)*32;
+    vert->texs[1]= (.5f + reflectedVec.y * p)*ATLAS_TILES;   // Q.1 F18 (was *32)
     
    
     

@@ -1095,8 +1095,8 @@ void Resources::loadMenuTextures(){
 	temp=
 		  new Texture2D(@"menu_shared_worlds.png" , FALSE);
 	menutextures.push_back(temp);	
-	temp=
-		  new Texture2D(@"cloud_SM.png" , FALSE);
+	temp=NULL;   // Q.1 F5: never drawn (slot kept, positional)
+		  //new Texture2D(@"cloud_SM.png" , FALSE);
 	menutextures.push_back(temp);	
 	temp=
 		  new Texture2D(@"menu_cancel.png" , FALSE);
@@ -1135,8 +1135,8 @@ void Resources::loadMenuTextures(){
 	temp=
 		  new Texture2D(@"pinwheel.png" , FALSE);
 	menutextures.push_back(temp);
-	temp=
-		  new Texture2D(@"mountains.png" , FALSE);
+	temp=NULL;   // Q.1 F5: never drawn (slot kept, positional)
+		  //new Texture2D(@"mountains.png" , FALSE);
 	menutextures.push_back(temp);
     temp=
 		  new Texture2D(@"menu_text_load.png" , FALSE);
@@ -1144,11 +1144,11 @@ void Resources::loadMenuTextures(){
     temp=
 		  new Texture2D(@"menu_text_back.png" , FALSE);
 	menutextures.push_back(temp);
-    temp=
-		  new Texture2D(@"cloud_MD.png" , FALSE);
+    temp=NULL;   // Q.1 F5: never drawn (slot kept, positional)
+		  //new Texture2D(@"cloud_MD.png" , FALSE);
 	menutextures.push_back(temp);
-    temp=
-		  new Texture2D(@"cloud_LG.png" , FALSE);
+    temp=NULL;   // Q.1 F5: never drawn (slot kept, positional)
+		  //new Texture2D(@"cloud_LG.png" , FALSE);
 	menutextures.push_back(temp);
     
 	temp=

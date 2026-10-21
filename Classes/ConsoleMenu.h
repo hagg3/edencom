@@ -144,6 +144,8 @@ private:
     GLW::TextField  m_field;
 
     std::map<unsigned, Cached*> m_cache; // serial -> label
+    std::map<unsigned, Cached*> m_cacheOther;   // Q.1 F25: the other source tab's labels, swapped in on a tab switch
+    float m_builtUOther, m_builtWOther;         // ...and the u()/width they were built at
     std::vector<unsigned> m_visSerials;  // the serials drawn, top row first (tests)
     std::vector<InfoRow*> m_info[TABS];  // the Variables / Help tabs' rows, built on first show
 

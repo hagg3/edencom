@@ -123,6 +123,7 @@ private:
 
 float getShadow(int x,int z,int y);
 float calcLight(int x,int z,int y,float shadow,int coord);
+void calcLight3(int x,int z,int y,float shadow,float out[3]);   // Q.1 F26: one light fetch, three channels
  int getLandc(int x,int z,int y);
  int getLandc2(int x,int z,int y);
 // B.5b-1b: does the window's slot for block column (x,z) hold that column right now?

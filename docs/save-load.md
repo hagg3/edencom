@@ -547,3 +547,6 @@ point migrates those in once (`migrate_legacy_saves`, `native/src/entry/eden_mai
 `loadWorld`/`loadEmodWorld` set `FileManager::worldUnbounded` (derived, never persisted): TRUE if the header
 `pos`/`home` or any saved column (`.eden` directory hashmap / `.emod` `columnKeys()`) lies outside the bundled
 2880 square. Post-2.1 clients have no edge wall, so `Player::update` skips its clamp for such worlds.
+
+### Q.1a notes (2026-10-21)
+- **F12:** `getName`, `probeWorldHeight` and `emodPairsWith` open the `.emod` header-only (`open(path,false,true,true)`). A world whose column records are corrupt is no longer listed as `error~`; it fails on load via the load-failure path.

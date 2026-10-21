@@ -124,6 +124,10 @@ Experiments › *Camera view* (`camera_view`, `KIND_ENUM` 0–2) applies through
 which advances `(v+1)%3` **through `eden_settings_set`** — deliberately not fly mode's pattern, whose key
 writes the global and lets the Settings row drift. A new mode-style key should write through its setting
 the same way. Gate: `--camera-selftest`.
+- **Fly tuning (Settings › Gameplay, moved out of Experiments with *Fly mode*).** Four sliders under `fly`
+  (`fly_accel`, `fly_max_speed`, `fly_braking`, `fly_vertical`) set the `FLY_ACCEL_MULT`/`FLY_MAX_SPEED`/
+  `FLY_BRAKING`/`FLY_VERTICAL_MULT` globals in `Classes/Player.mm`. Defaults (1, 0 = unlimited, 0, 1) reproduce the
+  stock feel bit-for-bit; braking >0 blends the per-frame drag from .995 toward .80 (made frame-rate independent only then).
 
 ## Middle-click eyedropper (`eden_pick_block_at_crosshair`, `src/seam/Input_web.mm`)
 Middle-click raycasts the crosshair block and copies its type into the current hotbar

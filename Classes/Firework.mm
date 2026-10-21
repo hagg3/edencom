@@ -18,10 +18,7 @@ Firework::Firework(){
     
 }
 void Firework::addFirework(int x,int y,int z,int color){
-    int n=n_firework;
-    if(n_firework!=MAX_FIREWORK){
-        n_firework++;
-    }
+    int n=n_firework<MAX_FIREWORK?n_firework++:MAX_FIREWORK-1;   // Q.1 F15: overwrite the last slot when full
     fireworks[n].pos=MakeVector(x,y,z);
     fireworks[n].vel=MakeVector(0,27,0);
    // fireworks[n].vel=MakeVector(0,0,0);

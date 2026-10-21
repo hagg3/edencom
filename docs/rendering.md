@@ -457,3 +457,11 @@ time becomes an upper bound that includes its own GPU work.
 - **Caution:** `rebuild2` (counting and fill passes must stay exactly consistent or
   you'll write past `verticesbg`), bucket/`face_idx` bookkeeping, `prepareVBO`
   swap ordering, anything shared with the old threading design.
+
+### Q.1a notes (2026-10-21)
+- **F9 (object batches):** the golden cube's rotated corners/normals (`gcV`/`gcN`, 144 each) are built once per frame, not per cube. **F10 (signs):** `SignRenderer::render` orphans its VBO (`glBufferData(NULL)`) every frame before the sub-uploads. **F18:** `CalcEnvMap`'s sphere-map V is `*ATLAS_TILES` (was 32), next to X.8's sky note; changes the golden cube's look.
+
+### Q.1b notes (2026-10-21)
+- **F6 (object array ownership):** `rtobjects` is freed on the pointer, never on `rtnum_objects` (in `prepareVBO`'s two paths, `unbuild`, `dropGeometry`, `resetForReuse`, `~TerrainChunk`). Stock zeroed the count first, so every chunk drop and world exit leaked the array (measured 54–56 root leaks a warp, `TESTERS/perf-audit/leakobj3.*.leaks`; 0 after, `TESTERS/q1b/`). `objects` aliases `rtobjects` after a publish; `clearMeshes` only NULLs it, so free through `rtobjects` alone.
+- **F7 (objects-only chunks):** `rebuild2` returns early (`clearOldVerticesOnly`) when a chunk has objects but no faces (a lone golden cube, door top or flower in air). `prepareVBO`'s clear branch now publishes `objects` to `rtobjects` there (count 0 when `objects` is NULL: the earlier early returns count objects without allocating them). Stock never drew these.
+- **F19 (cull/sort eye):** `TerrainChunk::render`/`render2`'s per-direction face culling and `compare_back2front` read `g_cullEye` (`Terrain.mm`), set at the top of `Terrain::render` from `Camera::viewPoints`. In third person that is the real eye, not the pivot `cam->px/py/pz`. First-person culling is unchanged; the transparent sort now measures from the eye (`player->pos` + 0.3·boxheight), not the feet.

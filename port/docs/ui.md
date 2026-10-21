@@ -210,3 +210,16 @@ hardware (the native iOS build on an iPad Air 2, 2026-09-07 onward — the devic
 NSString under the row's key (`eden_settings_text` / `eden_settings_set_text`), with no float meaning; `eden_settings_set`,
 `eden_settings_reset_all` (clears it) and the Console bridge (`bridgeSettings` skips kind 4; `--console-selftest` gate 3 too) know it.
 `SettingsMenu` draws it as a `GLW::Button` that opens `GLDialog::prompt`. The only row is Experiments › Matchmakers (`mp_matchmakers`).
+
+## Console seam (C.3/C.4)
+
+Moved from `port/CLAUDE.md` (2026-10-20). The Console (C.3) is a screen over a running world, so its seam is small and shared: `Menu_web.mm`
+  has `eden_console_menu_{open,toggle,back,active}` and `eden_ui_captures_keys()`; `Input_native.cpp` lets
+  only the `menu` and `console` keybinds through while the Console is open (typing can never walk) and
+  drops the one backquote the opening key may deliver; `Input_web.mm`'s `eden_ui_wants_cursor()` is 1
+  while it is open. `console` is a `KB_NATIVE` row in `Settings_web.mm`. C.4: `Input_native.cpp` adds
+  `eden_text_input_keyboard_top()` (iOS reads `IOSKeyboard_native.mm`, its own real-UIKit ARC object
+  library like `eden_apple_net`; -1 for up to 600 ms after text input starts until the first frame
+  notification), `eden_text_input_start_code()` (`SDL_StartTextInputWithProperties`, autocorrect and
+  capitalisation off) and Tab/Up/Down as bytes 0x09/0x11/0x12 while a field is focused;
+  `eden_native_debug_set_keyboard_top()` fakes a keyboard for `--ui-selftest`/`--shot`.

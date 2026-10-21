@@ -1405,7 +1405,7 @@ NSString* FileManager::getName(NSString* name){
     }
     if(isEmodName(name)){
         emod::EdenWorldStore st;
-        if(!st.open(fn.c_str(),false))return @"error~";
+        if(!st.open(fn.c_str(),false,true,true))return @"error~";   // Q.1 F12: header-only (only T_WORLD_HEADER is read)
         std::vector<uint8_t> raw;
         if(st.readRecord(emod::T_WORLD_HEADER,raw)>emod::EdenWorldStore::READ_FALLBACK||raw.size()!=sizeof(WorldFileHeader))return @"error~";
         WorldFileHeader h; memcpy(&h,&raw[0],sizeof(h));
@@ -1487,7 +1487,7 @@ int FileManager::probeWorldHeight(NSString* name,BOOL fromArchive){
     if(isEmodName(name)){
         // No probe needed beyond the file header: an `.emod` states its height (bands 4 | 16).
         emod::EdenWorldStore st;
-        if(!st.open([file_name UTF8String],false))return T_HEIGHT_DEFAULT;
+        if(!st.open([file_name UTF8String],false,true,true))return T_HEIGHT_DEFAULT;   // Q.1 F12: header-only (bands())
         return st.bands()==16?T_HEIGHT_MAX:T_HEIGHT_DEFAULT;
     }
     NSFileHandle* fh=[NSFileHandle fileHandleForReadingAtPath:file_name];
@@ -2566,7 +2566,7 @@ static unsigned long long le64(const uint8_t* p){
 // allows the header+directory SHA-256, which stays recorded in the file for a stricter check.)
 static BOOL emodPairsWith(const std::string& emodPath,NSString* srcName,const std::string& srcPath){
     emod::EdenWorldStore st;
-    if(!st.open(emodPath.c_str(),false))return FALSE;
+    if(!st.open(emodPath.c_str(),false,true,true))return FALSE;   // Q.1 F12: header-only (T_PROVENANCE)
     std::vector<uint8_t> p;
     if(st.readRecord(emod::T_PROVENANCE,p)>emod::EdenWorldStore::READ_FALLBACK||p.size()<80)return FALSE;
     if(![srcName hasSuffix:@".eden"]){
