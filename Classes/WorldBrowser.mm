@@ -33,7 +33,7 @@ extern "C" int eden_get_upgrade_256z(void);   // port/src/seam/Settings_web.mm (
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <filesystem>
+#include <dirent.h>
 #include <ctime>
 #include <string>
 #include <vector>
@@ -596,11 +596,15 @@ struct BrowserImpl {
             std::remove((dlFile + ".part").c_str());
         }
         if (sweep) {
-            std::error_code ec;
-            for (std::filesystem::directory_iterator it(documents_dir(), ec), end; !ec && it != end; it.increment(ec)) {
-                const std::string n = it->path().filename().string();
-                if (n.compare(0, 15, ".emod-download-") == 0 || n == ".emod-download" || n == ".emod-download.part")
-                    std::remove(it->path().string().c_str());
+            // POSIX, not std::filesystem: that is unavailable below iOS 13 (the deployment target is 12).
+            const std::string dir = documents_dir();
+            if (DIR* dp = opendir(dir.c_str())) {
+                while (struct dirent* de = readdir(dp)) {
+                    const std::string n = de->d_name;
+                    if (n.compare(0, 15, ".emod-download-") == 0 || n == ".emod-download" || n == ".emod-download.part")
+                        std::remove((dir + "/" + n).c_str());
+                }
+                closedir(dp);
             }
         }
         std::remove(layerIn.c_str());
