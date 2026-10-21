@@ -169,6 +169,11 @@ A variable is `group.name`. **`NAME`** prints it, **`NAME VALUE`** sets it. Name
 | `gameplay.health` | on / off | on | at once | Falls, fire and creatures hurt. |
 | `gameplay.autojump` | on / off | on | at once | Auto-jump |
 | `gameplay.creatures` | on / off | on | at once | Off is faster. |
+| `gameplay.fly` | on / off | off | at once | Space and Ctrl to rise and fall. |
+| `gameplay.fly_accel` | 0.05 to 1 | 1 | at once | Lower is gentler and easier to hold still. |
+| `gameplay.fly_max_speed` | 0 to 100 | 0 | at once | Blocks per second. 0 is unlimited. |
+| `gameplay.fly_braking` | 0 to 1 | 0 | at once | Higher stops sooner when you let go. |
+| `gameplay.fly_vertical` | 0.05 to 1 | 1 | at once | Fly rise/fall speed |
 
 #### `audio.`
 
@@ -223,7 +228,6 @@ A variable is `group.name`. **`NAME`** prints it, **`NAME VALUE`** sets it. Name
 
 | Variable | Values | Default | Applies | What |
 |---|---|---|---|---|
-| `experiments.fly` | on / off | off | at once | Space and Ctrl to rise and fall. |
 | `experiments.fps_normalize` | on / off | on | at once | Same walk speed at any refresh rate. |
 | `experiments.advanced_movement` | on / off | off | at once | Zero-delay bunny-hop and wheel-jump. |
 | `experiments.crouch` | on / off | off | at once | Adds a crouch key for 1-block gaps. |
