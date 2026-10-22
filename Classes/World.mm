@@ -184,7 +184,8 @@ World::World(){
     Resources::getResources=res;
    
     World::getWorld=this;
-    
+    fm=NULL;   // Hud::Hud() runs before fm is created and asks MpWorld::active() (reads fm->sessionWorld); a C++ new doesn't zero (Windows crashed, Linux got lucky)
+
     if(JUST_TERRAIN_GEN){
         RLETEST();
         double start=CFAbsoluteTimeGetCurrent();

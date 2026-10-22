@@ -138,6 +138,7 @@ Read this before writing any code. These are the implicit rules the codebase fol
 | If you change… | Also check… |
 |---|---|
 | Block type enum / tables | Save compat (raw bytes on disk!), `enum BLOCK_TYPES` (`Constants.h`), `blockinfo`, `blockTypeFaces`, `blockColor` (`Globals.mm`), atlas tile, `blockTntMap`, `hudBlocksMap`, HUD picker list (`Hud.mm`), and the type's flags in meshing/physics/fire. **The id space is full at 127** (`block8` is signed; ids 112–127 since Stage D.2a): there is no room to append another type |
+| Anything `Hud::Hud()`/`Menu::Menu()` calls that reads `World::getWorld->…` | `World::World()` builds `hud` before `fm` (and `menu` after both); a C++ `new` does not zero, so an unset member is garbage on Windows and happens to be 0 on Linux. `fm` is nulled at the top of the ctor; null-check anything else you read |
 | `colorTable` generation | Every painted block in every existing world re-tints |
 | A block type's flags (`IS_LIQUID`/`IS_OBJECT`) or `TYPE_CLOUD`/`GLASS`/`WEAVE` | Whether it casts a baked shadow (`g_shadow_caster[]`, `Classes/Shadow.mm`, built from the flags), and so CI's "geometry 64z shadows" `full` if the bundled map holds it |
 | `CHUNK_SIZE` | `SIZEOF_COLUMN` (file format!), progress divisors, `INDICES_MAX` sizing |

@@ -146,7 +146,7 @@ int flatType(int y) {
 
 bool active() {
     World* w = World::getWorld;
-    return w && w->fm && w->fm->sessionWorld;
+    return w && w->fm && w->fm->sessionWorld;   // fm is NULL until World::World() creates it (Hud::Hud() asks first)
 }
 
 bool gateCreatures(bool wanted) {
