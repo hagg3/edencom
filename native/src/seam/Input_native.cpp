@@ -57,6 +57,7 @@
 // unchanged — see this file's header.
 extern "C" {
 void eden_input_pointer_event(int phase, int identity, float x, float y);
+void eden_look_trace_set_win_per_pt(float r);
 void eden_set_move_input(float forward, float strafe, float speedMul);
 void eden_set_fly_thrust(int up, int down);
 void eden_set_crouch(int on);
@@ -1070,6 +1071,12 @@ void eden_native_input_handle_event(const SDL_Event& e) {
             if (ww <= 0 || wh <= 0) { ww = (int)SCREEN_WIDTH; wh = (int)SCREEN_HEIGHT; }
             float x = 0.0f, y = 0.0f;
             window_to_point(e.tfinger.x * (float)ww, e.tfinger.y * (float)wh, &x, &y);
+            if (down) {   // L.0 --look-trace: window points per engine point, through the letterbox
+                float x0 = 0.0f, x1 = 0.0f, yy = 0.0f;
+                window_to_point(0.0f, 0.0f, &x0, &yy);
+                window_to_point((float)ww, 0.0f, &x1, &yy);
+                if (x1 > x0) eden_look_trace_set_win_per_pt((float)ww / (x1 - x0));
+            }
             eden_input_pointer_event(phase, slot, x, y);
             // AFTER the event, not before: the core needs the slot to still resolve while it is
             // closing the touch out.

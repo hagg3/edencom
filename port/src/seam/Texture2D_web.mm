@@ -706,25 +706,31 @@ void Texture2D::initFromPath(NSString* path, BOOL sizeToFit, Texture2DPixelForma
         // nil here only means the RECOLOR of that one asset no-ops — a strictly better failure
         // than shifting every subsequent skin into the wrong slot.
         UIImage* kept = cg ? [[UIImage alloc] initWithCGImage:cg] : nil;
+        UIImage** slot;
         if (isPortalico) {
-            if (isMask) storedPortalicoMask = kept; else storedPortalico = kept;
+            slot = isMask ? &storedPortalicoMask : &storedPortalico;
         } else if (isDoorico) {
-            if (isMask) storedDooricoMask = kept; else storedDoorico = kept;
+            slot = isMask ? &storedDooricoMask : &storedDoorico;
         } else if (isFlowerico) {
-            if (isMask) storedFlowericoMask = kept; else storedFlowerico = kept;
+            slot = isMask ? &storedFlowericoMask : &storedFlowerico;
         } else if (isGoldcubeico) {
-            if (isMask) storedCubeMask = kept; else storedCube = kept;
+            slot = isMask ? &storedCubeMask : &storedCube;
         } else if (isPaint) {
-            if (isMask) storedPaintMask = kept; else storedPaint = kept;
+            slot = isMask ? &storedPaintMask : &storedPaint;
         } else if (isDoor) {
-            if (isMask) storedDoorMask = kept; else storedDoor = kept;
+            slot = isMask ? &storedDoorMask : &storedDoor;
         } else if (isMask) {
-            storedMasks[storedMaskCounter / 2][storedMaskCounter % 2] = kept;
+            slot = &storedMasks[storedMaskCounter / 2][storedMaskCounter % 2];
             storedMaskCounter++;
         } else {
-            storedSkins[realStoredSkinCounter / 2][realStoredSkinCounter % 2] = kept;
+            slot = &storedSkins[realStoredSkinCounter / 2][realStoredSkinCounter % 2];
             realStoredSkinCounter++;
         }
+        // Q.3: the game textures now reload on every world entry (DEFER_GAME_TEXTURES), so a slot
+        // can already hold the previous load's image. Overwriting it leaked ~5 MB a world load
+        // (--leak-probe). The readers in Resources.mm only borrow the CGImage for one recolor.
+        [*slot release];
+        *slot = kept;
     } else {
         CGImageRelease(cg);
     }

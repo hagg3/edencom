@@ -28,6 +28,7 @@
 #include <chrono>
 #include <cstring>
 #include <cstdio>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -88,12 +89,12 @@ public:
         t0_ = nowMs();
         eden_net::MpConfig c = cfg_;
         c.joinBurst = false;   // §7: SIGNQ and REGION go out after SPAWN, at its lattice point
-        return s_.start(c);
+        return s_->start(c);
     }
 
     void pump() override {
         std::vector<eden_net::MpSideEvent> side;
-        s_.drainSide(side);
+        s_->drainSide(side);
         for (const auto& e : side) {
             switch (e.kind) {
                 case eden_net::MpSideEvent::Welcome:
@@ -129,7 +130,7 @@ public:
         if (st_ == Welcomed && ((caps_ && (spawn_ || now - tWelcome_ >= 500)) || (!caps_ && now - tWelcome_ >= 1000))) begin();
         if (begun_) {
             std::vector<eden_net::MpWorldEvent> w;
-            s_.drainWorld(w);
+            s_->drainWorld(w);
             for (const auto& e : w) {
                 if (e.kind == eden_net::MpWorldEvent::Snapz) {
                     records_ += e.recs.size();
@@ -141,13 +142,14 @@ public:
                 }
             }
         }
+        s_->setHeldBytes(MpWorld::heldBytes());   // Q.6 (F21): the cap spans drains
         World* wd = World::getWorld;
         if (st_ == Syncing && MpWorld::joinReady()) {
             if (MpWorld::openSession()) { st_ = Loading; tLoad_ = now; }
         }
         // The Connecting window's stage line and bar (UI plan §6).
         if (st_ == Connecting) {
-            g_js.stage = s_.stage() == eden_net::MpStage::Connecting || s_.stage() == eden_net::MpStage::Idle
+            g_js.stage = s_->stage() == eden_net::MpStage::Connecting || s_->stage() == eden_net::MpStage::Idle
                              ? EDEN_MP_JOIN_CONNECTING : EDEN_MP_JOIN_JOINING;
             g_js.progress = -1.0f;
         } else if (st_ == Welcomed || st_ == Syncing) {
@@ -162,17 +164,17 @@ public:
             st_ = Playing;
             g_js.stage = EDEN_MP_JOIN_PLAYING;
             g_js.progress = 1.0f;
-            s_.setPlaying();
+            s_->setPlaying();
             std::printf("[mp] mp.join host=%s:%d connect=%d ms welcome=%lld ms sync=%lld ms load=%lld ms playable=%lld ms "
-                        "records=%zu bytes=%zu caps=%d\n", cfg_.host.c_str(), cfg_.port, s_.connectMs(),
+                        "records=%zu bytes=%zu caps=%d\n", cfg_.host.c_str(), cfg_.port, s_->connectMs(),
                         (long long)(tWelcome_ - t0_), (long long)(tLoad_ - tSync_), (long long)(now - tLoad_),
-                        (long long)(now - t0_), records_, s_.bytesReceived(), (int)caps_);
+                        (long long)(now - t0_), records_, s_->bytesReceived(), (int)caps_);
             std::fflush(stdout);
             if (!lostText_.empty()) showDisconnected();
         }
     }
 
-    void sendLine(const char* l) override { s_.sendLine(l); }
+    void sendLine(const char* l) override { s_->sendLine(l); }
 
     // MP.6: the Connecting window's Cancel (before Loading only). Called outside pump, so the drop
     // below deletes this object at once: nothing may touch a member after it.
@@ -188,7 +190,7 @@ public:
     }
 
     void release() override {
-        s_.stop();
+        s_->detach();
         if (g_cur == this) g_cur = nullptr;
         delete this;
         // Reconnect (§12): a fresh join once the old session is gone (endSession is what released us).
@@ -202,7 +204,7 @@ private:
     void begin() {
         MpWorld::beginSession(cfg_.host.c_str(), cfg_.port, cfg_.host.c_str());   // the INFO name is MP.6's
         if (spawn_) MpWorld::setSpawn(sp_[0], sp_[1], sp_[2]);
-        s_.sendSignQ();
+        s_->sendSignQ();
         MpWorld::startRegions(caps_);
         begun_ = true;
         st_ = Syncing;
@@ -236,7 +238,9 @@ private:
     }
 
     eden_net::MpConfig cfg_;
-    eden_net::MpSession s_;
+    // Q.6 (F20): shared so release() can detach it: a Cancel during a connect or DNS lookup returns at
+    // once and the thread finishes alone (it never touches engine state, rule 8).
+    std::shared_ptr<eden_net::MpSession> s_ = std::make_shared<eden_net::MpSession>();
     St st_ = Connecting;
     bool caps_ = false, spawn_ = false, begun_ = false;
     float sp_[3] = {0, 0, 0};

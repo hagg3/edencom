@@ -484,8 +484,20 @@ struct Ev {
     bool started = false;                // Snapz: the non-resident half is merged, `res` is what's left
     size_t cur = 0;
     std::vector<uint32_t> res;
+    size_t bytes = 0;                    // Q.6: its share of g_qBytes
 };
 std::deque<Ev> g_q;
+size_t g_qBytes = 0;   // Q.6 (F21): what g_q holds, reported to the session's cap (heldBytes)
+const size_t kSetEntryBytes = 40;   // ~ one unordered_set<uint64_t> node on a 64-bit libc++/libstdc++
+const size_t kLocalEditsPrune = 65536;   // Q.6: past this many, g_localEdits drops entries older than kLocalEditMaxAgeMs
+const int64_t kLocalEditMaxAgeMs = 60000;
+size_t g_localEditsPruneAt = kLocalEditsPrune;
+
+void pushEv(Ev&& e) {
+    e.bytes = sizeof(Ev) + e.recs.size() * (sizeof(MpRec) + sizeof(uint32_t)) + e.who.size() + e.text.size();   // + `res`
+    g_qBytes += e.bytes;
+    g_q.push_back(std::move(e));
+}
 std::unordered_set<uint64_t> g_burstRelayed;   // cells an ACTION changed inside the open burst (§6.3)
 std::unordered_map<uint64_t, int64_t> g_localEdits;   // noteLocalEdit: cell -> when
 Link* g_link = nullptr;
@@ -539,8 +551,10 @@ int latticeOf(float p) { return kLattice * (int)std::floor(p / (float)kLattice +
 
 void resetLive() {
     g_q.clear();
+    g_qBytes = 0;
     std::unordered_set<uint64_t>().swap(g_burstRelayed);
     std::unordered_map<uint64_t, int64_t>().swap(g_localEdits);
+    g_localEditsPruneAt = kLocalEditsPrune;
     g_pacer = Pacer();
     g_recon = Recon();
 }
@@ -572,7 +586,7 @@ void endBurst(int64_t now) {
     }
     p.burstOpen = false;
     p.frames = 0;
-    g_q.push_back(std::move(e));
+    pushEv(std::move(e));
 }
 
 void pacerTick() {
@@ -816,6 +830,7 @@ void drain(Budget& b) {
             case Ev::EndBurst: done = applyEndBurst(e, b); break;
         }
         if (!done) break;   // FIFO: a deferred event holds back everything behind it
+        g_qBytes -= e.bytes;
         g_q.pop_front();
     }
     b.finish();
@@ -852,7 +867,7 @@ void enqueueSnapz(const MpRec* recs, size_t n) {
     e.kind = Ev::Snapz;
     e.t = now;
     e.recs.assign(recs, recs + n);
-    g_q.push_back(std::move(e));
+    pushEv(std::move(e));
     if (n < (size_t)kFullFrame) endBurst(now);
 }
 
@@ -862,7 +877,7 @@ void enqueueAction(const char* who, int x, int y, int z, int mode, int extra) {
     e.t = clockMs();
     e.who = who ? who : "";
     e.x = x; e.y = y; e.z = z; e.mode = mode; e.extra = extra;
-    g_q.push_back(std::move(e));
+    pushEv(std::move(e));
 }
 
 void enqueueSign(int x, int y, int z, int a, int b, int c, const char* text) {
@@ -871,10 +886,15 @@ void enqueueSign(int x, int y, int z, int a, int b, int c, const char* text) {
     e.t = clockMs();
     e.x = x; e.y = y; e.z = z; e.a = a; e.b = b; e.c = c;
     e.text = text ? text : "";
-    g_q.push_back(std::move(e));
+    pushEv(std::move(e));
 }
 
 size_t queuedEvents() { return g_q.size(); }
+
+size_t heldBytes() {
+    return g_qBytes + (g_burstTouched.size() + g_burstRelayed.size() + g_recon.named.size()) * kSetEntryBytes +
+           g_recon.todo.capacity() * sizeof(uint64_t);
+}
 
 void tick() {
     if (g_link) {
@@ -1133,7 +1153,19 @@ void reaskRegion() {
 }
 
 void noteLocalEdit(int x, int y, int z) {
-    if (cellInRange(x, y, z)) g_localEdits[cellKey(x, y, z)] = clockMs();
+    if (!cellInRange(x, y, z)) return;
+    const int64_t now = clockMs();
+    // Q.6 (F21): pruned only when a reconcile completes, so a session that never finishes one would
+    // grow it forever. An edit older than a minute predates any REGION still answerable.
+    // The next sweep waits for twice what survived, so a big fill stays linear.
+    if (g_localEdits.size() >= g_localEditsPruneAt) {
+        for (auto it = g_localEdits.begin(); it != g_localEdits.end();) {
+            if (now - it->second > kLocalEditMaxAgeMs) it = g_localEdits.erase(it);
+            else ++it;
+        }
+        g_localEditsPruneAt = std::max(kLocalEditsPrune, g_localEdits.size() * 2);
+    }
+    g_localEdits[cellKey(x, y, z)] = now;
 }
 
 // ==== MP.4: edits out (engine plan §8.1, E9, E10; signs §10) ======================================

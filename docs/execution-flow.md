@@ -60,7 +60,7 @@ everything below it are shared.
      `physicalMemory` thresholds (~480 MB / ~300 MB, in `awakeFromNib`).
    - `world = new World()`.
 4. `World::World()`:
-   - `new Resources()` (loads menu textures, audio engine),
+   - `new Resources()` (loads menu textures, audio engine; since Q.3 not the game textures),
    - `tc_initGeometry()` (fills the shared `allIndices` index buffer),
    - `new Terrain()` (which creates TerrainGenerator/Liquids/Portal/Firework —
      but **does not allocate the block arrays yet**),
@@ -189,7 +189,8 @@ loading; `doneLoading` acts as the state: 0 idle → 1 loading → 2 finished.
   `allocateMemory()`, if the world is 256z **and** `eden_low_memory()` is set, `loadWorld` reports
   `eden_report_load_failure(name, "TALL_WORLD_LOW_MEM")` and resets `doneLoading`/`menu->loading`
   without touching `Terrain`. Only the retired web page ever set that flag.
-- On completion: unload menu textures, `loadGameAssets`, reset camera/player,
+- On completion: unload menu textures, `loadGameAssets` (since Q.3 this also decodes the 106 game
+  textures on every target, `DEFER_GAME_TEXTURES`; they were loaded at boot before), reset camera/player,
   `LoadModels` (creatures' POD files), switch to WAIT→PLAY.
 - **The `doneLoading==2` transition does not, by itself, mean the load succeeded** —
   it only means the loader thread returned. `FileManager::loadWorld()` can bail out
@@ -203,7 +204,7 @@ loading; `doneLoading` acts as the state: 0 idle → 1 loading → 2 finished.
   yet (docs/save-load.md, Common pitfalls).
 
 `World::exitToMenu` reverses it: `unloadTerrain`, `UnloadModels`,
-`unloadGameAssets`, `terrain->deallocateMemory()`, reload menu textures, menu music.
+`unloadGameAssets` (frees the game textures again since Q.3), `terrain->deallocateMemory()`, reload menu textures, menu music.
 
 ## Threading model
 

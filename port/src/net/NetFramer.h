@@ -10,6 +10,7 @@ namespace eden_net {
 
 constexpr size_t kMaxLine = 8192;
 constexpr size_t kMaxSnapzLine = size_t(64) << 20;
+constexpr size_t kShrinkAbove = size_t(1) << 20;   // Q.6: buffers past this are freed once empty
 
 class LineFramer {
 public:
@@ -30,14 +31,23 @@ public:
         if (nl - start_ > capFor()) { overflow_ = true; return false; }
         out.assign(buf_, start_, nl - start_);
         start_ = scan_ = nl + 1;
-        if (start_ == buf_.size()) { buf_.clear(); start_ = scan_ = 0; }
-        else if (start_ > (size_t(1) << 16)) { buf_.erase(0, start_); start_ = scan_ = 0; }
+        if (start_ == buf_.size()) {
+            buf_.clear();
+            start_ = scan_ = 0;
+            if (buf_.capacity() > kShrinkAbove) std::string().swap(buf_);   // Q.6: don't keep a big line's capacity
+        }
+        else if (start_ > (size_t(1) << 16)) {
+            buf_.erase(0, start_);
+            start_ = scan_ = 0;
+            if (buf_.capacity() > kShrinkAbove && buf_.size() < buf_.capacity() / 4) buf_.shrink_to_fit();
+        }
         return true;
     }
 
     bool overflowed() const { return overflow_; }
     // Bytes of the line being assembled (progress for a long SNAPZ line).
     size_t pending() const { return buf_.size() - start_; }
+    size_t capacity() const { return buf_.capacity(); }   // Q.6 selftest
 
 private:
     size_t capFor() const {

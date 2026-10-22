@@ -78,6 +78,12 @@
 //   --touch-selftest     Stage 4.3: pushes SDL finger events at the engine's OWN reported HUD rect
 //                        and asserts the tap reaches Hud::inmenu. The only test of the touch path
 //                        outside a browser.
+//   --look-trace         L.0 (WORKING/touch-camera-plan-2026-10-17.md): one `look.trace` line per
+//                        touch at its end -- events/frame, the motion stock's look branch drops
+//                        (last event only, int points), zero-step frames, frame dt. Not a mode:
+//                        add it to a normal run (eden-args.txt on a device). Not diagnostics-gated.
+//   --look-selftest      L.0: step 0 of the plan's look selftest -- synthetic multi-event and
+//                        sub-point drags through eden_input_pointer_event; asserts the trace counters.
 //   --gamepad-selftest   Stage 2: attaches an SDL VIRTUAL gamepad, drives its sticks/buttons, and
 //                        asserts the engine moved — so it needs no physical controller and runs
 //                        headless. Native counterpart of web-port-final:web/tools/headless-gamepad-test.js.
@@ -604,6 +610,10 @@ extern "C" void eden_mem_trace_install(void);   // HeapProbe_native.cpp, --mem-t
 extern "C" void eden_gl_set_tex_experiments(int bits);   // gl_fixed_function.cpp, --tex-exp=
 extern "C" void eden_gl_set_tex_flush(int on);           // gl_fixed_function.cpp, N.4.9's fix
 extern "C" void eden_mem_trace(const char* where);
+extern "C" void eden_input_pointer_event(int phase, int identity, float x, float y);   // Input_web.mm
+extern "C" void eden_look_trace_enable(int on);     // Input_web.mm, --look-trace (L.0)
+extern "C" void eden_look_trace_frame(void);        // Input_web.mm: closes a frame of the trace
+extern "C" void eden_look_trace_last(int out[6], float* lostPct);   // --look-selftest
 extern "C" void eden_test_force_touch_input(void);   // Settings_web.mm (X.19)
 void settings_pump() {
     if (!eden_settings_loaded()) eden_settings_init();
@@ -636,6 +646,7 @@ void tick(int n) {
         pump_events();
         settings_pump();
         if (g_tickInput) eden_native_input_tick();
+        eden_look_trace_frame();
         g_app->viewController.drawFrame(true);
         eden_native_audio_tick();
         eden_heap_pressure_tick();
@@ -6707,9 +6718,11 @@ int run_mp_replay() {
         MpWorld::beginSession("replay", 0, "Leg 4");
         MpWorld::setSpawn((float)P + 0.5f, 60.0f, (float)P + 0.5f);
         MpWorld::setLink(L);
-        auto frameMs = [] {
+        size_t heldPeak = 0;   // Q.6: MpWorld::heldBytes(), what the session's byte cap sees
+        auto frameMs = [&heldPeak] {
             const Uint64 a = SDL_GetPerformanceCounter();
             tick(1);
+            heldPeak = std::max(heldPeak, MpWorld::heldBytes());
             return (double)(SDL_GetPerformanceCounter() - a) * 1000.0 / (double)SDL_GetPerformanceFrequency();
         };
         const Uint64 tj0 = SDL_GetPerformanceCounter();
@@ -6735,6 +6748,9 @@ int run_mp_replay() {
               "leg 4: a 600k-record join lands whole through Syncing -> Loading -> Play", d);
         std::snprintf(d, sizeof d, "%d sync frames for %zu SNAPZ frames, worst %.2f ms", syncFrames, frames.size(), syncWorst);
         check(syncFrames >= 2, "leg 4: the join drain is spread over frames (8 ms budget)", d);
+        std::snprintf(d, sizeof d, "peak %zu B for %zu records, %zu B after", heldPeak, all.size(), MpWorld::heldBytes());
+        check(heldPeak >= all.size() * sizeof(eden_net::SnapzRec) && MpWorld::heldBytes() == 0,
+              "leg 4: held bytes count the queued burst, 0 once applied", d);
 
         // A 2,000-cell relay storm in play: peers building into air, all over the window.
         Terrain* t = World::getWorld->terrain;
@@ -6754,6 +6770,8 @@ int run_mp_replay() {
         std::snprintf(d, sizeof d, "landed %d/2000 over %d frames, worst %d chunks", landed, stormFrames, s4.worstFrameChunks);
         check(landed == 2000 && stormFrames >= 2 && s4.worstFrameChunks <= 24 + 6,
               "leg 4: a 2,000-cell relay storm lands whole, at most 24 chunks (+1 cell) a frame", d);
+        std::snprintf(d, sizeof d, "%zu B after the storm", MpWorld::heldBytes());
+        check(MpWorld::heldBytes() == 0, "leg 4: held bytes return to 0 after the storm", d);
         if (!quit_to_menu()) return 1;
         check(L->released && !MpWorld::active(), "leg 4: leaving the session releases the link", "");
         delete L;
@@ -6873,6 +6891,65 @@ int run_mp_join() {
         check(quit_to_menu() && !MpWorld::active() && !MpWorld::link(), "leaving the session closes it", "");
     }
     std::printf("[eden-mp-join] %s (%d failure(s))\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
+    return g_selftestFailures ? 1 : 0;
+}
+
+// --look-selftest: step 0 of WORKING/touch-camera-plan-2026-10-17.md, the L.0 trace's own gate.
+// Synthetic drags through eden_input_pointer_event (the real seam entry point) in point space,
+// top-left origin; the trace line is checked against numbers worked out from the stream.
+int run_look_selftest() {
+    g_selftestTag = "eden-look";
+    eden_set_detected_touch(1);
+    eden_test_force_touch_input();
+    eden_look_trace_enable(1);
+    const char* name = g_opt.world.empty() ? "look-selftest" : g_opt.world.c_str();
+    if (!open_world(name, g_opt.height)) return 1;
+    tick(60);
+    const float x0 = (float)(int)(SCREEN_WIDTH * 0.5f), y0 = (float)(int)(SCREEN_HEIGHT * 0.5f);
+    int c[6];
+    float lost = 0;
+    char d[240];
+
+    // D1: three 1-point moves a frame for 30 frames. Frames 1-5 stay inside stock's 15-point dead
+    // zone (3k <= 15); frames 6-30 plus the release frame are look frames. Stock applies 1 point of
+    // each frame's 3: 25 of 75 points turned, so lost = 66.7%.
+    eden_input_pointer_event(0, 41, x0, y0);
+    tick(1);
+    float x = x0;
+    for (int f = 0; f < 30; ++f) {
+        for (int k = 0; k < 3; ++k) { x += 1.0f; eden_input_pointer_event(1, 41, x, y0); }
+        tick(1);
+    }
+    eden_input_pointer_event(2, 41, x, y0);
+    tick(2);
+    eden_look_trace_last(c, &lost);
+    std::snprintf(d, sizeof(d), "events %d frames %d multi %d look_frames %d lost %.2f%%", c[0], c[1], c[2],
+                  c[3], lost);
+    check(c[0] == 91 && c[1] == 31 && c[2] == 30 && c[3] == 26,
+          "a 3-events-per-frame drag counts 91 events, 31 frames, 30 multi-event, 26 look frames", d);
+    check(lost > 66.0f && lost < 67.4f, "stock's last-event-only look loses two thirds of it", d);
+
+    // D2: one 0.3-point move a frame after a 20-point jump past the dead zone. Int truncation steps
+    // the camera on ~30 of the 100 slow frames and turns 0 on the rest, but loses nothing overall.
+    eden_input_pointer_event(0, 42, x0, y0);
+    tick(1);
+    x = x0 + 20.0f;
+    eden_input_pointer_event(1, 42, x, y0);
+    tick(1);
+    for (int f = 0; f < 100; ++f) {
+        x += 0.3f;
+        eden_input_pointer_event(1, 42, x, y0);
+        tick(1);
+    }
+    eden_input_pointer_event(2, 42, x, y0);
+    tick(2);
+    eden_look_trace_last(c, &lost);
+    const float zeroPct = c[5] ? 100.0f * (float)c[4] / (float)c[5] : 0.0f;
+    std::snprintf(d, sizeof(d), "zero-step %d of %d motion frames (%.1f%%), lost %.2f%%", c[4], c[5], zeroPct, lost);
+    check(c[5] == 101 && zeroPct > 60.0f && zeroPct < 80.0f, "a 0.3-point/frame drag is a staircase: ~70% zero-step frames", d);
+    check(lost > -2.0f && lost < 3.0f, "truncation loses (almost) nothing overall", d);
+
+    std::printf("[eden-look] %s (%d failure(s))\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
     return g_selftestFailures ? 1 : 0;
 }
 
@@ -11101,6 +11178,8 @@ static int parse_one_arg(const char* a) {
         else if (!std::strcmp(a, "--audio-selftest")) { g_opt.mode = "audio-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--gamepad-selftest")) { g_opt.mode = "gamepad-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--touch-selftest")) { g_opt.mode = "touch-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--look-selftest"))  { g_opt.mode = "look-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--look-trace"))     eden_look_trace_enable(1);
         else if (!std::strcmp(a, "--empty-bit-selftest")) { g_opt.mode = "empty-bit-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--newblocks-selftest")) { g_opt.mode = "newblocks-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--photo-selftest")) { g_opt.mode = "photo-selftest"; g_opt.headless = true; }
@@ -11550,6 +11629,7 @@ static int eden_main_after_args(int argc, char** argv) {
         else if (!std::strcmp(g_opt.mode, "audio-selftest")) rc = run_audio_selftest();
         else if (!std::strcmp(g_opt.mode, "gamepad-selftest")) rc = run_gamepad_selftest();
         else if (!std::strcmp(g_opt.mode, "touch-selftest")) rc = run_touch_selftest();
+        else if (!std::strcmp(g_opt.mode, "look-selftest")) rc = run_look_selftest();
         else if (!std::strcmp(g_opt.mode, "empty-bit-selftest")) rc = run_empty_bit_selftest();
         else if (!std::strcmp(g_opt.mode, "newblocks-selftest")) rc = run_newblocks_selftest();
         else if (!std::strcmp(g_opt.mode, "net-selftest"))  rc = eden_net_selftest_run(g_opt.netServer.c_str());
@@ -11639,6 +11719,7 @@ static int eden_main_after_args(int argc, char** argv) {
 #if defined(EDEN_DIAGNOSTICS)
             eden_live_commands_tick();
 #endif
+            eden_look_trace_frame();   // L.0: after the pump, before World::update reads the touches
             if (g_app->viewController.isAnimating()) g_app->viewController.drawFrame(true);
             // AFTER the tick that queued this frame's sounds, so a sound fired now is bound to
             // the device in the same frame rather than the next one.

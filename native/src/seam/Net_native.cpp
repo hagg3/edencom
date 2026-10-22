@@ -70,11 +70,16 @@ const std::string& fixture_root() {
 
 void on_total(void* ctx, long long t) { static_cast<Job*>(ctx)->total.store(t); }
 
+// Q.6 (F21): an in-memory body (server list, a preview, a LIST reply) has no business past this; a
+// download to a file is not capped here.
+const size_t kMaxMemoryBody = size_t(32) << 20;
+
 int on_data(void* ctx, const void* data, size_t n) {
     Job* j = static_cast<Job*>(ctx);
     if (j->f) {
         if (std::fwrite(data, 1, n, j->f) != n) return 0;
     } else {
+        if (j->body.size() + n > kMaxMemoryBody) return 0;   // Q.6: a list or preview, never a world
         const unsigned char* p = static_cast<const unsigned char*>(data);
         j->body.insert(j->body.end(), p, p + n);
     }

@@ -380,7 +380,7 @@ array pointers. The frame still fills a staging array exactly as before; the cha
 one `glBufferSubData` upload per batch (growing via `glBufferData` in power-of-two
 steps) instead of the GL shim silently re-uploading all four client arrays' worth of
 the same bytes per draw (`gl_fixed_function.cpp`, `eden_gl_setup_attributes` — client-side
-vertex data isn't legal in the core/ES3 contexts the shim targets). One buffer per batch, not a shared one — a shared
+vertex data isn't legal in the core/ES3 contexts the shim targets; since Q.5 the shim's own path, still used by HUD, Fire and BlockBreak, copies an interleaved struct once, only the vertices used, into shared rings: `port/docs/gl-shim.md`). One buffer per batch, not a shared one — a shared
 buffer would make its `glBufferSubData` a write the previous batch's draw is still
 reading (driver sync stall each batch); five small elidable rebinds cost less than
 that. Measured live in Safari on the retired web build (`web-port-final:web/tools/safari-objbatch-probe.js`;

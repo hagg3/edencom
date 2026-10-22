@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
@@ -452,7 +453,7 @@ void legErrors() {
     });
     CHECK(o.errored && o.err == MpError::Protocol);
     o = runScript([](Sock& c) { drain(c); putLine(c, "[Server] Welcome, Sam! (Character Type: 3)"); },
-                  [](MpConfig& c) { c.worldQueueCapBytes = 100; });   // cap is only hit by SNAPZ data
+                  [](MpConfig& c) { c.worldQueueCapBytes = 100; });   // cap is only hit by world events
     CHECK(o.errored && o.err == MpError::Lost);
     {
         const auto big = sampleRecs(50, 3);
@@ -506,6 +507,93 @@ void legErrors() {
     Got g;
     pump(s, g, 3000, closedStage);
     CHECK(join == "JOIN:Sam:10::zr");
+}
+
+// ---- Q.6: memory caps and a non-blocking cancel -------------------------------------------
+
+void legRobustness() {
+    // The framer frees a big line's buffer once it is consumed (F21: it kept up to 64 MB).
+    {
+        LineFramer f;
+        std::string big = "SNAPZ:1:" + std::string(size_t(3) << 20, 'A') + "\n";
+        f.feed(big.data(), big.size());
+        std::string l;
+        CHECK(f.next(l) && l.size() == big.size() - 1);
+        CHECK(f.capacity() <= kShrinkAbove);
+    }
+    // ACTION and SIGNP count against the cap too, not only SNAPZ.
+    {
+        Outcome o = runScript([](Sock& c) {
+            drain(c);
+            putLine(c, "[Server] Welcome, Sam! (Character Type: 3)");
+            putLine(c, "ACTION:bob:1:10:20:30:0:5");
+        }, [](MpConfig& c) { c.worldQueueCapBytes = 100; });
+        CHECK(o.errored && o.err == MpError::TooMuchData);
+    }
+    // The cap spans drains: what the consumer still holds (setHeldBytes) counts. Two frames 300 ms
+    // apart, each under the cap; drained between them, so only the held bytes can trip it.
+    const auto recs = sampleRecs(200, 5);
+    MpWorldEvent probe;
+    probe.kind = MpWorldEvent::Snapz;
+    probe.recs = recs;
+    const size_t one = MpSession::eventBytes(probe);
+    for (int hold = 0; hold < 2; ++hold) {
+        Mock m;
+        m.start([&](Sock& c) {
+            drain(c);
+            putLine(c, "[Server] Welcome, Sam! (Character Type: 3)");
+            putLine(c, encodeSnapzLine(recs.data(), recs.size()));
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+            putLine(c, encodeSnapzLine(recs.data(), recs.size()));
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        });
+        MpSession s;
+        MpConfig cfg = cfgFor(m.port);
+        cfg.worldQueueCapBytes = one + one / 2;
+        s.start(cfg);
+        Got g;
+        size_t held = 0;
+        const int64_t t0 = nowMs();
+        while (nowMs() - t0 < 3000 && !closedStage(g)) {
+            s.drainSide(g.side);
+            std::vector<MpWorldEvent> w;
+            if (s.drainWorld(w)) {
+                for (auto& e : w) held += MpSession::eventBytes(e);
+                if (hold) s.setHeldBytes(held);
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        s.drainSide(g.side);
+        const bool tooMuch = g.error() && g.error()->err == MpError::TooMuchData;
+        if (hold) check(tooMuch, "held bytes count against the cap across drains");
+        else check(!tooMuch && held == 2 * one, "without held bytes two drained frames fit");
+    }
+    // F20: detach() returns at once, even mid-connect; the thread finishes alone and frees the session.
+    {
+        auto s = std::make_shared<MpSession>();
+        MpConfig cfg = cfgFor(9);
+        cfg.host = "10.255.255.1";   // unroutable: the connect hangs to its timeout (or fails fast)
+        cfg.connectTimeoutMs = 1500;
+        std::weak_ptr<MpSession> wk = s;
+        s->start(cfg);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        const int64_t t0 = nowMs();
+        s->detach();
+        s.reset();
+        check(nowMs() - t0 < 100, "detach returns without waiting for the connect");
+        const int64_t t1 = nowMs();
+        while (!wk.expired() && nowMs() - t1 < 4000) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        check(wk.expired(), "a detached session frees itself when its thread ends");
+    }
+    // A stack session can't be kept alive by its thread: detach() falls back to a join.
+    {
+        int deadPort = 0;
+        { Sock t; tcpListen(0, t, &deadPort); closeSock(t); }
+        MpSession s;
+        s.start(cfgFor(deadPort));
+        s.detach();
+        CHECK(s.stage() == MpStage::Closed);
+    }
 }
 
 // ---- MP.6: servers.txt and the probe ------------------------------------------------------
@@ -689,6 +777,7 @@ extern "C" int eden_mp_selftest_run(const char* server) {
     startup();
     legJoin();
     legErrors();
+    legRobustness();   // Q.6
     legServerList();   // MP.6
     legProbe();
     if (server && *server) legLiveMp(server);

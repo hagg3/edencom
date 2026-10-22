@@ -62,6 +62,11 @@
 #import "../../../Classes/GLDialog.h"
 #include "../shim/foundation/platform_shims.h"   // EDEN_EXPORT (Phase N Stage 1)
 #include <unordered_map>
+#include <vector>
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
 
 namespace {
 
@@ -112,9 +117,155 @@ UIEvent* pooledEvent() {
     return event;
 }
 
+// ---------------------------------------------------------------------------------------------
+// L.0 `--look-trace` (WORKING/touch-camera-plan-2026-10-17.md): measures what stock's touch look
+// throws away before L.1 changes it. A plain arg, not EDEN_DIAGNOSTICS: the CI ipa has none.
+//
+// Per touch, per frame (the frame closes in eden_look_trace_frame(), called by the host loop after
+// the event pump and before drawFrame, i.e. exactly what Player::processInput is about to see):
+//   raw   = the sum of every event's FLOAT delta this frame (engine points, the same flip/scale
+//           Input.mm applies, before its int truncation),
+//   stock = the LAST event's int `mx - pmx`, the one delta Player.mm's movecam branch applies.
+// Frames inside stock's 15-point dead zone (`cDist`, measured from fx/fy as Player does) are counted
+// apart: stock discards that motion on purpose (D4), so it is not "lost" in the D1/D2 sense.
+// At the frame after a touch ends, one `look.trace` line goes to stderr (emod-last-run.log on iOS).
+int g_lookTrace = 0;
+float g_lookTraceWinPerPt = 0.0f;   // window points per engine point (Input_native, D3)
+
+struct LookTraceSlot {
+    UITouch* touch = nil;       // borrowed: identity only, for finding the engine slot
+    int engineSlot = -1;
+    bool ending = false, cam = true;
+    float lx = 0, ly = 0;       // last raw position, float engine points (engine y-up)
+    double t0 = 0;
+    int fev = 0;                // this frame
+    float fdx = 0, fdy = 0;
+    int sdx = 0, sdy = 0;
+    int events = 0, frames = 0, multi = 0, maxEv = 0;   // totals
+    int slopFrames = 0, lookFrames = 0, zeroStep = 0, motionFrames = 0;
+    double raw = 0, applied = 0, err = 0, slopRaw = 0;
+    std::vector<float> dt;
+};
+std::unordered_map<int, LookTraceSlot> &lookSlots() {
+    static std::unordered_map<int, LookTraceSlot> s;
+    return s;
+}
+double g_lookLastFrameMs = 0;
+// The last summary's counters, for --look-selftest.
+int g_lookLast[6];   // events, frames, multi, lookFrames, zeroStep, motionFrames
+float g_lookLastLostPct = 0;
+
+void look_raw_point(float x, float y, float* ox, float* oy) {
+    // Input.mm's own mapping: y flipped against scr_height, then the IS_IPAD&&!IS_RETINA scale.
+    float px = x, py = (float)Input::getInput()->scr_height - y;
+    if (IS_IPAD && !IS_RETINA) { px /= SCALE_WIDTH; py /= SCALE_HEIGHT; }
+    *ox = px; *oy = py;
+}
+
+void look_trace_event(int phase, int identity, UITouch* touch, float x, float y) {
+    float px, py;
+    look_raw_point(x, y, &px, &py);
+    itouch* t = Input::getInput()->touches;
+    std::unordered_map<int, LookTraceSlot> &slots = lookSlots();
+    if (phase == 0) {
+        LookTraceSlot s;
+        s.touch = touch;
+        for (int i = 0; i < MAX_TOUCHES; i++)
+            if (t[i].touch_id == touch) { s.engineSlot = i; break; }
+        if (s.engineSlot < 0) return;   // the engine ignored it (all slots busy)
+        s.lx = px; s.ly = py;
+        s.t0 = eden_platform_now_ms();
+        slots[identity] = s;
+        return;
+    }
+    std::unordered_map<int, LookTraceSlot>::iterator it = slots.find(identity);
+    if (it == slots.end()) return;
+    LookTraceSlot &s = it->second;
+    if (phase == 3) { slots.erase(it); return; }   // cancel: Input::clearAll, no look applied
+    const itouch &e = t[s.engineSlot];
+    s.fev++;
+    s.events++;
+    s.fdx += px - s.lx; s.fdy += py - s.ly;
+    s.lx = px; s.ly = py;
+    s.sdx = e.mx - e.pmx; s.sdy = e.my - e.pmy;   // overwritten: only the last event's survives
+    if (phase == 2) s.ending = true;
+}
+
+float look_pct(std::vector<float> &v, float p) {
+    if (v.empty()) return 0;
+    std::sort(v.begin(), v.end());
+    size_t i = (size_t)(p * (float)(v.size() - 1) + 0.5f);
+    return v[i < v.size() ? i : v.size() - 1];
+}
+
 } // namespace
 
 extern "C" {
+
+EDEN_EXPORT void eden_look_trace_enable(int on) { g_lookTrace = on; }
+EDEN_EXPORT void eden_look_trace_set_win_per_pt(float r) { g_lookTraceWinPerPt = r; }
+EDEN_EXPORT void eden_look_trace_last(int out[6], float* lostPct) {
+    for (int i = 0; i < 6; i++) out[i] = g_lookLast[i];
+    *lostPct = g_lookLastLostPct;
+}
+
+// Once per frame, after the event pump, before drawFrame. Cheap no-op when the trace is off.
+EDEN_EXPORT void eden_look_trace_frame(void) {
+    if (!g_lookTrace) return;
+    const double now = eden_platform_now_ms();
+    const float dt = g_lookLastFrameMs > 0 ? (float)(now - g_lookLastFrameMs) : 0.0f;
+    g_lookLastFrameMs = now;
+    itouch* t = Input::getInput()->touches;
+    std::unordered_map<int, LookTraceSlot> &slots = lookSlots();
+    for (std::unordered_map<int, LookTraceSlot>::iterator it = slots.begin(); it != slots.end();) {
+        LookTraceSlot &s = it->second;
+        const itouch &e = t[s.engineSlot];
+        if (dt > 0) s.dt.push_back(dt);
+        if (!s.ending) s.cam = e.movecam;   // HUD claims clear it in the previous drawFrame
+        if (s.fev > 0) {
+            s.frames++;
+            if (s.fev >= 2) s.multi++;
+            if (s.fev > s.maxEv) s.maxEv = s.fev;
+            const double mag = std::sqrt((double)s.fdx * s.fdx + (double)s.fdy * s.fdy);
+            if (abs(e.mx - e.fx) <= 15 && abs(e.my - e.fy) <= 15) {   // Player.mm cDist
+                s.slopFrames++;
+                s.slopRaw += mag;
+            } else {
+                s.lookFrames++;
+                s.raw += mag;
+                s.applied += std::sqrt((double)s.sdx * s.sdx + (double)s.sdy * s.sdy);
+                const double ex = s.fdx - s.sdx, ey = s.fdy - s.sdy;
+                s.err += std::sqrt(ex * ex + ey * ey);
+                if (mag >= 0.05) {
+                    s.motionFrames++;
+                    if (s.sdx == 0 && s.sdy == 0) s.zeroStep++;
+                }
+            }
+        }
+        s.fev = 0; s.fdx = s.fdy = 0; s.sdx = s.sdy = 0;
+        if (!s.ending) { ++it; continue; }
+
+        // lost: the share of the finger's travel (outside the dead zone) the camera never turned
+        // by (D1; ~0 for D2, whose truncation catches up a frame later). err: the per-frame
+        // mismatch, i.e. the jitter (D1 and D2 both). Slightly negative lost = rounding.
+        const float lostPct = s.raw > 0 ? (float)(100.0 * (1.0 - s.applied / s.raw)) : 0.0f;
+        const float errPct = s.raw > 0 ? (float)(100.0 * s.err / s.raw) : 0.0f;
+        const float p50 = look_pct(s.dt, 0.50f), p99 = look_pct(s.dt, 0.99f);
+        std::fprintf(stderr,
+            "look.trace id=%d cam=%d dur=%.2fs events=%d frames=%d multi=%.1f%% maxev=%d"
+            " slop_frames=%d slop_pt=%.1f look_frames=%d raw_pt=%.1f applied_pt=%.1f lost=%.1f%%"
+            " err=%.1f%% zero=%.1f%% (%d/%d) dt_p50=%.1fms dt_p99=%.1fms win_per_pt=%.3f\n",
+            it->first, (int)s.cam, (now - s.t0) / 1000.0, s.events, s.frames,
+            s.frames ? 100.0f * s.multi / s.frames : 0.0f, s.maxEv, s.slopFrames, s.slopRaw,
+            s.lookFrames, s.raw, s.applied, lostPct, errPct,
+            s.motionFrames ? 100.0f * s.zeroStep / s.motionFrames : 0.0f, s.zeroStep, s.motionFrames,
+            p50, p99, g_lookTraceWinPerPt);
+        g_lookLast[0] = s.events; g_lookLast[1] = s.frames; g_lookLast[2] = s.multi;
+        g_lookLast[3] = s.lookFrames; g_lookLast[4] = s.zeroStep; g_lookLast[5] = s.motionFrames;
+        g_lookLastLostPct = lostPct;
+        it = slots.erase(it);
+    }
+}
 
 // `phase`: 0=start, 1=move, 2=end, 3=cancel. Deliberately a small JS-facing enum of our own
 // rather than reusing UITouchPhase's numbering (uikit_stubs.h) — keeps the JS side ignorant of
@@ -179,6 +330,7 @@ void eden_input_pointer_event(int phase, int identity, float x, float y) {
         case 2: input->touchesEnded(set, event); break;
         default: input->touchesCancelled(set, event); break;
     }
+    if (g_lookTrace) look_trace_event(phase, identity, touch, x, y);   // L.0
 
     if (phase == 2 || phase == 3) {
         touches.erase(identity);

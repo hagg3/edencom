@@ -78,6 +78,22 @@ the first version of the new assertions *also* passed with the fix removed — t
 in-game menu open, where `g_relativeMouse` is false and the mouse path is switched off anyway. A
 gate has to be run once with the bug put back.
 
+## Touch-look trace (`--look-trace`, L.0)
+`--look-trace` (a plain arg, not `EDEN_DIAGNOSTICS`, so it works in the CI ipa via `eden-args.txt`) makes
+`Input_web.mm` count, per touch and per frame, every event's **float** delta against the one delta stock's
+`movecam` branch applies (the last event's int `mx − pmx`). The frame closes in `eden_look_trace_frame()`,
+which the host loop calls after `pump_events()` and before `drawFrame`. At the frame after a touch ends,
+one line goes to stderr (`emod-last-run.log` on iOS):
+
+`look.trace id= cam= dur= events= frames= multi=% maxev= slop_frames= slop_pt= look_frames= raw_pt= applied_pt= lost=% err=% zero=% (n/m) dt_p50= dt_p99= win_per_pt=`
+
+`cam=0` means the HUD claimed the touch (ignore it). `slop_*` is motion inside stock's 15-point dead zone
+(D4; not counted as lost). `lost` = 1 − applied/raw over look frames (D1: events dropped when ≥2 land in a
+frame). `err` = the per-frame mismatch, `zero` = frames that moved < 1 point and turned 0 (D2's staircase).
+`win_per_pt` = window (iOS) points per engine point through the letterbox (D3/D4 conversion). Gate:
+`--look-selftest` (a 3-events-per-frame drag → 66.7% lost; a 0.3-pt/frame drag → ~70% zero-step, ~0 lost).
+Plan: `WORKING/touch-camera-plan-2026-10-17.md`.
+
 ## Input-mode detection
 Touch vs. keyboard+mouse is `eden_effective_input_is_touch()` (`Settings_web.mm`): the `input_mode`
 setting (hidden on native) or the detected flag, which native sets **once at boot** — touch on iOS,

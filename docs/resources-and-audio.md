@@ -35,6 +35,10 @@ the entire audio layer (sound effects, ambience, music, creature voices).
   Q.3: the game set (106 textures, 14.9 MiB) is also deferred to world entry on every platform via the
   `DEFER_GAME_TEXTURES` global (default on; `LOW_MEM_DEVICE` does the same but turns lighting off);
   `getTex` lazy-loads an empty set, and `--recolor-selftest` calls `loadGameAssets()` first.
+  Each load re-stores the recolour sources (`storedSkins`/`storedMasks`/`storedDoor`…, kept as
+  `UIImage`s), so `Texture2D_web.mm` releases a slot's previous image before overwriting it; without
+  that every world entry leaked ~5 MB (`--leak-probe`, 2026-10-22). Stock `Texture2D.mm` has the same
+  overwrite on `LOW_MEM_DEVICE`.
 - `getDoorTex(color)`, `getPaintTex`, `getPaintedTex(type,color)`,
   `getSkin(model,color,state)` — lazily-built colored variants. `getSkin` keeps at most
   `SKIN_CACHE_SIZE` 48 recoloured creature skins, evicting the least recently used (P.15; was 200,

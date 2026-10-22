@@ -67,13 +67,27 @@ void MpSession::fail(MpError err, const std::string& text) {
     pushSide(std::move(e));
 }
 
+// Q.6 (F21): every world event counts against the cap, ACTION and SIGNP too (a flood of them is as
+// unbounded as one huge SNAPZ). worldBytes_ is this queue; heldBytes_ what the consumer holds.
+size_t MpSession::eventBytes(const MpWorldEvent& w) {
+    return sizeof(MpWorldEvent) + w.recs.size() * sizeof(SnapzRec) + w.who.size() + w.text.size();
+}
+
+void MpSession::pushWorld(MpWorldEvent&& w) {
+    const size_t bytes = eventBytes(w);
+    if (worldBytes_ + heldBytes_ + bytes > cfg_.worldQueueCapBytes) { fail(MpError::TooMuchData, "Server sent more than this device can hold"); return; }
+    worldBytes_ += bytes;
+    std::lock_guard<std::mutex> g(mu_);
+    worldQ_.push_back(std::move(w));
+}
+
 bool MpSession::start(const MpConfig& cfg) {
     stop();
     cfg_ = cfg;
     stop_ = false;
     terminal_ = joined_ = false;
     lastServerLine_.clear();
-    rxBytes_ = snapzRecs_ = worldBytes_ = 0;
+    rxBytes_ = snapzRecs_ = worldBytes_ = heldBytes_ = 0;
     {
         std::lock_guard<std::mutex> g(mu_);
         sideQ_.clear();
@@ -90,13 +104,25 @@ bool MpSession::start(const MpConfig& cfg) {
         return false;
     }
     stage_ = MpStage::Idle;
-    th_ = std::thread([this] { run(); });
+    // Q.6: a shared_ptr-owned session's thread holds a reference, so detach() can let it outlive
+    // its owner (null for a stack session, which must stop()).
+    std::shared_ptr<MpSession> self = weak_from_this().lock();
+    th_ = std::thread([this, self] { run(); });
     return true;
 }
 
 void MpSession::stop() {
     stop_ = true;
-    if (th_.joinable()) th_.join();
+    if (!th_.joinable()) return;
+    if (th_.get_id() == std::this_thread::get_id()) th_.detach();   // the thread dropped the last reference
+    else th_.join();
+}
+
+void MpSession::detach() {
+    stop_ = true;
+    if (!th_.joinable()) return;
+    if (weak_from_this().expired()) { th_.join(); return; }   // not shared_ptr-owned: nothing would keep us alive
+    th_.detach();
 }
 
 bool MpSession::drainSide(std::vector<MpSideEvent>& out) {
@@ -165,6 +191,7 @@ void MpSession::run() {
         default: fail(MpError::ConnectFailed, cfg_.host + ":" + std::to_string(cfg_.port)); goto done;
     }
     connectMs_ = cms;
+    if (stop_) goto done;   // Q.6 (F20): cancelled during the connect; never send the JOIN
     setStage(MpStage::Joining);
     {
         sendLine("JOIN:" + cfg_.username + ":" + std::to_string(cfg_.characterType) + ":" + cfg_.password + ":zr");
@@ -183,7 +210,10 @@ void MpSession::run() {
                     if (r > 0) {
                         rxBytes_ += (size_t)r;
                         fr.feed(rb.data(), (size_t)r);
-                        while (!terminal_ && fr.next(line)) handleLine(line);
+                        while (!terminal_ && fr.next(line)) {
+                            handleLine(line);
+                            if (line.capacity() > kShrinkAbove) std::string().swap(line);   // Q.6: not a SNAPZ line's 64 MB
+                        }
                         if (fr.overflowed()) { fail(MpError::Protocol, "line too long"); break; }
                         continue;
                     }
@@ -321,11 +351,7 @@ void MpSession::handleLine(const std::string& line) {
         const char* why = nullptr;
         if (!parseSnapzLine(line, w.recs, &why)) { fail(MpError::Protocol, why ? why : "bad SNAPZ"); return; }
         snapzRecs_ += w.recs.size();
-        const size_t bytes = w.recs.size() * sizeof(SnapzRec) + 64;
-        if (worldBytes_ + bytes > cfg_.worldQueueCapBytes) { fail(MpError::TooMuchData, "Server sent more than this device can hold"); return; }
-        worldBytes_ += bytes;
-        std::lock_guard<std::mutex> g(mu_);
-        worldQ_.push_back(std::move(w));
+        pushWorld(std::move(w));
         return;
     }
     if (startsWith(line, "SIGNP:")) {   // SIGNP:server:x:y:z:a:b:c:text — text may hold ':'
@@ -336,8 +362,7 @@ void MpSession::handleLine(const std::string& line) {
             parseInt(f[5], w.sa) && parseInt(f[6], w.sb) && parseInt(f[7], w.sc)) {
             w.who = f[1];
             w.text = f[8];
-            std::lock_guard<std::mutex> g(mu_);
-            worldQ_.push_back(std::move(w));
+            pushWorld(std::move(w));
         }
         return;
     }
@@ -349,8 +374,7 @@ void MpSession::handleLine(const std::string& line) {
         if (f.size() >= 7 && parseInt(f[2], w.type) && parseInt(f[3], w.x) && parseInt(f[4], w.y) && parseInt(f[5], w.z) &&
             parseInt(f[6], w.mode) && (f.size() < 8 || parseInt(f[7], w.extra))) {
             w.who = f[1];
-            std::lock_guard<std::mutex> g(mu_);
-            worldQ_.push_back(std::move(w));
+            pushWorld(std::move(w));
         }
         return;
     }

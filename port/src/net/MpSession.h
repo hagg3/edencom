@@ -8,6 +8,7 @@
 #pragma once
 #include <atomic>
 #include <condition_variable>
+#include <memory>
 #include <deque>
 #include <mutex>
 #include <string>
@@ -67,10 +68,12 @@ struct MpConfig {
     int pongSilenceMs = 30000;
     bool joinBurst = true;      // send SIGNQ + REGION right behind JOIN, as retail does
     int regionX = 65536, regionZ = 65536;
-    size_t worldQueueCapBytes = size_t(256) << 20;
+    size_t worldQueueCapBytes = size_t(256) << 20;   // Q.6: this queue + setHeldBytes, across drains
 };
 
-class MpSession {
+// Q.6 (F20): a session owned by a std::shared_ptr can be detach()ed: its thread keeps it alive and
+// finishes a connect or DNS lookup alone, so the UI never waits on it. A stack session can only stop().
+class MpSession : public std::enable_shared_from_this<MpSession> {
 public:
     MpSession() = default;
     ~MpSession() { stop(); }
@@ -79,11 +82,15 @@ public:
 
     bool start(const MpConfig& cfg);   // false (+ an Error event) on BadInput
     void stop();                       // closes the socket, joins the thread; no event
+    void detach();                     // Q.6: signal and let go; no join (shared_ptr-owned only, else stop())
     MpStage stage() const { return stage_.load(); }
     void setPlaying() { setStage(MpStage::Playing); }   // MP.3b: after the join burst is applied
 
     bool drainSide(std::vector<MpSideEvent>& out);
     bool drainWorld(std::vector<MpWorldEvent>& out);
+    // Q.6 (F21): what the consumer still holds of drained world data (MpWorld::heldBytes()); counted
+    // against worldQueueCapBytes with this session's own queue, so the cap spans drains.
+    void setHeldBytes(size_t n) { heldBytes_ = n; }
 
     // MP.3a --mp-replay: one recorded server line through the same parser, with no socket and no
     // thread (never call it on a started session). The events land in the queues as if received.
@@ -97,6 +104,7 @@ public:
     void sendPosVel(double px, double py, double pz, double vx, double vy, double vz);
     void sendAction(int x, int y, int z, int mode, int extra = -1);
 
+    static size_t eventBytes(const MpWorldEvent& w);   // Q.6: what one event counts against the cap
     size_t bytesReceived() const { return rxBytes_.load(); }
     size_t snapzRecords() const { return snapzRecs_.load(); }
     int connectMs() const { return connectMs_.load(); }
@@ -106,6 +114,7 @@ private:
     void run();
     void setStage(MpStage s);
     void pushSide(MpSideEvent&& e);
+    void pushWorld(MpWorldEvent&& w);
     void fail(MpError e, const std::string& text);
     void handleLine(const std::string& line);
     bool flushOut();
@@ -114,7 +123,7 @@ private:
     std::thread th_;
     std::atomic<bool> stop_{false};
     std::atomic<MpStage> stage_{MpStage::Idle};
-    std::atomic<size_t> rxBytes_{0}, snapzRecs_{0}, worldBytes_{0};
+    std::atomic<size_t> rxBytes_{0}, snapzRecs_{0}, worldBytes_{0}, heldBytes_{0};
     std::atomic<int> connectMs_{0};
 
     std::mutex mu_;                          // guards sideQ_, worldQ_, outQ_

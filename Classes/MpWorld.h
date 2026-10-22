@@ -130,6 +130,7 @@ void enqueueSnapz(const MpRec* recs, size_t n);
 void enqueueAction(const char* who, int x, int y, int z, int mode, int extra);
 void enqueueSign(int x, int y, int z, int a, int b, int c, const char* text);
 size_t queuedEvents();
+size_t heldBytes();   // Q.6: queued events + burst/reconcile sets, counted against the session's byte cap
 
 // World::update's first call, every frame in every mode: the link's pump, the REGION pacer, and,
 // while the session world has not loaded yet (the join's Syncing step, §7), the queue into the

@@ -27,7 +27,9 @@ seam-excluded). The port's browser is `Classes/WorldBrowser.{h,mm}` (docs/ui.md)
 non-blocking seam, `eden_net_fetch/poll/body/error/release` — implemented natively in
 `native/src/seam/Net_native.cpp` over a backend chosen at build time: `AppleNet_native.mm`
 (NSURLSession, macOS/iOS), `NetWinHttp_native.cpp` (Windows), `NetCurl_native.cpp` (libcurl, Linux),
-or `NetNone_native.cpp` ("no network" — a Linux build without libcurl; Get Worlds is then not offered). It speaks the stock protocol to BOTH official services and adds the
+or `NetNone_native.cpp` ("no network" — a Linux build without libcurl; Get Worlds is then not offered). A body kept in
+memory (no `destPath`: the list and preview fetches) is capped at 32 MB (Q.6, `kMaxMemoryBody`); a world download goes
+to a file and is not capped. It speaks the stock protocol to BOTH official services and adds the
 community archive:
 
 | Source | List | World | Preview |
@@ -89,6 +91,7 @@ Plain C++ in `port/src/net/` (no `Classes/` includes; compiled into `eden_native
 - `NetSock` — non-blocking TCP (POSIX + Winsock): `tcpConnect` with a deadline and `CONN_DNS/REFUSED/TIMEOUT/OTHER`,
   `sendSome`/`recvSome` (`IO_WOULDBLOCK`, `IO_ERROR`, 0 = closed), loopback listen/accept for the selftests.
 - `LineFramer` — `\n` framer. Cap 8192 bytes per line, 64 MB for a line starting `SNAPZ:`. A `\r` is kept (protocol).
+  Once a line past 1 MB (`kShrinkAbove`) is consumed its buffer is freed (Q.6), as is the session's line string.
 - `Snapz` — `SNAPZ:<count>:<b64>`: unpadded base64, raw DEFLATE, exactly `count*20` bytes of five LE int32
   (`x y z flag type`). Rejects a count the payload cannot hold (deflate caps at ~1032:1), short/long/trailing data.
   Records come out in wire order; merging a cell's flag 0 / flag 3 and bucketing by column is `MpWorld::mergeSnapz` (below).
@@ -98,6 +101,15 @@ Plain C++ in `port/src/net/` (no `Classes/` includes; compiled into `eden_native
   `MpWorldEvent` (`ACTION`, `SIGNP`, `SNAPZ`, in server order) queues drained by the main thread. `MpError` carries the
   UI plan §7 causes (`ServerFull`, `WrongPassword`, `InvalidName`+reason, `NoWelcome`, `ServerClosed`+last `[Server]` line,
   `Lost`, ...). Name/password with `:` are refused locally; `characterType` is clamped to 0..10; `zr` is sent verbatim.
+- **Memory cap (Q.6, F21).** Every world event (`SNAPZ` records, and `ACTION`/`SIGNP` too) counts
+  `MpSession::eventBytes` against `worldQueueCapBytes` (256 MB), together with what the consumer reports it still holds
+  (`setHeldBytes`; the join flow passes `MpWorld::heldBytes()` = `MpWorld`'s queued events + the burst/reconcile cell sets
+  every pump). So the cap spans drains, including while the load pthread runs and `MpWorld` cannot drain. Past it:
+  `TooMuchData`.
+- **Stopping (Q.6, F20).** `stop()` joins the thread. `detach()` (a session owned by a `std::shared_ptr`, as
+  `MpLink_native.mm`'s is) signals and lets go: the thread holds its own reference, finishes a connect or DNS lookup
+  alone (`getaddrinfo` has no timeout), closes the socket and frees the session. So the Connecting window's Cancel never
+  blocks the UI. A connect that completes after the stop does not send its `JOIN`. A stack session's `detach()` joins.
 - Gates: `--net-selftest`, `--mp-selftest` (offline against an in-process mock, every CI leg) and `port/tools/mp-live-gate.sh`
   (both with `--server=` against a local `edenserver`). `feedLine()` runs one recorded line through the same parser with no
   socket (`--mp-replay`). The join flow that starts one is `native/src/seam/MpLink_native.mm` (MP.3b, below); it runs
@@ -174,6 +186,8 @@ Plan §5-§7; code `Classes/MpWorld.mm` (second half), `Terrain::setCellState`, 
   that the burst didn't name (nor an `ACTION` relayed inside it) goes back to flat — resident columns are committed first,
   then written cell by cell under the budget; non-resident ones lose the entries in one pass. Spared: cells
   `noteLocalEdit` (MP.4's intent sites) stamped at or after that `REGION` went out; stamps older than it are pruned.
+  Q.6: a session that never completes a reconcile would grow the stamps forever, so past 65,536 `noteLocalEdit` also drops
+  stamps older than 60 s (the next sweep waits for twice what survived, so a big fill stays linear).
   `--mp-reconcile=0` turns it off; an unsolicited burst (legacy push, a late reply) merges without reconcile.
 - **The join** (`MpLink_native.mm`, §7): Connecting → welcome → `CAPS:region` then ≤ 500 ms for `SPAWN` (no CAPS in 1 s =
   the legacy push: no `REGION`) → `beginSession`, `setSpawn`, `SIGNQ`, `startRegions` → Syncing until `joinReady()` (the
@@ -320,7 +334,9 @@ The home **Multiplayer** tile opens `Classes/ServerListMenu` (list, detail pane,
 ## Port-side files and gates
 
 Moved from `port/CLAUDE.md` (2026-10-20). `port/src/net/`: `NetSock` (TCP, POSIX + Winsock), `NetFramer.h`,
-  `Snapz`, `MpSession` (network thread + queues). Plain C++, no engine includes; gates `--net-selftest`/`--mp-selftest`,
+  `Snapz`, `MpSession` (network thread + queues). Plain C++, no engine includes; gates `--net-selftest`/`--mp-selftest`
+  (Q.6's `legRobustness`: framer shrink, `ACTION` counted, held bytes across drains, `detach()` mid-connect; `--mp-replay`
+  leg 4 checks `MpWorld::heldBytes()` counts the 614k-record burst and returns to 0),
   `tools/mp-live-gate.sh`. See `../docs/networking.md` "Multiplayer transport and session". MP.3a's session
   world/overlay is engine code (`Classes/MpWorld.*`); `MpSession::feedLine` drives the parser socket-free for
   `--mp-replay`, whose fixture `tools/fixtures/mp/replay-1.{lines,expect}` is recorded and independently
