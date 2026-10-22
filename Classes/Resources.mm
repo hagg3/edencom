@@ -716,7 +716,7 @@ void Resources::voSound(int action,int type,Vector location){
 }
 
 void Resources::loadGameAssets(){
-    if(LOW_MEM_DEVICE){
+    if((LOW_MEM_DEVICE||DEFER_GAME_TEXTURES)&&textures.empty()){
         loadGameTextures();
     }
   /*
@@ -737,7 +737,7 @@ void Resources::loadGameAssets(){
     }*/
 }
 void Resources::unloadGameAssets(){
-    if(LOW_MEM_DEVICE){
+    if(LOW_MEM_DEVICE||DEFER_GAME_TEXTURES){
         unloadGameTextures();
     }
    // [World::getWorld->terrain deallocateMemory];
@@ -977,7 +977,7 @@ Resources::Resources(){
     
     csbkg=new Texture2D(@"colorpick_background.png" ,FALSE);
     
-    if(!LOW_MEM_DEVICE){
+    if(!LOW_MEM_DEVICE&&!DEFER_GAME_TEXTURES){
         loadGameTextures();
     }
    
@@ -1192,7 +1192,7 @@ void Resources::unloadMenuTextures(){
 }
 
 void Resources::unloadGameTextures(){
-    if(!LOW_MEM_DEVICE){
+    if(!LOW_MEM_DEVICE&&!DEFER_GAME_TEXTURES){
         return;
     }
     while(textures.size()>0){
@@ -1842,6 +1842,8 @@ Texture2D* Resources::getTex(int idx){
     if(idx==ICO_COLOR_SELECT_BACKGROUND){
        return csbkg;
     }
+    // Q.3: a reader outside a world (headless probes, selftests) loads the set on first use.
+    if(textures.empty()&&DEFER_GAME_TEXTURES)loadGameTextures();
 	return textures[idx];
 }
 

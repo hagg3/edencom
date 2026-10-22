@@ -71,8 +71,10 @@ It is now real, entirely in the seam/shim (no `Classes/` edit):
 - **`UIImage` is a real retain-counted owner of one `CGImage`.** Both ivars are POD
   on purpose — see [objc-runtime.md](objc-runtime.md) on why a C++ ivar in a shim
   `@implementation` is never constructed or destroyed (Linux/Windows).
-- **`Texture2D::initFromImage` carries the upload pipeline** (POT rounding, canvas
-  placement, pixel-format packing) and `initFromPath` decodes to a `CGImage` and calls
+- **`Texture2D::initFromImage` carries the upload pipeline** (POT rounding for `sizeToFit`
+  only since Q.2, otherwise the image's own size with the width rounded up so a 16/24/8-bit row
+  stays 4-byte aligned; canvas placement; pixel-format packing; since Q.4 a grey+alpha PNG asked
+  for `Automatic` packs as LA88) and `initFromPath` decodes to a `CGImage` and calls
   it — which is the engine's own shape, and means the PNG path and the recolor path
   share one code path instead of two.
 - **`initFromPath` now runs the engine's `storeImage` block**, filling

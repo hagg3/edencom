@@ -74,6 +74,33 @@ buffer with the same name. `TerrainChunk.mm` deletes and regenerates per-chunk V
 every streaming boundary (several call sites), making this a live hazard, not a
 theoretical one.
 
+## Client-memory streaming (Q.5, 2026-10-22)
+Core GL and ES3 have no client-side vertex arrays, so every draw whose arrays point at CPU memory
+(HUD and menus, object batches, `Fire`, `BlockBreak`, sky/trails) copies them into GL buffers first.
+`eden_gl_setup_attributes(lo, hi)` does it in three steps:
+- **Groups.** Enabled client arrays that share a stride and whose first vertex's bytes all fit inside
+  one stride window (an interleaved struct: `BlockBreak`'s position/normal/colour/texcoord) are
+  copied **once**; each member points at its byte offset inside that copy.
+- **Range.** Only vertices `[lo, hi)` are copied, so vertex `lo` becomes index 0. The function
+  returns that rebase: `glDrawArrays` draws from `first - base`; `glDrawElements` with client
+  indices scans min and max and subtracts `base` from each index while copying them. A draw that
+  also has a VBO-resident array isn't rebased (base 0).
+- **Rings.** The copies go into two shared rings (`g_vring` 4 MiB for vertices, `g_iring` 256 KiB
+  for indices) through `glMapBufferRange(WRITE | INVALIDATE_RANGE | UNSYNCHRONIZED)`. A ring is
+  orphaned (`glBufferData(NULL)`) only when the next range doesn't fit, so no range is rewritten
+  inside one storage generation and nothing waits on the GPU. A draw bigger than the ring grows it.
+  If the map returns NULL the bytes are staged and sent with `glBufferSubData`.
+
+Each range starts 16-byte aligned plus the source address mod 4, so members keep their client
+alignment. Client slots now get a new `glVertexAttribPointer` each draw (the offset moves); VBO
+slots are still elided. `glMapBufferRange` / `glUnmapBuffer` are in the non-Apple loader
+(`gl_loader_native.h`, both lists). Before Q.5 each enabled slot was a separate
+`glBufferData(STREAM_DRAW)` of `[0, maxIndex]`: `BlockBreak` uploaded 4 × 640 KB a draw once its
+ring wrapped. Measured on the M2 (`sample`, 8 s of repeated TNT blasts, main thread):
+`eden_gl_setup_attributes` 67–70 → 17–28 samples, `BlockBreak::render` 18–23 → 2–8,
+`glBufferData` 39–52 → 0. UI pixels are unchanged (`--shot` diffs only in the animated background).
+The bench is `TESTERS/q5-shim-streaming/bench.sh`; the iPad Air 2 number is still owed.
+
 ## Context guard and context loss
 Each guarded shim wrapper forwards only if `eden_gl_have_context()`; with no context (headless, or a failed
 `eden_gl_context_create`) GL calls no-op and the engine keeps running — that is what the headless
@@ -157,6 +184,28 @@ uploads amount to, plus ~80 MB more on the first frames: it keeps each upload's 
 first frame presented. With a flush after each upload the same textures cost 1.0–1.3× their nominal
 size, as they always did on the Mac, and the 64z footprint went **338 → 145 MB**. The Mac costs
 ~1.0× either way. Measured, not assumed: `WORKING/n49-r4-device-results-2026-10-04.md`.
+
+**Uploads are NPOT since Q.2 (2026-10-22).** Every context the port creates is ES 3.0 or desktop core
+(4.1/3.2), where non-power-of-two textures are core with `GL_REPEAT` and mip chains, so
+`Texture2D_web.mm` no longer pads an image to a POT canvas unless the caller passed `sizeToFit` (only the
+two block atlases, which are POT anyway); density-built labels upload at their raster size too. The
+padding was a third of decoded texture memory (149 unique textures on the desktop `--shot` tour:
+46.7 → 31.2 MiB; the menu's `ipad~pinwheel.png` alone 16 → 9.5 MiB). The shim's `glTexImage2D` needs nothing:
+the port never changes `GL_UNPACK_ALIGNMENT` from 4, so the seam rounds an NPOT canvas width up to keep a
+16-bit (2 texels), RGB888 or 8-bit (4 texels) row aligned. Pixel-diff of the tour against the POT build:
+identical apart from NEAREST picking the other texel where @2x art lands at exactly 2:1 (texel
+boundaries; X.23) and the time-driven pinwheel angle. Plan: `WORKING/npot-textures-plan-2026-10-22.md`.
+
+**One- and two-channel uploads since Q.4 (2026-10-22).** `Texture2D_web.mm` uploads a grey+alpha PNG
+(stb `comp == 2`) as LA88 when the caller asked for `Automatic` (the only such asset is the menu's
+`ipad~pinwheel.png`: 9.5 → 4.75 MiB). ES 3.0 (iOS) takes `GL_LUMINANCE_ALPHA` as is; desktop core GL
+removed `GL_LUMINANCE`/`GL_ALPHA`/`GL_LUMINANCE_ALPHA` (`GL_INVALID_ENUM`, no texture), so on every
+non-`EDEN_GL_ES_DIALECT` build the shim's `glTexImage2D` uploads them as `GL_R8`/`GL_RG8` and sets the
+texture's swizzle (GL 3.3 core; the context is 4.1) to what the ES 1 format sampled: L → (L,L,L,1),
+A → (0,0,0,A), LA → (L,L,L,A). The swizzle is texture-object state and is not reset by a later RGBA
+upload into the same name; nothing does that (`Texture2D` gens a fresh name per image). The
+`[eden-tex]` probe and the upload byte counter still see the ES format. `--shot` tour before/after:
+the menu pages differ only by the clock-driven pinwheel angle. Data: `TESTERS/q4/`.
 
 Two diagnostic hooks sit beside it, both off by default:
 - **`g_tex_probe`** (native `--mem-trace=2`): called before the upload, after `glTexImage2D`, after

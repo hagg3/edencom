@@ -7,7 +7,8 @@ the entire audio layer (sound effects, ambience, music, creature voices).
 ## Important files
 - `Classes/Resources.mm/.h` — the manager, `Resources::getResources` singleton.
 - `Classes/Texture2D.mm` — texture loading (PNG/PVR paths) + string rasterization. *Port:*
-  seam-excluded; `port/src/seam/Texture2D_web.mm` (stb_image decode, 2048 px cap) and
+  seam-excluded; `port/src/seam/Texture2D_web.mm` (stb_image decode, 4096 px cap, NPOT uploads
+  since Q.2) and
   `native/src/seam/TextRaster_native.cpp` (string raster) replace it.
 - Audio: `Classes/SimpleAudioEngine.h` is the contract. Stock implements it with
   `Classes/SimpleAudioEngine.mm` (C++ wrapper) over `SimpleAudioEngine_objc` / `CocosDenshion` /
@@ -31,6 +32,9 @@ the entire audio layer (sound effects, ambience, music, creature voices).
   flower sheet, spheremap, HUD icons…). Game vs. menu sets are loaded/unloaded on
   world enter/exit (`loadGameAssets`/`unloadGameAssets`,
   `loadMenuTextures`/`unloadMenuTextures`) to fit early-device memory.
+  Q.3: the game set (106 textures, 14.9 MiB) is also deferred to world entry on every platform via the
+  `DEFER_GAME_TEXTURES` global (default on; `LOW_MEM_DEVICE` does the same but turns lighting off);
+  `getTex` lazy-loads an empty set, and `--recolor-selftest` calls `loadGameAssets()` first.
 - `getDoorTex(color)`, `getPaintTex`, `getPaintedTex(type,color)`,
   `getSkin(model,color,state)` — lazily-built colored variants. `getSkin` keeps at most
   `SKIN_CACHE_SIZE` 48 recoloured creature skins, evicting the least recently used (P.15; was 200,
@@ -232,6 +236,18 @@ both swapped in `World::loadWorld`/`exitToMenu`.
 - **Caution:** atlas layout (coupled to `blockTypeFaces` and the 1/`ATLAS_TILES` texture-matrix
   scale), load/unload pairing (double-frees on the menu↔game boundary are a classic
   crash here).
+- **Caution (port, Q.2, 2026-10-22):** a PNG loaded with `sizeToFit == FALSE` (every texture but the
+  two block atlases) is uploaded at its **own size**, not padded to a power of two, so its canvas
+  is the image and `_maxS`/`_maxT` are 1. `Texture2D`'s draw methods never cared (they scale by
+  `_maxS`/`_maxT`); code that binds `->name` and supplies **its own** texcoords does, so such a
+  texture must be POT art or its UVs must be in image units. Every current one is POT (sky boxes,
+  skins, shadow, smoke, flame, sphere map, portal, swirl, flower, door, `ui_icons.png`, the atlases).
+  `drawNumbers` assumes its sheet is 16 cells across the *texture* (`text_numbers.png`, 512 wide).
+- **Port, Q.4 (2026-10-22):** a grey+alpha PNG loaded with `kTexture2DPixelFormat_Automatic` uploads
+  as LA88, not RGBA8888 (half the bytes, same sampled colour); today that is only `ipad~pinwheel.png`.
+  New grey+alpha art gets the same treatment; the stored `UIImage` copy the recolor path reads stays
+  RGBA8. Desktop GL mapping: `port/docs/gl-shim.md`.
+  Plan and audit: `WORKING/npot-textures-plan-2026-10-22.md`.
 
 ### Q.1a notes (2026-10-21)
 - **F5:** `loadMenuTextures` leaves `MENU_CLOUD`/`MENU_MOUNTAINS`/`MENU_CLOUD2`/`MENU_CLOUD3` as `NULL` (never drawn). **F8 (native audio):** `unloadEffect` destroys every voice playing the clip before erasing it (a looping voice re-reads `clip->pcm` each tick).

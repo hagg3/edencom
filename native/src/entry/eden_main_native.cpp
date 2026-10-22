@@ -7323,6 +7323,7 @@ extern "C" const char* eden_debug_recolor_state(int color);
 int run_recolor_selftest() {
     g_selftestTag = "eden-recolor";
     tick(3);
+    Resources::getResources->loadGameAssets();   // Q.3: the paint/door art is captured by the game-texture load, which the menu no longer does
     std::printf("[eden-recolor] metrics IS_IPAD=%d SUPPORTS_RETINA=%d SCALE=%gx%g SCREEN=%gx%g\n", (int)IS_IPAD,
                 (int)SUPPORTS_RETINA, SCALE_WIDTH, SCALE_HEIGHT, SCREEN_WIDTH, SCREEN_HEIGHT);
     char d[600];
@@ -9885,7 +9886,7 @@ int run_browser_selftest_body(bool live) {
         const std::string size = pick >= 0 ? b->entrySize(pick) : "";
         const int before = eden_menu_world_count();
         const bool ok = !id.empty() && browser_download(b, m, id.c_str());
-        const int at = menu_index_of_file((id + ".eden").c_str());
+        const int at = menu_index_of_file((id + world_ext()).c_str());
         std::snprintf(detail, sizeof(detail), "id %s (%s), worlds %d -> %d, status \"%s\", listed as \"%s\"", id.c_str(),
                       size.c_str(), before, eden_menu_world_count(), b->statusText(), at >= 0 ? eden_menu_world_name(at) : "-");
         check(ok && at >= 0 && !m->showbrowser, "the smallest archive world downloads, unpacks and is listed", detail);
@@ -9897,7 +9898,7 @@ int run_browser_selftest_body(bool live) {
             const bool played = tick_until([] { return game_mode() == 1; }, 60000, "game_mode == PLAY");
             check(played, "the downloaded world loads", "");
             if (played) { tick(60); quit_to_menu(); tick(10); }
-            const int again = menu_index_of_file((id + ".eden").c_str());
+            const int again = menu_index_of_file((id + world_ext()).c_str());
             if (again >= 0) { eden_menu_select(again); m->a_deleteConfirm(); }
         }
         if (m->showbrowser) { ui_tap_rect(b->controlRect("back")); tick(3); }

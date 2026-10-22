@@ -38,6 +38,7 @@
 #include <cstdint>
 #include <string>
 #include <unordered_map>
+#include <vector>
 // GROUP 2d's draw path is written against the GLES2 entry points (shaders, uniforms,
 // vertex attributes) that the ES1 header above does not declare. Including both is safe:
 // every shared enum and typedef has identical definitions in the two headers, and the
@@ -912,12 +913,63 @@ static GLenum eden_tex_sized_format(GLenum format, GLenum type) {
     return 0;
 }
 #endif
+#if !defined(EDEN_GL_ES_DIALECT)
+// Q.4 (F3): desktop core GL removed LUMINANCE / ALPHA / LUMINANCE_ALPHA (GL_INVALID_ENUM, no
+// texture). Each becomes a sized R8/RG8 texture plus a per-texture swizzle (GL 3.3 core; the
+// context is 4.1) that samples exactly what the ES 1 format did: L -> (L,L,L,1), A -> (0,0,0,A),
+// LA -> (L,L,L,A). ES 3.0 (iOS) still takes the unsized formats, so it never comes here.
+#ifndef GL_RED
+#define GL_RED 0x1903
+#endif
+#ifndef GL_RG
+#define GL_RG 0x8227
+#endif
+#ifndef GL_R8
+#define GL_R8 0x8229
+#endif
+#ifndef GL_RG8
+#define GL_RG8 0x822B
+#endif
+#ifndef GL_TEXTURE_SWIZZLE_R
+#define GL_TEXTURE_SWIZZLE_R 0x8E42
+#define GL_TEXTURE_SWIZZLE_G 0x8E43
+#define GL_TEXTURE_SWIZZLE_B 0x8E44
+#define GL_TEXTURE_SWIZZLE_A 0x8E45
+#endif
+static bool eden_tex_core_legacy_format(GLenum target, GLenum* format, GLint* internalformat) {
+    GLint sw[4];
+    if (*format == GL_LUMINANCE_ALPHA) {
+        *format = GL_RG; *internalformat = GL_RG8;
+        sw[0] = sw[1] = sw[2] = GL_RED; sw[3] = GL_GREEN;
+    } else if (*format == GL_LUMINANCE) {
+        *format = GL_RED; *internalformat = GL_R8;
+        sw[0] = sw[1] = sw[2] = GL_RED; sw[3] = GL_ONE;
+    } else if (*format == GL_ALPHA) {
+        *format = GL_RED; *internalformat = GL_R8;
+        sw[0] = sw[1] = sw[2] = GL_ZERO; sw[3] = GL_RED;
+    } else {
+        return false;
+    }
+    glTexParameteri(target, GL_TEXTURE_SWIZZLE_R, sw[0]);
+    glTexParameteri(target, GL_TEXTURE_SWIZZLE_G, sw[1]);
+    glTexParameteri(target, GL_TEXTURE_SWIZZLE_B, sw[2]);
+    glTexParameteri(target, GL_TEXTURE_SWIZZLE_A, sw[3]);
+    return true;
+}
+#endif
 void eden_gl_glTexImage2D(GLenum target, GLint level, GLint internalformat, GLsizei width,
                           GLsizei height, GLint border, GLenum format, GLenum type,
                           const void* pixels) {
     if (eden_gl_have_context()) {
         const int mips = (g_pending_generate_mipmap && level == 0) ? 1 : 0;
         if (g_tex_probe) g_tex_probe(0, g_tex_label, width, height, format, type, mips);
+        const GLenum esFormat = format;   // the byte accounting below counts the ES 1 layout
+#if !defined(EDEN_GL_ES_DIALECT)
+        // The swizzle is texture-object state, so an RGB(A) re-upload into a name that held an
+        // L/LA/A image would keep it. Nothing does that today (Texture2D gens a fresh name per
+        // image); a caller that starts to must reset the swizzle.
+        eden_tex_core_legacy_format(target, &format, &internalformat);
+#endif
 #if defined(EDEN_PLATFORM_IOS)
         GLenum sized = 0;
         if ((g_tex_exp & EDEN_TEX_EXP_STORAGE) && level == 0 && border == 0)
@@ -930,13 +982,13 @@ void eden_gl_glTexImage2D(GLenum target, GLint level, GLint internalformat, GLsi
         } else
 #endif
         glTexImage2D(target, level, internalformat, width, height, border, format, type, pixels);
-        if (g_tex_probe) g_tex_probe(1, g_tex_label, width, height, format, type, mips);
+        if (g_tex_probe) g_tex_probe(1, g_tex_label, width, height, esFormat, type, mips);
         {
             unsigned long long bpp = 4;
             if (type == GL_UNSIGNED_SHORT_5_6_5 || type == GL_UNSIGNED_SHORT_4_4_4_4 ||
                 type == GL_UNSIGNED_SHORT_5_5_5_1) bpp = 2;
-            else if (format == GL_ALPHA || format == GL_LUMINANCE) bpp = 1;
-            else if (format == GL_LUMINANCE_ALPHA) bpp = 2;
+            else if (esFormat == GL_ALPHA || esFormat == GL_LUMINANCE) bpp = 1;
+            else if (esFormat == GL_LUMINANCE_ALPHA) bpp = 2;
             unsigned long long b = (unsigned long long)width * (unsigned long long)height * bpp;
             if (g_pending_generate_mipmap && level == 0) b = b * 4 / 3;
             g_tex_upload_bytes += b;
@@ -946,9 +998,9 @@ void eden_gl_glTexImage2D(GLenum target, GLint level, GLint internalformat, GLsi
         g_pending_generate_mipmap = false;
         if (g_tex_flush) glFlush();   // N.4.9: see g_tex_flush
         if (g_tex_probe) {
-            g_tex_probe(2, g_tex_label, width, height, format, type, mips);
+            g_tex_probe(2, g_tex_label, width, height, esFormat, type, mips);
             glFinish();
-            g_tex_probe(3, g_tex_label, width, height, format, type, mips);
+            g_tex_probe(3, g_tex_label, width, height, esFormat, type, mips);
         }
         return;
     }
@@ -1275,8 +1327,22 @@ static const char* kSkinFragmentShader =
 
 static GLuint g_program = 0;
 static GLuint g_skin_program = 0;
-static GLuint g_stream_vbo[ATTR_COUNT] = {0, 0, 0, 0, 0, 0, 0};
-static GLuint g_stream_ibo = 0;
+// Q.5 (F11): client-memory draws (HUD, Fire, BlockBreak, object batches) stream through two rings,
+// one for vertex bytes and one for indices, instead of a glBufferData orphan per slot per draw.
+// Each upload takes the next free range: glMapBufferRange(UNSYNCHRONIZED | INVALIDATE_RANGE),
+// write, unmap. The ring is orphaned (glBufferData(NULL)) only when a range doesn't fit, so no
+// range is ever written twice inside one storage generation, and the GPU may still be reading
+// earlier ranges without a sync: the textbook streaming pattern, and the one Apple's ES guide
+// names. `size` grows to the largest single upload seen (a draw bigger than the ring).
+struct StreamRing {
+    GLuint     name = 0;
+    GLenum     target;
+    GLsizeiptr size;
+    GLsizeiptr head = 0;
+    bool       fresh = true;   // no storage yet: the first allocation must glBufferData
+};
+static StreamRing g_vring = {0, GL_ARRAY_BUFFER, (GLsizeiptr)4 << 20};
+static StreamRing g_iring = {0, GL_ELEMENT_ARRAY_BUFFER, (GLsizeiptr)256 << 10};
 
 static struct {
     GLint mvp, mv, texmat, color, useColorArray, usePointSizeArray, pointSize, pointAtten;
@@ -1412,8 +1478,8 @@ static void eden_gl_forget_deleted_buffers(GLsizei n, const GLuint* buffers) {
 void eden_gl_shim_invalidate_gl_objects(void) {
     g_program = 0;
     g_skin_program = 0;
-    g_stream_ibo = 0;
-    for (int i = 0; i < ATTR_COUNT; ++i) g_stream_vbo[i] = 0;
+    g_vring.name = 0; g_vring.head = 0; g_vring.fresh = true;
+    g_iring.name = 0; g_iring.head = 0; g_iring.fresh = true;
     // Every cache above describes state inside objects that just went away (or inside a context
     // that did). Forgetting this is how a shim starts skipping uploads that never happened.
     g_bound_program = 0;
@@ -1544,10 +1610,8 @@ static bool eden_gl_ensure_program(void) {
     EDEN_UNI(alphaTestEnabled, "u_alphaTestEnabled"); EDEN_UNI(alphaRef, "u_alphaRef");
 #undef EDEN_UNI
 
-    for (int i = 0; i < ATTR_COUNT; ++i) {
-        if (!g_stream_vbo[i]) glGenBuffers(1, &g_stream_vbo[i]);
-    }
-    if (!g_stream_ibo) glGenBuffers(1, &g_stream_ibo);
+    if (!g_vring.name) glGenBuffers(1, &g_vring.name);
+    if (!g_iring.name) glGenBuffers(1, &g_iring.name);
     return true;
 }
 
@@ -1598,10 +1662,8 @@ static bool eden_gl_ensure_skin_program(void) {
     EDEN_SKIN_UNI(fogEnd, "u_fogEnd");
 #undef EDEN_SKIN_UNI
 
-    for (int i = 0; i < ATTR_COUNT; ++i) {
-        if (!g_stream_vbo[i]) glGenBuffers(1, &g_stream_vbo[i]);
-    }
-    if (!g_stream_ibo) glGenBuffers(1, &g_stream_ibo);
+    if (!g_vring.name) glGenBuffers(1, &g_vring.name);
+    if (!g_iring.name) glGenBuffers(1, &g_iring.name);
     std::fprintf(stderr, "[eden-gl] matrix-palette skinning program ready.\n");
     return true;
 }
@@ -1691,50 +1753,114 @@ static GLsizei eden_gl_type_size(GLenum type) {
     }
 }
 
-// Binds every enabled array to its attribute slot. `vertexCeiling` is one past the highest
-// vertex the draw will touch — needed only for client-memory arrays, which must be copied into
-// a real buffer first (WebGL forbids client-side vertex data outright).
+// Q.5: reserve `bytes` in ring `r` (bound to r.target by the caller) at an offset that is 16-byte
+// aligned plus `phase` (0..3), and return a pointer to write them through; *off is the GL offset.
+// stream_end() publishes. If the driver refuses the map the bytes are staged in memory and sent
+// with glBufferSubData instead, so callers always get a writable pointer.
+static std::vector<unsigned char> g_stream_scratch;
+static bool g_stream_mapped = false;
+
+static void* eden_gl_stream_begin(StreamRing& r, GLsizeiptr bytes, GLsizeiptr phase, GLintptr* off) {
+    GLsizeiptr at = ((r.head + 15) & ~(GLsizeiptr)15) + phase;
+    if (r.fresh || at + bytes > r.size) {
+        if (bytes + phase > r.size) r.size = (bytes + phase + 0xFFFF) & ~(GLsizeiptr)0xFFFF;
+        glBufferData(r.target, r.size, nullptr, GL_STREAM_DRAW);   // orphan: a new generation
+        stat_issued();
+        r.fresh = false;
+        at = phase;
+    }
+    r.head = at + bytes;
+    *off = (GLintptr)at;
+    void* p = glMapBufferRange(r.target, (GLintptr)at, bytes,
+                               GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_RANGE_BIT |
+                               GL_MAP_UNSYNCHRONIZED_BIT);
+    stat_issued();
+    g_stream_mapped = (p != nullptr);
+    if (p) return p;
+    if (g_stream_scratch.size() < (size_t)bytes) g_stream_scratch.resize((size_t)bytes);
+    return g_stream_scratch.data();
+}
+
+static void eden_gl_stream_end(StreamRing& r, GLintptr off, GLsizeiptr bytes) {
+    if (g_stream_mapped) glUnmapBuffer(r.target);
+    else glBufferSubData(r.target, off, bytes, g_stream_scratch.data());
+    stat_issued();
+}
+
+static inline void eden_gl_bind_path_array(GLuint buf) {
+    if (g_path_array_buffer == buf) { stat_elided(); return; }
+    glBindBuffer(GL_ARRAY_BUFFER, buf);
+    g_path_array_buffer = buf;
+    stat_issued();
+}
+
+// Binds every enabled array to its attribute slot. [lo, hi) is the vertex range the draw will
+// read; it matters only for client-memory arrays, which must be copied into a real buffer first
+// (WebGL forbade client-side vertex data; core GL does too). Only [lo, hi) is copied, so vertex
+// `lo` lands at index 0: the RETURN value is that rebase (lo, or 0 when nothing was rebased), which
+// the caller subtracts from `first` or from every index.
 //
 // Item #4: every call below is issued only when this slot's specification actually differs from
-// what GL was last told. The client-memory branch still uploads unconditionally (the CPU-side
-// bytes change every frame by definition) but its glVertexAttribPointer is usually identical draw
-// to draw, and so is skipped.
-static void eden_gl_setup_attributes(GLsizei vertexCeiling) {
+// what GL was last told. Client-memory uploads happen every draw (the CPU-side bytes change every
+// frame by definition), and since Q.5 their ring offset moves too, so their glVertexAttribPointer
+// is re-issued; VBO-resident slots are still skipped when unchanged.
+static GLint eden_gl_setup_attributes(GLint lo, GLint hi) {
     // Invariant this relies on: eden_gl_restore_bindings always leaves GL_ARRAY_BUFFER equal to
     // the engine's own binding mirror, so that is what is really bound on entry.
     g_path_array_buffer = g_bound_array_buffer;
 
-    // Row #16: client-memory arrays that interleave one vertex struct (Hud/Fire/BlockBreak/object
-    // batches — position/color/texcoord sharing one pointer) used to run the per-slot branch below
-    // independently, uploading nearly the same bytes into three separate streaming VBOs once per
-    // attribute. Detect the sharing here (same nonzero stride, pointers within one stride of each
-    // other) and upload the shared span ONCE, into the lowest-numbered member's streaming VBO, with
-    // every other member pointing at a byte offset into that same buffer. Arrays with stride 0
-    // (tightly packed, single-attribute) or VBO-resident arrays are untouched by this and keep
-    // their existing branches below.
-    struct UploadGroup { const char* base; GLsizei stride; int leaderSlot; bool uploaded; };
+    // Row #16 / Q.5 (a): client-memory arrays that interleave one vertex struct (Hud/Fire/
+    // BlockBreak/object batches: position/color/texcoord/normal sharing one pointer) are uploaded
+    // ONCE, with each member pointing at its byte offset inside that one copy. Two arrays join a
+    // group when they share a stride and their first vertex's bytes all fit inside one stride
+    // window, so the shared copy is never larger than the separate ones would have been. A group's
+    // `lo` is its lowest member address and `hi` one past its highest member's last byte.
+    struct UploadGroup { uintptr_t lo, hi; GLsizei stride; GLintptr off; };
     UploadGroup groups[ATTR_COUNT];
     int groupCount = 0;
-    int groupIndexOf[ATTR_COUNT];
-    for (int i = 0; i < ATTR_COUNT; ++i) groupIndexOf[i] = -1;
-    if (vertexCeiling > 0) {
-        for (int slot = 0; slot < ATTR_COUNT; ++slot) {
-            const ClientArray& a = g_arrays[slot];
-            if (!a.enabled || a.size <= 0 || a.buffer || !a.pointer || a.stride <= 0) continue;
-            const char* p = (const char*)a.pointer;
-            int found = -1;
-            for (int g = 0; g < groupCount; ++g) {
-                if (groups[g].stride != a.stride) continue;
-                ptrdiff_t diff = p - groups[g].base;
-                if (diff >= 0 && diff < groups[g].stride) { found = g; break; }
-            }
-            if (found == -1) {
-                groups[groupCount] = { p, a.stride, slot, false };
-                found = groupCount++;
-            }
-            groupIndexOf[slot] = found;
+    int groupOf[ATTR_COUNT];
+    bool anyVbo = false;
+    for (int slot = 0; slot < ATTR_COUNT; ++slot) {
+        groupOf[slot] = -1;
+        const ClientArray& a = g_arrays[slot];
+        if (!a.enabled || a.size <= 0) continue;
+        if (a.buffer) { anyVbo = true; continue; }
+        if (!a.pointer) continue;
+        const GLsizei elem = (GLsizei)(a.size * eden_gl_type_size(a.type));
+        const GLsizei estride = a.stride ? a.stride : elem;
+        const uintptr_t p = (uintptr_t)a.pointer, e = p + (uintptr_t)elem;
+        int g = 0;
+        for (; g < groupCount; ++g) {
+            if (groups[g].stride != estride) continue;
+            uintptr_t glo = groups[g].lo < p ? groups[g].lo : p;
+            uintptr_t ghi = groups[g].hi > e ? groups[g].hi : e;
+            if (ghi - glo <= (uintptr_t)estride) { groups[g].lo = glo; groups[g].hi = ghi; break; }
+        }
+        if (g == groupCount) groups[groupCount++] = { p, e, estride, 0 };
+        groupOf[slot] = g;
+    }
+
+    // Q.5 (b): copy only [lo, hi). A VBO-resident array in the same draw can't be rebased, so a
+    // mixed draw (none today) keeps vertex numbering and copies from 0 as before.
+    const GLint base = (anyVbo || lo < 0) ? 0 : lo;
+    if (groupCount > 0 && hi > base) {
+        eden_gl_bind_path_array(g_vring.name);
+        for (int g = 0; g < groupCount; ++g) {
+            UploadGroup& u = groups[g];
+            const char* src = (const char*)u.lo + (ptrdiff_t)base * u.stride;
+            const GLsizeiptr bytes =
+                (GLsizeiptr)(hi - 1 - base) * u.stride + (GLsizeiptr)(u.hi - u.lo);
+            // phase = the source's address mod 4, so every member keeps its client alignment.
+            GLintptr off = 0;
+            void* dst = eden_gl_stream_begin(g_vring, bytes, (GLsizeiptr)(u.lo & 3), &off);
+            std::memcpy(dst, src, (size_t)bytes);
+            eden_gl_stream_end(g_vring, off, bytes);
+            u.off = off;
         }
     }
+    // hi <= base with client arrays enabled is the "VBO indices + client arrays" case
+    // eden_gl_glDrawElements describes: nothing is copied and the slot points at offset 0 of the
+    // ring. It does not occur in the engine; it would show as wrong geometry, not a crash.
 
     for (int slot = 0; slot < ATTR_COUNT; ++slot) {
         const ClientArray& a = g_arrays[slot];
@@ -1755,52 +1881,30 @@ static void eden_gl_setup_attributes(GLsizei vertexCeiling) {
         if (!c.enabled) { glEnableVertexAttribArray(slot); c.enabled = true; stat_issued(); }
         else stat_elided();
 
+        // VBO-resident (TerrainChunk/Graphics): the pointer is already a byte offset. Client
+        // memory: the member's offset inside its group's ring copy.
+        GLuint buf = a.buffer;
+        const void* ptr = a.pointer;
+        if (!buf) {
+            buf = g_vring.name;
+            const int g = groupOf[slot];
+            ptr = (const void*)(g < 0 ? 0 : groups[g].off + (GLintptr)((uintptr_t)a.pointer - groups[g].lo));
+        }
         // Does GL already hold exactly this specification for this slot? `buffer` is part of it:
         // glVertexAttribPointer latches the buffer bound AT CALL TIME, so the same offset against
-        // a different buffer is a different specification.
-        auto spec_matches = [&](GLuint buf, const void* ptr) {
-            return c.buffer == buf && c.size == a.size && c.type == a.type &&
-                   c.normalized == normalized && c.stride == estride && c.pointer == ptr;
-        };
-        auto spec_store = [&](GLuint buf, const void* ptr) {
-            c.buffer = buf; c.size = a.size; c.type = a.type;
-            c.normalized = normalized; c.stride = estride; c.pointer = ptr;
-        };
-        auto bind_array = [&](GLuint buf) {
-            if (g_path_array_buffer == buf) { stat_elided(); return; }
-            glBindBuffer(GL_ARRAY_BUFFER, buf);
-            g_path_array_buffer = buf;
-            stat_issued();
-        };
-
-        if (a.buffer) {
-            // VBO-resident (TerrainChunk/Graphics): the pointer is already a byte offset. Nothing
-            // needs uploading, so an unchanged specification means ZERO calls for this slot —
-            // which is the whole win on the terrain path, where six draws share one chunk's VBO.
-            if (spec_matches(a.buffer, a.pointer)) { stat_elided(); continue; }
-            bind_array(a.buffer);
-            glVertexAttribPointer(slot, a.size, a.type, normalized, estride, a.pointer);
-            stat_issued();
-            spec_store(a.buffer, a.pointer);
-        } else {
-            // Client memory (Hud/Terrain object batches/Fire/BlockBreak): copy the span the draw
-            // will read into this slot's streaming VBO. The span stops at the LAST vertex's own
-            // components rather than a full trailing stride, so an interleaved array is never
-            // read past its end.
-            GLsizeiptr bytes = 0;
-            if (vertexCeiling > 0) {
-                bytes = (GLsizeiptr)(vertexCeiling - 1) * estride +
-                        (GLsizeiptr)(a.size * eden_gl_type_size(a.type));
-            }
-            bind_array(g_stream_vbo[slot]);
-            glBufferData(GL_ARRAY_BUFFER, bytes, a.pointer, GL_STREAM_DRAW);
-            stat_issued();
-            if (spec_matches(g_stream_vbo[slot], (const void*)0)) { stat_elided(); continue; }
-            glVertexAttribPointer(slot, a.size, a.type, normalized, estride, (const void*)0);
-            stat_issued();
-            spec_store(g_stream_vbo[slot], (const void*)0);
+        // a different buffer is a different specification. On the terrain path, where six draws
+        // share one chunk's VBO, an unchanged specification means ZERO calls for the slot.
+        if (c.buffer == buf && c.size == a.size && c.type == a.type &&
+            c.normalized == normalized && c.stride == estride && c.pointer == ptr) {
+            stat_elided(); continue;
         }
+        eden_gl_bind_path_array(buf);
+        glVertexAttribPointer(slot, a.size, a.type, normalized, estride, ptr);
+        stat_issued();
+        c.buffer = buf; c.size = a.size; c.type = a.type;
+        c.normalized = normalized; c.stride = estride; c.pointer = ptr;
     }
+    return base;
 }
 
 // docs/rendering.md: "passes assume their predecessors restored state". The draw path binds its
@@ -1910,17 +2014,17 @@ void eden_gl_glDrawArrays(GLenum mode, GLint first, GLsizei count) {
     if (eden_gl_skinning_active()) {
         if (!eden_gl_ensure_skin_program()) return;
         eden_gl_apply_skin_uniforms();
-        eden_gl_setup_attributes((GLsizei)first + count);
-        glDrawArrays(mode, first, count);
+        const GLint base = eden_gl_setup_attributes(first, first + count);
+        glDrawArrays(mode, first - base, count);
         eden_gl_restore_bindings();
         return;
     }
     if (!eden_gl_ensure_program()) return;
     eden_gl_apply_uniforms(mode);
-    // Client arrays are uploaded from their BASE, so `first` stays a valid vertex index into
-    // the streaming buffer and is passed through unchanged.
-    eden_gl_setup_attributes((GLsizei)first + count);
-    glDrawArrays(mode, first, count);
+    // Client arrays are uploaded from vertex `first` (Q.5), so the draw starts at first - base:
+    // 0 for an all-client draw, `first` unchanged for VBO-resident arrays.
+    const GLint base = eden_gl_setup_attributes(first, first + count);
+    glDrawArrays(mode, first - base, count);
     if (eden_gl_dbg_active()) {
         g_fdbg.drawArrays++; g_fdbg.verts += count;
         if (g_dbg_lastDrawTextured) g_fdbg.texturedDraws++;
@@ -1944,46 +2048,73 @@ void eden_gl_glDrawElements(GLenum mode, GLsizei count, GLenum type, const void*
     }
 
     const void* indexOffset = indices;
-    GLsizei vertexCeiling = 0;
 
     if (g_bound_element_buffer == 0) {
-        // Client-side indices (BlockBreak.mm, Fire.mm). Two things follow: the indices need
-        // copying into a real buffer, and the highest index has to be scanned for, because it —
-        // not `count` — is what bounds the vertex data the draw will read.
-        GLsizeiptr indexBytes = (GLsizeiptr)count * eden_gl_type_size(type);
-        unsigned maxIndex = 0;
-        if (indices) {
-            if (type == GL_UNSIGNED_SHORT) {
-                const unsigned short* p = (const unsigned short*)indices;
-                for (GLsizei i = 0; i < count; ++i) if (p[i] > maxIndex) maxIndex = p[i];
-            } else if (type == GL_UNSIGNED_BYTE) {
-                const unsigned char* p = (const unsigned char*)indices;
-                for (GLsizei i = 0; i < count; ++i) if (p[i] > maxIndex) maxIndex = p[i];
-            } else if (type == GL_UNSIGNED_INT) {
-                const unsigned int* p = (const unsigned int*)indices;
-                for (GLsizei i = 0; i < count; ++i) if (p[i] > maxIndex) maxIndex = p[i];
+        // Client-side indices (BlockBreak.mm, Fire.mm). Three things follow: the indices need
+        // copying into a real buffer; the lowest and highest index have to be scanned for, because
+        // they, not `count`, bound the vertex data the draw will read; and since only that span is
+        // uploaded (Q.5), each index is rebased by the lowest one while it is copied.
+        if (!indices) return;
+        const GLsizei isz = eden_gl_type_size(type);
+        const GLsizeiptr indexBytes = (GLsizeiptr)count * isz;
+        unsigned minIndex = 0xFFFFFFFFu, maxIndex = 0;
+        if (type == GL_UNSIGNED_SHORT) {
+            const unsigned short* p = (const unsigned short*)indices;
+            for (GLsizei i = 0; i < count; ++i) {
+                if (p[i] > maxIndex) maxIndex = p[i];
+                if (p[i] < minIndex) minIndex = p[i];
             }
+        } else if (type == GL_UNSIGNED_BYTE) {
+            const unsigned char* p = (const unsigned char*)indices;
+            for (GLsizei i = 0; i < count; ++i) {
+                if (p[i] > maxIndex) maxIndex = p[i];
+                if (p[i] < minIndex) minIndex = p[i];
+            }
+        } else if (type == GL_UNSIGNED_INT) {
+            const unsigned int* p = (const unsigned int*)indices;
+            for (GLsizei i = 0; i < count; ++i) {
+                if (p[i] > maxIndex) maxIndex = p[i];
+                if (p[i] < minIndex) minIndex = p[i];
+            }
+        } else {
+            minIndex = 0;
         }
-        vertexCeiling = (GLsizei)maxIndex + 1;
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, g_stream_ibo);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, indexBytes, indices, GL_STREAM_DRAW);
-        stat_issued(2);
+        const unsigned base = (unsigned)eden_gl_setup_attributes((GLint)minIndex, (GLint)maxIndex + 1);
+
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, g_iring.name);
+        stat_issued();
         // Tell eden_gl_restore_bindings there is something to put back. The VBO-index branch below
         // never moves this binding, so it must NOT pay for a restore.
         g_path_ebo_dirty = true;
-        indexOffset = (const void*)0;
+        GLintptr off = 0;
+        void* dst = eden_gl_stream_begin(g_iring, indexBytes, 0, &off);
+        if (base == 0) {
+            std::memcpy(dst, indices, (size_t)indexBytes);
+        } else if (type == GL_UNSIGNED_SHORT) {
+            const unsigned short* p = (const unsigned short*)indices;
+            unsigned short* q = (unsigned short*)dst;
+            for (GLsizei i = 0; i < count; ++i) q[i] = (unsigned short)(p[i] - base);
+        } else if (type == GL_UNSIGNED_BYTE) {
+            const unsigned char* p = (const unsigned char*)indices;
+            unsigned char* q = (unsigned char*)dst;
+            for (GLsizei i = 0; i < count; ++i) q[i] = (unsigned char)(p[i] - base);
+        } else {
+            const unsigned int* p = (const unsigned int*)indices;
+            unsigned int* q = (unsigned int*)dst;
+            for (GLsizei i = 0; i < count; ++i) q[i] = p[i] - base;
+        }
+        eden_gl_stream_end(g_iring, off, indexBytes);
+        indexOffset = (const void*)off;
     } else {
-        // VBO-resident indices (TerrainChunk.mm's opaque pass). Every array in this path is
-        // VBO-resident too, so nothing needs uploading and the ceiling is unused. If a mixed
-        // case ever appears — VBO indices with client arrays — the max index cannot be read back
-        // cheaply and this would under-upload; it does not occur in the engine today (grep:
-        // TerrainChunk is the only glDrawElements-with-bound-EBO caller), and it would show up
-        // as missing geometry rather than as a crash, so it is called out here rather than
-        // guessed at.
-        vertexCeiling = 0;
+        // VBO-resident indices (TerrainChunk.mm's opaque pass, Model.mm's skinned batches). Every
+        // array in this path is VBO-resident too, so nothing needs uploading and the range is
+        // unused. If a mixed case ever appears — VBO indices with client arrays — the index range
+        // cannot be read back cheaply and this would under-upload; it does not occur in the engine
+        // today, and it would show up as missing geometry rather than as a crash, so it is called
+        // out here rather than guessed at.
+        eden_gl_setup_attributes(0, 0);
     }
 
-    eden_gl_setup_attributes(vertexCeiling);
     glDrawElements(mode, count, type, indexOffset);
     if (eden_gl_dbg_active()) {
         g_fdbg.drawElements++; g_fdbg.indices += count;

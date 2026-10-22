@@ -104,7 +104,8 @@ fit, a row taller than the view still shows; `rowOffset()`; content drags walk t
     through `Texture2D(string, dims, align, font, density)` with `eden_ui_raster_density()`
     (`port/src/seam/DisplayProfile_web.mm`: drawable height / ortho height, clamped 0.5–4, **1 headless**
     so no hash moves; the floor was 1 until X.20, 2026-10-17, which minified every label 0.625x through
-    NEAREST in a default window on a 1x Mac monitor). The texture remembers its `_density`; `drawText` and `drawAtPoint` divide the quad by it
+    NEAREST in a default window on a 1x Mac monitor). Since Q.2 (2026-10-22) such a label is uploaded at its W × H raster, not padded into a POT buffer.
+    The texture remembers its `_density`; `drawText` and `drawAtPoint` divide the quad by it
     (`drawText` also snaps the origin to a device pixel), so the layout in ortho units is unchanged. Any other
     `new Texture2D(NSString*, …)` site (SharedList, stubbed on native) still rasterises at 1 texel/unit and
     can opt in the same way.

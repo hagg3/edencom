@@ -16,8 +16,8 @@
 //      verbatim ports — the ES1 state-pairing risk that made Stage P2 "Opus" lived in the GL shim
 //      (gl_es1_shim.cpp GROUP 2d), not here, and that shim is done and browser-verified.
 //   2. THE PIXEL SOURCE is the real work this file does: initFromPath decodes PNGs via stb_image
-//      instead of UIImage/CGBitmapContext, replicating initFromImage's pow-of-two padding, the
-//      upside-down-texture flip (Texture2D.h's own doc comment: "content will be upside-down"),
+//      instead of UIImage/CGBitmapContext, replicating initFromImage's pow-of-two padding (only
+//      for sizeToFit since Q.2: NPOT images upload at their own size), the upside-down-texture flip (Texture2D.h's own doc comment: "content will be upside-down"),
 //      and the per-pixel-format packing (RGB565/RGBA4444/RGBA5551/RGB888) bit-for-bit.
 //
 // THE RECOLOR PIPELINE — implemented 2026-07-31 (project audit row 11 / A5), was a stub before.
@@ -209,7 +209,8 @@ namespace {
 // has one uniform source layout. `outHasAlpha` reports the image's REAL channel count (stb still
 // tells us via `comp` even when we force 4) — needed to reproduce initFromImage's "Automatic"
 // pixel-format choice (RGBA8888 if the source had alpha, RGB565 if not).
-unsigned char* EdenLoadPNG(NSString* path, int* outW, int* outH, BOOL* outHasAlpha) {
+unsigned char* EdenLoadPNG(NSString* path, int* outW, int* outH, BOOL* outHasAlpha,
+                           BOOL* outGreyAlpha) {
     NSData* fileData = [[NSData alloc] initWithContentsOfFile:path];   // Q.1 F4: released below (was autoreleased into a pool-less root)
     if (!fileData || [fileData length] == 0) {
         [fileData release];
@@ -237,6 +238,7 @@ unsigned char* EdenLoadPNG(NSString* path, int* outW, int* outH, BOOL* outHasAlp
         return nullptr;
     }
     if (outHasAlpha) *outHasAlpha = (comp == 4 || comp == 2) ? YES : NO;
+    if (outGreyAlpha) *outGreyAlpha = (comp == 2) ? YES : NO;
     return pixels;
 }
 
@@ -249,6 +251,22 @@ int EdenRoundDimension(int v, BOOL sizeToFit) {
     int i = 1;
     while ((sizeToFit ? 2 * i : i) < v) i *= 2;
     return i;
+}
+
+// Q.2 (F1): the texels a row must be a multiple of for GL's default GL_UNPACK_ALIGNMENT of 4,
+// which nothing in the port changes. A POT row of 4+ texels always was; an NPOT one in a 16-bit,
+// RGB888 or 8-bit format may not be, and would upload sheared.
+int EdenRowAlignTexels(Texture2DPixelFormat f) {
+    switch (f) {
+        case kTexture2DPixelFormat_RGBA4444:
+        case kTexture2DPixelFormat_RGBA5551:
+        case kTexture2DPixelFormat_RGB565:
+        case kTexture2DPixelFormat_LA88:   return 2;
+        case kTexture2DPixelFormat_RGB888:
+        case kTexture2DPixelFormat_L8:
+        case kTexture2DPixelFormat_A8:     return 4;
+        default:                           return 1;
+    }
 }
 
 }  // namespace
@@ -284,14 +302,27 @@ void Texture2D::initFromImage(CGImageRef image, UIImageOrientation orientation, 
     }
 
     CGSize imageSize = CGSizeMake((float)srcW, (float)srcH);
-    int width = EdenRoundDimension(srcW, sizeToFit);
-    int height = EdenRoundDimension(srcH, sizeToFit);
+    // Q.2 (F1): no POT canvas unless the caller asked for scaling. ES 3.0 and desktop core GL take
+    // NPOT textures with REPEAT and mips, and the POT padding was 14.4 MiB of 45.2 decoded (the
+    // pinwheel alone 16 -> 9.5 MiB). sizeToFit keeps the stock rule: "resample onto a POT grid" is
+    // what it asks for, and its only callers (atlas.png, atlas2.png) are POT already. Every reader
+    // of the canvas size is a draw method below, through _maxS/_maxT (plan: WORKING/
+    // npot-textures-plan-2026-10-22.md); engine code that binds `name` with its own UVs only does
+    // so for textures that are POT, whose canvas is unchanged.
+    int width = sizeToFit ? EdenRoundDimension(srcW, sizeToFit) : srcW;
+    int height = sizeToFit ? EdenRoundDimension(srcH, sizeToFit) : srcH;
     // Oversized cap: proportional halving (not a hard clamp to kMaxTextureSize_Eden), matching
     // Texture2D.mm's `while((width>kMax)||(height>kMax)){width/=2;height/=2;...}` — rare in
     // practice (the tallest asset is the 2048-row block atlas, D.2t) but kept for fidelity.
     while (width > kMaxImageTextureSize_Eden || height > kMaxImageTextureSize_Eden) {
         width /= 2;
         height /= 2;
+    }
+    // Q.2: an NPOT row gets a transparent column or three so it stays 4-byte aligned; _maxS
+    // already excludes them. A POT width is left as the stock rule made it.
+    if (width & (width - 1)) {
+        const int a = EdenRowAlignTexels(pixelFormat);
+        width = (width + a - 1) / a * a;
     }
 
     // Build the RGBA8 canvas at (width, height): sizeToFit scales the source to fill it exactly
@@ -470,9 +501,9 @@ Texture2D::Texture2D(NSString* string, CGSize dimensions, UITextAlignment alignm
 // it is 1136x852 units across a 2046x1536 px box, so every label was magnified 1.8x through
 // GL_MAG_FILTER NEAREST — the doubled-pixel softness reported as "dialogs slightly blurry".
 //
-// So rasterise at W = round(w * density) texels (font scaled to match), then copy the W x H
-// raster into the top-left of a POT buffer and let _maxS/_maxT select it. Rasterising into the
-// POT buffer directly would not do: the seam aligns text against the WHOLE buffer width, and
+// So rasterise at W = round(w * density) texels (font scaled to match) and upload the W x H
+// raster as it is (Q.2; it used to be copied into the top-left of a POT buffer). Rasterising into
+// a POT buffer directly would not do: the seam aligns text against the WHOLE buffer width, and
 // pot(w * density) is not w * density, so centred and right-aligned text would move. drawText
 // then draws W / density units — within half a device pixel of `w`, and exactly 1:1 on pixels.
 //
@@ -501,26 +532,16 @@ Texture2D::Texture2D(NSString* string, CGSize dimensions, UITextAlignment alignm
     }
     int W = (int)lroundf((float)dimensions.width * density);
     int H = (int)lroundf((float)dimensions.height * density);
-    int potW = 1, potH = 1;
-    while (potW < W) potW *= 2;
-    while (potH < H) potH *= 2;
-    if (potW > kMaxTextureSize_Eden) potW = kMaxTextureSize_Eden;
-    if (potH > kMaxTextureSize_Eden) potH = kMaxTextureSize_Eden;
-    if (W > potW) W = potW;
-    if (H > potH) H = potH;
+    if (W > kMaxTextureSize_Eden) W = kMaxTextureSize_Eden;
+    if (H > kMaxTextureSize_Eden) H = kMaxTextureSize_Eden;
     if (W <= 0 || H <= 0) return;
 
-    unsigned char* raster = (unsigned char*)calloc((size_t)W * H * 4, 1);
-    eden_rasterize_text_rgba([string UTF8String], W, H, [font pointSize] * density, (int)alignment, raster);
-    unsigned char* data = raster;
-    if (W != potW || H != potH) {
-        data = (unsigned char*)calloc((size_t)potW * potH * 4, 1);
-        for (int y = 0; y < H; y++)
-            memcpy(data + (size_t)y * potW * 4, raster + (size_t)y * W * 4, (size_t)W * 4);
-        free(raster);
-    }
+    // Q.2 (F1): uploaded at W x H. This used to copy the raster into the top-left of a POT buffer
+    // and let _maxS/_maxT select it; RGBA8888 rows are always 4-byte aligned, so nothing else owed.
+    unsigned char* data = (unsigned char*)calloc((size_t)W * H * 4, 1);
+    eden_rasterize_text_rgba([string UTF8String], W, H, [font pointSize] * density, (int)alignment, data);
     g_decodeLabel = "<text>";
-    initData(data, kTexture2DPixelFormat_RGBA8888, potW, potH, CGSizeMake(W, H), FALSE);
+    initData(data, kTexture2DPixelFormat_RGBA8888, W, H, CGSizeMake(W, H), FALSE);
     g_decodeLabel = "<CGImage>";
     free(data);
     _density = density;
@@ -655,8 +676,14 @@ void Texture2D::initFromPath(NSString* path, BOOL sizeToFit, Texture2DPixelForma
     }
 
     int srcW = 0, srcH = 0;
-    BOOL hasAlpha = NO;
-    unsigned char* src = EdenLoadPNG(path, &srcW, &srcH, &hasAlpha);
+    BOOL hasAlpha = NO, greyAlpha = NO;
+    unsigned char* src = EdenLoadPNG(path, &srcW, &srcH, &hasAlpha, &greyAlpha);
+    // Q.4 (F3): a grey+alpha PNG (the menu pinwheel, 9.5 MiB as RGBA) uploads as LA88 at half the
+    // bytes; it samples identically (L -> RGB). Only "Automatic", whose RGBA8888 choice came from
+    // the alpha alone; the stored CGImage below stays RGBA8, so recolors are unaffected. Desktop
+    // core GL has no LUMINANCE_ALPHA: the shim's glTexImage2D maps it to RG8 + a swizzle.
+    if (greyAlpha && pixelFormat == kTexture2DPixelFormat_Automatic)
+        pixelFormat = kTexture2DPixelFormat_LA88;
 
     // stb_image hands back its own allocation; CGImage wants one it can free(). They are both
     // plain malloc'd blocks in this build (stb uses STBI_MALLOC == malloc unless overridden, and

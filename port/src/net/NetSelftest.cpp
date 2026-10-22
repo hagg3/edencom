@@ -3,6 +3,7 @@
 // server on loopback, so every CI leg runs them; with `--server=host:port` (a local
 // `edenserver`, see port/tools/mp-live-gate.sh) they add a live leg. No engine, no window.
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <string>

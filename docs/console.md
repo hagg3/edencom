@@ -131,7 +131,7 @@ registry until a `--live-cmds` session registers them (C.5, below); `cmdprobe` a
 
 **Harness (`--live-cmds`, C.5).** `native/src/seam/LiveCommands_native.mm` keeps its legacy verbs byte for byte
 (`set` absolute and refusal-free, `tp`, `look`, `wait`, `rate`, `open`, `save`, `say`, `press`, `cells`,
-`cmdprobe`, `cmdtrace`, `quit`) and adds `/<line>`: a console line run through `Console::run` with the anchor
+`cmdprobe`, `cmdtrace`, `quit`; Q.5 added `photo`, the F2 screenshot) and adds `/<line>`: a console line run through `Console::run` with the anchor
 fixed at `=0 =0 =0` (relative = absolute). Output is mirrored to stdout as `[live] <text>` (errors
 `[live] ! <text>`). On the first `/` line it registers two harness-only `CF_DIAG` verbs, `cells X Y Z X2 Y2 Z2`
 and `quit`. Gate 6: `port/tools/live-cmds-gate.sh` replays `port/tools/fixtures/live-cmds/gate.txt` under the

@@ -35,6 +35,7 @@ extern bool SUPPORTS_RETINA;
 extern bool CREATURES_ON;
 extern int CAMERA_VIEW;   // H.12: 0 first person, 1 third behind, 2 third front (THIRD_PERSON, Constants.h)
 extern bool LOW_MEM_DEVICE;
+extern bool DEFER_GAME_TEXTURES;   // Q.3: game textures load in loadGameAssets (world entry), not under the menu; no lighting side effect
 extern bool LOW_GRAPHICS;
 
 

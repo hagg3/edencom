@@ -22,6 +22,8 @@
 //                              then z, then y), one `[live] cells` line
 //   cmdprobe                   print CmdScript::describe() (live / started / refused ... counts)
 //   cmdtrace 0|1               print every command-block statement as it runs
+//   photo                      take the F2 screenshot (Hud's camera path): the frame becomes the
+//                              world's thumbnail, <world file>.png beside it in Documents
 //   /<console line>            a Console line (Classes/Console.h) with the anchor fixed at =0 =0 =0, so
 //                              relative = absolute; output echoes as `[live] <text>` (errors `[live] ! <text>`).
 //                              `/cells` and `/quit` are the harness-only console verbs registered below.
@@ -54,6 +56,7 @@ int   eden_menu_create_world(void);
 void  eden_menu_set_pending_world_type(int flat);
 void  eden_menu_set_pending_world_height(int height);
 const char* eden_debug_menu_state(void);
+void  eden_take_screenshot(void);
 }
 void addlight(int xx, int zz, int yy, float brightness, Vector color);
 extern Vector colorTable[256];
@@ -207,6 +210,7 @@ bool run(const std::string& line) {
         }
     } else if (!std::strcmp(cmd, "cmdprobe")) { std::printf("[live] cmd %s\n", CmdScript::describe()); std::fflush(stdout); }
     else if (!std::strcmp(cmd, "cmdtrace")) CmdScript::trace = atoi(rest) != 0;
+    else if (!std::strcmp(cmd, "photo")) eden_take_screenshot();
     else if (!std::strcmp(cmd, "quit")) { SDL_Event e; SDL_zero(e); e.type = SDL_EVENT_QUIT; SDL_PushEvent(&e); }
     else std::fprintf(stderr, "[live] unknown: %s\n", line.c_str());
     return false;
