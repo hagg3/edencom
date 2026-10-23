@@ -2430,7 +2430,8 @@ bool RenderModels()
     model_render_count=0;
     int debug_count1=0;
     
-    for(int i=0;i<nguys;i++){
+    const int creature_slots=MpWorld::active()?0:nguys;   // MP.13: creatures never update in a session, so never draw the ones LoadModels2 placed
+    for(int i=0;i<creature_slots;i++){
         if(!guys[i].alive)continue;
         if(!guys[i].update){
           //  printg("model alive but not updating[%d]: (%f,%f,%f)\n",i,guys[i].pos.x,guys[i].pos.y,guys[i].pos.z);

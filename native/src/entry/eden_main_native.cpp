@@ -88,6 +88,9 @@
 //                        arbitration, the latched slop. --look-mutate=<name> puts one bug back
 //                        (lastonly int enginepts noflush noslop noclear nodecay unlatched multi);
 //                        each must FAIL it.
+//   --fly-selftest       FM.2: noclip -- Fly's measured cruise, noclip cruise and crisp stop, pitch
+//                        steers, passes a wall Fly stops at, lava-proof, y floor, unstick, and a
+//                        20 s run streaming keeps up with (run at --radius=9 and --radius=16).
 //   --gamepad-selftest   Stage 2: attaches an SDL VIRTUAL gamepad, drives its sticks/buttons, and
 //                        asserts the engine moved — so it needs no physical controller and runs
 //                        headless. Native counterpart of web-port-final:web/tools/headless-gamepad-test.js.
@@ -315,6 +318,8 @@
 #include "../../../Classes/TerrainGenerator.h"   // --classic-selftest (H.4)
 #include "../../../Classes/MpWorld.h"            // --mp-replay (MP.3a)
 #include "../../../Classes/TouchLook.h"          // --look-selftest (Stage L)
+extern bool  NOCLIP_MUTATE_MOVE;                    // Classes/Player.mm (--fly-mutate=move, FM.4)
+extern float NOCLIP_SPEED;                          // Classes/Player.mm (--fly-selftest, FM.2)
 #include "../../../Classes/ChatFeed.h"           // MP.7: --mp-replay leg 8
 #include "../../../Classes/ServerListMenu.h"     // MP.6: --ui-selftest, --shot, --mp-mock
 #include "../../../Classes/ServerFormMenu.h"
@@ -556,6 +561,7 @@ struct Options {
     bool passVsync = false;              // --pass-vsync: keep vsync on (the player's frame; present then holds the vsync wait)
     std::string convertAnswer;           // --convert-answer=upgrade|keep|cancel: --convert-prompt-selftest
     std::string classicFixture = "../port/tools/fixtures/classic/legacy-1315365413.bin.gz";   // --classic-fixture=
+    std::string flyMutate;               // --fly-mutate=move: --fly-selftest's mutation leg (FM.4)
     std::string lookMutate;              // --look-mutate=<name>: --look-selftest's mutation legs (Stage L)
     std::string classicMutate;           // --classic-mutate=tables|trunc|noborder: --classic-selftest's mutation legs
     std::string propsMutate;             // --props-mutate=nogen: --props-selftest's mutation leg (H.15)
@@ -6929,7 +6935,7 @@ int run_look_selftest() {
     Terrain* ter = World::getWorld->terrain;
     pl->invertcam = 0;
     TOUCH_LOOK_SMOOTH = 0.0f;   // raw exactly; step 4 turns it on
-    TOUCH_LOOK_GLIDE = 0;
+    TOUCH_LOOK_GLIDE = 0.0f;
     hud->mode = MODE_BUILD;     // so a tap that is not cleared builds (steps 5-6)
     hud->blocktype = TYPE_STONE;
     int c[6];
@@ -7145,7 +7151,7 @@ int run_look_selftest() {
     // within 1 s; a touch-down catches it.
     {
         for (int glide = 0; glide < 2; ++glide) {
-            TOUCH_LOOK_GLIDE = glide;
+            TOUCH_LOOK_GLIDE = glide ? 0.2f : 0.0f;   // half-life, s
             level(0.0f);
             drag(x0 - 60.0f, y0, 30, 4.0f);   // ~240 pt/s at release
             const float yR = pl->yaw;
@@ -7176,7 +7182,21 @@ int run_look_selftest() {
         for (int f = 1; f <= 10; ++f) { eden_input_pointer_event(1, id, x0 + 3.0f * f, y0); tick(1); }   // not a tap
         eden_input_pointer_event(2, id, x0 + 30.0f, y0);
         tick(2);
-        TOUCH_LOOK_GLIDE = 0;
+        TOUCH_LOOK_GLIDE = 0.0f;
+        // Slider range: a longer half-life coasts further than a shorter one.
+        float far[2];
+        const float hl[2] = {0.1f, 0.6f};
+        for (int k = 0; k < 2; ++k) {
+            TOUCH_LOOK_GLIDE = hl[k];
+            level(0.0f);
+            drag(x0 - 60.0f, y0, 30, 4.0f);
+            const float yR = pl->yaw;
+            tick(120);
+            far[k] = turned(yR, pl->yaw);
+        }
+        TOUCH_LOOK_GLIDE = 0.0f;
+        std::snprintf(d, sizeof(d), "coast after release: half-life 0.1 s +%.3f deg, 0.6 s +%.3f deg", far[0], far[1]);
+        check(far[0] > 0.1f && far[1] > far[0] * 1.5f, "step 7: the glide slider sets how far it coasts", d);
     }
 
     // ---- Step 8: arbitration unchanged. A drag on the joystick pad turns nothing; a second world
@@ -7197,20 +7217,20 @@ int run_look_selftest() {
         float x = x0 - 80.0f;
         eden_input_pointer_event(0, a, x, y0);
         tick(1);
-        for (int f = 0; f < 15; ++f) { x += 2.0f; eden_input_pointer_event(1, a, x, y0); tick(1); }
+        for (int f = 0; f < 3; ++f) { x += 2.0f; eden_input_pointer_event(1, a, x, y0); tick(1); }   // inside the slop
         const float yA = pl->yaw;
         eden_input_pointer_event(0, b, x0 + 100.0f, y0 + 40.0f);
         tick(1);
-        for (int f = 0; f < 10; ++f) { x += 2.0f; eden_input_pointer_event(1, a, x, y0); tick(1); }
+        for (int f = 0; f < 30; ++f) { x += 2.0f; eden_input_pointer_event(1, a, x, y0); tick(1); }
         const float yB = pl->yaw;
         eden_input_pointer_event(2, a, x, y0);
         for (int f = 1; f <= 10; ++f) { eden_input_pointer_event(1, b, x0 + 100.0f + 3.0f * f, y0 + 40.0f); tick(1); }
         eden_input_pointer_event(2, b, x0 + 130.0f, y0 + 40.0f);
         tick(2);
         std::snprintf(d, sizeof(d), "one finger %.3f deg (want %.3f), then %.4f with two down", turned(0.0f, yA),
-                      (30.0f - slop) * deg, turned(yA, yB));
-        check(std::fabs(turned(0.0f, yA) - (30.0f - slop) * deg) < 0.01f && std::fabs(turned(yA, yB)) < 1e-4f,
-              "step 8: a second world finger ends the first one's look (num > 1)", d);
+                      0.0f, turned(yA, yB));
+        check(std::fabs(turned(0.0f, yA)) < 1e-4f && std::fabs(turned(yA, yB)) < 1e-4f,
+              "step 8: a second world finger stops a look that has not latched yet (num > 1)", d);
 
         level(0.0f);
         const int id = ++ident;
@@ -7227,6 +7247,34 @@ int run_look_selftest() {
                       80.0f - 20.0f * deg);
         check(std::fabs(pTop - 80.0f) < 1e-3f && std::fabs(pBack - (80.0f - 20.0f * deg)) < 0.01f,
               "step 8: pitch clamps at +80 and turns back at once", d);
+    }
+
+    // ---- Step 8b (L.7): a look finger that is already dragging keeps turning when another finger
+    // taps (stick finger held on the pad, look drag, a third finger taps and lifts).
+    {
+        float jx = 0, jy = 0, jw = 0, jh = 0;
+        const char* st = eden_debug_display_state();
+        const char* p2 = st ? std::strstr(st, "\"rjoystick\":[") : nullptr;
+        if (p2) std::sscanf(p2 + 13, "%f,%f,%f,%f", &jx, &jy, &jw, &jh);
+        level(0.0f);
+        const int stick = ++ident, a = ++ident, b = ++ident;
+        if (jw > 0 && jh > 0) { eden_input_pointer_event(0, stick, jx + jw * 0.5f, SCREEN_HEIGHT - (jy + jh * 0.5f)); tick(1); }
+        float x = x0 - 80.0f;
+        eden_input_pointer_event(0, a, x, y0);
+        tick(1);
+        for (int f = 0; f < 15; ++f) { x += 2.0f; eden_input_pointer_event(1, a, x, y0); tick(1); }
+        eden_input_pointer_event(0, b, x0 + 100.0f, y0 + 40.0f);   // the tap
+        tick(2);
+        eden_input_pointer_event(2, b, x0 + 100.0f, y0 + 40.0f);
+        tick(2);
+        const float yT = pl->yaw;
+        for (int f = 0; f < 20; ++f) { x += 2.0f; eden_input_pointer_event(1, a, x, y0); tick(1); }
+        const float after = turned(yT, pl->yaw);
+        eden_input_pointer_event(2, a, x, y0);
+        if (jw > 0 && jh > 0) eden_input_pointer_event(2, stick, jx + jw * 0.5f, SCREEN_HEIGHT - (jy + jh * 0.5f));
+        tick(2);
+        std::snprintf(d, sizeof(d), "turned %.3f deg in the 20 frames after the tap (want %.3f)", after, 40.0f * deg);
+        check(std::fabs(after - 40.0f * deg) < 0.05f, "step 8b: the look keeps turning after another finger taps (L.7)", d);
     }
 
     // ---- Step 9 (D5): the slop is latched. 40 points out, back through the start and 40 beyond:
@@ -8459,6 +8507,7 @@ void check_clear_of_map_border(const char* what) {
 // housekeeping, not the cure.
 void rise_until_clear(int maxFrames) {
     if (!eden_get_fly_mode()) {
+        set_setting_by_key("fly", 1);   // FM.1: V only cycles when "Allow fly" is on
         push_key(SDL_SCANCODE_V, true);
         push_key(SDL_SCANCODE_V, false);
         tick(10);
@@ -8484,6 +8533,269 @@ void rise_until_clear(int maxFrames) {
     }
     push_key(SDL_SCANCODE_SPACE, false);
     tick(60);
+}
+
+// ---------------------------------------------------------------------------------------------
+// --fly-selftest (FM.2): noclip physics, WORKING/fly-modes-plan-2026-10-23.md §3.2–3.4. Fixed
+// 1/60 s etime, W and Space through the real key path, look set on the Player. Measures Fly's
+// real cruise (what NOCLIP_SPEED was chosen against), then noclip: cruise, pitch steers, crisp
+// stop, passes a wall Fly stops at, lava does nothing, the y floor, unstick in stone vs no drop
+// in open air, and a long run that streaming keeps up with (run it at --radius=9 and 16).
+// FM.4 adds the cycle/toast and touch gates; --fly-mutate=move calls move() in noclip again and
+// the wall gate must FAIL (native.yml runs it on linux/windows).
+// ---------------------------------------------------------------------------------------------
+int run_fly_selftest() {
+    g_selftestTag = "eden-fly";
+    g_tickInput = true;   // W/Space/Ctrl/Shift reach the engine through the input tick
+    const char* name = g_opt.world.empty() ? "fly-selftest" : g_opt.world.c_str();
+    if (!open_world(name, g_opt.height)) return 1;
+    g_app->viewController.setFixedEtime(1.0f / 60.0f);
+    tick(60);
+    Player* pl = World::getWorld->player;
+    char d[240];
+    auto fill = [](int x0, int x1, int z0, int z1, int y0, int y1, int type) {
+        for (int x = x0; x <= x1; ++x)
+            for (int z = z0; z <= z1; ++z)
+                for (int y = y0; y <= y1; ++y) eden_console_setblock(x, z, y, type);
+    };
+    auto at = [&](float x, float y, float z) {
+        eden_console_teleport(x, y, z);
+        tick(2);
+        pl->vel = MakeVector(0, 0, 0);
+        pl->yaw = 0; pl->pitch = 0;   // yaw 0 faces +x
+    };
+    auto speed_over = [&](int n) {   // blocks/s over the next n ticks, 3D
+        const Vector a = pl->pos;
+        tick(n);
+        const Vector b = pl->pos;
+        const float dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+        return std::sqrt(dx * dx + dy * dy + dz * dz) * 60.0f / (float)n;
+    };
+    const int bx = (int)kMapCentre, bz = (int)kMapCentre, by = g_opt.height - 8;
+    fill(bx - 2, bx + 90, bz - 2, bz + 2, by - 2, by + 3, TYPE_NONE);   // an open corridor along +x
+
+
+    if (g_opt.flyMutate == "move") NOCLIP_MUTATE_MOVE = true;
+    else if (!g_opt.flyMutate.empty()) { std::fprintf(stderr, "[eden-fly] unknown --fly-mutate=%s\n", g_opt.flyMutate.c_str()); return 1; }
+    auto press = [&](SDL_Scancode k) { push_key(k, true); tick(2); push_key(k, false); tick(2); };
+    auto toast = [&]() -> std::string {
+        NSString* t = World::getWorld->hud->sb->current();
+        return t ? std::string([t UTF8String]) : std::string("(none)");
+    };
+
+    // FM.4 gate 1: V cycles Off -> Fly -> Noclip -> Off and the toast says so.
+    set_setting_by_key("fly", 1);
+    fly_set_state(0);
+    at(bx + 0.5f, by + 0.5f, bz + 0.5f);
+    std::string tt[3]; int st[3];
+    for (int i = 0; i < 3; ++i) { press(SDL_SCANCODE_V); tt[i] = toast(); st[i] = fly_get_state(); }
+    std::snprintf(d, sizeof(d), "states %d %d %d, toasts '%s' '%s' '%s'", st[0], st[1], st[2], tt[0].c_str(), tt[1].c_str(), tt[2].c_str());
+    check(st[0] == 1 && st[1] == 2 && st[2] == 0 && tt[0] == "Fly ON" && tt[1] == "NOCLIP on" && tt[2] == "Fly OFF",
+          "V cycles Off -> Fly -> Noclip -> Off with the toast", d);
+
+    // Gate 2: Allow fly off pins Off, no toast; turning it off in noclip leaves noclip, clear of solids.
+    set_setting_by_key("fly", 0);
+    World::getWorld->hud->sb->clear();
+    for (int i = 0; i < 3; ++i) press(SDL_SCANCODE_V);
+    std::snprintf(d, sizeof(d), "state %d, toast '%s'", fly_get_state(), toast().c_str());
+    check(fly_get_state() == 0 && toast() == "(none)", "Allow fly off: V does nothing, no toast", d);
+    set_setting_by_key("fly", 1);
+    fill(bx + 30, bx + 32, bz - 1, bz + 1, by - 1, by + 1, TYPE_STONE);
+    fly_set_state(2);
+    at(bx + 31.5f, by + 0.5f, bz + 0.5f);   // inside the block
+    tick(5);
+    set_setting_by_key("fly", 0);
+    tick(2);
+    std::snprintf(d, sizeof(d), "state %d, blocked %d", fly_get_state(), (int)pl->boxBlocked());
+    check(fly_get_state() == 0 && !pl->boxBlocked(), "turning Allow fly off in noclip leaves it, clear of solids", d);
+    fill(bx + 30, bx + 32, bz - 1, bz + 1, by - 1, by + 1, TYPE_NONE);
+    set_setting_by_key("fly", 1);
+
+    // Gate 7: touch. Jump/crouch slots are fly up/down (m_jump never set), fire/pickaxe taps no
+    // longer move y, the cycle button cycles only when allowed.
+    fly_set_state(1);
+    at(bx + 0.5f, by + 0.5f, bz + 0.5f);
+    tick(30);
+    Hud* hud = World::getWorld->hud;
+    bool jumpSeen = false;
+    float ty = pl->pos.y;
+    eden_tap_hud_button_begin(8);
+    for (int i = 0; i < 60; ++i) { tick(1); if (hud->m_jump) jumpSeen = true; }
+    const bool upFlag = hud->m_flyup;
+    eden_tap_hud_button_end(8);
+    tick(30);
+    const float up = pl->pos.y - ty;
+    ty = pl->pos.y;
+    eden_tap_hud_button_begin(9);
+    for (int i = 0; i < 60; ++i) { tick(1); if (hud->m_jump) jumpSeen = true; }
+    const bool downFlag = hud->m_flydown;
+    eden_tap_hud_button_end(9);
+    tick(30);
+    const float down = pl->pos.y - ty;
+    std::snprintf(d, sizeof(d), "hold jump slot: dy %+.2f (m_flyup %d); crouch slot: dy %+.2f (m_flydown %d); m_jump seen %d",
+                  up, (int)upFlag, down, (int)downFlag, (int)jumpSeen);
+    check(up > 2.0f && down < -2.0f && upFlag && downFlag && !jumpSeen, "touch: jump/crouch slots are fly up/down while flying", d);
+    tick(60);
+    ty = pl->pos.y;
+    for (int b : {7, 1, 7, 1}) { eden_tap_hud_button_begin(b); tick(4); eden_tap_hud_button_end(b); tick(4); }   // fire x2, blocks x2 (each toggles back)
+    tick(30);
+    std::snprintf(d, sizeof(d), "dy %+.3f after tapping fire/blocks in Fly", pl->pos.y - ty);
+    check(std::fabs(pl->pos.y - ty) < 0.05f, "touch: fire and block taps no longer move y", d);
+    fly_set_state(0);
+    eden_tap_hud_button_begin(10); tick(4); eden_tap_hud_button_end(10); tick(4);
+    const int s1 = fly_get_state();
+    eden_tap_hud_button_begin(10); tick(4); eden_tap_hud_button_end(10); tick(4);
+    const int s2 = fly_get_state();
+    set_setting_by_key("fly", 0);
+    fly_set_state(0);
+    tick(2);
+    eden_tap_hud_button_begin(10); tick(4); eden_tap_hud_button_end(10); tick(4);
+    const int s3 = fly_get_state();
+    set_setting_by_key("fly", 1);
+    std::snprintf(d, sizeof(d), "allowed: %d then %d; not allowed: %d", s1, s2, s3);
+    check(s1 == 1 && s2 == 2 && s3 == 0, "touch: the cycle button cycles only when Allow fly is on", d);
+    fly_set_state(0);
+
+    // Fly's real cruise (plan §3.2: measure before choosing NOCLIP_SPEED).
+    fly_set_state(1);
+    at(bx + 0.5f, by + 0.5f, bz + 0.5f);
+    push_key(SDL_SCANCODE_W, true);
+    tick(240);
+    const float flyCruise = speed_over(60);
+    push_key(SDL_SCANCODE_W, false);
+    std::printf("[eden-fly] Fly cruise (W, fly_accel 1, 60 Hz): %.1f b/s; NOCLIP_SPEED %.1f\n",
+                flyCruise, NOCLIP_SPEED);
+
+    // Noclip cruise and crisp stop.
+    fly_set_state(2);
+    at(bx + 0.5f, by + 0.5f, bz + 0.5f);
+    push_key(SDL_SCANCODE_W, true);
+    tick(60);
+    const float ncCruise = speed_over(30);
+    push_key(SDL_SCANCODE_W, false);
+    tick(30);
+    const float ncStopped = speed_over(6);
+    std::snprintf(d, sizeof(d), "%.1f b/s (NOCLIP_SPEED %.1f)", ncCruise, NOCLIP_SPEED);
+    check(std::fabs(ncCruise - NOCLIP_SPEED) < NOCLIP_SPEED * 0.05f, "noclip cruise is NOCLIP_SPEED", d);
+    std::snprintf(d, sizeof(d), "%.3f b/s 0.5 s after release", ncStopped);
+    check(ncStopped < 0.5f, "noclip stops crisply on release", d);
+
+    // Pitch steers: +45 rises, 0 stays level.
+    at(bx + 0.5f, by - 1.5f - 10.0f, bz + 0.5f);   // start lower so the rise fits under the clamp
+    pl->pitch = 45;
+    float y0 = pl->pos.y;
+    push_key(SDL_SCANCODE_W, true);
+    tick(60);
+    const float riseUp = pl->pos.y - y0;
+    pl->pitch = 0;
+    tick(30);   // let vel.y decay
+    y0 = pl->pos.y;
+    tick(60);
+    const float riseLevel = pl->pos.y - y0;
+    push_key(SDL_SCANCODE_W, false);
+    tick(30);
+    std::snprintf(d, sizeof(d), "pitch +45: dy %.2f in 1 s; pitch 0: dy %.3f", riseUp, riseLevel);
+    check(riseUp > 2.0f && std::fabs(riseLevel) < 0.1f, "noclip: look pitch steers the movement", d);
+
+    // A wall Fly stops at, noclip passes.
+    const int wx = bx + 8;
+    fill(wx, wx, bz - 2, bz + 2, by - 2, by + 3, TYPE_STONE);
+    fly_set_state(1);
+    at(bx + 0.5f, by + 0.5f, bz + 0.5f);
+    push_key(SDL_SCANCODE_W, true);
+    tick(120);
+    push_key(SDL_SCANCODE_W, false);
+    const float flyX = pl->pos.x;
+    fly_set_state(2);
+    at(bx + 0.5f, by + 0.5f, bz + 0.5f);
+    push_key(SDL_SCANCODE_W, true);
+    tick(120);
+    push_key(SDL_SCANCODE_W, false);
+    const float ncX = pl->pos.x;
+    std::snprintf(d, sizeof(d), "wall at x+%d: Fly reached x+%.1f, noclip x+%.1f", wx - bx, flyX - bx, ncX - bx);
+    check(flyX < wx && ncX > wx + 2, "noclip passes a wall Fly stops at", d);
+
+    // Unstick: inside solid stone pops up to air; in open air leaving noclip moves nothing.
+    tick(30);
+    at(wx + 0.5f, by + 0.5f, bz + 0.5f);   // inside the wall (noclip still on)
+    tick(10);
+    y0 = pl->pos.y;
+    const bool wasBlocked = pl->boxBlocked();
+    fly_set_state(0);
+    std::snprintf(d, sizeof(d), "blocked %d -> %d, y %.2f -> %.2f", wasBlocked, (int)pl->boxBlocked(), y0, pl->pos.y);
+    check(wasBlocked && !pl->boxBlocked() && pl->pos.y - y0 <= 7.0f && pl->pos.y > y0,
+          "leaving noclip inside stone pops up to air", d);
+    fly_set_state(2);
+    at(bx + 40.5f, by + 0.5f, bz + 0.5f);
+    tick(10);
+    y0 = pl->pos.y;
+    fly_set_state(0);
+    std::snprintf(d, sizeof(d), "y %.3f -> %.3f", y0, pl->pos.y);
+    check(pl->pos.y == y0, "leaving noclip in open air does not drop to the floor", d);
+
+    // Lava: noclip is invulnerable, Fly is not.
+    const int lx = bx + 60;
+    fill(lx - 1, lx + 1, bz - 1, bz + 1, by - 1, by + 2, TYPE_LAVA);
+    auto lava_life = [&](int state) {
+        fly_set_state(state);
+        at(lx + 0.5f, by + 0.5f, bz + 0.5f);
+        pl->life = 1; pl->dead = FALSE;
+        float lo = 1;
+        for (int i = 0; i < 120; ++i) { tick(1); if (pl->life < lo) lo = pl->life; }
+        return lo;
+    };
+    const float ncLife = lava_life(2), flyLife = lava_life(1);
+    fill(lx - 1, lx + 1, bz - 1, bz + 1, by - 1, by + 2, TYPE_NONE);
+    fly_set_state(0);
+    pl->life = 1; pl->dead = FALSE;
+    tick(10);
+    std::snprintf(d, sizeof(d), "lowest life in 2 s of lava: noclip %.3f, Fly %.3f", ncLife, flyLife);
+    check(ncLife == 1.0f && flyLife < 0.99f, "noclip is invulnerable (lava), Fly is not", d);
+
+    // The y floor: diving down through the ground stops at y 1, no fall-out respawn.
+    fly_set_state(2);
+    at(bx + 20.5f, 12.0f, bz + 0.5f);
+    pl->pitch = -80;
+    push_key(SDL_SCANCODE_W, true);
+    push_key(SDL_SCANCODE_LCTRL, true);
+    float yMin = 1e9f, yMax = -1e9f;
+    for (int i = 0; i < 180; ++i) {
+        tick(1);
+        if (pl->pos.y < yMin) yMin = pl->pos.y;
+        if (pl->pos.y > yMax) yMax = pl->pos.y;
+    }
+    push_key(SDL_SCANCODE_W, false);
+    push_key(SDL_SCANCODE_LCTRL, false);
+    std::snprintf(d, sizeof(d), "y stayed in [%.2f, %.2f] diving for 3 s from y 12", yMin, yMax);
+    check(yMin >= 1.0f && yMin < 1.5f && yMax <= 12.5f, "noclip is clamped at y 1 (no respawn)", d);
+
+    // A long noclip run: streaming keeps up, no stall inside solids. Sprint along +x at mid height
+    // (through hills) for 20 s; the player must cover the distance and land in loaded columns.
+    at(kMapCentre - 300.0f, (float)g_opt.height / 3.0f, kMapCentre + 0.5f);
+    tick(30);
+    const float lx0 = pl->pos.x;
+    push_key(SDL_SCANCODE_W, true);
+    push_key(SDL_SCANCODE_LSHIFT, true);
+    const Uint64 t0 = SDL_GetTicks();
+    int unloaded = 0;   // frames whose own column was not resident yet (stream behind the player)
+    for (int i = 0; i < 1200; ++i) {
+        tick(1);
+        if (getLandc2((int)pl->pos.x, (int)pl->pos.z, 0) <= 0) ++unloaded;
+    }
+    const Uint64 ms = SDL_GetTicks() - t0;
+    push_key(SDL_SCANCODE_W, false);
+    push_key(SDL_SCANCODE_LSHIFT, false);
+    tick(120);
+    const float ran = pl->pos.x - lx0;
+    const int below = getLandc2((int)pl->pos.x, (int)pl->pos.z, 0);
+    std::snprintf(d, sizeof(d), "%.0f blocks in 20 s engine time (%.1f s wall), own column unloaded "
+                  "%d/1200 frames, bedrock below after = %d", ran, ms / 1000.0f, unloaded, below);
+    check(ran > NOCLIP_SPEED * 18.0f && unloaded == 0 && below > 0, "a long noclip run: streaming keeps up", d);
+    fly_set_state(0);
+
+    g_app->viewController.setFixedEtime(0.0f);
+    std::printf("[eden-fly] %s (%d failure(s))\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
+    return g_selftestFailures ? 1 : 0;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -11504,7 +11816,9 @@ static int parse_one_arg(const char* a) {
         else if (!std::strcmp(a, "--gamepad-selftest")) { g_opt.mode = "gamepad-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--touch-selftest")) { g_opt.mode = "touch-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--look-selftest"))  { g_opt.mode = "look-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--fly-selftest"))   { g_opt.mode = "fly-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--look-trace"))     eden_look_trace_enable(1);
+        else if (starts_with(a, "--fly-mutate="))     g_opt.flyMutate = a + 13;
         else if (starts_with(a, "--look-mutate="))    g_opt.lookMutate = a + 14;
         else if (!std::strcmp(a, "--empty-bit-selftest")) { g_opt.mode = "empty-bit-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--newblocks-selftest")) { g_opt.mode = "newblocks-selftest"; g_opt.headless = true; }
@@ -11956,6 +12270,7 @@ static int eden_main_after_args(int argc, char** argv) {
         else if (!std::strcmp(g_opt.mode, "gamepad-selftest")) rc = run_gamepad_selftest();
         else if (!std::strcmp(g_opt.mode, "touch-selftest")) rc = run_touch_selftest();
         else if (!std::strcmp(g_opt.mode, "look-selftest")) rc = run_look_selftest();
+        else if (!std::strcmp(g_opt.mode, "fly-selftest")) rc = run_fly_selftest();
         else if (!std::strcmp(g_opt.mode, "empty-bit-selftest")) rc = run_empty_bit_selftest();
         else if (!std::strcmp(g_opt.mode, "newblocks-selftest")) rc = run_newblocks_selftest();
         else if (!std::strcmp(g_opt.mode, "net-selftest"))  rc = eden_net_selftest_run(g_opt.netServer.c_str());

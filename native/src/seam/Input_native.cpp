@@ -93,8 +93,7 @@ double eden_platform_now_ms(void);
 void eden_movement_tick(void);
 int  eden_ui_wants_cursor(void);
 int  eden_hud_in_menu(void);
-int  eden_get_fly_mode(void);
-void eden_set_fly_mode(int on);
+void eden_cycle_fly_mode(void);
 void eden_set_block_preview(int on);
 int  eden_get_block_preview(void);
 void eden_toggle_build_size(void);
@@ -521,11 +520,11 @@ void gamepad_button_edges() {
         g_padPrev[b.btn] = down;
     }
 
-    // Y toggles fly, same as V on the keyboard.
+    // Y cycles fly mode, same as V on the keyboard.
     {
         const bool down = SDL_GetGamepadButton(g_pad, SDL_GAMEPAD_BUTTON_NORTH);
         if (down && !g_padPrev[SDL_GAMEPAD_BUTTON_NORTH])
-            eden_set_fly_mode(eden_get_fly_mode() ? 0 : 1);
+            eden_cycle_fly_mode();
         g_padPrev[SDL_GAMEPAD_BUTTON_NORTH] = down;
     }
 
@@ -942,7 +941,7 @@ void eden_native_input_handle_event(const SDL_Event& e) {
                 else if (mi == g_miBlockPicker)  hud_tap(1);
                 else if (mi == g_miColorPicker)  hud_tap(2);
                 else if (mi == g_miFireTool)     hud_tap(7);
-                else if (mi == g_miFlyToggle)    eden_set_fly_mode(eden_get_fly_mode() ? 0 : 1);
+                else if (mi == g_miFlyToggle)    eden_cycle_fly_mode();
                 else if (mi == g_miBlockPreview) eden_set_block_preview(eden_get_block_preview() ? 0 : 1);
                 else if (mi == g_miBuildSize)    eden_toggle_build_size();
                 else if (mi == g_miHideHud)      eden_toggle_hide_hud();

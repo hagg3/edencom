@@ -94,7 +94,7 @@ static const Setting kSettings[] = {
   { "creatures",         "Creatures",         "Gameplay",  KIND_TOGGLE, ENG_CREATURES,  0,   1,   1,   1,  "Off is faster.",                       NULL },
   // Fly mode lives in Gameplay (was Experiments). The four sliders default to the original feel
   // (accel 10x walk, drag .995/frame, rise/fall JUMP_SPEED*3, no speed cap); see FLY_* in Classes/Player.mm.
-  { "fly",               "Fly mode",          "Gameplay",  KIND_TOGGLE, -1,             0,   1,   1,   0,  "Space and Ctrl to rise and fall.",                   NULL },
+  { "fly",               "Allow fly",         "Gameplay",  KIND_TOGGLE, -1,             0,   1,   1,   0,  "V or the fly button: Off, Fly, Noclip.",                   NULL },
   { "fly_accel",         "Fly acceleration",  "Gameplay",  KIND_RANGE,  -1,          .05f,   1, .05f,   1,  "Lower is gentler and easier to hold still.", NULL, "fly" },
   { "fly_max_speed",     "Fly top speed",     "Gameplay",  KIND_RANGE,  -1,             0, 100,   1,   0,  "Blocks per second. 0 is unlimited.", NULL, "fly" },
   { "fly_braking",       "Fly braking",       "Gameplay",  KIND_RANGE,  -1,             0,   1, .05f,   0,  "Higher stops sooner when you let go.", NULL, "fly" },
@@ -116,10 +116,11 @@ static const Setting kSettings[] = {
   { "mouse_sensitivity_y", "Mouse sensitivity (Y)", "Controls", KIND_RANGE, -1,      .25f,  3, .05f,  1,  NULL,  NULL },
   { "invert_look",       "Invert look",       "Controls",  KIND_TOGGLE, -1,             0,   1,   1,   0,  NULL,                                                               NULL },
   // Stage L: touch drag-camera rows (Classes/TouchLook.h). Shown only with touch input; the mouse rows are
-  // hidden then (eden_settings_native_hidden). Smoothing 0 = raw exactly. Glide (Experiments) is off by default.
+  // hidden then (eden_settings_native_hidden). Smoothing 0 = raw exactly. Glide is a half-life in seconds, 0 = off (default).
   { "touch_look_speed",  "Touch look speed",  "Controls",  KIND_RANGE,  -1,          .25f,  3, .05f,  1,  "Drag camera, left-right.", NULL },
   { "touch_look_speed_y", "Touch look speed (Y)", "Controls", KIND_RANGE, -1,        .25f,  3, .05f,  1,  "Drag camera, up-down.", NULL },
   { "touch_look_smoothing", "Touch look smoothing", "Controls", KIND_RANGE, -1,       0,   1, .05f, .2f, "0 follows your finger exactly.", NULL },
+  { "touch_look_glide", "Touch look glide", "Controls", KIND_RANGE, -1,               0, .6f, .05f,  0,  "Camera keeps turning after you lift your finger. 0 stops at once.", NULL },
   // Row #24 (gamepad). Two translators read these now — public/eden-gamepad.js on web and
   // native/src/seam/Input_native.cpp (Phase N Stage 2) on native — both of them pure translators
   // over the existing input entry points. The rows deliberately do
@@ -211,7 +212,6 @@ static const Setting kSettings[] = {
   { "fire_chars_vines",  "Fire chars vines",  "Experiments", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Burning vines turn to dark stone.", NULL },
   { "creature_walk_voices", "Creature walking sounds", "Experiments", KIND_TOGGLE, -1,  0,   1,   1,   0,  "Creatures call out as they start walking.", NULL },
   { "double_brush",      "Double-size build brush", "Experiments", KIND_TOGGLE, -1,      0,   1,   1,   0,  "A key builds 2x2x2 blocks at a time.", NULL },
-  { "touch_look_glide",  "Touch look glide",  "Experiments", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Camera keeps turning briefly after you lift your finger.", NULL },
   { "camera_view",       "Camera view",       "Experiments", KIND_ENUM,   -1,           0,   2,   1,   0,  "Third person shows your body. F5 cycles.", "First person,Third person,Third person (front)" },
   // MP.8: comma-separated matchmaker addresses (host[:port], default 27020); empty = no Matchmakers tab.
   { "mp_matchmakers",    "Matchmakers",       "Experiments", KIND_TEXT,   -1,           0,   0,   0,   0,  "Lists other servers. Off when empty.", NULL },
@@ -412,7 +412,7 @@ static void eden_apply_input_profile(void) {
 
 extern "C" void eden_keybind_reset_all(void);   // Stage 5.2, defined further down
 extern "C" void eden_set_block_preview(int on);
-extern "C" void eden_set_fly_mode(int on);
+extern "C" void eden_set_fly_allowed(int on);
 extern float FLY_ACCEL_MULT, FLY_MAX_SPEED, FLY_BRAKING, FLY_VERTICAL_MULT;
 extern "C" void eden_set_crouch_enabled(int on);
 extern "C" void eden_set_fire_melts_ice(int on);
@@ -480,7 +480,7 @@ static void eden_apply_setting(int i, bool commitEngine) {
     if (std::strcmp(s.key, "block_preview") == 0) {
         eden_set_block_preview(v != 0.0f ? 1 : 0);
     } else if (std::strcmp(s.key, "fly") == 0) {
-        eden_set_fly_mode(v != 0.0f ? 1 : 0);
+        eden_set_fly_allowed(v != 0.0f ? 1 : 0);
     } else if (std::strcmp(s.key, "fly_accel") == 0) {
         FLY_ACCEL_MULT = v;
     } else if (std::strcmp(s.key, "fly_max_speed") == 0) {
@@ -545,7 +545,7 @@ static void eden_apply_setting(int i, bool commitEngine) {
     } else if (std::strcmp(s.key, "touch_look_smoothing") == 0) {
         TOUCH_LOOK_SMOOTH = v;
     } else if (std::strcmp(s.key, "touch_look_glide") == 0) {
-        TOUCH_LOOK_GLIDE = v != 0.0f ? 1 : 0;
+        TOUCH_LOOK_GLIDE = v > 0.0f ? v : 0.0f;
     } else if (std::strcmp(s.key, "crosshair") == 0) {
         eden_crosshair = v;
     } else if (std::strcmp(s.key, "advanced_movement") == 0) {
@@ -1203,7 +1203,7 @@ static const Keybind kKeybinds[] = {
   { "crouch",      "Crouch",                "Movement",  KC_LCTRL,   KC_RCTRL,  KB_CONTINUOUS, KB_BOTH },
 
   { "fireTool",    "Fire tool",             "Actions",   KC_F,       0,         KB_MOMENTARY,  KB_BOTH },
-  { "flyToggle",   "Toggle fly mode",       "Actions",   KC_V,       0,         KB_MOMENTARY,  KB_BOTH },
+  { "flyToggle",   "Cycle fly mode",        "Actions",   KC_V,       0,         KB_MOMENTARY,  KB_BOTH },
   { "blockPicker", "Block picker",          "Actions",   KC_E,       0,         KB_MOMENTARY,  KB_BOTH },
   { "colorPicker", "Colour picker",         "Actions",   KC_C,       0,         KB_MOMENTARY,  KB_BOTH },
   { "buildSize",   "Build brush size",      "Actions",   KC_X,       0,         KB_MOMENTARY,  KB_NATIVE },

@@ -17,7 +17,7 @@ float TOUCH_LOOK_DEG_PER_PT=0.5f;
 float TOUCH_LOOK_SENS_X=1.0f;
 float TOUCH_LOOK_SENS_Y=1.0f;
 float TOUCH_LOOK_SMOOTH=0.2f;   // "low"; tuned in L.6
-int   TOUCH_LOOK_GLIDE=0;
+float TOUCH_LOOK_GLIDE=0.0f;   // half-life, seconds; 0 = off
 float TOUCH_SLOP_PT=12.0f;      // UIKit's pan slop is ~10; stock's 15 engine pt was ~27 iOS pt
 int   TOUCH_LOOK_MUTATE=0;
 
@@ -28,7 +28,6 @@ const double kMaxCutoffHz=30.0;   // smoothing ~0: barely filtered
 const double kMinCutoffHz=1.0;    // smoothing 1: heavy
 const double kBeta=0.05;          // cutoff rises 1 Hz per 20 pt/s, so a flick is unfiltered
 const double kDerivCutoffHz=4.0;  // the speed estimate (also the glide's start velocity)
-const double kGlideHalfLife=0.2;  // seconds
 const double kGlideStopDegS=3.0;  // ...or 5% of where it started, whichever is larger
 
 struct Slot{
@@ -121,7 +120,7 @@ void touchlook_end(int slot,itouch* t,float* dyaw,float* dpitch){
         s.fx=s.rx;
         s.fy=s.ry;
     }
-    if(TOUCH_LOOK_GLIDE){
+    if(TOUCH_LOOK_GLIDE>0){
         float gy,gp;
         toDegrees(s.vx,s.vy,&gy,&gp);
         const double mag=sqrt((double)gy*gy+(double)gp*gp);
@@ -134,12 +133,12 @@ void touchlook_end(int slot,itouch* t,float* dyaw,float* dpitch){
 
 void touchlook_glide(float etime,float* dyaw,float* dpitch){
     *dyaw=*dpitch=0;
-    if(!TOUCH_LOOK_GLIDE) g_gliding=false;   // switched off mid-glide
+    if(!(TOUCH_LOOK_GLIDE>0)) g_gliding=false;   // switched off mid-glide
     if(!g_gliding||etime<=0) return;
     *dyaw=(float)(g_glideYaw*etime);
     *dpitch=(float)(g_glidePitch*etime);
     if(TOUCH_LOOK_MUTATE&TL_MUT_NODECAY) return;
-    const double k=pow(0.5,(double)etime/kGlideHalfLife);
+    const double k=pow(0.5,(double)etime/(double)TOUCH_LOOK_GLIDE);
     g_glideYaw*=k;
     g_glidePitch*=k;
     if(sqrt(g_glideYaw*g_glideYaw+g_glidePitch*g_glidePitch)<g_glideStop) g_gliding=false;
@@ -157,7 +156,7 @@ int touchlook_mutation_bit(const char* name){
     static const struct{ const char* name; int bit; } k[]={
         {"lastonly",TL_MUT_LASTONLY},{"int",TL_MUT_INT},{"enginepts",TL_MUT_ENGINEPTS},
         {"noflush",TL_MUT_NOFLUSH},{"noslop",TL_MUT_NOSLOP},{"noclear",TL_MUT_NOCLEAR},
-        {"nodecay",TL_MUT_NODECAY},{"unlatched",TL_MUT_UNLATCHED},{"multi",TL_MUT_MULTI},
+        {"nodecay",TL_MUT_NODECAY},{"unlatched",TL_MUT_UNLATCHED},{"multi",TL_MUT_MULTI},{"clearlatch",TL_MUT_CLEARLATCH},
     };
     for(unsigned i=0;i<sizeof(k)/sizeof(k[0]);i++)
         if(name&&strcmp(name,k[i].name)==0) return k[i].bit;

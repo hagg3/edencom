@@ -20,6 +20,11 @@ class World;
 
 // Player::takeDamage cause, picks the death sound (H.6).
 enum DEATH_CAUSES{DEATH_NONE=0,DEATH_LAVA=1,DEATH_CREATURE=2,DEATH_TNT=3};
+// FM.1 fly state: 0 Off, 1 Fly, 2 Noclip. Cycle is a no-op unless FLY_ALLOWED.
+int  fly_get_state();
+void fly_set_state(int s);
+void fly_cycle_state();
+
 class Player {
 public:
 	float boxbase;
@@ -61,6 +66,10 @@ public:
     void render();
     void setSpeed(Vector svel,float speed);
     BOOL checkCollision();
+    BOOL postMove(float etime);       // FM.2: update()'s tail after move(), shared with noclip
+    void noclipUpdate(float etime);   // FM.2
+    BOOL boxBlocked();                // FM.2: box overlaps a block vertc() treats as solid
+    void unstick();                   // FM.2: pop up out of solid on leaving noclip
     Vector lol[50];
     
     Vector lol1[50];

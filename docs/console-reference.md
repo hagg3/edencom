@@ -169,7 +169,7 @@ A variable is `group.name`. **`NAME`** prints it, **`NAME VALUE`** sets it. Name
 | `gameplay.health` | on / off | on | at once | Falls, fire and creatures hurt. |
 | `gameplay.autojump` | on / off | on | at once | Auto-jump |
 | `gameplay.creatures` | on / off | on | at once | Off is faster. |
-| `gameplay.fly` | on / off | off | at once | Space and Ctrl to rise and fall. |
+| `gameplay.fly` | on / off | off | at once | V or the fly button: Off, Fly, Noclip. |
 | `gameplay.fly_accel` | 0.05 to 1 | 1 | at once | Lower is gentler and easier to hold still. |
 | `gameplay.fly_max_speed` | 0 to 100 | 0 | at once | Blocks per second. 0 is unlimited. |
 | `gameplay.fly_braking` | 0 to 1 | 0 | at once | Higher stops sooner when you let go. |
@@ -199,6 +199,7 @@ A variable is `group.name`. **`NAME`** prints it, **`NAME VALUE`** sets it. Name
 | `controls.touch_look_speed` | 0.25 to 3 | 1 | at once | Drag camera, left-right. (diagnostics builds) |
 | `controls.touch_look_speed_y` | 0.25 to 3 | 1 | at once | Drag camera, up-down. (diagnostics builds) |
 | `controls.touch_look_smoothing` | 0 to 1 | 0.2 | at once | 0 follows your finger exactly. (diagnostics builds) |
+| `controls.touch_look_glide` | 0 to 0.6 | 0 | at once | Camera keeps turning after you lift your finger; the value is the half-life in seconds, 0 stops at once. (diagnostics builds) |
 | `controls.gamepad` | on / off | on | at once | Use a connected controller. |
 | `controls.gamepad_look_sensitivity` | 0.25 to 3 | 1 | at once | Gamepad look speed |
 | `controls.gamepad_deadzone` | 0.05 to 0.5 | 0.15 | at once | Raise it if the camera drifts. |
@@ -238,7 +239,6 @@ A variable is `group.name`. **`NAME`** prints it, **`NAME VALUE`** sets it. Name
 | `experiments.fire_chars_vines` | on / off | off | at once | Burning vines turn to dark stone. |
 | `experiments.creature_walk_voices` | on / off | off | at once | Creatures call out as they start walking. |
 | `experiments.double_brush` | on / off | off | at once | A key builds 2x2x2 blocks at a time. |
-| `experiments.touch_look_glide` | on / off | off | at once | Camera keeps turning briefly after you lift your finger. (diagnostics builds) |
 | `experiments.camera_view` | First person, Third person, Third person (front) | First person | at once | Third person shows your body. F5 cycles. |
 
 #### `saves.`
@@ -263,7 +263,7 @@ A variable is `group.name`. **`NAME`** prints it, **`NAME VALUE`** sets it. Name
 | `keys.flyDown` | a key name, or none | - | at once | Fly down |
 | `keys.crouch` | a key name, or none | - | at once | Crouch |
 | `keys.fireTool` | a key name, or none | - | at once | Fire tool |
-| `keys.flyToggle` | a key name, or none | - | at once | Toggle fly mode |
+| `keys.flyToggle` | a key name, or none | - | at once | Cycle fly mode |
 | `keys.blockPicker` | a key name, or none | - | at once | Block picker |
 | `keys.colorPicker` | a key name, or none | - | at once | Colour picker |
 | `keys.buildSize` | a key name, or none | - | at once | Build brush size |

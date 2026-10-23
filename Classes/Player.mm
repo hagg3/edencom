@@ -33,9 +33,16 @@ static bool onground;
 static bool onramp;
 static bool jumpandbuild;
 
-bool FLY_MODE=true;
+bool FLY_MODE=true;     // flying: Fly or Noclip
 bool FLY_UP=true;
 bool FLY_DOWN=true;
+bool NOCLIP_MODE=false; // Noclip (a state of FLY_MODE): Player::noclipUpdate, never move()
+bool FLY_ALLOWED=false; // Settings > Gameplay > Allow fly; V / the cycle button do nothing when false
+// FM.2 noclip tuning (no Settings rows). Keep NOCLIP_SPEED·FLY_ACCEL_MULT well under 100.5 b/s:
+// update()'s substep split clamps |vel| to JUMP_SPEED*15.
+float NOCLIP_SPEED=60;  // blocks/s at full input (×1.3 sprint). Fly cruises at ~97.5 (the clamp)
+bool NOCLIP_MUTATE_MOVE=false;   // --fly-mutate=move (FM.4): noclip falls through to move() again; --fly-selftest must FAIL
+float NOCLIP_RATE=10;   // 1/s: velocity approaches the target by 1-e^(-rate·t)
 // Fly tuning (Settings › Gameplay). Defaults reproduce the original feel exactly.
 float FLY_ACCEL_MULT=1;      // × the stock 10× walk acceleration
 float FLY_MAX_SPEED=0;       // horizontal blocks/s cap; 0 = unlimited
@@ -80,7 +87,31 @@ Player::Player(World* lworld){
 	
 }
 
+// FM.1: the one place fly state changes (0 Off, 1 Fly, 2 Noclip), so V, gamepad Y, the touch
+// button and Settings cannot disagree. Thrust flags are cleared on every transition.
+int fly_get_state(){ return NOCLIP_MODE?2:(FLY_MODE?1:0); }
+void fly_set_state(int s){
+    bool leavingNoclip=NOCLIP_MODE&&s!=2;
+    FLY_MODE=(s==1||s==2);
+    NOCLIP_MODE=(s==2);
+    FLY_UP=FLY_DOWN=false;
+    if(leavingNoclip){
+        World* w=World::getWorld;
+        if(w&&w->player)w->player->unstick();   // FM.2
+    }
+}
+void fly_cycle_state(){
+    if(!FLY_ALLOWED) return;
+    int s=(fly_get_state()+1)%3;
+    fly_set_state(s);
+    World* w=World::getWorld;
+    if(w&&w->hud&&w->hud->sb)
+        w->hud->sb->setStatus(s==1?@"Fly ON":(s==2?@"NOCLIP on":@"Fly OFF"),1.5f);
+}
+
 void Player::reset(){
+    NOCLIP_MODE=false;   // FM.2: no unstick here; the caller places the player
+    fly_set_state(0);
 	jumpandbuild=FALSE;
 	lpos.x=pos.x;
 	lpos.y=pos.y;
@@ -371,7 +402,10 @@ void Player::processInput(float etime){
 	}
 	if(num>1&&!(TOUCH_LOOK_MUTATE&TL_MUT_MULTI)){
 		for(int i=0;i<MAX_TOUCHES;i++){
-			if(touches[i].inuse==usage_id&&touches[i].down==M_DOWN){
+			// L.7: a look already latched keeps looking when another finger lands (a tap to
+			// build while dragging); only the fingers still inside their slop give up the camera.
+			if(touches[i].inuse==usage_id&&touches[i].down==M_DOWN&&
+			   (!touches[i].looklatched||(TOUCH_LOOK_MUTATE&TL_MUT_CLEARLATCH))){
 				touches[i].movecam=FALSE;
 			}		
 		}		
@@ -839,6 +873,7 @@ static BOOL ladderIsVine=FALSE;
 static BOOL lastOnIce;
 
 void Player::takeDamage(float damage,int cause){
+    if(NOCLIP_MODE)return;   // FM.2: noclip is invulnerable to every cause
     life-=damage;
     if(!health_option){
         if(life<.36){
@@ -956,8 +991,14 @@ BOOL Player::update(float etime){
             
         }
         yaw+=dyaw;
-        
-        
+
+
+    }
+    // FM.2: noclip never calls move(), which is where collision, gravity, liquids, ladders,
+    // pickups, portals, lava and footsteps all live.
+    if(NOCLIP_MODE&&!NOCLIP_MUTATE_MOVE){
+        noclipUpdate(etime);
+        return postMove(etime);
     }
 	Hud* hud=World::getWorld->hud;
 
@@ -1172,10 +1213,10 @@ BOOL Player::update(float etime){
             vel.y=-JUMP_SPEED*2;
     }else if(FLY_MODE){
         vel.y=0;
-        if(FLY_UP){
+        if(FLY_UP||World::getWorld->hud->m_flyup){
             vel.y+=JUMP_SPEED*3*FLY_VERTICAL_MULT;
             
-        }if (FLY_DOWN) {
+        }if (FLY_DOWN||World::getWorld->hud->m_flydown) {
             vel.y+=-JUMP_SPEED*3*FLY_VERTICAL_MULT;
             
         }
@@ -1195,7 +1236,12 @@ BOOL Player::update(float etime){
 	lpos.y=pos.y;
 	lpos.z=pos.z;
     this->move(etime);
-	
+    return postMove(etime);
+}
+
+// FM.2: everything update() did after move(), shared with the noclip branch (edge wall, sky,
+// camera, third-person body, touch etime, ambience). A change here reaches both paths.
+BOOL Player::postMove(float etime){
     // X.6: worlds with data outside the bundled square (post-2.1 clients) have no edge wall.
     // H.4: a Classic world made "2880 square" has the same wall (its land ends there).
     TerrainGenerator* tg=World::getWorld->terrain->tgen;
@@ -2054,6 +2100,97 @@ void Player::groundPlayer(){
     // and leave the player embedded -- every portal/home warp comes through here.
     while(checkCollision()&&pos.y<=T_HEIGHT+36){
         pos.y+=1;
+    }
+}
+// FM.2: is the player's box inside something vertc() would push it out of? Only the blocks the
+// box overlaps (checkCollision()'s 3x3 would also count a wall beside the player). Liquids,
+// flowers, doors, portals, golden cubes and ladders/vines don't count, so leaving noclip under
+// water stays under water.
+BOOL Player::boxBlocked(){
+    float bot=pos.y-boxheight/2;
+    float top=pos.y+boxheight/2;
+    for(int x=(int)floorf(pos.x-boxbase/2);x<=(int)floorf(pos.x+boxbase/2-.001f);x++){
+        for(int z=(int)floorf(pos.z-boxbase/2);z<=(int)floorf(pos.z+boxbase/2-.001f);z++){
+            for(int y=(int)floorf(bot);y<=(int)floorf(top-.001f);y++){
+                int type=getLandc2(x,z,y);
+                if(type<=0)continue;
+                if(blockinfo[type]&(IS_LIQUID|IS_DOOR|IS_PORTAL))continue;
+                if(type==TYPE_FLOWER||type==TYPE_GOLDEN_CUBE||type==TYPE_LADDER||type==TYPE_VINE)continue;
+                return TRUE;
+            }
+        }
+    }
+    return FALSE;
+}
+// FM.2: leaving noclip inside solid pops straight up to air. Not groundPlayer(): its first loop
+// drops the player to the floor, which would snap a mid-air exit down.
+void Player::unstick(){
+    while(boxBlocked()&&pos.y<=T_HEIGHT+36){
+        pos.y+=1;
+    }
+    vel=MakeVector(0,0,0);
+    lpos=pos;
+}
+// FM.2: Source-style noclip. Velocity approaches the 3D wish direction (look pitch included)
+// exponentially, so it is frame-rate independent and stops crisply when input stops.
+void Player::noclipUpdate(float etime){
+    if(yaw>=360)yaw-=360;
+    if(yaw<=-360)yaw+=360;
+    if(pitch<=-80)pitch=-80;
+    if(pitch>=80)pitch=80;
+    float cp=cos(D2R(pitch));
+    Vector fwd=MakeVector(cos(D2R(yaw))*cp,sin(D2R(pitch)),sin(D2R(yaw))*cp);
+    Vector right=MakeVector(cos(D2R(yaw+90)),0,sin(D2R(yaw+90)));
+    float up=((FLY_UP||World::getWorld->hud->m_flyup)?1.0f:0.0f)-((FLY_DOWN||World::getWorld->hud->m_flydown)?1.0f:0.0f);
+    // walk_force is only a direction here: the keyboard seam folds a frame-rate factor into its
+    // length and the joystick passes a unit vector. The stick/sprint magnitude is in
+    // max_walk_speed (setSpeed: walk_speed·SPEED_M·1.3), so 1 = normal, 1.3 = sprint/full stick.
+    float fz=walk_force.z,fx=walk_force.x;
+    float fl=sqrtf(fz*fz+fx*fx);
+    float m=0;
+    if(fl>.0001f){
+        fz/=fl;fx/=fl;
+        m=max_walk_speed/(SPEED_M*1.3f);
+        if(m>1.3f)m=1.3f;
+        if(m<0)m=0;
+    }
+    Vector wish;
+    wish.x=(fwd.x*fz+right.x*fx)*m;
+    wish.y=fwd.y*fz*m+up;
+    wish.z=(fwd.z*fz+right.z*fx)*m;
+    float wmax=m>1?m:1;   // diagonals and forward+rise are not faster
+    float wl2=v_length2(wish);
+    if(wl2>wmax*wmax){
+        float k=wmax/sqrtf(wl2);
+        wish.x*=k;wish.y*=k;wish.z*=k;
+    }
+    float target=NOCLIP_SPEED*FLY_ACCEL_MULT;
+    float a=1-expf(-NOCLIP_RATE*etime);
+    vel.x+=(wish.x*target-vel.x)*a;
+    vel.y+=(wish.y*target-vel.y)*a;
+    vel.z+=(wish.z*target-vel.z)*a;
+    if(FLY_MAX_SPEED>0){
+        float l2=v_length2(vel);
+        if(l2>FLY_MAX_SPEED*FLY_MAX_SPEED){
+            float k=FLY_MAX_SPEED/sqrtf(l2);
+            vel.x*=k;vel.y*=k;vel.z*=k;
+        }
+    }
+    accel=MakeVector(0,0,0);
+    speed=hspeed=vspeed=0;
+    onground=onramp=FALSE;
+    climbing=inLiquid=onIce=jumping=FALSE;
+    World::getWorld->hud->underLiquid=FALSE;
+    lpos=pos;
+    pos.x+=vel.x*etime;
+    pos.y+=vel.y*etime;
+    pos.z+=vel.z*etime;
+    if(pos.y<1){
+        pos.y=1;
+        if(vel.y<0)vel.y=0;
+    }else if(pos.y>T_HEIGHT+8){
+        pos.y=T_HEIGHT+8;
+        if(vel.y>0)vel.y=0;
     }
 }
 static int icesound=0;

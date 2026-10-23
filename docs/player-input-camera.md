@@ -128,10 +128,45 @@ results — callers read them immediately after the call.
   stop at a literal `y <= 100`; it is `T_HEIGHT + 36` now, which is the same 100 at 64z and the
   difference between landing and being left embedded in rock in a 256-tall world
   (`WORKING/256z-format-backport-plan-2026-08-05.md`, breaker B2).
-- **FLY_MODE** (this fork, `FLY_MODE`/`FLY_UP`/`FLY_DOWN` at the top of `Player.mm`): three bools
-  enable flight; fire/pickaxe buttons become up/down thrust. They initialise `true`, but the port
-  drives them from Settings › Experiments › **Fly mode** (`fly`, default **off**,
-  `eden_set_fly_mode`); Space/Ctrl rise and fall. Off is stock behaviour.
+- **Fly state** (this fork, FM.1; `FLY_MODE`/`FLY_UP`/`FLY_DOWN`/`NOCLIP_MODE`/`FLY_ALLOWED` at the top
+  of `Player.mm`): the state is Off / Fly / Noclip. `FLY_MODE` means "flying" (Fly *or* Noclip), so
+  existing readers stay right; `NOCLIP_MODE` marks Noclip (see **Noclip** below). `fly_set_state(0|1|2)` / `fly_cycle_state()` / `fly_get_state()` (declared in
+  `Player.h`) own every transition: they clear `FLY_UP/FLY_DOWN`, and a cycle toasts through
+  `hud->sb->setStatus` (*Fly ON* / *NOCLIP on* / *Fly OFF*). `fly_cycle_state()` does nothing
+  (silently) unless `FLY_ALLOWED`. `Player::reset()` sets Off, so the state is never saved and a
+  world load or respawn starts on foot. The Settings › Gameplay row `fly` (default **off**) is
+  now **Allow fly** → `eden_set_fly_allowed` (turning it off while flying drops to Off). V and
+  gamepad Y call `eden_cycle_fly_mode`; Space/Ctrl rise and fall while flying.
+  `eden_set_fly_mode(on)` stays the programmatic switch (on = Fly, ignores *Allow fly*; selftests
+  use it); also `eden_get_fly_state/set_fly_state/get_fly_allowed`. Off is stock behaviour.
+- **Noclip** (FM.2): `Player::update` branches right after `processInput` and the yaw animation:
+  `noclipUpdate(etime)` then `postMove(etime)`, and **never calls `move()`**. `postMove` is the old
+  tail of `update` after `move()` (map-edge wall, sky colour, camera, third-person body, touch
+  `etime`, ambience), shared by both paths, so a change there reaches noclip too. Because collision
+  and every trigger live in `move()`/`vertc()`, noclip skips: push-out, gravity, ladders, swimming
+  and flow, ramps/ice, trampoline, lava damage, golden-cube pickup, portal entry, footsteps/landing
+  sounds, autojump and the `y<-10` respawn; `hud->underLiquid` stays false (no tint/underwater bed).
+  A new trigger added to `vertc`/`move` is skipped by noclip unless added to the branch too.
+  - Movement is Source-style: wish = look forward (yaw **and pitch**) × forward input + right ×
+    strafe + up × (`FLY_UP` − `FLY_DOWN`). `walk_force` gives only the direction (the keyboard seam
+    folds a frame-rate factor into its length; the joystick passes a unit vector); the magnitude is
+    `max_walk_speed/(SPEED_M·1.3)` (1 normal, 0.5 walk, 1.3 sprint / full stick), capped so diagonals
+    aren't faster. `vel` approaches `wish·NOCLIP_SPEED·FLY_ACCEL_MULT` by `1−e^(−NOCLIP_RATE·t)`:
+    frame-rate independent, and the same law is the crisp stop. `FLY_MAX_SPEED` caps |vel| (3D);
+    `fly_braking`/`fly_vertical` don't apply. `pos.y` is clamped to `[1, T_HEIGHT+8]`.
+  - **Speeds** (globals, no Settings rows): `NOCLIP_SPEED` 60 b/s (78 sprinting), `NOCLIP_RATE` 10/s.
+    Keep `NOCLIP_SPEED·1.3·FLY_ACCEL_MULT` under **100.5 b/s**: `update()` splits a frame while
+    `etime·|vel| > 0.1` and clamps `|vel|` to `JUMP_SPEED*15` first. Fly itself cruises at ~97.5 b/s
+    with W held at 60 Hz (measured, `--fly-selftest`), i.e. it rides that clamp.
+  - `takeDamage` returns at once in noclip (lava, creatures, TNT, command blocks).
+  - **Leaving noclip** (`fly_set_state` to anything else, including *Allow fly* turned off) calls
+    `Player::unstick()`: while `boxBlocked()` step up 1 block (cap `T_HEIGHT+36`), then zero `vel`.
+    `boxBlocked()` scans only the cells the box overlaps and counts what `vertc` pushes out of (not
+    liquids, flowers, doors, portals, golden cubes, ladders/vines), so an exit under water stays
+    under water and one beside a wall doesn't climb it. Not `groundPlayer()`: its first loop drops
+    the player to the floor. `Player::reset()` clears `NOCLIP_MODE` first, so a load/respawn doesn't
+    unstick at the old position.
+  - Gate: `--fly-selftest` (`native/README.md`).
 - **Crouch** (port addition, `CROUCH_HELD` global + `Player::canFit`): holding crouch (keyboard,
   Ctrl by default, or the HUD button) eases `boxheight` from `1.85` down to `0.925` over 0.25 s
   (`CROUCH_ANIM_TIME`), feet planted, so the player fits through 1-block gaps. Standing back up is
@@ -214,10 +249,13 @@ a ~27 iOS pt dead zone (D4), and a drag sweeping back past its start stopping th
   settles when the finger stops, and the release (`touchlook_end`, in the `M_RELEASE` loop, which runs
   *before* the look loop) consumes that frame's motion and flushes the remainder. Stock dropped the
   release frame's motion.
-- **Glide** (`TOUCH_LOOK_GLIDE`, default off): on release the speed estimate keeps turning the
-  camera, halving every 0.2 s, stopping under max(3°/s, 5% of start); a touch-down or turning it off
+- **Glide** (`TOUCH_LOOK_GLIDE`, a float half-life in seconds, Settings › Controls slider 0–0.6,
+  default 0 = off): on release the speed estimate keeps turning the
+  camera, halving every `TOUCH_LOOK_GLIDE` s, stopping under max(3°/s, 5% of start); a touch-down or turning it off
   stops it.
-- Unchanged: `inuse`, `movecam`, the `num > 1` rule (a second world finger ends the look), invert
+- L.7: the `num > 1` rule clears `movecam` only on touches not yet `looklatched`; before, a tap
+  landing on a second finger permanently killed the dragging finger's look (`--look-mutate=clearlatch`).
+- Unchanged: `inuse`, `movecam`, the `num > 1` rule (a second not-yet-looking world finger gives up the camera), invert
   (`invertcam` negates both axes as before), the pitch clamp, mouse and gamepad look.
 - Gate: `--look-selftest` steps 0–9 plus `--look-mutate=` legs (native/README.md). `TOUCH_LOOK_MUTATE`
   bits are test-only hooks in `Input.mm`/`Player.mm`/`TouchLook.mm`; 0 in every real run.

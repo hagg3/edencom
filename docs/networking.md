@@ -203,6 +203,8 @@ Plan §5-§7; code `Classes/MpWorld.mm` (second half), `Terrain::setCellState`, 
   a recorder client's reply). Mac numbers 2026-10-17: 614k records decode 23 ms, sync 25 ms over 3 frames (worst 12.7 ms),
   playable 100 ms; storm 32 frames, worst 1.7 ms; live join to a local server 101 ms.
 
+**Noclip in a session (FM.2).** Allowed: noclip is purely client-side (`Player::noclipUpdate`, `docs/player-input-camera.md`), and a vanilla server only sees the positions we send, including ones inside blocks, with no way to object. Golden cubes are scenery in a session anyway, and noclip fires no portals.
+
 ## Edits out and in (Stage MP, MP.4)
 Plan §8-§10; code `MpWorld::intent*` (end of `Classes/MpWorld.mm`), `applyActionLive`, `Terrain::update`'s burn list,
 `SignTool::answer`.

@@ -137,7 +137,7 @@ private:
 
     GLW::Label      m_title;
     GLW::Label      m_anchor, m_matchLabel;
-    GLW::Button     m_back, m_collapse, m_run, m_tabBtn, m_up, m_down, m_newPill;
+    GLW::Button     m_back, m_collapse, m_tabsChip, m_run, m_tabBtn, m_up, m_down, m_newPill;
     GLW::IconRail   m_rail;
     GLW::ScrollView m_scroll;            // the Console tab's scrollback
     GLW::ScrollView m_infoScroll;        // Variables / Help

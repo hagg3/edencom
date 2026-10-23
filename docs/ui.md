@@ -204,7 +204,7 @@ fit, a row taller than the view still shows; `rowOffset()`; content drags walk t
 >   the point space less the window's unsafe insets (Dynamic Island, rounded corners, home bar;
 >   `eden_safe_rect()` in `DisplayProfile_web.mm`), the whole screen where there are none, so every
 >   number is stock without insets. `Hud::layoutForScreen` anchors the right-hand mode column,
->   jump/crouch (render + hit), `rmenu`, the status line, the picker/colour grids (centred on the
+>   jump/crouch/fly-cycle (render + hit), `rmenu`, the status line, the picker/colour grids (centred on the
 >   safe rect; the picker's page strip is clamped above the home bar) and calls
 >   `Joystick::layoutForScreen()`, which puts the pad 20 points in from the safe corner (its knob
 >   clamps are now pad-relative, and the stick vector's y reads `default_pos.origin.y`: stock read
@@ -659,6 +659,18 @@ changing anything here; the summary:
   against an input path that still had its hard-coded `switch (sc)` and merely also consulted the
   model. It measures "stopped" against an unbound control key rather than a fixed epsilon, since a
   flying player drifts and the drift is a property of the world, not of the binding.
+
+## Fly buttons (FM.3)
+Bottom-right row, right to left: **jump**, **crouch**, **fly-cycle**, 10 pt apart (`flyGap` in
+`Hud::layoutForScreen`; `inbox2/3` add 4 pt slop per side, so a gap under 8 made hit rects overlap).
+Hit rects equal the render rects (jump's still runs on to the screen edge). While `FLY_MODE`
+(Fly or Noclip) the jump slot is **Fly up** and the crouch slot **Fly down** (shown even with
+Crouch off): the touch sets the frame-derived `hud->m_flyup/m_flydown` instead of `m_jump/m_crouch`
+and `Player` ORs them with the keyboard `FLY_UP/FLY_DOWN`. The old tap-latch on the fire/pickaxe
+buttons is gone: they no longer move y. The cycle button (`rflyhit/rflyrender`) exists only when
+*Allow fly* is on and the menu is closed; a tap (claim on down, act on release, like `rchat`) calls
+`fly_cycle_state()`. Its glyph is a GL-kit `Label` ("OFF" / "FLY" / "NC", lime while flying) on a
+dark plate, built once per state; no new art.
 
 ## Version tag
 `GLW::drawVersionTag()` (GLWidgets.mm) draws "Emod <version>" (white, 1u black shadow) in the top-left

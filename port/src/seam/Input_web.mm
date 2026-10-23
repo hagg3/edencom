@@ -276,7 +276,7 @@ EDEN_EXPORT void eden_look_trace_frame(void) {
             "look.trace id=%d cam=%d dur=%.2fs events=%d frames=%d multi=%.1f%% maxev=%d"
             " slop_frames=%d slop_pt=%.1f look_frames=%d raw_pt=%.1f applied_pt=%.1f lost=%.1f%%"
             " err=%.1f%% zero=%.1f%% (%d/%d) dt_p50=%.1fms dt_p99=%.1fms win_per_pt=%.3f pt_scale=%.3f"
-            " slop_win=%.1f deg_per_pt=%.3f smooth=%.2f glide=%d\n",
+            " slop_win=%.1f deg_per_pt=%.3f smooth=%.2f glide=%.2f\n",
             it->first, (int)s.cam, (now - s.t0) / 1000.0, s.events, s.frames,
             s.frames ? 100.0f * s.multi / s.frames : 0.0f, s.maxEv, s.slopFrames, s.slopRaw,
             s.lookFrames, s.raw, s.applied, lostPct, errPct,
@@ -421,12 +421,11 @@ void eden_set_move_input(float forward, float strafe, float speedMul) {
     World::getWorld->player->setSpeed(MakeVector(vx, vy, vz), speedMul);
 }
 
-// Fly up/down (this fork ships FLY_MODE=true, Classes/Player.mm:32). FLY_UP/FLY_DOWN are the same
-// two externs Classes/Hud.mm's burn/mine HUD buttons flip as a tap-toggle when FLY_MODE is on
-// (Classes/Hud.mm ~658-720) — driven here as momentary key state instead, since a keyboard has a
-// real up/down rather than a single tap. Classes/Player.mm:1003-1010: vel.y gets +thrust if
-// FLY_UP, -thrust if FLY_DOWN, so both-false (neither key held) or both-true (both held) net to a
-// hover, and exactly one true gives clean ascend/descend.
+// Fly up/down (keyboard). FLY_UP/FLY_DOWN are momentary key state; the touch HUD's jump/crouch
+// slots drive the separate frame-derived hud->m_flyup/m_flydown while flying (FM.3: the old
+// fire/pickaxe tap-latch is gone) and Player ORs the two. In Player.mm vel.y gets +thrust if up,
+// -thrust if down, so both-false or both-true net to a hover, and exactly one true gives clean
+// ascend/descend.
 EDEN_EXPORT
 void eden_set_fly_thrust(int up, int down) {
     extern bool FLY_UP;
@@ -601,17 +600,18 @@ static Button hudTapButtonRect(Hud* hud, int which) {
         // 7 = fire/burn tool (rburn) — added so the web port can bind a key to it (F, by
         // default); Hud::update's own tap handler toggles MODE_BURN on/off exactly like a real
         // tap here would (Classes/Hud.mm:663-680). One quirk inherited as-is from that same
-        // handler: if FLY_MODE is on, tapping this button ALSO flips FLY_UP — harmless in
-        // practice since eden_set_fly_thrust (driven by the actual held keys) overwrites FLY_UP
-        // again on the very next frame.
+        // handler (it no longer touches fly thrust since FM.3).
         case 7: return hud->rburn;
+        case 8: return hud->rjumphit;     // FM.4: fly up while flying
+        case 9: return hud->rcrouchhit;   // FM.4: fly down while flying
+        case 10: return hud->rflyhit;     // FM.4: the fly-mode cycle button
         default: return hud->rmenu;
     }
 }
 EDEN_EXPORT
 void eden_tap_hud_button_begin(int which) {
     if (!World::getWorld || !World::getWorld->hud) return;
-    if (which < 0 || which > 7) return;
+    if (which < 0 || which > 10) return;
     Button b = hudTapButtonRect(World::getWorld->hud, which);
     float cx = b.origin.x + b.size.width / 2.0f;
     float cy = b.origin.y + b.size.height / 2.0f;
@@ -620,7 +620,7 @@ void eden_tap_hud_button_begin(int which) {
 EDEN_EXPORT
 void eden_tap_hud_button_end(int which) {
     if (!World::getWorld || !World::getWorld->hud) return;
-    if (which < 0 || which > 7) return;
+    if (which < 0 || which > 10) return;
     Button b = hudTapButtonRect(World::getWorld->hud, which);
     float cx = b.origin.x + b.size.width / 2.0f;
     float cy = b.origin.y + b.size.height / 2.0f;
@@ -765,12 +765,9 @@ int eden_ui_wants_cursor(void) {
     return (m == MODE_PICK_BLOCK || m == MODE_PICK_COLOR) ? 1 : 0;
 }
 
-// Fly mode. `Classes/Player.mm:32` hard-codes FLY_MODE/FLY_UP/FLY_DOWN to true in this fork
-// (CLAUDE.md notes stock behaviour is false), and Hud.mm:570 still carries the commented-out
-// remains of the toggle button that used to drive it — so there is no way to turn it off from the
-// shipped UI. These are plain mutable globals, so the port can own the setting without touching
-// the engine: the page defaults it OFF at startup (stock behaviour) and binds a key to toggle.
-// FLY_UP/FLY_DOWN move with it; they gate the vertical controls, which are meaningless on foot.
+// Fly mode. Plain mutable globals in Classes/Player.mm (Off at reset; Settings > Allow fly gates
+// the V / HUD cycle, FM.1). FLY_UP/FLY_DOWN move with it; they gate the vertical controls, which
+// are meaningless on foot.
 // Jump. Player::preupdate reads `hud->m_jump` (Classes/Player.mm:897) — it is the HUD jump
 // button's state, not an input event, so it has to be held for as long as the key is down. With
 // fly mode off (now the default) Space had no effect at all, because the only thing bound to it
@@ -967,15 +964,36 @@ void eden_ui_tick(void) {
 }
 
 EDEN_EXPORT
-void eden_set_fly_mode(int on) {
-    extern bool FLY_MODE, FLY_UP, FLY_DOWN;
-    FLY_MODE = FLY_UP = FLY_DOWN = (on != 0);
+void eden_set_fly_mode(int on) {   // programmatic: ignores FLY_ALLOWED (selftests rely on it)
+    fly_set_state(on ? 1 : 0);
 }
 
 EDEN_EXPORT
-int eden_get_fly_mode(void) {
+int eden_get_fly_mode(void) {      // flying (Fly or Noclip)
     extern bool FLY_MODE;
     return FLY_MODE ? 1 : 0;
+}
+
+EDEN_EXPORT
+void eden_cycle_fly_mode(void) { fly_cycle_state(); }   // Off -> Fly -> Noclip -> Off; no-op unless allowed
+
+EDEN_EXPORT
+int eden_get_fly_state(void) { return fly_get_state(); }
+
+EDEN_EXPORT
+void eden_set_fly_state(int s) { fly_set_state(s < 0 ? 0 : (s > 2 ? 2 : s)); }
+
+EDEN_EXPORT
+void eden_set_fly_allowed(int on) {
+    extern bool FLY_ALLOWED;
+    FLY_ALLOWED = (on != 0);
+    if (!FLY_ALLOWED && fly_get_state() != 0) fly_set_state(0);
+}
+
+EDEN_EXPORT
+int eden_get_fly_allowed(void) {
+    extern bool FLY_ALLOWED;
+    return FLY_ALLOWED ? 1 : 0;
 }
 
 // H.12: Experiments › Camera view (0 first person, 1 third behind, 2 third front). Set through

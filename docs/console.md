@@ -183,8 +183,8 @@ the player. A creature can still hurt a player who is typing (no auto-pause; rev
   console verbs (`Console::commandAt`), a tap puts `verb ` in the input. It is the cmd.html reference, kept
   current by the same tables.
 
-**Strip layout** (Collapse): the last three lines over a 1-line input + Run, with *Expand* and *Back*,
-docked to the **top** edge so the world shows below. The choice is remembered for the session.
+**Strip layout** (Collapse): the last three lines over a 1-line input + Run, with *Menu* (C.11: the collapsed button's label; *Collapse* when expanded) and *Back*,
+docked to the **top** edge so the world shows below; the panel is 55% translucent (MP.14), and a fresh `openChat` opens in this layout. The choice is remembered for the session.
 
 **Cost.** A scrollback line is one `Label` built the first frame it is shown and kept, keyed by
 `Console::scrollbackSerial()` (lines ever printed: `scrollback()[i]` is serial `serial - size + i`), until
@@ -198,10 +198,10 @@ variable-height).
 `eden_text_input_keyboard_top()` (point space, y up; 0 = none, -1 = coming but not measured yet) where
 the keyboard is. Over the Console tab: if the keyboard reaches into `railFrame()`'s panel, the panel is
 rebuilt (`ConsoleMenu::frame`) from just above the keyboard to just under the screen top, **without the
-rail** (the tabs come back when it goes); the input is then the lowest thing above the keyboard and
+rail** (the tabs come back when it goes; C.11: a *Tabs* chip beside *Back* hints at them, a tap blurs the field); the input is then the lowest thing above the keyboard and
 re-announces its rect, so SDL's view shift has nothing to do (`keep_visible` is not used). If that panel
 would show fewer than **4** scrollback lines (iPhone landscape), or the height is still -1, the
-**auto strip** is used: the top-docked strip, no *Expand* button, dropping lines (to one) rather than
+**auto strip** is used: the top-docked strip, no *Menu* button, dropping lines (to one) rather than
 reach under the keyboard; it is not the player's collapse and ends with the keyboard. The field is a
 **code field** (`TextField::setCodeMode`): text input starts through `eden_text_input_start_code()`
 (no autocorrect, no autocapitalisation), and a hardware keyboard's **Tab / Up / Down** arrive as the

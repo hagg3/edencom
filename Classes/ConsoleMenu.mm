@@ -34,7 +34,7 @@
 
 static const int usage_id=17;   // distinct from Menu (7), SettingsMenu (3), GLDialog (9), Player (10), Keybinds (11), WorldBrowser (12), NewWorld (13), WorldProperties (14), Hud (15, 16)
 
-enum { CB_NONE=0, CB_BACK, CB_COLLAPSE, CB_RUN, CB_TAB, CB_UP, CB_DOWN, CB_PILL };
+enum { CB_NONE=0, CB_BACK, CB_COLLAPSE, CB_RUN, CB_TAB, CB_UP, CB_DOWN, CB_PILL, CB_TABS };
 
 struct ConsoleMenu::Cached {
     GLW::Label label;
@@ -112,7 +112,7 @@ void ConsoleMenu::open(){
 // MP.7: T / `/` / the touch button. The same screen as the `console` key, on the Chat tab.
 void ConsoleMenu::openChat(const char* prefill){
     if(!MpWorld::active()) return;
-    if(!m_open) open();
+    if(!m_open){ open(); setCollapsed(true); }   // MP.14: a fresh open is the input bar, not the full screen
     showTab(TAB_CHAT);
     setInput(prefill?prefill:"");
     configureField();
@@ -453,7 +453,9 @@ void ConsoleMenu::buildLabels(){
     m_title.set(m_tab==TAB_CHAT?"Chat":m_tab==TAB_PLAYERS?"Players":"Console",du(32),UITextAlignmentCenter);
     m_titleTab=m_tab;
     m_back.setLabel("Back",du(20));       m_back.sizeToFit();
-    m_collapse.setLabel(m_collapsed?"Expand":"Collapse",du(20)); m_collapse.sizeToFit();
+    // C.11: "Menu" while collapsed says the rail (Chat/Console/Sessions...) is behind it.
+    m_collapse.setLabel(m_collapsed?"Menu":"Collapse",du(20)); m_collapse.sizeToFit();
+    m_tabsChip.setLabel("Tabs",du(18));   m_tabsChip.sizeToFit(7.0f);
     m_run.setLabel(m_tab==TAB_CHAT?"Send":"Run",du(20)); m_run.setTone(GLW::Button::TONE_POSITIVE); m_run.sizeToFit();
     m_tabBtn.setLabel("Tab",du(18));      m_tabBtn.sizeToFit(7.0f);
     m_up.setLabel("Up",du(18));           m_up.sizeToFit(7.0f);
@@ -554,6 +556,9 @@ void ConsoleMenu::layout(){
     titlebarHit(m_back);
     m_collapse.setRect(CGRectMake(T.origin.x+T.size.width-m_collapse.fitWidth(),T.origin.y,0,T.size.height));
     titlebarHit(m_collapse);
+    // C.11: with the keyboard up there is no rail; a chip beside Back hints at it and a tap lowers the keyboard.
+    m_tabsChip.setRect(CGRectMake(T.origin.x+m_back.fitWidth()+du(6),T.origin.y,0,T.size.height));
+    titlebarHit(m_tabsChip);
     m_titleY=f.titleY(m_title);
     m_rail.setRect(f.rail);
     m_rail.setSelected(tileOfTab(m_tab));
@@ -653,6 +658,7 @@ int ConsoleMenu::hitButton(float mx,float my) const{
     const bool consoleTab=inputTab();
     if(m_back.hit(mx,my)) return CB_BACK;
     if(!m_autoStrip&&m_collapse.hit(mx,my)) return CB_COLLAPSE;
+    if(!strip()&&m_noRail&&m_tabsChip.hit(mx,my)) return CB_TABS;
     if((strip()||consoleTab)&&m_run.hit(mx,my)) return CB_RUN;
     if(!strip()&&consoleTab){
         if(m_tabBtn.hit(mx,my)) return CB_TAB;
@@ -718,7 +724,7 @@ void ConsoleMenu::update(float etime){
             const float mx=touches[i].mx, my=touches[i].my;
             const int b=hitButton(mx,my);
             m_downButton=b;
-            m_back.setPressed(b==CB_BACK); m_collapse.setPressed(b==CB_COLLAPSE); m_run.setPressed(b==CB_RUN);
+            m_back.setPressed(b==CB_BACK); m_collapse.setPressed(b==CB_COLLAPSE); m_run.setPressed(b==CB_RUN); m_tabsChip.setPressed(b==CB_TABS);
             m_tabBtn.setPressed(b==CB_TAB); m_up.setPressed(b==CB_UP); m_down.setPressed(b==CB_DOWN);
             m_newPill.setPressed(b==CB_PILL);
             if(b!=CB_NONE) continue;
@@ -748,7 +754,7 @@ void ConsoleMenu::update(float etime){
             const float mx=touches[i].mx, my=touches[i].my;
             touches[i].inuse=0;
             touches[i].down=M_NONE;
-            m_back.setPressed(false); m_collapse.setPressed(false); m_run.setPressed(false);
+            m_back.setPressed(false); m_collapse.setPressed(false); m_run.setPressed(false); m_tabsChip.setPressed(false);
             m_tabBtn.setPressed(false); m_up.setPressed(false); m_down.setPressed(false); m_newPill.setPressed(false);
             const int downB=m_downButton;
             m_downButton=CB_NONE;
@@ -757,6 +763,7 @@ void ConsoleMenu::update(float etime){
                 switch(downB){
                 case CB_BACK:     close(); return;
                 case CB_COLLAPSE: setCollapsed(!m_collapsed); break;
+                case CB_TABS:     m_field.blur(); break;     // C.11: the keyboard goes, the rail comes back
                 case CB_RUN:      submit(); if(m_open) m_field.focus(); else return; break;
                 case CB_TAB:      complete(); m_field.focus(); break;
                 case CB_UP:       historyStep(-1); m_field.focus(); break;
@@ -863,8 +870,17 @@ void ConsoleMenu::render(){
     glLoadIdentity();
 
     if(strip()){
-        bevel(m_panel,BEVEL_WINDOW);
-        bevel(m_panel,BEVEL_CONTENT);
+        // MP.14: translucent, so the game behind the bar stays visible; text stays dark on a light face.
+        {
+            const float t=2*u();
+            const Color face={kContentFace.r,kContentFace.g,kContentFace.b,0.55f};
+            const CGRect& P=m_panel;
+            fill(P,face);
+            fill(P.origin.x,P.origin.y,P.size.width,t,kWindowKeyline);
+            fill(P.origin.x,P.origin.y+P.size.height-t,P.size.width,t,kWindowKeyline);
+            fill(P.origin.x,P.origin.y,t,P.size.height,kWindowKeyline);
+            fill(P.origin.x+P.size.width-t,P.origin.y,t,P.size.height,kWindowKeyline);
+        }
         if(!m_autoStrip) m_collapse.render();
         m_back.render();
         drawStrip();
@@ -876,6 +892,7 @@ void ConsoleMenu::render(){
         m_back.render();
         m_title.drawCentered(m_panel.origin.x+m_panel.size.width*0.5f,m_titleY,kText);
         m_collapse.render();
+        if(m_noRail) m_tabsChip.render();
         if(railShown()) m_rail.render();
         bevel(m_content,BEVEL_CONTENT);
         if(inputTab()){

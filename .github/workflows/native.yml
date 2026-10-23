@@ -155,12 +155,20 @@ jobs:
           # Each --look-mutate puts one fixed bug back and must FAIL it.
           rm -rf look-docs && mkdir -p look-docs
           run_gate "look selftest"    $B --look-selftest --docs="$PWD/look-docs"
-          for m in lastonly int enginepts noflush noslop noclear nodecay unlatched multi; do
+          for m in lastonly int enginepts noflush noslop noclear nodecay unlatched multi clearlatch; do
             rm -rf look-docs-$m && mkdir -p look-docs-$m
             if $B --look-selftest --look-mutate=$m --docs="$PWD/look-docs-$m" > gate-look-mutate-$m.log 2>&1; then
               echo "::error::--look-selftest --look-mutate=$m PASSED: the gate cannot see that mutation"; exit 1
             fi
           done
+          # Stage FM: noclip, the V cycle + toast, the touch fly slots. --fly-mutate=move calls
+          # move() in noclip again and must FAIL it.
+          rm -rf fly-docs && mkdir -p fly-docs
+          run_gate "fly selftest"     $B --fly-selftest --docs="$PWD/fly-docs"
+          rm -rf fly-docs-m && mkdir -p fly-docs-m
+          if $B --fly-selftest --fly-mutate=move --docs="$PWD/fly-docs-m" > gate-fly-mutate-move.log 2>&1; then
+            echo "::error::--fly-selftest --fly-mutate=move PASSED: the gate cannot see noclip calling move()"; exit 1
+          fi
           run_gate "audio selftest"   $B --audio-selftest
           # W.2: the retired web checks' native gates (docs/web-port-archive.md) -- the GL shim's
           # no-context bookkeeping, the paint/door/skin recolour, the stock 568x320 HUD rects and the
@@ -454,12 +462,20 @@ jobs:
           # Each --look-mutate puts one fixed bug back and must FAIL it.
           rm -rf look-docs && mkdir -p look-docs
           run_gate "look selftest"    $B --look-selftest --docs="$PWD/look-docs"
-          for m in lastonly int enginepts noflush noslop noclear nodecay unlatched multi; do
+          for m in lastonly int enginepts noflush noslop noclear nodecay unlatched multi clearlatch; do
             rm -rf look-docs-$m && mkdir -p look-docs-$m
             if $B --look-selftest --look-mutate=$m --docs="$PWD/look-docs-$m" > gate-look-mutate-$m.log 2>&1; then
               echo "::error::--look-selftest --look-mutate=$m PASSED: the gate cannot see that mutation"; exit 1
             fi
           done
+          # Stage FM: noclip, the V cycle + toast, the touch fly slots. --fly-mutate=move calls
+          # move() in noclip again and must FAIL it.
+          rm -rf fly-docs && mkdir -p fly-docs
+          run_gate "fly selftest"     $B --fly-selftest --docs="$PWD/fly-docs"
+          rm -rf fly-docs-m && mkdir -p fly-docs-m
+          if $B --fly-selftest --fly-mutate=move --docs="$PWD/fly-docs-m" > gate-fly-mutate-move.log 2>&1; then
+            echo "::error::--fly-selftest --fly-mutate=move PASSED: the gate cannot see noclip calling move()"; exit 1
+          fi
           run_gate "audio selftest"   $B --audio-selftest
           # W.2: the retired web checks' native gates (docs/web-port-archive.md) -- the GL shim's
           # no-context bookkeeping, the paint/door/skin recolour, the stock 568x320 HUD rects and the
@@ -719,6 +735,8 @@ jobs:
           ./build/eden_native --touch-selftest
           rm -rf look-docs && mkdir -p look-docs
           ./build/eden_native --look-selftest --docs="$PWD/look-docs"   # Stage L; the mutation legs run on linux/windows
+          rm -rf fly-docs && mkdir -p fly-docs
+          ./build/eden_native --fly-selftest --docs="$PWD/fly-docs"   # Stage FM; the mutation leg runs on linux/windows
           ./build/eden_native --audio-selftest
           # W.2 (see the linux job). The convert64 cross-check matters most here: Apple's Foundation is
           # where convertWorldTo64's `.eden` leg failed (fileHandleForWritingAtPath: on a missing file).

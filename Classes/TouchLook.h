@@ -21,7 +21,7 @@ extern float TOUCH_LOOK_DEG_PER_PT;   // degrees per window point (0.5 tablet, 0
 extern float TOUCH_LOOK_SENS_X;       // multipliers, 1 = default
 extern float TOUCH_LOOK_SENS_Y;
 extern float TOUCH_LOOK_SMOOTH;       // 0 = raw exactly, 1 = heavy (One-Euro min cutoff 1 Hz)
-extern int   TOUCH_LOOK_GLIDE;        // 1 = keep turning after release, decaying
+extern float TOUCH_LOOK_GLIDE;      // glide half-life in seconds; 0 = off (keep turning after release, decaying)
 extern float TOUCH_SLOP_PT;           // tap-vs-drag threshold, window points, latched once crossed
 
 // --look-selftest's mutation legs: each puts one fixed bug back (eden_main_native.cpp).
@@ -35,9 +35,10 @@ enum {
     TL_MUT_NODECAY   = 1<<6,   // glide never stops
     TL_MUT_UNLATCHED = 1<<7,   // D5: slop re-tested every frame
     TL_MUT_MULTI     = 1<<8,   // two world fingers keep looking (num>1 rule off)
+    TL_MUT_CLEARLATCH= 1<<9,   // L.7: a second finger's touch-down clears the latched look finger for good
 };
 extern int TOUCH_LOOK_MUTATE;
-// --look-mutate=<name>: lastonly int enginepts noflush noslop noclear nodecay unlatched multi.
+// --look-mutate=<name>: lastonly int enginepts noflush noslop noclear nodecay unlatched multi clearlatch.
 // 0 for an unknown name.
 int touchlook_mutation_bit(const char* name);
 

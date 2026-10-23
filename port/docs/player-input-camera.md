@@ -98,7 +98,7 @@ letterbox measure (finger events only), `pt_scale` the engine's `TOUCH_PT_SCALE`
 `eden_display_apply()` writes `TOUCH_PT_SCALE` (= `eden_display_window_pt_per_point()`) and the phone/tablet
 `TOUCH_LOOK_DEG_PER_PT` on *every* apply, before its no-change early return (the box can move without the
 point space changing). Headless with no viewport, the scale is 1. The sensitivity, smoothing and glide
-globals keep their defaults until L.5 adds Settings rows.
+globals are written by the `touch_look_*` Settings rows (glide: a half-life slider, 0 = off).
 
 Gate: `--look-selftest` (native/README.md): steps 0–9 of the plan, and nine `--look-mutate=` legs that
 must each fail it (linux/windows CI). Plan: `WORKING/touch-camera-plan-2026-10-17.md`.
@@ -140,6 +140,10 @@ settings toggle (as fly mode now is too): the "Crouch mode" row in the
 button entirely — its hit-test loop and its render/draw call are both wrapped in
 `if (CROUCH_ENABLED)` (`extern BOOL CROUCH_ENABLED`) — so there's no dead button sitting on screen,
 matching how `FLY_MODE` hides its own up/down affordances when off.
+
+Fly state seam (FM.1, `Input_web.mm`): `eden_cycle_fly_mode` (V / gamepad Y), `eden_get/set_fly_state`
+(0 Off, 1 Fly, 2 Noclip), `eden_set/get_fly_allowed` (the *Allow fly* row); `eden_set/get_fly_mode`
+keep their programmatic contract (on = Fly, ignores *Allow fly*).
 
 ## Camera view (H.12)
 Experiments › *Camera view* (`camera_view`, `KIND_ENUM` 0–2) applies through `eden_apply_setting()` →

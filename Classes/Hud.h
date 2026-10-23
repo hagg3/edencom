@@ -65,6 +65,7 @@ public:
     bool heartbeat;
     bool m_jump;
     bool m_crouch;  // web port touch crouch button (Player::preupdate OR's this with keyboard CROUCH_HELD)
+    bool m_flyup,m_flydown;  // FM.3: while flying, the jump/crouch slots are fly up/down (frame-derived; Player ORs with FLY_UP/DOWN)
     int justLoaded;
 	int blocktype;
     int block_paintcolor;
@@ -80,6 +81,7 @@ public:
 	 int blocktype_pressed;
     Button rmine,rburn,rbuild,rjumphit,rjumprender,rpaint;
     Button rcrouchhit,rcrouchrender;
+    Button rflyhit,rflyrender;   // FM.3: the fly-mode cycle button, left of the crouch slot (only when Allow fly is on)
     
     Button rcam,rexit,rsave,rhome,rmenu;
     Button rchat;   // MP.7: the touch chat button, right of the pause gear (a session only)

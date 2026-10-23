@@ -22,6 +22,12 @@ extern bool pendingRespawnSound;
 #import "ChatFeed.h"   // MP.7: the feed and the chat button
 #import "Menu.h"
 
+// FM.3: fly state for the jump/crouch/cycle buttons (Player.mm; fly_* are declared in Player.h)
+extern bool FLY_ALLOWED;
+extern BOOL FLY_MODE;
+int  fly_get_state();
+void fly_cycle_state();
+
 extern float SCREEN_WIDTH; 
 extern float SCREEN_HEIGHT;
 extern float P_ASPECT_RATIO;
@@ -305,6 +311,7 @@ Hud::Hud(){
     inmenu=FALSE;
     underLiquid=FALSE;
     m_crouch=FALSE;
+    m_flyup=m_flydown=FALSE;
     fade_out=0;
 	test_a=0;
 	mode=MODE_MINE;
@@ -372,20 +379,37 @@ void Hud::layoutForScreen(){
     //    rjumprender.origin.y+=13;
     //    rjumprender.origin.x-=7;
     //}
-    rjumphit.origin.x=rjumprender.origin.x-1;
+    // FM.3: the jump, crouch/down and fly-cycle buttons sit HUD_FLY_GAP points apart. inbox2/inbox3 add
+    // 4pt of slop on every side, so a gap under 8 made neighbouring hit rects overlap (a thumb hit
+    // both); 10 leaves 2pt of dead zone. Hit rects equal the render rects (jump's runs on to the
+    // screen edge and bottom, as stock).
+    const float flyGap=10;
+    rjumphit.origin.x=rjumprender.origin.x;
 	rjumphit.origin.y=s0y;
 	rjumphit.size.width=sR- rjumphit.origin.x;
 	rjumphit.size.height=45+rjumprender.origin.y-s0y;
 
     // Crouch button: same icon as jump, drawn mirrored on the X axis, sitting just to its left.
-    rcrouchrender.origin.x=rjumprender.origin.x-50;
+    // While flying this slot is Fly down.
+    rcrouchrender.origin.x=rjumprender.origin.x-45-flyGap;
     rcrouchrender.origin.y=rjumprender.origin.y;
     rcrouchrender.size.width=45;
     rcrouchrender.size.height=45;
-    rcrouchhit.origin.x=rcrouchrender.origin.x-1;
+    rcrouchhit.origin.x=rcrouchrender.origin.x;
     rcrouchhit.origin.y=s0y;
-    rcrouchhit.size.width=rjumphit.origin.x-rcrouchhit.origin.x;
+    rcrouchhit.size.width=45;
     rcrouchhit.size.height=45+rcrouchrender.origin.y-s0y;
+
+    // FM.3 fly-mode cycle button, left of the crouch/down slot.
+    rflyrender.origin.x=rcrouchrender.origin.x-45-flyGap;
+    rflyrender.origin.y=rjumprender.origin.y;
+    rflyrender.size.width=45;
+    rflyrender.size.height=45;
+    rflyhit.origin.x=rflyrender.origin.x;
+    rflyhit.origin.y=s0y;
+    rflyhit.size.width=45;
+    rflyhit.size.height=45+rflyrender.origin.y-s0y;
+    rflyrender.pressed=FALSE;
 
 	CGRect sbrect;
 	sbrect.origin.x=s0x+20;
@@ -806,6 +830,10 @@ BOOL Hud::update(float etime){
                 }
                 
             }
+            if(FLY_ALLOWED&&!inmenu&&inbox2(touches[i].mx,touches[i].my,&rflyhit)){   // FM.3
+                fly_cycle_state();
+                rflyhit.pressed=FALSE;
+            }
             if(MpWorld::active()&&!inmenu&&inbox2(touches[i].mx,touches[i].my,&rchat)){   // MP.7
                 eden_chat_open(0);
                 rchat.pressed=FALSE;
@@ -912,6 +940,11 @@ BOOL Hud::update(float etime){
                 touches[i].down=M_NONE;
                 Resources::getResources->playSound(S_MENU_BUTTON_PRESS);
             }
+            if(FLY_ALLOWED&&!inmenu&&inbox3(touches[i].mx,touches[i].my,&rflyhit)){   // FM.3: claims the touch
+                touches[i].inuse=usage_id2;
+                touches[i].down=M_NONE;
+                Resources::getResources->playSound(S_MENU_BUTTON_PRESS);
+            }
             if(MpWorld::active()&&!inmenu&&inbox3(touches[i].mx,touches[i].my,&rchat)){   // MP.7: claims the touch
                 touches[i].inuse=usage_id2;
                 touches[i].down=M_NONE;
@@ -931,10 +964,6 @@ BOOL Hud::update(float etime){
                 touches[i].inuse=usage_id2;
 			}*/
         
-            extern bool FLY_UP;
-            extern bool FLY_DOWN;
-            extern BOOL FLY_MODE;
-        
 			BOOL handled=FALSE;
             if(inbox2(touches[i].mx,touches[i].my,&rburn)){	
                 flamecount++;
@@ -947,10 +976,6 @@ BOOL Hud::update(float etime){
                 else
                     mode=MODE_BURN;
                 
-                if(FLY_MODE){
-                FLY_UP=!FLY_UP;
-                
-                }
                 inmenu=FALSE;
                     handled=TRUE;
 			}
@@ -993,10 +1018,6 @@ BOOL Hud::update(float etime){
                 if(mode==MODE_MINE)mode=MODE_NONE;
                 else
                     mode=MODE_MINE;
-                 if(FLY_MODE){
-                FLY_DOWN=!FLY_DOWN;
-                     
-                 }
                 inmenu=FALSE;
                 handled=TRUE;
 			}
@@ -1058,14 +1079,16 @@ BOOL Hud::update(float etime){
     // touchscreen tap on the button, never a keyboard-synthesized press (isRealTouch is FALSE for
     // Input_web.mm's synthetic kJumpTouchIdentity touch that drives Space, same for mouse/HUD-tap
     // identities) -- so e.g. Space-to-jump on desktop stays silent even with the setting on.
-    BOOL wasJumpPressed=m_jump;
+    BOOL wasJumpPressed=m_jump||m_flyup;
     static BOOL jumpIsRealTouch=FALSE;
 	m_jump=FALSE;
+    m_flyup=FALSE;
     BOOL jumpTouchReal=FALSE;
 	for(int i=0;i<MAX_TOUCHES;i++){
 		if((touches[i].inuse==0||touches[i].inuse==usage_id)&&touches[i].down==M_DOWN){
 			if(inbox2(touches[i].mx,touches[i].my,&rjumphit)){
-				m_jump=TRUE;
+				if(FLY_MODE)m_flyup=TRUE;   // FM.3: while flying the jump slot is Fly up
+				else m_jump=TRUE;
                 inmenu=FALSE;
 				//test_a+=.0001;
 				//if(test_a>.005)test_a=0;
@@ -1079,22 +1102,25 @@ BOOL Hud::update(float etime){
 
 	}
     extern BOOL touchControlsSoundEnabled;
-    if(m_jump&&!wasJumpPressed){
+    const BOOL jumpPressedNow=m_jump||m_flyup;
+    if(jumpPressedNow&&!wasJumpPressed){
         jumpIsRealTouch=jumpTouchReal;
         if(jumpIsRealTouch&&touchControlsSoundEnabled)
             Resources::getResources->playSound(S_JUMP_BUTTON_PRESS);
-    }else if(!m_jump&&wasJumpPressed){
+    }else if(!jumpPressedNow&&wasJumpPressed){
         if(jumpIsRealTouch&&touchControlsSoundEnabled)
             Resources::getResources->playSound(S_JUMP_BUTTON_RELEASE);
     }
 
 	m_crouch=FALSE;
+	m_flydown=FALSE;
 	extern BOOL CROUCH_ENABLED;
-	if(CROUCH_ENABLED){
+	if(CROUCH_ENABLED||FLY_MODE){   // FM.3: the slot is Fly down while flying, even with Crouch off
 		for(int i=0;i<MAX_TOUCHES;i++){
 			if((touches[i].inuse==0||touches[i].inuse==usage_id)&&touches[i].down==M_DOWN){
 				if(inbox2(touches[i].mx,touches[i].my,&rcrouchhit)){
-					m_crouch=TRUE;
+					if(FLY_MODE)m_flydown=TRUE;
+					else m_crouch=TRUE;
 					inmenu=FALSE;
 					touches[i].inuse=usage_id;
 				}
@@ -2318,7 +2344,7 @@ void Hud::render(){
    	tpaint->drawButton( rpaint);
     
 	
-	if(m_jump){
+	if(m_jump||m_flyup){
         rjumprender.pressed=TRUE;
         res->getTex(ICO_JUMP_ACTIVE)->drawButton(rjumprender);
 	}else{
@@ -2330,14 +2356,34 @@ void Hud::render(){
     // up-pointing chevron points down. Hidden entirely when the "Crouch mode" experiment is off
     // (Settings_web.mm's "crouch" row) — the button doesn't just no-op, it disappears.
     extern BOOL CROUCH_ENABLED;
-    if(CROUCH_ENABLED){
-        if(m_crouch){
+    if(CROUCH_ENABLED||FLY_MODE){   // FM.3: also the Fly down button while flying
+        if(m_crouch||m_flydown){
             rcrouchrender.pressed=TRUE;
             res->getTex(ICO_JUMP_ACTIVE)->drawButton(rcrouchrender,TRUE);
         }else{
             rcrouchrender.pressed=FALSE;
             tjump->drawButton(rcrouchrender,TRUE);
         }
+    }
+
+    // FM.3: the fly-mode cycle button (only when Allow fly is on). Glyph = the mode as a label on
+    // the kit's dark plate, lime while flying; the labels are built once (a texture upload each).
+    if(FLY_ALLOWED&&!inmenu){
+        static GLW::Label flyLbl[3];
+        static const char* const kFlyText[3]={"OFF","FLY","NC"};
+        const int st=fly_get_state();
+        if(flyLbl[st].empty())flyLbl[st].set(kFlyText[st],14,UITextAlignmentCenter);
+        const CGRect r=CGRectMake(rflyrender.origin.x,rflyrender.origin.y,rflyrender.size.width,rflyrender.size.height);
+        const float s=IS_IPAD?SCALE_WIDTH:1.0f;
+        glMatrixMode(GL_PROJECTION);glPushMatrix();glLoadIdentity();
+        glOrthof(0,SCREEN_WIDTH*s,0,SCREEN_HEIGHT*s,-1,1);
+        glMatrixMode(GL_MODELVIEW);glPushMatrix();glLoadIdentity();
+        glEnable(GL_BLEND);glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+        glEnableClientState(GL_VERTEX_ARRAY);glEnableClientState(GL_TEXTURE_COORD_ARRAY);glDisableClientState(GL_COLOR_ARRAY);
+        GLW::fill(r,GLW::rgb(0x000000,rflyrender.pressed?0.8f:0.55f));
+        flyLbl[st].drawCentered(r.origin.x+r.size.width/2,r.origin.y+r.size.height/2+flyLbl[st].height()/2,st?GLW::rgb(0xc6f175):GLW::kText);
+        glColor4f(1,1,1,1);
+        glMatrixMode(GL_PROJECTION);glPopMatrix();glMatrixMode(GL_MODELVIEW);glPopMatrix();
     }
 
 

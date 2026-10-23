@@ -1067,6 +1067,21 @@ void renderPeerTags() {
     const Vector u = MakeVector(r.y * f.z - r.z * f.y, r.z * f.x - r.x * f.z, r.x * f.y - r.y * f.x);   // r x f
     const float th = std::tan((eden_fov_degrees > 0.0f ? eden_fov_degrees : 80.0f) * (float)M_PI / 360.0f);
     const float bh = w->player ? w->player->boxheight : 6.0f;
+    // MP.12: the HUD's ortho is not SCREEN-sized on 2x-UI devices (ChatFeed sets its own), so project into
+    // an ortho of our own: normalised device coords map onto SCREEN * s whatever the caller left bound.
+    const float us = IS_IPAD ? SCALE_WIDTH : 1.0f;
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
+    glLoadIdentity();
+    glOrthof(0, SCREEN_WIDTH * us, 0, SCREEN_HEIGHT * us, -1, 1);
+    glMatrixMode(GL_MODELVIEW);
+    glPushMatrix();
+    glLoadIdentity();
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+    glDisableClientState(GL_COLOR_ARRAY);
     for (auto& p : g_peers) {
         if (!p.used) continue;
         const Vector d = MakeVector(p.pos.x - eye.x, p.pos.y + bh * 0.5f + 1.0f - eye.y, p.pos.z - eye.z);
@@ -1076,12 +1091,17 @@ void renderPeerTags() {
         const float ny = (d.x * u.x + d.y * u.y + d.z * u.z) / (zc * th);
         if (std::fabs(nx) > 1.1f || std::fabs(ny) > 1.1f) continue;
         if (!p.haveTag) { p.tag.set(p.name.c_str(), GLW::du(18), UITextAlignmentCenter, 0, GLW::FACE_DISPLAY); p.haveTag = true; }
-        const float sx = (nx * 0.5f + 0.5f) * SCREEN_WIDTH, sy = (ny * 0.5f + 0.5f) * SCREEN_HEIGHT;
+        const float sx = (nx * 0.5f + 0.5f) * SCREEN_WIDTH * us, sy = (ny * 0.5f + 0.5f) * SCREEN_HEIGHT * us;
         const float tw = p.tag.width(), lh = p.tag.lineHeight(), pad = GLW::du(5);
         const float a = zc > kTagRange * 0.7f ? 0.55f : 0.85f;
         GLW::fill(sx - tw * 0.5f - pad, sy - lh * 0.5f - pad * 0.5f, tw + 2 * pad, lh + pad, GLW::Color{0.17f, 0.17f, 0.17f, a});
         p.tag.drawCentered(sx, sy + lh * 0.5f, GLW::kWhite);
     }
+    glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
+    glPopMatrix();
 }
 
 int peerCount() {
