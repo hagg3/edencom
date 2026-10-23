@@ -5,6 +5,8 @@ Touch handling, the block-pick raycast, player physics/collision, and the camera
 
 ## Important files
 - `Classes/Input.mm/.h` — raw touch bookkeeping (5-slot `itouch` array).
+- `Classes/TouchLook.mm/.h` — **post-import (Stage L, 2026-10-23)**: the touch drag camera's
+  arithmetic (degrees per window point, smoothing, glide). See "Touch look" below.
 - `Classes/Player.mm` (~2,300 lines) — input interpretation, physics, block editing,
   portals, damage. The single biggest gameplay file.
 - `Classes/Util.mm` — `findWorldCoords` raycast, SAT polyhedra collision
@@ -26,7 +28,10 @@ Touch handling, the block-pick raycast, player physics/collision, and the camera
 which maintains `touches[5]` slots keyed by `UITouch*`:
 current/previous/first positions (`mx/my`, `pmx/pmy`, `fx/fy`), `down` state
 (`M_DOWN/M_RELEASE/M_NONE`), `moved`, `movecam` (was this touch dragging the camera),
-per-touch block preview state, and hold time `etime`. Consumers (Hud buttons, Player,
+per-touch block preview state, and hold time `etime`. **Since Stage L** each slot also carries
+`lfx/lfy` (last position, float engine points), `ffx/ffy` (where it went down), `ldx/ldy` (look motion
+not yet consumed, summed over *every* event before the int truncation) and `looklatched`; the stock
+fields keep their meaning for every other consumer. Consumers (Hud buttons, Player,
 Menu) poll this array every frame — there is no event dispatch. `clearAll()` resets on
 world load. `keyTyped` feeds the custom GL keyboard (`VKeyboard`).
 
@@ -78,8 +83,9 @@ results — callers read them immediately after the call.
     `MpWorld::intentBuild/Mine/Paint/Burn` instead, which is the same call outside a
     multiplayer session and also sends the changed cells inside one
     ([networking.md](networking.md) "Edits out and in").
-  - Drag → camera look (`yaw += dx·YAW_SPEED`, `pitch += dy·PITCH_SPEED`,
-    optionally inverted; pitch clamped).
+  - Drag → camera look: the `movecam` branch, rewritten in Stage L (see "Touch look"); stock's
+    `yaw += dx·YAW_SPEED` int arithmetic is kept there as commented archaeology. Pitch is still
+    clamped to ±80 in `Player::update`.
   - "Jump and build" assist (`jumpandbuild`) places a block underneath after a jump
     when building below your feet. (There is no long-press-repeat for mine/paint —
     a prior version of this doc claimed one; verified against the code during the
@@ -187,6 +193,34 @@ repaired rather than replaced:
 - Underwater tint and the ambience beds stay **player**-based, so in third person the screen can show the
   camera above water while the tint says under.
 - Gate: `--camera-selftest` (native/README.md).
+
+## Touch look (`Classes/TouchLook`, Stage L, 2026-10-23)
+**MODIFIED FROM STOCK.** Stock's `movecam` branch turned by the *last* event's int `pmx − mx` at
+0.8°/engine point after a 15-engine-point dead zone (`cDist`) re-tested every frame. Measured on an
+Air 2 (L.0, `WORKING/touch-camera-plan-2026-10-17.md`): 6.5% of a medium drag lost when two moves land
+in one frame (D1), 37% zero-turn frames on slow drags (D2), speed varying with aspect and UI scale (D3),
+a ~27 iOS pt dead zone (D4), and a drag sweeping back past its start stopping there (D5). Now:
+- **Every event counts**: `Input.mm` adds each move's float delta to `ldx/ldy`; `touchlook_step`
+  consumes it.
+- **Degrees per window point** (an iOS pt): `TOUCH_PT_SCALE` (window pt per engine pt) is written by
+  `DisplayProfile_web.mm` on every display apply, with `TOUCH_LOOK_DEG_PER_PT` 0.5 on a tablet and
+  0.65 on a phone (window short side < 500 pt). `TOUCH_LOOK_SENS_X/Y` multiply it (1; the Settings › Controls sliders `touch_look_speed` / `touch_look_speed_y`).
+- **One slop for tap and look**, `TOUCH_SLOP_PT` = 12 window pt, Chebyshev from `ffx/ffy`. Inside it
+  `ldx/ldy` are discarded (no jump on crossing; only the travel past the edge turns). Crossing it
+  clears `placeBlock` (no tap) and **latches** `looklatched` until release.
+- **Smoothing**: a One-Euro filter on the finger's *position* in window points (`TOUCH_LOOK_SMOOTH`,
+  0 = bypass = raw exactly, default 0.2; min cutoff 30 Hz → 1 Hz as it goes 0 → 1, beta 0.05).
+  Filtering position conserves the total; a latched look steps every frame, events or not, so it
+  settles when the finger stops, and the release (`touchlook_end`, in the `M_RELEASE` loop, which runs
+  *before* the look loop) consumes that frame's motion and flushes the remainder. Stock dropped the
+  release frame's motion.
+- **Glide** (`TOUCH_LOOK_GLIDE`, default off): on release the speed estimate keeps turning the
+  camera, halving every 0.2 s, stopping under max(3°/s, 5% of start); a touch-down or turning it off
+  stops it.
+- Unchanged: `inuse`, `movecam`, the `num > 1` rule (a second world finger ends the look), invert
+  (`invertcam` negates both axes as before), the pitch clamp, mouse and gamepad look.
+- Gate: `--look-selftest` steps 0–9 plus `--look-mutate=` legs (native/README.md). `TOUCH_LOOK_MUTATE`
+  bits are test-only hooks in `Input.mm`/`Player.mm`/`TouchLook.mm`; 0 in every real run.
 
 ## Common pitfalls
 - The same touch can be claimed by HUD, camera-look, and block-edit logic; the

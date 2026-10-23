@@ -78,21 +78,30 @@ the first version of the new assertions *also* passed with the fix removed — t
 in-game menu open, where `g_relativeMouse` is false and the mouse path is switched off anyway. A
 gate has to be run once with the bug put back.
 
-## Touch-look trace (`--look-trace`, L.0)
+## Touch-look trace (`--look-trace`) and the touch-look globals (Stage L)
 `--look-trace` (a plain arg, not `EDEN_DIAGNOSTICS`, so it works in the CI ipa via `eden-args.txt`) makes
-`Input_web.mm` count, per touch and per frame, every event's **float** delta against the one delta stock's
-`movecam` branch applies (the last event's int `mx − pmx`). The frame closes in `eden_look_trace_frame()`,
-which the host loop calls after `pump_events()` and before `drawFrame`. At the frame after a touch ends,
-one line goes to stderr (`emod-last-run.log` on iOS):
+`Input_web.mm` sum, per touch and per frame, every event's **float** delta, and compare it with what
+`Classes/TouchLook` consumed (`touchlook_stats`). The frame closes in `eden_look_trace_frame()`, which the
+host loop calls after `pump_events()` and before `drawFrame`, so what a frame's events turned is read one
+call later. One call after the release is consumed, one line goes to stderr (`emod-last-run.log` on iOS):
 
-`look.trace id= cam= dur= events= frames= multi=% maxev= slop_frames= slop_pt= look_frames= raw_pt= applied_pt= lost=% err=% zero=% (n/m) dt_p50= dt_p99= win_per_pt=`
+`look.trace id= cam= dur= events= frames= multi=% maxev= slop_frames= slop_pt= look_frames= raw_pt= applied_pt= lost=% err=% zero=% (n/m) dt_p50= dt_p99= win_per_pt= pt_scale= slop_win= deg_per_pt= smooth= glide=`
 
-`cam=0` means the HUD claimed the touch (ignore it). `slop_*` is motion inside stock's 15-point dead zone
-(D4; not counted as lost). `lost` = 1 − applied/raw over look frames (D1: events dropped when ≥2 land in a
-frame). `err` = the per-frame mismatch, `zero` = frames that moved < 1 point and turned 0 (D2's staircase).
-`win_per_pt` = window (iOS) points per engine point through the letterbox (D3/D4 conversion). Gate:
-`--look-selftest` (a 3-events-per-frame drag → 66.7% lost; a 0.3-pt/frame drag → ~70% zero-step, ~0 lost).
-Plan: `WORKING/touch-camera-plan-2026-10-17.md`.
+All sums are per axis (|dx|+|dy|, engine points), so an axis-alternating step is not measured as a
+diagonal (L.0's negative "lost" was that). `cam=0` means the HUD claimed the touch. `slop_pt` = motion the
+slop discarded on purpose; `applied_pt` = what the look consumed; `lost` = raw − applied − slop (≈ 0 now;
+0 for a touch that never looked); `err` = per-frame mismatch on look frames (excluding the slop-crossing
+frame); `zero` = look frames with motion that turned nothing. `win_per_pt` is Input_native's own
+letterbox measure (finger events only), `pt_scale` the engine's `TOUCH_PT_SCALE`.
+
+**Who writes the `TOUCH_*` globals** (`Classes/TouchLook.h`): `DisplayProfile_web.mm`'s
+`eden_display_apply()` writes `TOUCH_PT_SCALE` (= `eden_display_window_pt_per_point()`) and the phone/tablet
+`TOUCH_LOOK_DEG_PER_PT` on *every* apply, before its no-change early return (the box can move without the
+point space changing). Headless with no viewport, the scale is 1. The sensitivity, smoothing and glide
+globals keep their defaults until L.5 adds Settings rows.
+
+Gate: `--look-selftest` (native/README.md): steps 0–9 of the plan, and nine `--look-mutate=` legs that
+must each fail it (linux/windows CI). Plan: `WORKING/touch-camera-plan-2026-10-17.md`.
 
 ## Input-mode detection
 Touch vs. keyboard+mouse is `eden_effective_input_is_touch()` (`Settings_web.mm`): the `input_mode`

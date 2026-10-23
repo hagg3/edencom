@@ -105,6 +105,9 @@ function(eden_collect_engine_sources)
   #   servers, Add/Edit/Profile, password prompt, Connecting, errors). Data only through MpServers.h.
   list(APPEND _eden_sources "${EDEN_ECS_BASE_DIR}/Classes/ServerListMenu.mm")
   list(APPEND _eden_sources "${EDEN_ECS_BASE_DIR}/Classes/ServerFormMenu.mm")
+  #   Classes/TouchLook.mm — Stage L's touch drag camera (WORKING/touch-camera-plan-2026-10-17.md):
+  #   degrees per window point, the One-Euro smoothing, the glide. Player's movecam branch calls it.
+  list(APPEND _eden_sources "${EDEN_ECS_BASE_DIR}/Classes/TouchLook.mm")
 
   list(LENGTH _eden_sources_rel _eden_total_count)
   list(LENGTH _eden_sources _eden_kept_count)

@@ -151,7 +151,16 @@ jobs:
           # Stage 4.3: SDL finger events at the engine's own reported HUD rect. Not iOS-only —
           # the translator is shared, so every platform gets to prove it still routes.
           run_gate "touch selftest"   $B --touch-selftest
-          run_gate "look selftest"    $B --look-selftest   # L.0: the --look-trace counters
+          # Stage L: the touch drag camera, steps 0-9 (WORKING/touch-camera-plan-2026-10-17.md).
+          # Each --look-mutate puts one fixed bug back and must FAIL it.
+          rm -rf look-docs && mkdir -p look-docs
+          run_gate "look selftest"    $B --look-selftest --docs="$PWD/look-docs"
+          for m in lastonly int enginepts noflush noslop noclear nodecay unlatched multi; do
+            rm -rf look-docs-$m && mkdir -p look-docs-$m
+            if $B --look-selftest --look-mutate=$m --docs="$PWD/look-docs-$m" > gate-look-mutate-$m.log 2>&1; then
+              echo "::error::--look-selftest --look-mutate=$m PASSED: the gate cannot see that mutation"; exit 1
+            fi
+          done
           run_gate "audio selftest"   $B --audio-selftest
           # W.2: the retired web checks' native gates (docs/web-port-archive.md) -- the GL shim's
           # no-context bookkeeping, the paint/door/skin recolour, the stock 568x320 HUD rects and the
@@ -441,7 +450,16 @@ jobs:
           # Stage 4.3: SDL finger events at the engine's own reported HUD rect. Not iOS-only —
           # the translator is shared, so every platform gets to prove it still routes.
           run_gate "touch selftest"   $B --touch-selftest
-          run_gate "look selftest"    $B --look-selftest   # L.0: the --look-trace counters
+          # Stage L: the touch drag camera, steps 0-9 (WORKING/touch-camera-plan-2026-10-17.md).
+          # Each --look-mutate puts one fixed bug back and must FAIL it.
+          rm -rf look-docs && mkdir -p look-docs
+          run_gate "look selftest"    $B --look-selftest --docs="$PWD/look-docs"
+          for m in lastonly int enginepts noflush noslop noclear nodecay unlatched multi; do
+            rm -rf look-docs-$m && mkdir -p look-docs-$m
+            if $B --look-selftest --look-mutate=$m --docs="$PWD/look-docs-$m" > gate-look-mutate-$m.log 2>&1; then
+              echo "::error::--look-selftest --look-mutate=$m PASSED: the gate cannot see that mutation"; exit 1
+            fi
+          done
           run_gate "audio selftest"   $B --audio-selftest
           # W.2: the retired web checks' native gates (docs/web-port-archive.md) -- the GL shim's
           # no-context bookkeeping, the paint/door/skin recolour, the stock 568x320 HUD rects and the
@@ -699,7 +717,8 @@ jobs:
           ./build/eden_native --input-selftest
           ./build/eden_native --gamepad-selftest
           ./build/eden_native --touch-selftest
-          ./build/eden_native --look-selftest
+          rm -rf look-docs && mkdir -p look-docs
+          ./build/eden_native --look-selftest --docs="$PWD/look-docs"   # Stage L; the mutation legs run on linux/windows
           ./build/eden_native --audio-selftest
           # W.2 (see the linux job). The convert64 cross-check matters most here: Apple's Foundation is
           # where convertWorldTo64's `.eden` leg failed (fileHandleForWritingAtPath: on a missing file).

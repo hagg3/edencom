@@ -46,6 +46,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cmath>
+#import "../../../Classes/TouchLook.h"   // Stage L: TOUCH_LOOK_* globals the touch_look_* rows write
 
 // Mirrors the anonymous enum at the top of Classes/SettingsMenu.mm. Those constants are file-local
 // there, so the indexes are duplicated — same situation as Player's `usage_id` in Input_web.mm. If
@@ -114,6 +115,11 @@ static const Setting kSettings[] = {
   { "mouse_sensitivity", "Mouse sensitivity", "Controls",  KIND_RANGE,  -1,          .25f,  3, .05f,  1,  NULL,                         NULL },
   { "mouse_sensitivity_y", "Mouse sensitivity (Y)", "Controls", KIND_RANGE, -1,      .25f,  3, .05f,  1,  NULL,  NULL },
   { "invert_look",       "Invert look",       "Controls",  KIND_TOGGLE, -1,             0,   1,   1,   0,  NULL,                                                               NULL },
+  // Stage L: touch drag-camera rows (Classes/TouchLook.h). Shown only with touch input; the mouse rows are
+  // hidden then (eden_settings_native_hidden). Smoothing 0 = raw exactly. Glide (Experiments) is off by default.
+  { "touch_look_speed",  "Touch look speed",  "Controls",  KIND_RANGE,  -1,          .25f,  3, .05f,  1,  "Drag camera, left-right.", NULL },
+  { "touch_look_speed_y", "Touch look speed (Y)", "Controls", KIND_RANGE, -1,        .25f,  3, .05f,  1,  "Drag camera, up-down.", NULL },
+  { "touch_look_smoothing", "Touch look smoothing", "Controls", KIND_RANGE, -1,       0,   1, .05f, .2f, "0 follows your finger exactly.", NULL },
   // Row #24 (gamepad). Two translators read these now — public/eden-gamepad.js on web and
   // native/src/seam/Input_native.cpp (Phase N Stage 2) on native — both of them pure translators
   // over the existing input entry points. The rows deliberately do
@@ -205,6 +211,7 @@ static const Setting kSettings[] = {
   { "fire_chars_vines",  "Fire chars vines",  "Experiments", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Burning vines turn to dark stone.", NULL },
   { "creature_walk_voices", "Creature walking sounds", "Experiments", KIND_TOGGLE, -1,  0,   1,   1,   0,  "Creatures call out as they start walking.", NULL },
   { "double_brush",      "Double-size build brush", "Experiments", KIND_TOGGLE, -1,      0,   1,   1,   0,  "A key builds 2x2x2 blocks at a time.", NULL },
+  { "touch_look_glide",  "Touch look glide",  "Experiments", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Camera keeps turning briefly after you lift your finger.", NULL },
   { "camera_view",       "Camera view",       "Experiments", KIND_ENUM,   -1,           0,   2,   1,   0,  "Third person shows your body. F5 cycles.", "First person,Third person,Third person (front)" },
   // MP.8: comma-separated matchmaker addresses (host[:port], default 27020); empty = no Matchmakers tab.
   { "mp_matchmakers",    "Matchmakers",       "Experiments", KIND_TEXT,   -1,           0,   0,   0,   0,  "Lists other servers. Off when empty.", NULL },
@@ -531,6 +538,14 @@ static void eden_apply_setting(int i, bool commitEngine) {
         eden_hold_to_act = v;
     } else if (std::strcmp(s.key, "mouse_sensitivity_y") == 0) {
         eden_mouse_sensitivity_y = v;
+    } else if (std::strcmp(s.key, "touch_look_speed") == 0) {
+        TOUCH_LOOK_SENS_X = v;
+    } else if (std::strcmp(s.key, "touch_look_speed_y") == 0) {
+        TOUCH_LOOK_SENS_Y = v;
+    } else if (std::strcmp(s.key, "touch_look_smoothing") == 0) {
+        TOUCH_LOOK_SMOOTH = v;
+    } else if (std::strcmp(s.key, "touch_look_glide") == 0) {
+        TOUCH_LOOK_GLIDE = v != 0.0f ? 1 : 0;
     } else if (std::strcmp(s.key, "crosshair") == 0) {
         eden_crosshair = v;
     } else if (std::strcmp(s.key, "advanced_movement") == 0) {
@@ -1036,6 +1051,10 @@ EDEN_EXPORT int eden_settings_native_hidden(int i) {
         "display_layout", "input_mode", "legacy_menu",
     };
     for (const char* h : kHidden) if (std::strcmp(s->key, h) == 0) return 1;
+    // Stage L: look rows follow the effective input device.
+    const bool touch = eden_effective_input_is_touch() != 0;
+    if (std::strncmp(s->key, "touch_look_", 11) == 0) return touch ? 0 : 1;
+    if (std::strncmp(s->key, "mouse_sensitivity", 17) == 0) return touch ? 1 : 0;
 #if defined(EDEN_PLATFORM_IOS)
     if (std::strcmp(s->key, "render_scale") == 0) return 1;   // N.4.12: dropped on iOS (see eden_get_render_scale_pct)
 #endif

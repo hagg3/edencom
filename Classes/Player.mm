@@ -14,6 +14,7 @@
 #import "SignTool.h"
 #import "CmdScript.h"
 #import "MpWorld.h"   // MP.3a: session gates; MP.4: the intent sites
+#import "TouchLook.h"   // Stage L: the touch drag camera
 #define MOVE_SPEED 35.0f
 #define CLIMB_SPEED 3.0f
 #define SPEED_M 4.5f
@@ -316,6 +317,7 @@ void Player::processInput(float etime){
 		if(touches[i].inuse==0&&touches[i].down==M_DOWN){
            
 			touches[i].inuse=usage_id;
+            touchlook_begin(i);   // Stage L: a fresh filter; a touch-down stops any glide
             if(mode==MODE_BUILD){
                 Point3D point=findWorldCoords(touches[i].my,touches[i].mx,FC_PLACE);
                 if(point.x==-1)continue;
@@ -367,7 +369,7 @@ void Player::processInput(float etime){
 			num++;
 		}		
 	}
-	if(num>1){
+	if(num>1&&!(TOUCH_LOOK_MUTATE&TL_MUT_MULTI)){
 		for(int i=0;i<MAX_TOUCHES;i++){
 			if(touches[i].inuse==usage_id&&touches[i].down==M_DOWN){
 				touches[i].movecam=FALSE;
@@ -376,6 +378,14 @@ void Player::processInput(float etime){
 	}
 	for(int i=0;i<MAX_TOUCHES;i++){
 		if(touches[i].inuse==usage_id&&touches[i].down==M_RELEASE){
+            // Stage L: a look ending turns by the motion its last frame delivered (stock dropped
+            // it: this loop runs before the look loop) plus the smoothing remainder.
+            if(touches[i].movecam&&touches[i].looklatched){
+                float dyaw,dpitch;
+                touchlook_end(i,&touches[i],&dyaw,&dpitch);
+                if(invertcam){ yaw-=dyaw; pitch-=dpitch; }
+                else{ yaw+=dyaw; pitch+=dpitch; }
+            }
 			touches[i].down=M_NONE;
 			touches[i].inuse=0;
 			if(mode==MODE_CAMERA){	
@@ -625,14 +635,25 @@ void Player::processInput(float etime){
 			
 		}
 	}
-	const static int cDist=15;
+	//const static int cDist=15;
 	//const static int minDist=14;
+    {   // Stage L: an opt-in glide after a look ends (TOUCH_LOOK_GLIDE); a touch-down stops it
+        float dyaw,dpitch;
+        touchlook_glide(etime,&dyaw,&dpitch);
+        if(invertcam){ yaw-=dyaw; pitch-=dpitch; }
+        else{ yaw+=dyaw; pitch+=dpitch; }
+    }
 	for(int i=0;i<MAX_TOUCHES;i++){
-		if(touches[i].inuse==usage_id&&touches[i].moved){
+		// Stage L: a latched look also runs on frames with no new event, so smoothing settles.
+		if(touches[i].inuse==usage_id&&(touches[i].moved||
+		   (touches[i].movecam&&touches[i].looklatched&&touches[i].down==M_DOWN))){
 			if(touches[i].movecam){
 				touches[i].moved=FALSE;		
 				
-                float sx=1;
+                // Stage L (Classes/TouchLook.h): stock turned by the LAST event's int delta (D1,
+                // D2), 0.4 x 2 degrees per ENGINE point (D3), after a 15-engine-point slop (D4)
+                // re-tested every frame (D5). Its arithmetic, kept as archaeology:
+                /*float sx=1;
                 float sy=1;
                 if(IS_IPAD){
                     sx=2;
@@ -663,7 +684,37 @@ void Player::processInput(float etime){
 						pitch+=sy*(float)dy*PITCH_SPEED;
 					else
 						pitch+=sy*(float)-dy*PITCH_SPEED;
-				}				
+				}*/
+                // One slop, in window points, for tap and look: a wiggle inside it is a tap and
+                // turns nothing. Crossing it ends the tap and latches the look until release.
+                const float slop=touchlook_slop_engine_pts();
+                const float ex=touches[i].lfx-touches[i].ffx;
+                const float ey=touches[i].lfy-touches[i].ffy;
+                const BOOL outside=fabsf(ex)>slop||fabsf(ey)>slop;
+                if(outside&&!(TOUCH_LOOK_MUTATE&TL_MUT_NOCLEAR)){
+					touches[i].placeBlock=FALSE;
+                }
+                const BOOL lookOutside=(TOUCH_LOOK_MUTATE&TL_MUT_NOSLOP)?(ex!=0||ey!=0):outside;
+                if(!lookOutside&&(!touches[i].looklatched||(TOUCH_LOOK_MUTATE&TL_MUT_UNLATCHED))){
+                    touchlook_discard(i,&touches[i]);   // stock's discard: no jump on crossing
+                    continue;
+                }
+                if(!touches[i].looklatched){
+                    // Only the travel past the slop's edge turns, so crossing it does not jump.
+                    const float s=(TOUCH_LOOK_MUTATE&TL_MUT_NOSLOP)?0:slop;
+                    const float ox=ex>s?ex-s:(ex<-s?ex+s:0);
+                    const float oy=ey>s?ey-s:(ey<-s?ey+s:0);
+                    touches[i].ldx-=ox;
+                    touches[i].ldy-=oy;
+                    touchlook_discard(i,&touches[i]);
+                    touches[i].ldx=ox;
+                    touches[i].ldy=oy;
+                    touches[i].looklatched=TRUE;
+                }
+                float dyaw,dpitch;
+                touchlook_step(i,&touches[i],etime,&dyaw,&dpitch);
+                if(invertcam){ yaw-=dyaw; pitch-=dpitch; }
+                else{ yaw+=dyaw; pitch+=dpitch; }
 			}else{
                 if(mode==MODE_BUILD){
                     Point3D point=findWorldCoords(touches[i].my,touches[i].mx,FC_PLACE);

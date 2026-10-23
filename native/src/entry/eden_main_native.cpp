@@ -78,12 +78,16 @@
 //   --touch-selftest     Stage 4.3: pushes SDL finger events at the engine's OWN reported HUD rect
 //                        and asserts the tap reaches Hud::inmenu. The only test of the touch path
 //                        outside a browser.
-//   --look-trace         L.0 (WORKING/touch-camera-plan-2026-10-17.md): one `look.trace` line per
-//                        touch at its end -- events/frame, the motion stock's look branch drops
-//                        (last event only, int points), zero-step frames, frame dt. Not a mode:
-//                        add it to a normal run (eden-args.txt on a device). Not diagnostics-gated.
-//   --look-selftest      L.0: step 0 of the plan's look selftest -- synthetic multi-event and
-//                        sub-point drags through eden_input_pointer_event; asserts the trace counters.
+//   --look-trace         Stage L (WORKING/touch-camera-plan-2026-10-17.md): one `look.trace` line per
+//                        touch at its end -- events/frame, the motion the touch look consumed vs
+//                        the finger's travel (lost), per-frame error, zero-step frames, frame dt.
+//                        Not a mode: add it to a normal run (eden-args.txt on a device). Not
+//                        diagnostics-gated.
+//   --look-selftest      Stage L: the plan's steps 0-9 -- the trace, no loss, no staircase, per-
+//                        window-point speed, smoothing at 30/60/120 Hz, tap vs drag slop, glide,
+//                        arbitration, the latched slop. --look-mutate=<name> puts one bug back
+//                        (lastonly int enginepts noflush noslop noclear nodecay unlatched multi);
+//                        each must FAIL it.
 //   --gamepad-selftest   Stage 2: attaches an SDL VIRTUAL gamepad, drives its sticks/buttons, and
 //                        asserts the engine moved — so it needs no physical controller and runs
 //                        headless. Native counterpart of web-port-final:web/tools/headless-gamepad-test.js.
@@ -310,6 +314,7 @@
 #include "../../../Classes/Shadow.h"         // --shadows= / --shadow-selftest (H.2)
 #include "../../../Classes/TerrainGenerator.h"   // --classic-selftest (H.4)
 #include "../../../Classes/MpWorld.h"            // --mp-replay (MP.3a)
+#include "../../../Classes/TouchLook.h"          // --look-selftest (Stage L)
 #include "../../../Classes/ChatFeed.h"           // MP.7: --mp-replay leg 8
 #include "../../../Classes/ServerListMenu.h"     // MP.6: --ui-selftest, --shot, --mp-mock
 #include "../../../Classes/ServerFormMenu.h"
@@ -551,6 +556,7 @@ struct Options {
     bool passVsync = false;              // --pass-vsync: keep vsync on (the player's frame; present then holds the vsync wait)
     std::string convertAnswer;           // --convert-answer=upgrade|keep|cancel: --convert-prompt-selftest
     std::string classicFixture = "../port/tools/fixtures/classic/legacy-1315365413.bin.gz";   // --classic-fixture=
+    std::string lookMutate;              // --look-mutate=<name>: --look-selftest's mutation legs (Stage L)
     std::string classicMutate;           // --classic-mutate=tables|trunc|noborder: --classic-selftest's mutation legs
     std::string propsMutate;             // --props-mutate=nogen: --props-selftest's mutation leg (H.15)
     std::string propsWorld;              // --props-world=FILE: --props-selftest times reading this world (gate 4)
@@ -615,6 +621,7 @@ extern "C" void eden_look_trace_enable(int on);     // Input_web.mm, --look-trac
 extern "C" void eden_look_trace_frame(void);        // Input_web.mm: closes a frame of the trace
 extern "C" void eden_look_trace_last(int out[6], float* lostPct);   // --look-selftest
 extern "C" void eden_test_force_touch_input(void);   // Settings_web.mm (X.19)
+extern "C" void eden_display_set_viewport(int css_w, int css_h);   // DisplayProfile_web.mm (--look-selftest step 3)
 void settings_pump() {
     if (!eden_settings_loaded()) eden_settings_init();
     // --render-scale=N is applied the first frame the model has loaded (before then a write would
@@ -6894,60 +6901,378 @@ int run_mp_join() {
     return g_selftestFailures ? 1 : 0;
 }
 
-// --look-selftest: step 0 of WORKING/touch-camera-plan-2026-10-17.md, the L.0 trace's own gate.
-// Synthetic drags through eden_input_pointer_event (the real seam entry point) in point space,
-// top-left origin; the trace line is checked against numbers worked out from the stream.
+// --look-selftest: WORKING/touch-camera-plan-2026-10-17.md's gate for Stage L, steps 0-9 (the
+// plan's numbering). Synthetic drags through eden_input_pointer_event (the real seam entry point),
+// point space, top-left origin, at a fixed 1/60 s etime; reads player->yaw/pitch frame by frame.
+// Headless has no window box, so TOUCH_PT_SCALE is 1 (one window point per engine point) until step
+// 3 gives it one. --look-mutate=<name> puts one fixed bug back (TouchLook.h's TL_MUT_*); native.yml
+// asserts every mutation FAILS this.
 int run_look_selftest() {
     g_selftestTag = "eden-look";
     eden_set_detected_touch(1);
     eden_test_force_touch_input();
     eden_look_trace_enable(1);
+    if (!g_opt.lookMutate.empty()) {
+        TOUCH_LOOK_MUTATE = touchlook_mutation_bit(g_opt.lookMutate.c_str());
+        if (!TOUCH_LOOK_MUTATE) {
+            std::fprintf(stderr, "[eden-look] unknown --look-mutate=%s\n", g_opt.lookMutate.c_str());
+            return 2;
+        }
+        std::printf("[eden-look] mutation: %s\n", g_opt.lookMutate.c_str());
+    }
     const char* name = g_opt.world.empty() ? "look-selftest" : g_opt.world.c_str();
     if (!open_world(name, g_opt.height)) return 1;
+    g_app->viewController.setFixedEtime(1.0f / 60.0f);
     tick(60);
-    const float x0 = (float)(int)(SCREEN_WIDTH * 0.5f), y0 = (float)(int)(SCREEN_HEIGHT * 0.5f);
+    Player* pl = World::getWorld->player;
+    Hud* hud = World::getWorld->hud;
+    Terrain* ter = World::getWorld->terrain;
+    pl->invertcam = 0;
+    TOUCH_LOOK_SMOOTH = 0.0f;   // raw exactly; step 4 turns it on
+    TOUCH_LOOK_GLIDE = 0;
+    hud->mode = MODE_BUILD;     // so a tap that is not cleared builds (steps 5-6)
+    hud->blocktype = TYPE_STONE;
     int c[6];
     float lost = 0;
-    char d[240];
-
-    // D1: three 1-point moves a frame for 30 frames. Frames 1-5 stay inside stock's 15-point dead
-    // zone (3k <= 15); frames 6-30 plus the release frame are look frames. Stock applies 1 point of
-    // each frame's 3: 25 of 75 points turned, so lost = 66.7%.
-    eden_input_pointer_event(0, 41, x0, y0);
-    tick(1);
-    float x = x0;
-    for (int f = 0; f < 30; ++f) {
-        for (int k = 0; k < 3; ++k) { x += 1.0f; eden_input_pointer_event(1, 41, x, y0); }
+    char d[320];
+    int ident = 40;
+    auto turned = [](float a, float b) {
+        float t = b - a;
+        while (t > 180.0f) t -= 360.0f;
+        while (t <= -180.0f) t += 360.0f;
+        return t;
+    };
+    auto level = [&](float pitch) { pl->yaw = 0.0f; pl->pitch = pitch; tick(2); };
+    auto centre = [](float* x, float* y) {
+        *x = (float)(int)(SCREEN_WIDTH * 0.5f);
+        *y = (float)(int)(SCREEN_HEIGHT * 0.5f);
+    };
+    int bx = 0, bz = 0, by = 0;   // the block-count box's centre, fixed per step (the player drifts)
+    auto pin_box = [&]() { bx = (int)pl->pos.x; bz = (int)pl->pos.z; by = (int)pl->pos.y; };
+    auto near_blocks = [&]() {   // non-air voxels in the pinned box (Terrain takes x, z, y)
+        int n = 0;
+        const int px = bx, pz = bz, py = by;
+        for (int x = px - 7; x <= px + 7; ++x)
+            for (int z = pz - 7; z <= pz + 7; ++z)
+                for (int y = py - 7; y <= py + 7; ++y)
+                    if (y >= 0 && y < T_HEIGHT && ter->getLand(x, z, y) > 0) ++n;
+        return n;
+    };
+    // Where a tap released at pointer (x, y) would build: Player's own call, on Input.mm's int point.
+    auto tap_target = [](float x, float y) {
+        const int mx = (int)x, my = (int)((float)Input::getInput()->scr_height - y);
+        return findWorldCoords(my, mx, FC_PLACE);   // sic: Player passes (my, mx)
+    };
+    // One horizontal drag: `n` moves of `step` engine points, one a frame, then the release.
+    auto drag = [&](float x, float y, int n, float step) {
+        const int id = ++ident;
+        eden_input_pointer_event(0, id, x, y);
         tick(1);
-    }
-    eden_input_pointer_event(2, 41, x, y0);
-    tick(2);
-    eden_look_trace_last(c, &lost);
-    std::snprintf(d, sizeof(d), "events %d frames %d multi %d look_frames %d lost %.2f%%", c[0], c[1], c[2],
-                  c[3], lost);
-    check(c[0] == 91 && c[1] == 31 && c[2] == 30 && c[3] == 26,
-          "a 3-events-per-frame drag counts 91 events, 31 frames, 30 multi-event, 26 look frames", d);
-    check(lost > 66.0f && lost < 67.4f, "stock's last-event-only look loses two thirds of it", d);
+        for (int f = 0; f < n; ++f) { x += step; eden_input_pointer_event(1, id, x, y); tick(1); }
+        eden_input_pointer_event(2, id, x, y);
+        tick(2);
+    };
+    const float slop = touchlook_slop_engine_pts();   // 12 headless
+    const float deg = TOUCH_LOOK_DEG_PER_PT;
+    float x0, y0;
+    centre(&x0, &y0);
 
-    // D2: one 0.3-point move a frame after a 20-point jump past the dead zone. Int truncation steps
-    // the camera on ~30 of the 100 slow frames and turns 0 on the rest, but loses nothing overall.
-    eden_input_pointer_event(0, 42, x0, y0);
-    tick(1);
-    x = x0 + 20.0f;
-    eden_input_pointer_event(1, 42, x, y0);
-    tick(1);
-    for (int f = 0; f < 100; ++f) {
-        x += 0.3f;
-        eden_input_pointer_event(1, 42, x, y0);
+    // ---- Steps 0-1 (D1): three 1-point moves a frame for 30 frames. The 12-point slop holds frames
+    // 1-4 (3k <= 12); frame 5 crosses and turns only the travel past the edge. Every later frame
+    // turns all three of its points, so after frame k the camera has turned (3k - 12) points' worth.
+    {
+        level(0.0f);
+        const int id = ++ident;
+        const float yaw0 = pl->yaw;
+        eden_input_pointer_event(0, id, x0, y0);
         tick(1);
+        float x = x0, worst = 0.0f;
+        int worstFrame = -1;
+        for (int f = 1; f <= 30; ++f) {
+            for (int k = 0; k < 3; ++k) { x += 1.0f; eden_input_pointer_event(1, id, x, y0); }
+            tick(1);
+            const float want = std::fmax(0.0f, (x - x0) - slop) * deg;
+            const float e = std::fabs(turned(yaw0, pl->yaw) - want);
+            if (e > worst) { worst = e; worstFrame = f; }
+        }
+        eden_input_pointer_event(2, id, x, y0);
+        tick(2);
+        eden_look_trace_last(c, &lost);
+        std::snprintf(d, sizeof(d), "events %d frames %d multi %d look_frames %d lost %.2f%%", c[0], c[1], c[2],
+                      c[3], lost);
+        check(c[0] == 91 && c[1] == 31 && c[2] == 30 && c[3] == 27,
+              "step 0: the trace counts 91 events, 31 frames, 30 multi-event, 27 look frames", d);
+        check(std::fabs(lost) < 0.5f, "step 0: the trace sees nothing lost", d);
+        const float total = turned(yaw0, pl->yaw), want = (90.0f - slop) * deg;
+        std::snprintf(d, sizeof(d), "turned %.3f deg (want %.3f), worst frame %d off by %.4f", total, want,
+                      worstFrame, worst);
+        check(std::fabs(total - want) < 0.01f && worst < 0.01f,
+              "step 1: a 3-events-per-frame drag turns its whole travel, every frame (smoothing 0 = raw)", d);
     }
-    eden_input_pointer_event(2, 42, x, y0);
-    tick(2);
-    eden_look_trace_last(c, &lost);
-    const float zeroPct = c[5] ? 100.0f * (float)c[4] / (float)c[5] : 0.0f;
-    std::snprintf(d, sizeof(d), "zero-step %d of %d motion frames (%.1f%%), lost %.2f%%", c[4], c[5], zeroPct, lost);
-    check(c[5] == 101 && zeroPct > 60.0f && zeroPct < 80.0f, "a 0.3-point/frame drag is a staircase: ~70% zero-step frames", d);
-    check(lost > -2.0f && lost < 3.0f, "truncation loses (almost) nothing overall", d);
+
+    // ---- Step 2 (D2): 0.3 points a frame after a 20-point jump past the slop. Int points stepped
+    // on ~30 of 100 frames; float accumulation turns every frame by the same amount.
+    {
+        level(0.0f);
+        const int id = ++ident;
+        const float yaw0 = pl->yaw;
+        eden_input_pointer_event(0, id, x0, y0);
+        tick(1);
+        float x = x0 + 20.0f;
+        eden_input_pointer_event(1, id, x, y0);
+        tick(1);
+        float prev = pl->yaw, minStep = 1e9f, maxStep = 0.0f;
+        for (int f = 0; f < 100; ++f) {
+            x += 0.3f;
+            eden_input_pointer_event(1, id, x, y0);
+            tick(1);
+            const float st = turned(prev, pl->yaw);
+            minStep = std::fmin(minStep, st);
+            maxStep = std::fmax(maxStep, st);
+            prev = pl->yaw;
+        }
+        eden_input_pointer_event(2, id, x, y0);
+        tick(2);
+        eden_look_trace_last(c, &lost);
+        const float total = turned(yaw0, pl->yaw), want = ((x - x0) - slop) * deg;
+        std::snprintf(d, sizeof(d), "per-frame step %.4f..%.4f deg (want %.4f), total %.3f (want %.3f), trace zero %d/%d",
+                      minStep, maxStep, 0.3f * deg, total, want, c[4], c[5]);
+        check(minStep > 0.3f * deg * 0.95f && maxStep < 0.3f * deg * 1.05f && c[4] == 0,
+              "step 2: a 0.3-point/frame drag turns every frame by the same amount (no staircase)", d);
+        check(std::fabs(total - want) < 0.01f, "step 2: and loses nothing", d);
+    }
+
+    // ---- Step 4: smoothing on, one event stream (120 events over 0.5 s, 100 points) ticked at 30, 60
+    // and 120 Hz. Held still for 1 s the filter settles on the travel; released straight from the
+    // motion, the flush leaves no remainder. Either way every rate ends on the same yaw.
+    {
+        TOUCH_LOOK_SMOOTH = 0.5f;
+        const int rates[3] = {30, 60, 120};
+        const float want = (100.0f - slop) * deg;
+        float lag60 = 0.0f;
+        for (int hold = 1; hold >= 0; --hold) {
+            for (int r : rates) {
+                g_app->viewController.setFixedEtime(1.0f / (float)r);
+                level(0.0f);
+                const int id = ++ident;
+                const float yaw0 = pl->yaw;
+                eden_input_pointer_event(0, id, x0, y0);
+                tick(1);
+                int k = 0;
+                const int frames = r / 2;
+                for (int n = 1; n <= frames; ++n) {
+                    while (k < 120 && (k + 1) * r <= n * 240) {
+                        ++k;
+                        eden_input_pointer_event(1, id, x0 + 100.0f * (float)k / 120.0f, y0);
+                    }
+                    tick(1);
+                }
+                const float atEnd = turned(yaw0, pl->yaw);
+                if (hold && r == 60) lag60 = want - atEnd;
+                float held = atEnd;
+                if (hold) { tick(r); held = turned(yaw0, pl->yaw); }
+                eden_input_pointer_event(2, id, x0 + 100.0f, y0);
+                tick(2);
+                const float fin = turned(yaw0, pl->yaw);
+                std::snprintf(d, sizeof(d), "%d Hz: %.3f deg at the motion's end, %.3f held, %.3f released (want %.3f)",
+                              r, atEnd, held, fin, want);
+                if (hold)
+                    check(std::fabs(held - want) < want * 0.005f, "step 4: held still, the filter settles on the travel", d);
+                check(std::fabs(fin - want) < 0.01f,
+                      hold ? "step 4: released after the hold, nothing is left over"
+                           : "step 4: released mid-motion, the flush leaves no remainder", d);
+            }
+        }
+        std::snprintf(d, sizeof(d), "lag at the motion's end, 60 Hz: %.3f deg", lag60);
+        check(lag60 > 0.05f, "step 4: smoothing 0.5 actually filters (the camera trails the finger)", d);
+        g_app->viewController.setFixedEtime(1.0f / 60.0f);
+        TOUCH_LOOK_SMOOTH = 0.0f;
+    }
+
+    // ---- Steps 5-6 (D4): one slop for tap and look. Looking down at the ground in Build mode (25 deg:
+    // far enough that the target never overlaps the player, which builds nothing, and above -50,
+    // where a tap would jump-and-build instead), a
+    // 6-point wiggle builds one block and turns nothing; a 40-point drag turns (40 - slop) points'
+    // worth and builds nothing.
+    {
+        level(-25.0f);
+        tick(10);
+        pin_box();
+        const int b0 = near_blocks();
+        const int id = ++ident;
+        static const float wig[6][2] = {{3, 0}, {6, 2}, {2, -4}, {-3, -6}, {-6, 1}, {0, 0}};
+        eden_input_pointer_event(0, id, x0, y0);
+        tick(1);
+        float wigTurn = 0.0f;
+        for (auto& w : wig) {
+            eden_input_pointer_event(1, id, x0 + w[0] / TOUCH_PT_SCALE, y0 + w[1] / TOUCH_PT_SCALE);
+            tick(1);
+            wigTurn = std::fmax(wigTurn, std::fabs(turned(0.0f, pl->yaw)) + std::fabs(pl->pitch + 25.0f));
+        }
+        const Point3D T = tap_target(x0, y0);
+        eden_input_pointer_event(2, id, x0, y0);
+        tick(6);
+        const int b1 = near_blocks();
+        std::snprintf(d, sizeof(d), "blocks %d -> %d, target %d,%d,%d now %d, largest turn %.3f deg, pitch %.3f",
+                      b0, b1, T.x, T.y, T.z, ter->getLand(T.x, T.z, T.y), wigTurn, pl->pitch);
+        check(b1 == b0 + 1 && T.x != -1 && ter->getLand(T.x, T.z, T.y) == TYPE_STONE && wigTurn < 1e-4f &&
+              std::fabs(pl->pitch + 25.0f) < 1e-4f,
+              "step 5: a 6-point wiggle is a tap: one block where it aimed, no turn at any point", d);
+
+        level(-25.0f);
+        pin_box();
+        const int b2 = near_blocks();
+        {   // drag() by hand, to read where the release would build
+            const int id2 = ++ident;
+            float x = x0;
+            eden_input_pointer_event(0, id2, x, y0);
+            tick(1);
+            for (int f = 0; f < 20; ++f) { x += 2.0f; eden_input_pointer_event(1, id2, x, y0); tick(1); }
+            const Point3D U = tap_target(x, y0);
+            eden_input_pointer_event(2, id2, x, y0);
+            tick(6);
+            const int b3 = near_blocks();
+            const float want = (40.0f - slop) * deg;
+            std::snprintf(d, sizeof(d), "blocks %d -> %d, release target %d,%d,%d now %d, turned %.3f deg (want %.3f)", b2,
+                          b3, U.x, U.y, U.z, U.x != -1 ? ter->getLand(U.x, U.z, U.y) : -1, turned(0.0f, pl->yaw), want);
+            check(b3 == b2 && U.x != -1 && ter->getLand(U.x, U.z, U.y) == TYPE_NONE &&
+                  std::fabs(turned(0.0f, pl->yaw) - want) < 0.01f,
+                  "step 6: a 40-point drag turns past the slop and builds nothing", d);
+        }
+    }
+
+    // ---- Step 7: glide. Off: the camera stops on release. On: it keeps turning, decays, and stops
+    // within 1 s; a touch-down catches it.
+    {
+        for (int glide = 0; glide < 2; ++glide) {
+            TOUCH_LOOK_GLIDE = glide;
+            level(0.0f);
+            drag(x0 - 60.0f, y0, 30, 4.0f);   // ~240 pt/s at release
+            const float yR = pl->yaw;
+            tick(6);
+            const float y6 = pl->yaw;
+            tick(54);
+            const float y60 = pl->yaw;
+            tick(30);
+            const float y90 = pl->yaw;
+            std::snprintf(d, sizeof(d), "glide %d: +%.3f deg after 0.1 s, +%.3f after 1 s, +%.3f after 1.5 s", glide,
+                          turned(yR, y6), turned(yR, y60), turned(yR, y90));
+            if (!glide)
+                check(std::fabs(turned(yR, y90)) < 1e-4f, "step 7: glide off, the camera stops on release", d);
+            else
+                check(turned(yR, y6) > 0.5f && std::fabs(turned(y60, y90)) < 1e-4f,
+                      "step 7: glide on, it keeps turning and stops within 1 s", d);
+        }
+        level(0.0f);
+        drag(x0 - 60.0f, y0, 30, 4.0f);
+        tick(3);
+        const int id = ++ident;
+        eden_input_pointer_event(0, id, x0, y0);   // a still finger
+        tick(1);
+        const float yC = pl->yaw;
+        tick(10);
+        std::snprintf(d, sizeof(d), "%.4f deg in the 10 frames after the touch-down", turned(yC, pl->yaw));
+        check(std::fabs(turned(yC, pl->yaw)) < 1e-4f, "step 7: a touch-down catches a glide", d);
+        for (int f = 1; f <= 10; ++f) { eden_input_pointer_event(1, id, x0 + 3.0f * f, y0); tick(1); }   // not a tap
+        eden_input_pointer_event(2, id, x0 + 30.0f, y0);
+        tick(2);
+        TOUCH_LOOK_GLIDE = 0;
+    }
+
+    // ---- Step 8: arbitration unchanged. A drag on the joystick pad turns nothing; a second world
+    // finger ends the first one's look (stock's num > 1 rule); pitch clamps at +80.
+    {
+        float jx = 0, jy = 0, jw = 0, jh = 0;
+        const char* st = eden_debug_display_state();
+        const char* p2 = st ? std::strstr(st, "\"rjoystick\":[") : nullptr;
+        if (p2) std::sscanf(p2 + 13, "%f,%f,%f,%f", &jx, &jy, &jw, &jh);
+        level(0.0f);
+        if (jw > 0 && jh > 0) drag(jx + jw * 0.5f - 20.0f, SCREEN_HEIGHT - (jy + jh * 0.5f), 20, 2.0f);
+        tick(30);
+        std::snprintf(d, sizeof(d), "pad [%.0f,%.0f,%.0f,%.0f], turned %.4f deg", jx, jy, jw, jh, turned(0.0f, pl->yaw));
+        check(jw > 0 && std::fabs(turned(0.0f, pl->yaw)) < 1e-4f, "step 8: a drag on the joystick pad turns nothing", d);
+
+        level(0.0f);
+        const int a = ++ident, b = ++ident;
+        float x = x0 - 80.0f;
+        eden_input_pointer_event(0, a, x, y0);
+        tick(1);
+        for (int f = 0; f < 15; ++f) { x += 2.0f; eden_input_pointer_event(1, a, x, y0); tick(1); }
+        const float yA = pl->yaw;
+        eden_input_pointer_event(0, b, x0 + 100.0f, y0 + 40.0f);
+        tick(1);
+        for (int f = 0; f < 10; ++f) { x += 2.0f; eden_input_pointer_event(1, a, x, y0); tick(1); }
+        const float yB = pl->yaw;
+        eden_input_pointer_event(2, a, x, y0);
+        for (int f = 1; f <= 10; ++f) { eden_input_pointer_event(1, b, x0 + 100.0f + 3.0f * f, y0 + 40.0f); tick(1); }
+        eden_input_pointer_event(2, b, x0 + 130.0f, y0 + 40.0f);
+        tick(2);
+        std::snprintf(d, sizeof(d), "one finger %.3f deg (want %.3f), then %.4f with two down", turned(0.0f, yA),
+                      (30.0f - slop) * deg, turned(yA, yB));
+        check(std::fabs(turned(0.0f, yA) - (30.0f - slop) * deg) < 0.01f && std::fabs(turned(yA, yB)) < 1e-4f,
+              "step 8: a second world finger ends the first one's look (num > 1)", d);
+
+        level(0.0f);
+        const int id = ++ident;
+        float y = SCREEN_HEIGHT - 10.0f;
+        eden_input_pointer_event(0, id, x0, y);
+        tick(1);
+        while (y > 10.0f) { y -= 5.0f; eden_input_pointer_event(1, id, x0, y); tick(1); }   // up the screen
+        const float pTop = pl->pitch;
+        for (int f = 0; f < 10; ++f) { y += 2.0f; eden_input_pointer_event(1, id, x0, y); tick(1); }
+        const float pBack = pl->pitch;
+        eden_input_pointer_event(2, id, x0, y);
+        tick(2);
+        std::snprintf(d, sizeof(d), "pitch %.3f at the top, %.3f after 20 points back (want %.3f)", pTop, pBack,
+                      80.0f - 20.0f * deg);
+        check(std::fabs(pTop - 80.0f) < 1e-3f && std::fabs(pBack - (80.0f - 20.0f * deg)) < 0.01f,
+              "step 8: pitch clamps at +80 and turns back at once", d);
+    }
+
+    // ---- Step 9 (D5): the slop is latched. 40 points out, back through the start and 40 beyond:
+    // the camera turns for the whole return path, none of it lost near the start.
+    {
+        level(0.0f);
+        const int id = ++ident;
+        float x = x0;
+        eden_input_pointer_event(0, id, x, y0);
+        tick(1);
+        for (int f = 0; f < 20; ++f) { x += 2.0f; eden_input_pointer_event(1, id, x, y0); tick(1); }
+        for (int f = 0; f < 40; ++f) { x -= 2.0f; eden_input_pointer_event(1, id, x, y0); tick(1); }
+        eden_input_pointer_event(2, id, x, y0);
+        tick(2);
+        const float want = ((40.0f - slop) - 80.0f) * deg;
+        std::snprintf(d, sizeof(d), "turned %.3f deg (want %.3f)", turned(0.0f, pl->yaw), want);
+        check(std::fabs(turned(0.0f, pl->yaw) - want) < 0.01f, "step 9: an out-and-back drag turns the whole way back", d);
+    }
+
+    // ---- Step 3 (D3), last because it gives headless a window box: the same 60-WINDOW-point swipe
+    // turns 60 - 12 window points' worth at every window size and UI scale (the engine point space
+    // differs), at the phone rate on a phone-sized window and the tablet rate otherwise.
+    {
+        struct K { int w, h, ui; } ks[] = {{1024, 768, 4}, {1024, 768, 3}, {852, 393, 4}, {852, 393, 3}, {2048, 1536, 4}};
+        float scMin = 1e9f, scMax = 0.0f;
+        for (const K& k : ks) {
+            set_setting_by_key("ui_scale", (float)k.ui);
+            eden_display_set_viewport(k.w, k.h);
+            tick(3);
+            const float sc = TOUCH_PT_SCALE, dg = TOUCH_LOOK_DEG_PER_PT;
+            scMin = std::fmin(scMin, sc);
+            scMax = std::fmax(scMax, sc);
+            float x, y;
+            centre(&x, &y);
+            level(0.0f);
+            drag(x - 30.0f / sc, y, 30, 2.0f / sc);
+            const float want = (60.0f - TOUCH_SLOP_PT) * dg;
+            const bool phone = (k.h < 500 || k.w < 500);
+            std::snprintf(d, sizeof(d), "%dx%d ui %d: %.0fx%.0f points, %.3f window pt/pt, %.2f deg/pt, turned %.3f (want %.3f)",
+                          k.w, k.h, k.ui, SCREEN_WIDTH, SCREEN_HEIGHT, sc, dg, turned(0.0f, pl->yaw), want);
+            check(std::fabs(turned(0.0f, pl->yaw) - want) < want * 0.01f && dg == (phone ? 0.65f : 0.5f),
+                  "step 3: a 60-window-point swipe turns the same per window point at any size and UI scale", d);
+        }
+        std::snprintf(d, sizeof(d), "TOUCH_PT_SCALE %.3f..%.3f", scMin, scMax);
+        check(scMax > scMin * 1.2f, "step 3: the sizes really do differ in window points per engine point", d);
+    }
 
     std::printf("[eden-look] %s (%d failure(s))\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
     return g_selftestFailures ? 1 : 0;
@@ -11180,6 +11505,7 @@ static int parse_one_arg(const char* a) {
         else if (!std::strcmp(a, "--touch-selftest")) { g_opt.mode = "touch-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--look-selftest"))  { g_opt.mode = "look-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--look-trace"))     eden_look_trace_enable(1);
+        else if (starts_with(a, "--look-mutate="))    g_opt.lookMutate = a + 14;
         else if (!std::strcmp(a, "--empty-bit-selftest")) { g_opt.mode = "empty-bit-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--newblocks-selftest")) { g_opt.mode = "newblocks-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--photo-selftest")) { g_opt.mode = "photo-selftest"; g_opt.headless = true; }

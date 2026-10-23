@@ -25,6 +25,7 @@
 #import "../../../Classes/Hud.h"
 #import "../../../Classes/Menu.h"
 #import "../../../Classes/Input.h"
+#import "../../../Classes/TouchLook.h"   // Stage L: TOUCH_PT_SCALE, TOUCH_LOOK_DEG_PER_PT
 #include "../shim/foundation/platform_shims.h"   // EDEN_EXPORT (Phase N Stage 1)
 #include <cstdio>
 #include <cmath>
@@ -324,6 +325,15 @@ static void eden_display_apply(void) {
     g_pointW = w;
     g_pointH = h;
     g_pxPerPoint = snap;
+    // Stage L (Classes/TouchLook.h): touch look speed and slop are in WINDOW points, so the engine
+    // needs this space's window points per point. Written on every apply, before the early return,
+    // because the box can move without the point space changing (and vice versa). A phone (short
+    // side under 500 window pt) turns faster per point: it has less room to swipe.
+    TOUCH_PT_SCALE = eden_display_window_pt_per_point();
+    {
+        const int shortSide = g_cssW < g_cssH ? g_cssW : g_cssH;
+        TOUCH_LOOK_DEG_PER_PT = (shortSide > 0 && shortSide < 500) ? 0.65f : 0.5f;
+    }
     if (!changed && !snapChanged) return;
 
     std::fprintf(stderr, "[eden-display] profile=%s ui_scale=%d%% layout=%s -> %dx%d points"

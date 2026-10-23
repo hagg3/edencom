@@ -10,6 +10,7 @@
 #import "Globals.h"
 #import "World.h"
 #import "Hud.h"
+#import "TouchLook.h"
 static Input* singleton=NULL;
 
 extern float SCREEN_WIDTH; 
@@ -52,7 +53,36 @@ void Input::clearAll(){
 		touches[i].moved=0;
 		touches[i].touch_id=NULL;
 		touches[i].placeBlock=FALSE;	
+		touches[i].lfx=touches[i].lfy=touches[i].ffx=touches[i].ffy=0;
+		touches[i].ldx=touches[i].ldy=0;
+		touches[i].looklatched=FALSE;
 	}
+}
+// Stage L: the raw position in float engine points (the same flip and IS_IPAD&&!IS_RETINA scale
+// as the int mx/my), and the look accumulation. Every event adds its delta, so a frame with two
+// moves turns by both (D1) and a sub-point drag is not a staircase (D2).
+static void look_point(CGPoint point,float* x,float* y){
+    if(IS_IPAD&&!IS_RETINA){
+        *x=(float)point.x/SCALE_WIDTH;
+        *y=(float)point.y/SCALE_HEIGHT;
+    }else{
+        *x=(float)point.x;
+        *y=(float)point.y;
+    }
+    if(TOUCH_LOOK_MUTATE&TL_MUT_INT){ *x=(float)(int)*x; *y=(float)(int)*y; }
+}
+static void look_accumulate(itouch* t,CGPoint point){
+    float x,y;
+    look_point(point,&x,&y);
+    if(TOUCH_LOOK_MUTATE&TL_MUT_LASTONLY){
+        t->ldx=x-t->lfx;
+        t->ldy=y-t->lfy;
+    }else{
+        t->ldx+=x-t->lfx;
+        t->ldy+=y-t->lfy;
+    }
+    t->lfx=x;
+    t->lfy=y;
 }
 
 /*- (void)clearMove:(int)i{
@@ -114,6 +144,11 @@ void Input::touchesBegan(NSSet* mtouches, UIEvent* event){
 		touches[idx].placeBlock=TRUE;	
 		touches[idx].previewtype=TYPE_NONE;
 		touches[idx].movecam=TRUE;
+		look_point(point,&touches[idx].lfx,&touches[idx].lfy);
+		touches[idx].ffx=touches[idx].lfx;
+		touches[idx].ffy=touches[idx].lfy;
+		touches[idx].ldx=touches[idx].ldy=0;
+		touches[idx].looklatched=FALSE;
 	}
 }
 
@@ -138,6 +173,7 @@ void Input::touchesMoved(NSSet* mtouches, UIEvent* event){
 			point.y=scr_height-point.y;
 		}*/
 		touches[idx].moved=TRUE;
+		look_accumulate(&touches[idx],point);
 		touches[idx].pmx=touches[idx].mx;
 		touches[idx].pmy=touches[idx].my;
 		if(IS_IPAD&&!IS_RETINA){
@@ -171,6 +207,7 @@ void Input::touchesEnded(NSSet* mtouches, UIEvent* event){
 			point.y=scr_height-point.y;
 		}	*/
 		touches[idx].moved=TRUE;
+		look_accumulate(&touches[idx],point);
 		touches[idx].pmx=touches[idx].mx;
 		touches[idx].pmy=touches[idx].my;
 		if(IS_IPAD&&!IS_RETINA){

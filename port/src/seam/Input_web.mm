@@ -60,6 +60,7 @@
 #import "../../../Classes/World.h"
 #import "../../../Classes/Constants.h"
 #import "../../../Classes/GLDialog.h"
+#import "../../../Classes/TouchLook.h"   // --look-trace reads what the new touch look consumed
 #include "../shim/foundation/platform_shims.h"   // EDEN_EXPORT (Phase N Stage 1)
 #include <unordered_map>
 #include <vector>
@@ -118,32 +119,39 @@ UIEvent* pooledEvent() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// L.0 `--look-trace` (WORKING/touch-camera-plan-2026-10-17.md): measures what stock's touch look
-// throws away before L.1 changes it. A plain arg, not EDEN_DIAGNOSTICS: the CI ipa has none.
+// `--look-trace` (WORKING/touch-camera-plan-2026-10-17.md). L.0 measured what stock's touch look
+// threw away; since L.1-L.4 it measures the new path (Classes/TouchLook), so a device re-trace
+// shows whether anything is still lost. A plain arg, not EDEN_DIAGNOSTICS: the CI ipa has none.
 //
 // Per touch, per frame (the frame closes in eden_look_trace_frame(), called by the host loop after
 // the event pump and before drawFrame, i.e. exactly what Player::processInput is about to see):
-//   raw   = the sum of every event's FLOAT delta this frame (engine points, the same flip/scale
-//           Input.mm applies, before its int truncation),
-//   stock = the LAST event's int `mx - pmx`, the one delta Player.mm's movecam branch applies.
-// Frames inside stock's 15-point dead zone (`cDist`, measured from fx/fy as Player does) are counted
-// apart: stock discards that motion on purpose (D4), so it is not "lost" in the D1/D2 sense.
-// At the frame after a touch ends, one `look.trace` line goes to stderr (emod-last-run.log on iOS).
+//   raw     = the sum of every event's FLOAT delta this frame (engine points, the same flip/scale
+//             Input.mm applies, before its int truncation),
+//   applied = what TouchLook consumed from that frame, read one frame later (the drawFrame after
+//             this call is the one that consumes it), and what its slop discarded on purpose.
+// Sums are per axis (|dx|+|dy|), so an axis-alternating step is not measured as a diagonal (L.0's
+// negative "lost" on slow drags was that artefact). lost = raw travel neither applied nor
+// discarded by the slop; err = the per-frame mismatch on look frames (the jitter); zero = look
+// frames with motion that turned nothing (the staircase).
+// At the frame after the release is consumed, one `look.trace` line goes to stderr
+// (emod-last-run.log on iOS).
 int g_lookTrace = 0;
 float g_lookTraceWinPerPt = 0.0f;   // window points per engine point (Input_native, D3)
 
 struct LookTraceSlot {
     UITouch* touch = nil;       // borrowed: identity only, for finding the engine slot
     int engineSlot = -1;
-    bool ending = false, cam = true;
+    bool ending = false, endSeen = false, cam = true, fresh = true;
     float lx = 0, ly = 0;       // last raw position, float engine points (engine y-up)
     double t0 = 0;
     int fev = 0;                // this frame
     float fdx = 0, fdy = 0;
-    int sdx = 0, sdy = 0;
+    int pev = 0;                // the previous frame, which the last drawFrame consumed
+    float pdx = 0, pdy = 0;
+    double last[4] = {0, 0, 0, 0};   // touchlook_stats at the previous call
     int events = 0, frames = 0, multi = 0, maxEv = 0;   // totals
     int slopFrames = 0, lookFrames = 0, zeroStep = 0, motionFrames = 0;
-    double raw = 0, applied = 0, err = 0, slopRaw = 0;
+    double raw = 0, applied = 0, err = 0, slopRaw = 0, lookRaw = 0;
     std::vector<float> dt;
 };
 std::unordered_map<int, LookTraceSlot> &lookSlots() {
@@ -182,12 +190,10 @@ void look_trace_event(int phase, int identity, UITouch* touch, float x, float y)
     if (it == slots.end()) return;
     LookTraceSlot &s = it->second;
     if (phase == 3) { slots.erase(it); return; }   // cancel: Input::clearAll, no look applied
-    const itouch &e = t[s.engineSlot];
     s.fev++;
     s.events++;
     s.fdx += px - s.lx; s.fdy += py - s.ly;
     s.lx = px; s.ly = py;
-    s.sdx = e.mx - e.pmx; s.sdy = e.my - e.pmy;   // overwritten: only the last event's survives
     if (phase == 2) s.ending = true;
 }
 
@@ -222,44 +228,61 @@ EDEN_EXPORT void eden_look_trace_frame(void) {
         const itouch &e = t[s.engineSlot];
         if (dt > 0) s.dt.push_back(dt);
         if (!s.ending) s.cam = e.movecam;   // HUD claims clear it in the previous drawFrame
+
+        // What the last drawFrame consumed: the previous frame's events. The first call precedes
+        // the drawFrame whose touchlook_begin zeroes the stats, so it reads nothing.
+        double st[4] = {0, 0, 0, 0};
+        if (!s.fresh) touchlook_stats(s.engineSlot, st);
+        s.fresh = false;
+        const double dc = st[0] - s.last[0], dd = st[1] - s.last[1];
+        const double dcx = st[2] - s.last[2], dcy = st[3] - s.last[3];
+        for (int k = 0; k < 4; k++) s.last[k] = st[k];
+        if (s.pev > 0) {
+            const double mag = std::fabs((double)s.pdx) + std::fabs((double)s.pdy);
+            s.raw += mag;
+            if (dd > 0 && dc == 0) {   // wholly inside the slop
+                s.slopFrames++;
+            } else {
+                s.lookFrames++;
+                if (dd == 0) {   // the crossing frame splits its motion: no per-frame error
+                    s.lookRaw += mag;
+                    s.err += std::fabs(s.pdx - dcx) + std::fabs(s.pdy - dcy);
+                }
+                if (mag >= 0.05) {
+                    s.motionFrames++;
+                    if (dc == 0) s.zeroStep++;
+                }
+            }
+        }
+        s.applied = st[0];
+        s.slopRaw = st[1];
+        s.pev = s.fev; s.pdx = s.fdx; s.pdy = s.fdy;
         if (s.fev > 0) {
             s.frames++;
             if (s.fev >= 2) s.multi++;
             if (s.fev > s.maxEv) s.maxEv = s.fev;
-            const double mag = std::sqrt((double)s.fdx * s.fdx + (double)s.fdy * s.fdy);
-            if (abs(e.mx - e.fx) <= 15 && abs(e.my - e.fy) <= 15) {   // Player.mm cDist
-                s.slopFrames++;
-                s.slopRaw += mag;
-            } else {
-                s.lookFrames++;
-                s.raw += mag;
-                s.applied += std::sqrt((double)s.sdx * s.sdx + (double)s.sdy * s.sdy);
-                const double ex = s.fdx - s.sdx, ey = s.fdy - s.sdy;
-                s.err += std::sqrt(ex * ex + ey * ey);
-                if (mag >= 0.05) {
-                    s.motionFrames++;
-                    if (s.sdx == 0 && s.sdy == 0) s.zeroStep++;
-                }
-            }
         }
-        s.fev = 0; s.fdx = s.fdy = 0; s.sdx = s.sdy = 0;
-        if (!s.ending) { ++it; continue; }
+        s.fev = 0; s.fdx = s.fdy = 0;
+        // The release frame's events are consumed by the NEXT drawFrame (touchlook_end), so the
+        // line waits one more call for them.
+        if (!s.ending || !s.endSeen) { if (s.ending) s.endSeen = true; ++it; continue; }
 
-        // lost: the share of the finger's travel (outside the dead zone) the camera never turned
-        // by (D1; ~0 for D2, whose truncation catches up a frame later). err: the per-frame
-        // mismatch, i.e. the jitter (D1 and D2 both). Slightly negative lost = rounding.
-        const float lostPct = s.raw > 0 ? (float)(100.0 * (1.0 - s.applied / s.raw)) : 0.0f;
-        const float errPct = s.raw > 0 ? (float)(100.0 * s.err / s.raw) : 0.0f;
+        // A touch that never looked (a tap, a HUD press) consumed nothing: lost is not defined.
+        const bool looked = s.applied > 0;
+        const float lostPct = looked && s.raw > 0 ? (float)(100.0 * (1.0 - (s.applied + s.slopRaw) / s.raw)) : 0.0f;
+        const float errPct = s.lookRaw > 0 ? (float)(100.0 * s.err / s.lookRaw) : 0.0f;
         const float p50 = look_pct(s.dt, 0.50f), p99 = look_pct(s.dt, 0.99f);
         std::fprintf(stderr,
             "look.trace id=%d cam=%d dur=%.2fs events=%d frames=%d multi=%.1f%% maxev=%d"
             " slop_frames=%d slop_pt=%.1f look_frames=%d raw_pt=%.1f applied_pt=%.1f lost=%.1f%%"
-            " err=%.1f%% zero=%.1f%% (%d/%d) dt_p50=%.1fms dt_p99=%.1fms win_per_pt=%.3f\n",
+            " err=%.1f%% zero=%.1f%% (%d/%d) dt_p50=%.1fms dt_p99=%.1fms win_per_pt=%.3f pt_scale=%.3f"
+            " slop_win=%.1f deg_per_pt=%.3f smooth=%.2f glide=%d\n",
             it->first, (int)s.cam, (now - s.t0) / 1000.0, s.events, s.frames,
             s.frames ? 100.0f * s.multi / s.frames : 0.0f, s.maxEv, s.slopFrames, s.slopRaw,
             s.lookFrames, s.raw, s.applied, lostPct, errPct,
             s.motionFrames ? 100.0f * s.zeroStep / s.motionFrames : 0.0f, s.zeroStep, s.motionFrames,
-            p50, p99, g_lookTraceWinPerPt);
+            p50, p99, g_lookTraceWinPerPt, TOUCH_PT_SCALE, TOUCH_SLOP_PT, TOUCH_LOOK_DEG_PER_PT,
+            TOUCH_LOOK_SMOOTH, TOUCH_LOOK_GLIDE);
         g_lookLast[0] = s.events; g_lookLast[1] = s.frames; g_lookLast[2] = s.multi;
         g_lookLast[3] = s.lookFrames; g_lookLast[4] = s.zeroStep; g_lookLast[5] = s.motionFrames;
         g_lookLastLostPct = lostPct;

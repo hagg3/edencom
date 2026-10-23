@@ -28,6 +28,12 @@ typedef struct{
     float scalex;
     float scaley;
     int build_size;
+    // Stage L (TouchLook.h): every event's motion, in float engine points, before the int
+    // truncation above. Not on disk. mx/pmx/fx keep their stock meaning for every other consumer.
+    float lfx,lfy;     // last raw position
+    float ffx,ffy;     // where the touch went down
+    float ldx,ldy;     // look motion not yet consumed (TouchLook zeroes it)
+    BOOL looklatched;  // crossed the slop once: looks until release (D5)
 }itouch;
 #define MAX_TOUCHES 5
 enum MSTATE {

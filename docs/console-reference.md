@@ -196,6 +196,9 @@ A variable is `group.name`. **`NAME`** prints it, **`NAME VALUE`** sets it. Name
 | `controls.mouse_sensitivity` | 0.25 to 3 | 1 | at once | Mouse sensitivity |
 | `controls.mouse_sensitivity_y` | 0.25 to 3 | 1 | at once | Mouse sensitivity (Y) |
 | `controls.invert_look` | on / off | off | at once | Invert look |
+| `controls.touch_look_speed` | 0.25 to 3 | 1 | at once | Drag camera, left-right. (diagnostics builds) |
+| `controls.touch_look_speed_y` | 0.25 to 3 | 1 | at once | Drag camera, up-down. (diagnostics builds) |
+| `controls.touch_look_smoothing` | 0 to 1 | 0.2 | at once | 0 follows your finger exactly. (diagnostics builds) |
 | `controls.gamepad` | on / off | on | at once | Use a connected controller. |
 | `controls.gamepad_look_sensitivity` | 0.25 to 3 | 1 | at once | Gamepad look speed |
 | `controls.gamepad_deadzone` | 0.05 to 0.5 | 0.15 | at once | Raise it if the camera drifts. |
@@ -235,6 +238,7 @@ A variable is `group.name`. **`NAME`** prints it, **`NAME VALUE`** sets it. Name
 | `experiments.fire_chars_vines` | on / off | off | at once | Burning vines turn to dark stone. |
 | `experiments.creature_walk_voices` | on / off | off | at once | Creatures call out as they start walking. |
 | `experiments.double_brush` | on / off | off | at once | A key builds 2x2x2 blocks at a time. |
+| `experiments.touch_look_glide` | on / off | off | at once | Camera keeps turning briefly after you lift your finger. (diagnostics builds) |
 | `experiments.camera_view` | First person, Third person, Third person (front) | First person | at once | Third person shows your body. F5 cycles. |
 
 #### `saves.`
