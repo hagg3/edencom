@@ -247,7 +247,7 @@ void legSocket() {
     int deadPort = 0;
     { Sock t; tcpListen(0, t, &deadPort); closeSock(t); }
     Sock d;
-    CHECK(tcpConnect("127.0.0.1", deadPort, 2000, d) == CONN_REFUSED);
+    CHECK(tcpConnect("127.0.0.1", deadPort, 6000, d) == CONN_REFUSED);   // Windows reports a closed loopback port only after ~2 s of SYN retries
     CHECK(tcpConnect("no-such-host.invalid", 27015, 2000, d) == CONN_DNS);
 }
 
