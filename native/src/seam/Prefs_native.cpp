@@ -137,6 +137,7 @@ void eden_prefs_set_ephemeral(int on) { g_ephemeral = (on != 0); }
 void eden_prefs_reset_for_test(const char* path) {
     g_table.clear();
     g_loaded = false;
+    if (path) g_ephemeral = false;   // a test that names a file wants it written (every --mode run is ephemeral off Apple)
     g_path_overridden = (path != nullptr);
     g_path_override = path ? path : "";
 }
