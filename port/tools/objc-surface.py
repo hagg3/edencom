@@ -37,7 +37,8 @@ def files():
     for r in ROOTS:
         for d, dirs, fs in os.walk(os.path.join(REPO, r)):
             dirs[:] = [x for x in dirs if x not in SKIP_DIRS]
-            out += [os.path.join(d, f) for f in fs if f.endswith(EXTS)]
+            # not symlinks: native/CMakeLists.txt links wrong-case names (input.h -> Input.h) into Classes/ on Linux
+            out += [os.path.join(d, f) for f in fs if f.endswith(EXTS) and not os.path.islink(os.path.join(d, f))]
     out += [os.path.join(REPO, f) for f in ('Lighting.mm', 'Lighting.h') if os.path.exists(os.path.join(REPO, f))]
     return sorted(out)
 
