@@ -6654,6 +6654,7 @@ int run_mp_replay() {
                   "leg 8: T opens the Console screen on Chat with five tiles in a session", "");
             const double pa[6] = {rep.spawn[0] + 6.0, rep.spawn[1] + 2.0, rep.spawn[2], 0, 0, 0};
             MpWorld::peerSeen("Kim", 2, 0, pa);
+            con->setCollapsed(false);   // MP.14: T opens the collapsed bar; the rail (and so Players) is on the full screen
             con->showTab(ConsoleMenu::TAB_PLAYERS);
             tick(1);
             std::snprintf(d, sizeof d, "rows %d peers %d", con->playerRows(), MpWorld::peerCount());

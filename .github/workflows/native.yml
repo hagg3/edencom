@@ -125,6 +125,9 @@ jobs:
           export LD_LIBRARY_PATH=$HOME/sdl3-prefix/lib
           B=./build/eden_native
 
+          # G.2b-0 (plan D14): the ObjC surface may only shrink; a converted file may not regain any.
+          python3 -I ../port/tools/objc-surface.py --check
+
           run_gate "boot (--p1-gate)" $B --p1-gate
 
           # The stage's single most load-bearing check, and the reason this mode exists: this
@@ -188,6 +191,8 @@ jobs:
           # Stage S / S.3: the .emod store + streaming converter. --emod-fixtures is the checked-in
           # pack emod.py wrote; every target must reproduce its SHA-256s byte for byte, which is
           # the cross-target .emod gate (macOS, Linux, Windows here).
+          # G.2b-0: the de-ObjC replacement layer (strf/eden_cstr_copy/EdenFile/eden_fs/prefs) vs the Apple vectors.
+          run_gate "base selftest" $B --base-selftest --docs="$PWD/base-docs"
           run_gate "emod selftest" $B --emod-selftest --emod-fixtures=../port/tools/fixtures/emod --emod-work="$PWD/emod-work"
           # MP.1/MP.2: the multiplayer TCP seam + protocol session against an in-process mock server on
           # loopback (Winsock on Windows). The live leg against ewb-server is port/tools/mp-live-gate.sh.
@@ -496,6 +501,8 @@ jobs:
           # Stage S / S.3: the .emod store + streaming converter. --emod-fixtures is the checked-in
           # pack emod.py wrote; every target must reproduce its SHA-256s byte for byte, which is
           # the cross-target .emod gate (macOS, Linux, Windows here).
+          # G.2b-0: the de-ObjC replacement layer (strf/eden_cstr_copy/EdenFile/eden_fs/prefs) vs the Apple vectors.
+          run_gate "base selftest" $B --base-selftest --docs="$PWD/base-docs"
           run_gate "emod selftest" $B --emod-selftest --emod-fixtures=../port/tools/fixtures/emod --emod-work="$PWD/emod-work"
           # MP.1/MP.2: the multiplayer TCP seam + protocol session against an in-process mock server on
           # loopback (Winsock on Windows). The live leg against ewb-server is port/tools/mp-live-gate.sh.
@@ -730,6 +737,8 @@ jobs:
           python3 ../.github/scripts/check-stage1.py stage1-64.log stage1-256.log
           ./build/eden_native --headless --stage1 --shadows=classic --docs="$PWD/docs64s"           2>&1 | tee stage1-64s.log
           python3 ../.github/scripts/check-stage1.py --shadows stage1-64s.log
+          rm -rf base-docs && mkdir -p base-docs
+          ./build/eden_native --base-selftest --docs="$PWD/base-docs"   # G.2b-0
           ./build/eden_native --input-selftest
           ./build/eden_native --gamepad-selftest
           ./build/eden_native --touch-selftest
