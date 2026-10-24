@@ -88,23 +88,9 @@
 // non-premultiplied RGBA8 bitmap context to reproduce it with. Keeping it ours is what lets the
 // native target compile Texture2D_web.mm unchanged. It works because nothing here includes
 // <CoreGraphics/CGImage.h>: real Foundation pulls in CGBase/CGGeometry only.
-#if defined(EDEN_USE_SYSTEM_FOUNDATION)
-#include <CoreGraphics/CGBase.h>
-#include <CoreGraphics/CGGeometry.h>
-#else
-typedef struct { float x, y; } CGPoint;
-typedef struct { float width, height; } CGSize;
-typedef struct { CGPoint origin; CGSize size; } CGRect;
-
-// Util.mm initialises its thumbnail rect from CGRectZero before filling in the size.
-static const CGRect CGRectZero = {{0, 0}, {0, 0}};
-
-static inline CGPoint CGPointMake(float x, float y) { return (CGPoint){x, y}; }
-static inline CGSize CGSizeMake(float w, float h) { return (CGSize){w, h}; }
-static inline CGRect CGRectMake(float x, float y, float w, float h) {
-    return (CGRect){{x, y}, {w, h}};
-}
-#endif
+// G.2b-0: the definitions moved to eden_base.h (plain C/C++, one copy per target for ObjC and
+// C++ translation units alike); this include is what keeps every existing user of them unchanged.
+#include "eden_base.h"
 
 // ---- UITouch / UIEvent — real minimal behavior, load-bearing for Input.h (see file header).
 // Populated by the web input seam (Stage P3, src/seam/EAGLView_web.mm's touch/pointer-event
@@ -182,9 +168,7 @@ typedef enum {
     UIImageOrientationRight, UIImageOrientationUpMirrored, UIImageOrientationDownMirrored,
     UIImageOrientationLeftMirrored, UIImageOrientationRightMirrored
 } UIImageOrientation;
-typedef enum {
-    UITextAlignmentLeft, UITextAlignmentCenter, UITextAlignmentRight
-} UITextAlignment;
+// UITextAlignment: eden_base.h (G.2b-0).
 
 // ---- UIApplication / UIScreen / UIDevice — the app-shell singletons.
 //

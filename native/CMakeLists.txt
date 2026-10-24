@@ -271,6 +271,7 @@ list(TRANSFORM EDEN_SHARED_SEAM PREPEND "${EDEN_PORT_DIR}/src/seam/")
 
 set(EDEN_SHARED_OTHER
   "${EDEN_PORT_DIR}/src/shim/audio/audiotoolbox_stub.cpp"  # failing AudioToolbox stubs, as on web
+  "${EDEN_PORT_DIR}/src/shim/foundation/eden_fs.cpp"        # G.2b-0: EdenFile, eden_fs_*, eden_bundle_path
   "${EDEN_PORT_DIR}/src/shim/foundation/platform_shims.cpp" # arc4random + the portable clock + FS roots
   "${EDEN_PORT_DIR}/src/shim/gl/gl_fixed_function.cpp"      # the ES1 -> GL translator, Stage 0.2's split
   # Stage MP (MP.1/MP.2): the multiplayer client's TCP seam, framer, SNAPZ codec and protocol session.
@@ -310,6 +311,9 @@ set(EDEN_NATIVE_SOURCES
   # Stage S / S.2: --codec-bench (zstd vs zlib per-column timing; no engine dependency).
   src/seam/CodecBench_native.cpp
   src/seam/WorldTools_native.cpp
+  # G.2b-0: the de-ObjC replacement layer's flat prefs store (all targets) and its --base-selftest.
+  src/seam/Prefs_native.cpp
+  src/seam/BaseSelftest_native.cpp
   # C.9: the player's README.txt written into the documents directory at startup.
   src/seam/PlayerReadme_native.cpp
   # ROADMAP 5.9: the eden_net_* seam the world browser polls (job table, worker threads, .part
@@ -644,6 +648,14 @@ endforeach()
 set_source_files_properties(${EDEN_ENGINE_MM_SOURCES} PROPERTIES
   COMPILE_OPTIONS "${EDEN_OBJCXX_FLAGS};-include;${EDEN_PARENT_DIR}/Eden_Prefix.pch"
 )
+# G.2b-0 (D9): engine files converted from .mm to .cpp (G.2b-3 onward) keep the prefix header's implicit
+# environment (printg, BOOL, CGRect). Add each converted file here; plain-C++ files that never had it
+# (PVRT, zstd, EdenWorldStore, StrUtil, ...) stay out. No NSLog on these: D3 turns every NSLog into printg.
+set(EDEN_ENGINE_PREFIXED_SOURCES "")
+if(EDEN_ENGINE_PREFIXED_SOURCES)
+  set_source_files_properties(${EDEN_ENGINE_PREFIXED_SOURCES} PROPERTIES
+    COMPILE_OPTIONS "-include;${EDEN_PARENT_DIR}/Eden_Prefix.pch")
+endif()
 # Stage H / H.4: the Classic generator's float noise must give the same bits on every target, so
 # no fused multiply-add in its translation unit (clang's default contracts on arm64; x86-64 SSE2
 # has no FMA to fuse into). With contraction off, IEEE + - * / and roundf/floorf are exact

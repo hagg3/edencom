@@ -27,6 +27,8 @@ function(eden_collect_engine_sources)
   #   hosts with no native dialog layer). Inert on web: the DOM showAlert* seams never call it.
   #   Classes/GLWidgets.mm — Phase N Stage 5.1's GL widget kit (the design system in
   #   Graphics::drawRect fills). GLDialog is its first consumer; the Stage 5 screens follow.
+  #   Classes/StrUtil.cpp — G.2b-0: strf, eden_cstr_copy, path helpers (plain C++, replaces Foundation strings).
+  list(APPEND _eden_sources "${EDEN_ECS_BASE_DIR}/Classes/StrUtil.cpp")
   list(APPEND _eden_sources "${EDEN_ECS_BASE_DIR}/Classes/MeshPool.mm")
   list(APPEND _eden_sources "${EDEN_ECS_BASE_DIR}/Classes/GLWidgets.mm")
   list(APPEND _eden_sources "${EDEN_ECS_BASE_DIR}/Classes/GLDialog.mm")

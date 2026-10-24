@@ -13,6 +13,10 @@
 #import <UIKit/UIKit.h>
 #endif
 
+// G.2b-0 (de-ObjC plan D8/D9): BOOL/CGRect/MIN/MAX... from a plain C/C++ header, so converted .cpp files see
+// the same base types the .mm files always did.
+#include "port/src/shim/foundation/eden_base.h"
+
 #ifndef __OPTIMIZE__
 #    define NSLog(...) NSLog(__VA_ARGS__)
 #    define printg(...) printf(__VA_ARGS__)

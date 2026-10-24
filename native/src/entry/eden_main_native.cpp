@@ -240,6 +240,8 @@
 //                        --mp-name=NAME (default Emod), --mp-password=P, --mp-type=N; --mp-reconcile=0 turns
 //                        reconcile off (diagnosis). MP.4: --mp-edits (builder) / --mp-hold=FILE (watcher) run
 //                        the two-client leg of port/tools/mp-replay.py edits; --mp-mutate=echo must fail it.
+//   --base-selftest      G.2b-0: the de-ObjC replacement layer (strf, eden_cstr_copy, path helpers vs the Apple
+//                        vectors; EdenFile, eden_fs_*, eden_bundle_path; the flat prefs store). Needs --docs=DIR.
 //   --emod-selftest      Stage S / S.3: EdenWorldStore + the streaming converter's gates (Classes/
 //                        EdenWorldStoreSelftest.cpp). --emod-fixtures=DIR (port/tools/fixtures/emod: the
 //                        emod.py byte comparison + the cross-target gate), --emod-work=DIR (scratch,
@@ -492,6 +494,7 @@ extern "C" const char* eden_bench_save(void);   // DevConsole_web.mm (X.1: --sav
 extern "C++" int eden_codec_bench(const char* path, int height, int want);   // CodecBench_native.cpp
 extern "C++" int eden_world_tool_main(int argc, char** argv);                 // WorldTools_native.cpp
 int fmh_selftestCompare(const char* edenPath, const char* emodPath, int* compared);   // Classes/FileManagerHelper.mm (S.6)
+extern "C" int eden_base_selftest_run(const char* workDir);   // native/src/seam/BaseSelftest_native.cpp (G.2b-0)
 extern "C" int eden_net_selftest_run(const char* server);   // port/src/net/NetSelftest.cpp (MP.1)
 extern "C" int eden_mp_selftest_run(const char* server);    // same file (MP.2)
 extern "C" int eden_emod_selftest_run(const char* fixtureDir, const char* workDir, int flags,
@@ -7907,12 +7910,12 @@ int run_display_selftest() {
     std::snprintf(d, sizeof(d), "Input [%g,%g]", scr.v[0], scr.v[1]);
     check(scr.v[0] == 568 && scr.v[1] == 320, "classic: Input's point space matches the engine", d);
     // The stock rects, by hand from Classes/Hud.mm's constants at 568x320:
-    //   HUDR_X = 568-45-13 = 510; rmine.y = 4*320/5-45-3 = 208; rjumphit.x = 510-17-1 = 492, w = 76;
+    //   HUDR_X = 568-45-13 = 510; rmine.y = 4*320/5-45-3 = 208; rjumphit.x = 510-17 = 493, w = 75 (FM.3 dropped stock's -1);
     //   rmenu.y = 320-45 = 275; blockBounds[0] = (7+15+4+57, -3+320-10-15-38) = (83, 254);
     //   rburn.y = 320-45-3 = 272; rpaint.y = 2*320/5-45-3+5 = 85; rpaintframe = (4+57, 10+10) 402x282.
     const struct { const char* key; ProbeRect want; } kStock[] = {
         {"rmine",       {{510, 208, 45, 45}}},
-        {"rjumphit",    {{492, 0, 76, 68}}},
+        {"rjumphit",    {{493, 0, 75, 68}}},
         {"rmenu",       {{0, 275, 45, 45}}},
         {"block0",      {{83, 254, 38, 38}}},
         {"rburn",       {{510, 272, 45, 45}}},
@@ -11878,6 +11881,7 @@ static int parse_one_arg(const char* a) {
         else if (starts_with(a, "--mp-hold="))       g_opt.mpHold = a + 10;
         else if (!std::strcmp(a, "--mp-mock"))       eden_mp_servers_mock(1);   // MP.6: the canned server list
         else if (starts_with(a, "--mp-reconcile="))  MpWorld::reconcileOn = atoi(a + 15) != 0;
+        else if (!std::strcmp(a, "--base-selftest")) { g_opt.mode = "base-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--emod-selftest")) { g_opt.mode = "emod-selftest"; g_opt.headless = true; }
         else if (starts_with(a, "--emod-fixtures=")) g_opt.emodFixtures = a + 16;
         else if (starts_with(a, "--emod-work="))     g_opt.emodWork = a + 12;
@@ -12281,6 +12285,7 @@ static int eden_main_after_args(int argc, char** argv) {
         else if (!std::strcmp(g_opt.mode, "fly-selftest")) rc = run_fly_selftest();
         else if (!std::strcmp(g_opt.mode, "empty-bit-selftest")) rc = run_empty_bit_selftest();
         else if (!std::strcmp(g_opt.mode, "newblocks-selftest")) rc = run_newblocks_selftest();
+        else if (!std::strcmp(g_opt.mode, "base-selftest")) rc = eden_base_selftest_run(g_opt.docs.c_str());
         else if (!std::strcmp(g_opt.mode, "net-selftest"))  rc = eden_net_selftest_run(g_opt.netServer.c_str());
         else if (!std::strcmp(g_opt.mode, "mp-selftest"))   rc = eden_mp_selftest_run(g_opt.netServer.c_str());
         else if (!std::strcmp(g_opt.mode, "mp-replay"))     rc = run_mp_replay();

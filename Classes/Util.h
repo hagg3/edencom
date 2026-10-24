@@ -13,6 +13,7 @@
 #import "Texture2D.h"
 #import "Vector.h"
 #import <string>
+#import "StrUtil.h"
 
 typedef struct _worldnode{
 	NSString* display_name;

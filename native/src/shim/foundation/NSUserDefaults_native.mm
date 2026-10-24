@@ -32,114 +32,12 @@
 #import "NSString.h"
 #import "NSNumber.h"
 
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
 #include <string>
 #include <unordered_map>
-#include <SDL3/SDL.h>
-#include "../../eden_app_identity.h"   // Emod is not Eden — see that file
+#include "../../../../port/src/shim/foundation/eden_prefs.h"   // G.2b-0: the store itself
 
-namespace {
-
-// X.21: a selftest run keeps its prefs in memory only: nothing is read from or written to the
-// real prefs file, so a developer's stored settings (X.19: Input mode) cannot change the result.
-bool g_ephemeral = false;
-
-// Creates every missing component of `path`. This was a hand-rolled mkdir(2) walk, because the
-// leaf's parent ("~/Library/Application Support") exists on macOS but "$HOME/.config" often does
-// not on Linux. Phase N Stage 3.2 replaced it with SDL's, which already creates parents and
-// already knows that mingw's mkdir() takes one argument where POSIX's takes two — a difference
-// that is a compile error on Windows, not a portability footnote.
-void eden_prefs_mkdirs(const std::string& path) {
-    SDL_CreateDirectory(path.c_str());
-}
-
-const std::string& eden_prefs_path() {
-    static std::string path = [] {
-        std::string dir;
-#if defined(_WIN32)
-        // %APPDATA% is the roaming per-user config root and is always set for an interactive
-        // session. Deliberately NOT SDL_GetPrefPath(), which would append a second "Emod"
-        // component and put the prefs under the same tree as the SAVES — these are preferences,
-        // not user content, and keeping them apart is the point of this file's location rule.
-        const char* appdata = getenv("APPDATA");
-        if (!appdata || !*appdata) return std::string();   // no profile: run memory-only, below
-        dir = std::string(appdata) + "\\" EDEN_APP_DIR_NAME;
-#else
-        const char* home = getenv("HOME");
-        if (!home || !*home) return std::string();   // no home: run memory-only, see below
-#if defined(__APPLE__)
-        dir = std::string(home) + "/Library/Application Support/" EDEN_APP_DIR_NAME;
-#else
-        const char* xdg = getenv("XDG_CONFIG_HOME");
-        dir = (xdg && *xdg) ? std::string(xdg) + "/" EDEN_APP_DIR_LOWER
-                            : std::string(home) + "/.config/" EDEN_APP_DIR_LOWER;
-#endif
-#endif
-        eden_prefs_mkdirs(dir);
-        return dir + "/prefs";
-    }();
-    return path;
-}
-
-// Read once, lazily. A missing file is not an error — it is a first run.
-std::unordered_map<std::string, std::string>& eden_prefs_disk() {
-    static std::unordered_map<std::string, std::string> table = [] {
-        std::unordered_map<std::string, std::string> t;
-        const std::string& p = eden_prefs_path();
-        if (p.empty() || g_ephemeral) return t;
-        FILE* f = fopen(p.c_str(), "rb");
-        if (!f) return t;
-        char line[1024];
-        while (fgets(line, sizeof(line), f)) {
-            char* tab = strchr(line, '\t');
-            if (!tab) continue;
-            *tab = '\0';
-            std::string value(tab + 1);
-            while (!value.empty() && (value.back() == '\n' || value.back() == '\r')) value.pop_back();
-            t[line] = value;
-        }
-        fclose(f);
-        return t;
-    }();
-    return table;
-}
-
-// Whole-file rewrite through a scratch file + rename, so a crash mid-write leaves the previous
-// preferences intact rather than a truncated one. Same reasoning as the engine's own save path
-// below its in-place threshold (docs/save-load.md) — this file is small enough that the simple
-// version is also the correct one.
-void eden_prefs_flush() {
-    const std::string& p = eden_prefs_path();
-    if (p.empty() || g_ephemeral) return;
-    std::string tmp = p + ".tmp";
-    FILE* f = fopen(tmp.c_str(), "wb");
-    if (!f) return;
-    for (const auto& kv : eden_prefs_disk()) {
-        fprintf(f, "%s\t%s\n", kv.first.c_str(), kv.second.c_str());
-    }
-    fclose(f);
-    // Windows' rename(2) fails if the destination exists, unlike POSIX's — so remove first. The
-    // window this opens (crash between remove and rename) costs the prefs file, not user content,
-    // and the alternative (MoveFileEx) would mean pulling in windows.h for one call.
-#if defined(_WIN32)
-    remove(p.c_str());
-#endif
-    // A failed rename leaves the old file in place, which is the safe direction; a leftover .tmp
-    // is harmless and is overwritten next time.
-    rename(tmp.c_str(), p.c_str());
-}
-
-// Mirrors the web twin's eden_prefs_available(): when there is nowhere to persist, everything
-// still works in memory for the session rather than failing. (There, it is a private-browsing
-// localStorage; here it is a process with no HOME, e.g. some CI sandboxes.)
-bool eden_prefs_available() { return !eden_prefs_path().empty(); }
-
-}  // namespace
-
-// Call before the first NSUserDefaults access (the table is read lazily, once).
-extern "C" void eden_prefs_set_ephemeral(int on) { g_ephemeral = (on != 0); }
+// G.2b-0: the flat-file store moved to native/src/seam/Prefs_native.cpp (C API in eden_prefs.h, all
+// targets). This file is now only the ObjC wrapper over it, kept until G.3 deletes the Foundation shim.
 
 @implementation NSUserDefaults {
     std::unordered_map<std::string, id> *_store;   // calloc'd to null; allocated by -init
@@ -165,15 +63,12 @@ extern "C" void eden_prefs_set_ephemeral(int on) { g_ephemeral = (on != 0); }
     auto it = _store->find(k);
     if (it != _store->end()) return it->second;
 
-    if (!eden_prefs_available()) return nil;
-    auto& disk = eden_prefs_disk();
-    auto d = disk.find(k);
-    if (d == disk.end()) return nil;
-    const std::string& raw = d->second;
     id value = nil;
-    if (raw.size() >= 2 && raw[0] == 'n' && raw[1] == ':')      value = [NSNumber numberWithInt:atoi(raw.c_str() + 2)];
-    else if (raw.size() >= 2 && raw[0] == 's' && raw[1] == ':') value = [NSString stringWithUTF8String:raw.c_str() + 2];
-    if (!value) return nil;          // unknown tag: treat as absent, don't guess
+    switch (eden_prefs_type(k.c_str())) {
+        case 1: value = [NSNumber numberWithInt:eden_prefs_get_int(k.c_str(), 0)]; break;
+        case 2: value = [NSString stringWithUTF8String:eden_prefs_get_str(k.c_str())]; break;
+    }
+    if (!value) return nil;          // absent or unknown tag: treat as absent, don't guess
     [value retain];                  // the map owns a reference, same as -setObject:forKey:
     (*_store)[k] = value;
     return value;
@@ -187,19 +82,12 @@ extern "C" void eden_prefs_set_ephemeral(int on) { g_ephemeral = (on != 0); }
     (*_store)[k] = value;
     if (old) [old release];
 
-    if (!value || !eden_prefs_available()) return;
+    if (!value) return;
     // Type tag chosen by what the value responds to, NSNumber first — every engine write is one.
-    if ([value isKindOfClass:[NSNumber class]]) {
-        char buf[32];
-        snprintf(buf, sizeof(buf), "n:%d", [(NSNumber *)value intValue]);
-        eden_prefs_disk()[k] = buf;
-        eden_prefs_flush();
-    } else if ([value isKindOfClass:[NSString class]]) {
-        std::string s = "s:";
-        s += [(NSString *)value UTF8String];
-        eden_prefs_disk()[k] = s;
-        eden_prefs_flush();
-    }
+    if ([value isKindOfClass:[NSNumber class]])
+        eden_prefs_set_int(k.c_str(), [(NSNumber *)value intValue]);
+    else if ([value isKindOfClass:[NSString class]])
+        eden_prefs_set_str(k.c_str(), [(NSString *)value UTF8String]);
 }
 
 - (NSInteger)integerForKey:(NSString *)key {
@@ -227,6 +115,7 @@ extern "C" void eden_prefs_set_ephemeral(int on) { g_ephemeral = (on != 0); }
 // Every -setObject: already wrote through, so there is nothing to flush. Returns YES for the same
 // reason as the web twin: Classes/SettingsMenu.mm calls it after each save.
 - (BOOL)synchronize {
+    eden_prefs_sync();
     return YES;
 }
 
