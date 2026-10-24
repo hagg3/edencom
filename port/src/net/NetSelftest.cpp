@@ -471,9 +471,10 @@ void legErrors() {
     {
         MpSession s;
         MpConfig cfg = cfgFor(deadPort);
+        cfg.connectTimeoutMs = 6000;   // Windows reports a closed loopback port only after ~2 s of SYN retries
         s.start(cfg);
         Got g;
-        pump(s, g, 5000, closedStage);
+        pump(s, g, 9000, closedStage);
         CHECK(g.error() && g.error()->err == MpError::Refused);
         MpSession s2;
         cfg.host = "no-such-host.invalid";
