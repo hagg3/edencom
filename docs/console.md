@@ -99,8 +99,7 @@ console change together.
 in it, tried only after every built-in block verb (a block never sees them):
 
 - **Verbs** (`addCommand(name, usage, help, flags, argKinds, fn)`): no `.` in the name, may not repeat a
-  block verb or another registration (reported on stderr, then dropped). `CF_DIAG` verbs are absent
-  (not refused) without `EDEN_DIAGNOSTICS`; `CF_CHEAT` verbs are refused unless a cvar
+  block verb or another registration (reported on stderr, then dropped). `CF_DIAG` verbs are present in every build (diagnostics always on, G.1); `CF_CHEAT` verbs are refused unless a cvar
   `experiments.allow_cheats` exists and is on (none does in v1; no verb carries the flag); `CF_WORLD`
   needs a world; `CF_EDITS` is a marker for a future multiplayer client.
 - **Cvars** (`addCvar(Cvar)`): dotted `group.key`, lower-cased for lookup (`keys.moveForward` also works as

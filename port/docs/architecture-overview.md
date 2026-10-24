@@ -12,8 +12,7 @@ file only covers what the port adds or replaces.
 ## The engine is (mostly) the real engine
 `World`/`Terrain`/`Player`/`Camera`/`Hud`/`Menu`/`FileManager`/`Resources`/`SpecialEffects` and
 their ownership graph are compiled from the **same** `Classes/` sources the iOS app was. The small
-set replaced instead of compiled is `native/CMakeLists.txt`'s `EDEN_NATIVE_SEAM_EXCLUDE` list, with a
-comment at each entry explaining why: the UIKit shell (`EAGLView.mm`, `EdenViewController.mm`,
+set replaced instead of compiled (moved to `archive/stock-unbuilt/` in G.1; their seams are in `port/src/seam` and `native/src/seam`) was, with the reason for each: the UIKit shell (`EAGLView.mm`, `EdenViewController.mm`,
 `EdenAppDelegate.mm`, `main.m`), `Texture2D.mm`, `FileArchive.mm`, `SimpleAudioEngine.mm`, the stock
 world-sharing client (`FileDownload.mm`/`FileUpload.mm`/`SharedList.mm`/`ShareUtil.mm`/`ShareMenu.mm`),
 `Alert.mm`, `Appirater.mm`, `md5.c`, `VKeyboard.mm` and `PVRTglesExt.cpp`. Everything else is the

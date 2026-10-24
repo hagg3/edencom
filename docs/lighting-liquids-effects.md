@@ -172,11 +172,16 @@ terms. Plan and gates: `WORKING/feature-archaeology-2026-10-13/shadows-plan.md`.
   the graphics presets (CPU meshing only). Native `--shadows=off|classic|smooth` is a
   **non-persisting override** (`shadow_setOverride`): native prefs are global, not per `--docs`, so
   a test must not write the player's setting.
-- **Data:** `shadowTop[T_SIZE*T_SIZE]` = the y of each block column's topmost **caster** (0 = none),
-  toroidal like `GBLOCK`; 83 KB at R9, 256 KB at R16. Derived, never saved — no format change.
-  Casters: everything except air, cloud, liquids (every level), glass, weave and `IS_OBJECT` blocks
+- **Data (nearest caster, 2026-10-23):** the shade reads the **nearest caster above each face**, not the
+  column's topmost, so canopies, balconies, mall roofs and cave ceilings shade the floor below them
+  (a tester saw no shadows indoors/underground when only the topmost block counted). `shadow_gather(x0,z0,y0,out)`
+  builds, per mesh, an 18×18-column × 16-y table of gaps (`SHADOW_GATHER_BYTES` = 5184 B) straight from
+  `blockarray` (≤ 39 blocks scanned per column); 0 = no caster within reach. With a single layer above
+  a face it equals the old topmost-only value. `shadowTop[T_SIZE*T_SIZE]` (the y of each column's topmost
+  caster, toroidal like `GBLOCK`, 83 KB at R9) survives only as the diagnostic `--shadow-selftest` checks
+  (`stale`). Derived, never saved — no format change. Casters: everything except air, cloud, liquids (every level), glass, weave and `IS_OBJECT` blocks
   (`g_shadow_caster[]`, built from `blockinfo` flags, so a new block type needs no table edit).
-- **Shade:** a covering column's weight is 16 when its top is 1–8 blocks above the face's block,
+- **Shade:** a covering column's weight is 16 when its nearest caster is 1–8 blocks above the face's block,
   fading to 0 at 24 (`SHADOW_REACH_FULL/END`), so deep caves keep today's brightness and the
   ground under a sky island is not shaded. Classic: the 3×3 of columns, `255-100*S/144`
   (155..255; exactly 1.x's `255-100*count/9` when every gap ≤ 8). Smooth: per vertex, the 2×2
@@ -188,8 +193,9 @@ terms. Plan and gates: `WORKING/feature-archaeology-2026-10-13/shadows-plan.md`.
   with shadows Off. The light store itself is untouched (`--shadow-selftest` step 4 checks its hash).
 - **Upkeep (on or off):** `Terrain::addChunk` flags the column; `shadow_syncLandedColumns()` rescans
   flagged columns right before the mesh pass in `prepareAndLoadGeometry`; `Terrain::setLand` calls
-  `shadow_onSetLand` after its `GBLOCK` write (one table load + a compare unless the top moves).
-  Only with shadows on: a top change dirties the chunks covering the 3×3 of columns × `[lo−23, hi−1]`,
+  `shadow_onSetLand(x,z,y,oldtype,type)` after its `GBLOCK` write (keeps `shadowTop`; cheap).
+  Only with shadows on: a block **turning into or out of a caster** (any y, not just the top) dirties the
+  chunks covering the 3×3 of columns × `[y−23, y−1]`,
   and `columnMeshable` also waits for the 4 diagonal columns. So **Off schedules and meshes
   byte-for-byte like stock** (same `geom`/`full`, same mesh-bench time).
 - **Workers** (dormant: only under `EDEN_THREADED`, which no current build defines): `shadowTop` is

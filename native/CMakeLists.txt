@@ -126,17 +126,10 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 set(CMAKE_CXX_STANDARD 17)
 
-# Same default and same meaning as web-port-final:web/CMakeLists.txt: the scripted-drive probes
-# (eden_debug_*, the [eden-p1] prints, DevConsole) are ON for Debug, OFF otherwise. Stage 1's
-# whole deliverable comes out of those probes, so a Stage 1 measurement tree wants
-# -DEDEN_DIAGNOSTICS=ON explicitly on top of Release — the same `build-relwdiag` combination the
-# web side uses, and for the same reason (Release codegen, probes still present).
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-  set(EDEN_DIAGNOSTICS_DEFAULT ON)
-else()
-  set(EDEN_DIAGNOSTICS_DEFAULT OFF)
-endif()
-option(EDEN_DIAGNOSTICS "Compile the scripted-drive debug probes (eden_debug_*, DevConsole, the [eden-p1] prints)." ${EDEN_DIAGNOSTICS_DEFAULT})
+# Diagnostics are always compiled in (G.0 decision, 2026-10-23; the OFF configuration had been broken
+# since d92fd8c and is deleted): the scripted-drive probes, DevConsole, `--live-cmds` and every
+# `--*-selftest` mode are in every build. `-DEDEN_DIAGNOSTICS=ON` on the command line is accepted and ignored.
+set(EDEN_DIAGNOSTICS ON)
 
 # X.1: the Stage F.3 timing hooks ([F3] lines, the F3_DRIVE / f3-drive.txt driver). Off by default so
 # a shipped build pays nothing; native/README.md "Timing hooks" says how to use them. The hooks are
@@ -172,99 +165,16 @@ endif()
 # ---------------------------------------------------------------------------------------------
 include("${EDEN_PARENT_DIR}/cmake/EngineSources.cmake")
 
-# Files to EXCLUDE from the authoritative 81 and replace with a native seam. This list is
-# web-port-final:web/CMakeLists.txt's EDEN_SEAM_EXCLUDE with TWO additions, and it is a per-target list on
-# purpose — Stage 0.1 generalised the mechanism precisely so EDEN_IOS_SEAM_EXCLUDE could differ.
-# IT DOES NOT: Stage 4.1 measured the guess this comment used to carry ("iOS should NOT exclude
-# Classes/EAGLView.mm") and rejected it. See the EDEN_IOS_SEAM_EXCLUDE block below the list for
-# the reason, which is that EdenViewController.mm creates an ES 1.1 context and this renderer has
-# not been ES 1.1 since the web port.
-set(EDEN_NATIVE_SEAM_EXCLUDE
-  # --- Surface + loop + touches: replaced by native/src/seam/SDLView_native.mm,
-  # EdenViewController_native.{h,cpp}, EdenAppDelegate_native.{h,cpp}, main_native.{h,cpp},
-  # src/entry/eden_main_native.cpp. Same reasoning as web — there is no CAEAGLLayer,
-  # UIApplicationMain or CADisplayLink here either.
-  "Classes/EAGLView.mm"
-  "Classes/EdenViewController.mm"
-  "Classes/EdenAppDelegate.mm"
-  "main.m"
-
-  # --- Raster: decodes via UIImage/CoreGraphics and rasterises strings via UIFont. Replaced by
-  # port/src/seam/Texture2D_web.mm, which this target compiles UNCHANGED (stb_image for PNGs); only
-  # its one string-rasterisation call is per-platform, and native/src/seam/TextRaster_native.cpp
-  # supplies that half with stb_truetype.
-  "Classes/Texture2D.mm"
-
-  # --- File I/O: as on web, FileManager.mm/FileManagerHelper.mm are NOT excluded — the real,
-  # tested RLE-column/directory/creature logic is compiled as-is over the Foundation shim.
-  # FileArchive.mm stays excluded (referenced only from commented-out compress/decompress code).
-  "Classes/FileArchive.mm"
-
-  # --- Audio: stubbed in native/src/seam/seam_link_stubs_native.mm for Stage 1. Stage 2 gives it
-  # a real backend behind SimpleAudioEngine.h's ~13-call contract; the plan names the approach
-  # (port SimpleAudioEngine_web.mm's hand-rolled LPCM .caf decoder — it is portable C).
-  "Classes/SimpleAudioEngine.mm"
-
-  # --- Networking: NSURLConnection-based world sharing. Same disposition as web.
-  "Classes/FileDownload.mm"
-  "Classes/FileUpload.mm"
-  "Classes/SharedList.mm"
-  "Classes/ShareUtil.mm"
-  "Classes/ShareMenu.mm"
-  "Classes/Alert.mm"
-
-  # --- Strip entirely: rating-prompt nag + analytics remnants (its only caller, EdenAppDelegate,
-  # is itself excluded above).
-  "Classes/Appirater.mm"
-
-  # --- CF file hashing: replaced by port/src/shim/foundation/md5_web.mm, compiled here too.
-  "Classes/md5.c"
-
-  # --- Native text entry for world renaming. Stage 2 (SDL_StartTextInput + the engine's GL UI).
-  "Classes/VKeyboard.mm"
-
-  # === THE TWO ADDITIONS OVER WEB'S LIST ====================================================
-  # PVRTglesExt.cpp CANNOT COMPILE ON macOS, and the reason is worth knowing before anyone tries
-  # to un-exclude it. PVRTglesExt.h selects `#define PVRGetProcAddress(x) ::x` when
-  # `__APPLE__ && TARGET_OS_IPHONE`, and the .cpp then names ~50 ES1 extension entry points as
-  # real global symbols (::glBindVertexArrayOES, ::glClipPlanefIMG, ...). On iOS those exist in
-  # the ES1 framework; on desktop GL they do not exist at all, so it is a wall of
-  # undeclared-identifier errors, not a link failure you could stub past. Web sidesteps it by not
-  # being __APPLE__ (its macro expands to NULL). native/src/seam/pvrt_matrix_palette_native.cpp
-  # provides the two functions the file defines, including the matrix-palette entry-point install
-  # that web does with -Wl,--wrap= (ld64 has no --wrap).
-  "Classes/PVRTglesExt.cpp"
-)
-
-# EDEN_IOS_SEAM_EXCLUDE == EDEN_NATIVE_SEAM_EXCLUDE, AND THAT IS A DECISION, NOT A DEFAULT.
-# (Phase N Stage 4.1; the plan's §"Stage 4" argues it in full and this file's comment above
-# recorded the OPPOSITE guess, that iOS should keep Classes/EAGLView.mm because it is the
-# original CAEAGLLayer/EAGLContext setup "preserved".)
-#
-# The measurement that decided it: Classes/EdenViewController.mm:28 creates
-# kEAGLRenderingAPIOpenGLES1 — a real ES 1.1 context. This port's renderer has not been ES 1.1
-# since the web build; it is the ES1 -> ES3/GL translator in port/src/shim/gl/gl_fixed_function.cpp
-# (~1,900 LOC). Un-excluding EAGLView.mm would therefore not save work — it would FORK the
-# renderer, give iOS the project's only ES-1.1 path, and forfeit the byte-identical-geometry
-# guarantee every other target is held to. So SDL3 supplies UIApplicationMain, the CAEAGLLayer,
-# the display link and the touches on iOS exactly as it does the window and the message pump on
-# the desktop, and the four excluded shell files stay excluded on all four platforms.
-#
-# EAGLView.mm remains in the repo as the reference for the ES-1.1 context attributes and the
-# retina/IS_IPAD metric logic — which is what "preserved" should have meant.
-set(EDEN_IOS_SEAM_EXCLUDE ${EDEN_NATIVE_SEAM_EXCLUDE})
-
-if(IOS)
-  set(EDEN_TARGET_SEAM_EXCLUDE ${EDEN_IOS_SEAM_EXCLUDE})
-else()
-  set(EDEN_TARGET_SEAM_EXCLUDE ${EDEN_NATIVE_SEAM_EXCLUDE})
-endif()
-
+# port/tools/engine-sources.txt lists exactly the stock 2.1.1 engine files this build compiles (G.1,
+# 2026-10-23: the files the port replaces with a seam, and the never-compiled iOS shell, Cocos/PVRShell
+# and share-network files, moved to archive/stock-unbuilt/, so there is no per-target exclude list any more).
+# The seam replacements live in port/src/seam and native/src/seam (SDLView_native, Texture2D_web,
+# TextRaster_native, pvrt_matrix_palette_native, seam_link_stubs_native, ...). Files added after the
+# import are appended in cmake/EngineSources.cmake.
 eden_collect_engine_sources(
   OUT_VAR EDEN_ENGINE_SOURCES
   SOURCES_FILE "${EDEN_PARENT_DIR}/port/tools/engine-sources.txt"
   BASE_DIR "${EDEN_PARENT_DIR}"
-  EXCLUDE_LIST ${EDEN_TARGET_SEAM_EXCLUDE}
 )
 
 # ---------------------------------------------------------------------------------------------
@@ -862,6 +772,14 @@ target_compile_options(eden_native PRIVATE
 # ---------------------------------------------------------------------------------------------
 # Link
 # ---------------------------------------------------------------------------------------------
+# G.1(a): drop unreferenced code and data on every leg (Mac 3.77 -> 3.12 MB measured, G.0 report §2.5).
+if(APPLE)
+  target_link_options(eden_native PRIVATE -Wl,-dead_strip)
+else()
+  target_compile_options(eden_native PRIVATE -ffunction-sections -fdata-sections)
+  target_link_options(eden_native PRIVATE -Wl,--gc-sections)
+endif()
+
 target_link_libraries(eden_native PRIVATE ${EDEN_SDL3_TARGET})
 if(IOS)
   # OpenGLES, not OpenGL: iOS never had desktop GL. It is deprecated in favour of Metal and is

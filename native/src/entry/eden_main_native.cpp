@@ -487,19 +487,15 @@ extern float eden_gamepad_deadzone;
 // Classes/Alert.h — the native seam (seam_link_stubs_native.mm) implements this as a GLDialog.
 void showAlertWarpHome();
 
-#if defined(EDEN_DIAGNOSTICS)
 extern "C" const char* eden_bench_save(void);   // DevConsole_web.mm (X.1: --save-bench)
-#endif
 
 extern "C++" int eden_codec_bench(const char* path, int height, int want);   // CodecBench_native.cpp
 extern "C++" int eden_world_tool_main(int argc, char** argv);                 // WorldTools_native.cpp
 int fmh_selftestCompare(const char* edenPath, const char* emodPath, int* compared);   // Classes/FileManagerHelper.mm (S.6)
 extern "C" int eden_net_selftest_run(const char* server);   // port/src/net/NetSelftest.cpp (MP.1)
 extern "C" int eden_mp_selftest_run(const char* server);    // same file (MP.2)
-#if defined(EDEN_DIAGNOSTICS)
 extern "C" int eden_emod_selftest_run(const char* fixtureDir, const char* workDir, int flags,
                                       const char* file, const char* ref);       // Classes/EdenWorldStoreSelftest.cpp
-#endif
 
 namespace {
 
@@ -5050,11 +5046,7 @@ int run_console_selftest() {
             return r;
         };
         auto has = [](const std::string& hay, const char* needle) { return hay.find(needle) != std::string::npos; };
-#ifdef EDEN_DIAGNOSTICS
         const bool diag = true;
-#else
-        const bool diag = false;
-#endif
         std::string out;
         // The player stands on P (setup), stone at +2 and grass at +3, so the anchor is P.
         setup("");
@@ -5328,7 +5320,6 @@ int run_console_selftest() {
 }
 
 
-#if defined(EDEN_DIAGNOSTICS)
 // ---- S.0(a) --save-bench=1,10,50,144 (dirty-column save cost; X.1: diagnostics-only) --------------
 static std::string g_saveBenchList = "1,10,50,144";
 int run_save_bench() {
@@ -5361,7 +5352,6 @@ int run_save_bench() {
     }
     return 0;
 }
-#endif
 
 // ---------------------------------------------------------------------------------------------
 // --light-selftest  (Stage R / R.3, the light store)
@@ -5716,6 +5706,38 @@ int run_shadow_selftest() {
         std::snprintf(d, sizeof(d), "floor chunk full %s -> %s", H0.c_str(), h2.c_str());
         check(!h2.empty() && h2 != H0, "step 2: the canopy re-meshed the floor chunk (the edit hook's dirtying)", d);
         checkStale(state("canopy"), "step 2: stale == 0");
+    }
+
+    // 2b nearest, not topmost: a roof of the same footprint 10 above the floor (6 over the canopy)
+    // must change nothing -- the canopy is the nearest caster. A topmost-only scan saw the roof at
+    // gap 10 (weight 14, not 16) and shaded every covered column lighter.
+    {
+        const int ry = gy + 10;
+        for (int x = x0 - 1; x <= x0 + 1; ++x)
+            for (int z = z0 - 1; z <= z0 + 1; ++z) eden_console_setblock(x, z, ry, TYPE_STONE);
+        tick(10);
+        const int want = 255 - (100 * 9 * 16) / 144;
+        const int got = shade(x0, z0, gy).classic;
+        std::snprintf(d, sizeof(d), "centre shade %d, want %d (canopy at gap 4, roof at gap 10)", got, want);
+        check(got == want, "step 2: a roof above the canopy does not weaken its shade (nearest caster)", d);
+        for (int x = x0 - 1; x <= x0 + 1; ++x)
+            for (int z = z0 - 1; z <= z0 + 1; ++z) eden_console_setblock(x, z, ry, TYPE_NONE);
+        tick(10);
+        // And the other direction: the floor under only the roof (canopy gone) is shaded by it.
+        for (int x = x0 - 1; x <= x0 + 1; ++x)
+            for (int z = z0 - 1; z <= z0 + 1; ++z) eden_console_setblock(x, z, cy, TYPE_NONE);
+        for (int x = x0 - 1; x <= x0 + 1; ++x)
+            for (int z = z0 - 1; z <= z0 + 1; ++z) eden_console_setblock(x, z, ry, TYPE_STONE);
+        tick(10);
+        const int under = shade(x0, z0, gy).classic, wantRoof = 255 - (100 * 9 * (SHADOW_REACH_END - 10)) / 144;
+        std::snprintf(d, sizeof(d), "centre shade %d, want %d (roof alone at gap 10)", under, wantRoof);
+        check(under == wantRoof, "step 2: a lone roof at gap 10 shades with the faded weight", d);
+        for (int x = x0 - 1; x <= x0 + 1; ++x)
+            for (int z = z0 - 1; z <= z0 + 1; ++z) {
+                eden_console_setblock(x, z, ry, TYPE_NONE);
+                eden_console_setblock(x, z, cy, TYPE_STONE);
+            }
+        tick(10);
     }
 
     // 3 mine it out through the destroy path: the floor's mesh must be exactly what it was.
@@ -7746,19 +7768,13 @@ std::string rect_str(const ProbeRect& r) {
 // to be nonzero and distinct (TerrainChunk.mm treats 0 as "no buffer yet"). The proof is
 // eden_gl_selftest_run() in port/src/shim/gl/gl_fixed_function.cpp; this mode is headless so the
 // guarded path is the one engaged. Diagnostics builds only, like the function.
-#if defined(EDEN_DIAGNOSTICS)
 extern "C" int eden_gl_selftest_run(void);
-#endif
 int run_gl_selftest() {
     g_selftestTag = "eden-gl";
-#if defined(EDEN_DIAGNOSTICS)
     tick(3);
     check(eden_gl_have_context() == 0, "headless: no GL context is current", "");
     const int ok = eden_gl_selftest_run();
     check(ok == 1, "guarded glGen* names are nonzero and distinct", "see [eden-gl-selftest] above");
-#else
-    check(false, "this build has EDEN_DIAGNOSTICS", "eden_gl_selftest_run() is compiled out");
-#endif
     std::printf("[eden-gl] %s (%d failure(s))\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
     return g_selftestFailures ? 1 : 0;
 }
@@ -8180,7 +8196,7 @@ int run_convert64_selftest() {
 // It runs BEFORE any world is touched — a broken runtime would otherwise present as a corrupt
 // save or a wrong checksum several thousand message sends downstream, which is exactly the kind of
 // diagnosis this project has paid for before.
-#if !defined(__APPLE__) && defined(EDEN_DIAGNOSTICS)
+#if !defined(__APPLE__)
 extern "C" int eden_objc_selftest_run(void);
 #endif
 
@@ -8189,10 +8205,6 @@ int run_objc_selftest() {
     std::fprintf(stderr, "[eden-objc] this target uses Apple's libobjc, not "
                          "port/src/shim/objc/objc_runtime.cpp — nothing to self-test.\n");
     return 0;
-#elif !defined(EDEN_DIAGNOSTICS)
-    std::fprintf(stderr, "[eden-objc] built without -DEDEN_DIAGNOSTICS=ON; the self-test is not "
-                         "compiled in.\n");
-    return 1;
 #else
     return eden_objc_selftest_run() == 1 ? 0 : 1;
 #endif
@@ -11808,9 +11820,7 @@ static int parse_one_arg(const char* a) {
         else if (!std::strcmp(a, "--stage1"))         g_opt.mode = "stage1";
         else if (starts_with(a, "--mesh-bench="))     g_meshBenchPasses = atoi(a + 13);
         else if (!std::strcmp(a, "--smoke"))          g_opt.mode = "smoke";
-#if defined(EDEN_DIAGNOSTICS)
         else if (starts_with(a, "--save-bench="))     { g_opt.mode = "save-bench"; g_opt.headless = true; g_saveBenchList = a + 13; }
-#endif
         else if (!std::strcmp(a, "--input-selftest")) { g_opt.mode = "input-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--audio-selftest")) { g_opt.mode = "audio-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--gamepad-selftest")) { g_opt.mode = "gamepad-selftest"; g_opt.headless = true; }
@@ -12242,9 +12252,7 @@ static int eden_main_after_args(int argc, char** argv) {
         if (!std::strcmp(g_opt.mode, "p1-gate"))            rc = run_p1_gate();
         else if (!std::strcmp(g_opt.mode, "stage1"))        rc = run_stage1();
         else if (!std::strcmp(g_opt.mode, "smoke"))         rc = run_smoke();
-#if defined(EDEN_DIAGNOSTICS)
         else if (!std::strcmp(g_opt.mode, "save-bench"))    rc = run_save_bench();
-#endif
         else if (!std::strcmp(g_opt.mode, "input-selftest")) rc = run_input_selftest();
         else if (!std::strcmp(g_opt.mode, "keybind-selftest")) rc = run_keybind_selftest();
         else if (!std::strcmp(g_opt.mode, "ui-selftest")) rc = run_ui_selftest();
@@ -12291,11 +12299,9 @@ static int eden_main_after_args(int argc, char** argv) {
         else if (!std::strcmp(g_opt.mode, "classic-selftest")) rc = run_classic_selftest();
         else if (!std::strcmp(g_opt.mode, "props-selftest")) rc = run_props_selftest();
         else if (!std::strcmp(g_opt.mode, "codec-bench"))   rc = eden_codec_bench(g_opt.codecFile.c_str(), g_opt.height, 500);
-#if defined(EDEN_DIAGNOSTICS)
         else if (!std::strcmp(g_opt.mode, "emod-selftest"))
             rc = eden_emod_selftest_run(g_opt.emodFixtures.c_str(), g_opt.emodWork.c_str(), g_opt.emodQuick ? 1 : 0,
                                         g_opt.emodFile.c_str(), g_opt.emodRef.c_str());
-#endif
         else if (!std::strcmp(g_opt.mode, "objc-selftest")) rc = run_objc_selftest();
         else if (!std::strcmp(g_opt.mode, "gl-selftest"))   rc = run_gl_selftest();
         else if (!std::strcmp(g_opt.mode, "recolor-selftest")) rc = run_recolor_selftest();
@@ -12331,9 +12337,7 @@ static int eden_main_after_args(int argc, char** argv) {
         // display rate never sleeps past a vsync and halves the frame rate.
         constexpr double kPaceSlackMs = 2.0;
         double nextFrameMs = 0.0;
-#if defined(EDEN_DIAGNOSTICS)
         if (!g_opt.liveCmds.empty()) eden_live_commands_init(g_opt.liveCmds.c_str());
-#endif
         if (!g_opt.mpJoin.empty()) mp_join_from_args();   // MP.3b: straight from the main menu to a server
         while (g_running) {
             const int capFps = eden_get_fps_cap();
@@ -12357,9 +12361,7 @@ static int eden_main_after_args(int argc, char** argv) {
             // pushed after it would land a frame late — the same ordering public/eden-input.js
             // gets by running inside the rAF callback ahead of the engine tick.
             eden_native_input_tick();
-#if defined(EDEN_DIAGNOSTICS)
             eden_live_commands_tick();
-#endif
             eden_look_trace_frame();   // L.0: after the pump, before World::update reads the touches
             if (g_app->viewController.isAnimating()) g_app->viewController.drawFrame(true);
             // AFTER the tick that queued this frame's sounds, so a sound fired now is bound to

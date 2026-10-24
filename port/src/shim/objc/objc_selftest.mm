@@ -121,7 +121,6 @@
 
 extern "C" {
 
-#ifdef EDEN_DIAGNOSTICS
 EDEN_EXPORT
 int eden_objc_selftest_run(void) {
     EdenSelfTestSub *sub = [[EdenSelfTestSub alloc] init];
@@ -216,6 +215,5 @@ int eden_objc_selftest_run(void) {
     }
     return ok;
 }
-#endif
 
 }  // extern "C"

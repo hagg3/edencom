@@ -7,10 +7,8 @@
 //  (Classes/TerrainChunk.{h,mm}, which made rebuild2() re-entrant) and in the invalidation rules
 //  below; what is left is a bounded slot pool, a queue, and two threads.
 //
-//  NOTE ON THE BUILD: this file is an engine file added AFTER the 2.1.1 import, so it is not in
-//  Eden.xcodeproj and port/tools/gen-source-list.sh (which reads that project file) cannot know
-//  about it. web-port-final:web/CMakeLists.txt therefore appends it to EDEN_ENGINE_SOURCES explicitly rather than
-//  it going in tools/engine-sources.txt, where regenerating the list would silently drop it. The
+//  NOTE ON THE BUILD: this file is an engine file added AFTER the 2.1.1 import, so it is appended in
+//  cmake/EngineSources.cmake rather than listed in tools/engine-sources.txt (the stock set). The
 //  legacy iOS target does not build this file and does not build Terrain.mm's calls into it.
 //
 #import "MeshPool.h"
@@ -84,7 +82,7 @@ typedef struct _mesh_job{
     int result;
     // H.2: the shadow tops round the chunk and the mode, gathered at dispatch -- shadowTop is
     // main-thread state, and a snapshot makes the mesh a function of the dispatch-time window.
-    unsigned char shade[SHADOW_GATHER_N];
+    unsigned char shade[SHADOW_GATHER_BYTES];
     int shadeMode;
 }MeshJob;
 
@@ -354,7 +352,7 @@ BOOL mp_dispatch(TerrainChunk* chunk,int idxn){
     memcpy(j->blocks,chunk->pblocks,sizeof(j->blocks));
     memcpy(j->colors,chunk->pcolors,sizeof(j->colors));
     j->shadeMode=g_shadow_mode;
-    if(j->shadeMode!=SHADOW_OFF)shadow_gather(chunk->pbounds[0],chunk->pbounds[2],j->shade);
+    if(j->shadeMode!=SHADOW_OFF)shadow_gather(chunk->pbounds[0],chunk->pbounds[2],chunk->pbounds[1],j->shade);
     g_snapshotMs+=mp_now()-t0;
 
     chunk->meshJobStale=FALSE;

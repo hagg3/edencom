@@ -872,14 +872,14 @@ int TerrainChunk::rebuild2(){   //here be dragons//
         skylight=.35f;
     // H.2: the shadow tops round this chunk. A worker was handed them at dispatch (shadowTop is
     // main-thread state); inline, gather them now. NULL = Off: every colour below is stock.
-    unsigned char shadeLocal[SHADOW_GATHER_N];
+    unsigned char shadeLocal[SHADOW_GATHER_BYTES];
     const unsigned char* mshade=NULL;
     int mshadeMode=SHADOW_OFF;
     if(t_mesh_blocks){
         mshade=t_mesh_shade;
         mshadeMode=t_mesh_shade_mode;
     }else if(g_shadow_mode!=SHADOW_OFF){
-        shadow_gather(pbounds[0],pbounds[2],shadeLocal);
+        shadow_gather(pbounds[0],pbounds[2],pbounds[1],shadeLocal);
         mshade=shadeLocal;
         mshadeMode=g_shadow_mode;
     }
@@ -1273,11 +1273,11 @@ int TerrainChunk::rebuild2(){   //here be dragons//
         if(mshadeMode!=SHADOW_OFF&&(FACE_TOP&isvisible)){
             const int gx=x+pbounds[0],gz=z+pbounds[2],gy=y+pbounds[1];
             if(mshadeMode==SHADOW_CLASSIC){
-                const int sh=shadow_classic(mshade,x,z,gy);
+                const int sh=shadow_classic(mshade,x,z,y);
                 if(sh<255)shadow_lightTop(gx,gz,gy,skylight,sh,light,light_top);
             }else{
                 int sh[4];
-                if(shadow_corners(mshade,x,z,gy,sh))
+                if(shadow_corners(mshade,x,z,y,sh))
                     shadow_lightTops(gx,gz,gy,skylight,sh,4,light,light_corner);
                 else
                     for(int k=0;k<4;k++){ light_corner[k][0]=light[0]; light_corner[k][1]=light[1]; light_corner[k][2]=light[2]; }

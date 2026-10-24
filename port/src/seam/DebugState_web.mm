@@ -642,12 +642,13 @@ extern "C" const char *eden_debug_top_shade(int x, int z, int y) {
     static char buf[256];
     if (!shadowTop || !World::getWorld || !World::getWorld->terrain) return "{}";
     const int x0 = x - ((x % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE, z0 = z - ((z % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-    unsigned char tops[SHADOW_GATHER_N];
-    shadow_gather(x0, z0, tops);
-    const int lx = x - x0, lz = z - z0;
-    const int classic = shadow_classic(tops, lx, lz, y);
+    const int y0 = y - ((y % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+    unsigned char tops[SHADOW_GATHER_BYTES];
+    shadow_gather(x0, z0, y0, tops);
+    const int lx = x - x0, lz = z - z0, ly = y - y0;
+    const int classic = shadow_classic(tops, lx, lz, ly);
     int corner[4];
-    for (int k = 0; k < 4; k++) corner[k] = shadow_corner(tops, lx, lz, y, k >> 1, k & 1);
+    for (int k = 0; k < 4; k++) corner[k] = shadow_corner(tops, lx, lz, ly, k >> 1, k & 1);
     extern Vector colorTable[256];
     float skylight = 1.0f, light[3] = {1.0f, 1.0f, 1.0f}, lt[3];
     if (!LOW_MEM_DEVICE && v_equals(World::getWorld->terrain->final_skycolor, colorTable[54])) skylight = .35f;
@@ -656,9 +657,9 @@ extern "C" const char *eden_debug_top_shade(int x, int z, int y) {
     shadow_lightTop(x, z, y, skylight, classic, light, lt);
     snprintf(buf, sizeof(buf),
              "{\"classic\":%d,\"corners\":[%d,%d,%d,%d],\"light\":[%.4f,%.4f,%.4f],"
-             "\"light_top\":[%.4f,%.4f,%.4f],\"top\":%d}",
+             "\"light_top\":[%.4f,%.4f,%.4f],\"gap\":%d}",
              classic, corner[0], corner[1], corner[2], corner[3], light[0], light[1], light[2],
-             lt[0], lt[1], lt[2], (int)tops[(lx + 1) * SHADOW_GATHER + lz + 1]);
+             lt[0], lt[1], lt[2], (int)tops[((lx + 1) * SHADOW_GATHER + lz + 1) * CHUNK_SIZE + ly]);
     return buf;
 }
 

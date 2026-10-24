@@ -2,9 +2,10 @@
 
 Roughly half the files in `Classes/` are vendored libraries. Treat them as read-only
 dependencies; none have been meaningfully forked except where noted. **Not everything here is
-compiled by the port**: what builds is `port/tools/engine-sources.txt` minus `native/CMakeLists.txt`'s
-`EDEN_NATIVE_SEAM_EXCLUDE` (which drops `SimpleAudioEngine.mm`, `Texture2D.mm`, `md5.c`, `Appirater.mm`
-and `PVRTglesExt.cpp`, among others) plus `cmake/EngineSources.cmake`.
+compiled by the port**: what builds is `port/tools/engine-sources.txt` plus `cmake/EngineSources.cmake`
+(the stock files the port replaces or never compiled, e.g. `SimpleAudioEngine.mm`, `Texture2D.mm`, `md5.c`,
+`Appirater.mm` and `PVRTglesExt.cpp`, live in `archive/stock-unbuilt/`; the never-called PowerVR modules
+Print3D, Shell, Background, ShadowVol, TriStrip and Geometry were deleted in G.1).
 
 | Component | Files | Role | Notes |
 |---|---|---|---|

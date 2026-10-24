@@ -67,22 +67,18 @@ bool EdenViewController::drawFrame(bool renderThisFrame) {
 
     // The same three lines web-port-final:web/tools/headless-p1-gate.js greps for, emitted identically so the
     // native gate can assert the same text (Stage 1 criterion 1).
-#ifdef EDEN_DIAGNOSTICS
     static int tickCount = 0;
     if (tickCount < 3) {
         std::fprintf(stderr, "[eden-p1] tick %d: World::update(%.4f s) entered\n", tickCount, etime);
     }
-#endif
 
     bool retinaSwapRequested = world && world->update(etime);
 
-#ifdef EDEN_DIAGNOSTICS
     if (tickCount < 3) {
         std::fprintf(stderr, "[eden-p1] tick %d: World::update returned (retinaSwap=%d)\n",
                      tickCount, (int)retinaSwapRequested);
         ++tickCount;
     }
-#endif
 
     if (renderThisFrame) eden_gl_stats_frame_boundary();
 
@@ -95,7 +91,6 @@ bool EdenViewController::drawFrame(bool renderThisFrame) {
     // web — IS_IPAD/SCALE_* are this port's LAYOUT point space, not its resolution, so honouring
     // the swap would move the HUD's coordinate system out from under an unchanged drawable.
     if (retinaSwapRequested) {
-#ifdef EDEN_DIAGNOSTICS
         static bool announced = false;
         if (!announced) {
             announced = true;
@@ -103,7 +98,6 @@ bool EdenViewController::drawFrame(bool renderThisFrame) {
                 "[eden] World::update requested a retina/quality swap. Ignored by design "
                 "(audit row 22 / B7).\n");
         }
-#endif
     }
 
     eden_autoreleasepool_drain(autoreleasePool);

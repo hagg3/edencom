@@ -76,7 +76,7 @@ Port additions (project-audit-2026-07-30 row F5): `SpawnCreatureAt(type, pos)` p
 reusing the ambient spawner's slot-scavenging condition and `ResetModel`, skipping
 `addMoreCreaturesIfNeeded`'s randomized ground search and biome-based type selection since the
 caller already knows the position is valid. Callers: command-block scripts (`CmdScript.mm`, D.4c),
-the diagnostics dev console (`port/src/seam/DevConsole_web.mm`, `EDEN_DIAGNOSTICS` only) and the
+the diagnostics dev console (`port/src/seam/DevConsole_web.mm`, always built since G.1) and the
 `--cmds-selftest` harness. `CountActiveCreatures()` is a read-only count for the console's `stats`
 command and `--cmds-selftest`. Both are genuine engine additions (`Classes/Model.{h,mm}`), not seam
 workarounds — the file-static `guys[]`/`nguys` meant a seam file could not read or write creature

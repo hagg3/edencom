@@ -753,7 +753,6 @@ const int kDbgFrames = 5;
 // call site below — removes the per-draw pipeline stall entirely from a build meant to be played,
 // not just the printed noise.
 void eden_gl_dbg_flush_frame() {
-#ifdef EDEN_DIAGNOSTICS
     if (g_fdbg.frame >= kDbgFrames) return;
     std::fprintf(stderr,
         "[eden-gl-dbg] frame %d: clear=(%.2f,%.2f,%.2f,%.2f) drawArrays=%d(verts=%ld) "
@@ -770,14 +769,9 @@ void eden_gl_dbg_flush_frame() {
     g_fdbg.drawArrays = g_fdbg.drawElements = g_fdbg.texturedDraws = 0;
     g_fdbg.verts = g_fdbg.indices = 0;
     g_fdbg.glErr = 0;
-#endif
 }
 bool eden_gl_dbg_active() {
-#ifdef EDEN_DIAGNOSTICS
     return g_fdbg.frame < kDbgFrames;
-#else
-    return false;
-#endif
 }
 } // namespace
 
@@ -2174,7 +2168,6 @@ void eden_debug_gl_buffer_bytes_reset(void) {
     g_glbuf_deletes = 0;
 }
 
-#ifdef EDEN_DIAGNOSTICS
 extern "C" EDEN_GL_EXPORT
 int eden_gl_selftest_run(void) {
     if (eden_gl_have_context()) {
@@ -2228,6 +2221,5 @@ int eden_gl_selftest_run(void) {
                           "distinct, and delete does not crash\n");
     return 1;
 }
-#endif
 
 } // extern "C"

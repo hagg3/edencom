@@ -38,7 +38,6 @@ enum EdenPass {
     P_COUNT
 };
 
-#ifdef EDEN_DIAGNOSTICS
 
 extern "C" double eden_platform_now_ms(void);
 extern "C" long eden_gl_stat_live(int which);
@@ -80,13 +79,6 @@ static inline void pass_end(int p) {
     g_pass.setup[p] += eden_gl_stat_live(1) - g_pass.s0[p];
 }
 
-#else
-
-static inline void pass_frame_reset() {}
-static inline void pass_begin(int) {}
-static inline void pass_end(int) {}
-
-#endif // EDEN_DIAGNOSTICS
 
 // Scope form, for a pass that has more than one exit.
 struct PassScope {

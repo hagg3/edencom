@@ -812,11 +812,12 @@ void Terrain::setLand(int x,int z,int y,int type,BOOL chunkToo){
 	
 	if(y<0||y>=T_HEIGHT)return;
    
+    const int oldtype=GBLOCK(x,z,y);
     GBLOCK(x,z,y)=type;
     // H.2: every runtime edit lands here (TerrainChunk::setLand forwards both of its branches), so
-    // this is where a column's shadow top follows the edit. One table load and a compare unless the
-    // top really moved (Shadow.h).
-    shadow_onSetLand(x,z,y,type);
+    // this is where the chunks a caster change re-shades are dirtied and the diagnostic column top
+    // follows the edit (Shadow.h).
+    shadow_onSetLand(x,z,y,oldtype,type);
     light_onSetLand(x,z,type);   // P.10: a new lightbox un-forgets its column (Lighting.h)
 
 	if(chunkToo){

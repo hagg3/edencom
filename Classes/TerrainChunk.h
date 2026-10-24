@@ -82,7 +82,7 @@ typedef struct _mesh_side_effect{
 void tc_meshSetSource(const block8* blocks,const color8* colors,const unsigned char* burnMask,
                       MeshSideEffect* sink,int sink_max,int* sink_count);
 void tc_meshClearSource();
-// H.2: a worker's shadow tops (SHADOW_GATHER_N bytes, Shadow.h), gathered on the main thread at
+// H.2: a worker's shadow tops (SHADOW_GATHER_BYTES, Shadow.h), gathered on the main thread at
 // dispatch, and the mode they were gathered for. mode 0 (or never called) = shadows Off. Cleared
 // by tc_meshClearSource().
 void tc_meshSetShade(const unsigned char* tops,int mode);

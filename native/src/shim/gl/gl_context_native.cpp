@@ -196,6 +196,8 @@ int eden_gl_context_create(int drawable_width, int drawable_height) {
     // macOS offers exactly two core-profile versions, 3.2 and 4.1, and nothing in this shim needs
     // anything past 3.2 — the request is 4.1 so the driver is free to hand back its best, and
     // <OpenGL/gl3.h> (which declares the 3.2 subset) still covers every entry point used.
+    // G.1(e): elsewhere the request walks 4.1 -> 3.3 -> 3.2 (see the CreateContext loop below), so a
+    // driver that caps lower (Windows on ARM's GL-over-D3D12 stops at 3.3) still gets a context.
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
@@ -245,6 +247,17 @@ int eden_gl_context_create(int drawable_width, int drawable_height) {
 
     eden_mem_trace("gl:window");
     g_gl = SDL_GL_CreateContext(g_window);
+#if !defined(EDEN_PLATFORM_IOS) && !defined(__APPLE__)
+    // G.1(e): 4.1 -> 3.3 -> 3.2 core. Every entry point the shim uses is in 3.2.
+    static const int kFallback[][2] = {{3, 3}, {3, 2}};
+    for (int i = 0; !g_gl && i < 2; ++i) {
+        std::fprintf(stderr, "[eden-gl] core context refused (%s); trying %d.%d\n", SDL_GetError(),
+                     kFallback[i][0], kFallback[i][1]);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, kFallback[i][0]);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, kFallback[i][1]);
+        g_gl = SDL_GL_CreateContext(g_window);
+    }
+#endif
     if (!g_gl) {
         std::fprintf(stderr, "[eden-gl] SDL_GL_CreateContext failed: %s\n", SDL_GetError());
         SDL_DestroyWindow(g_window);

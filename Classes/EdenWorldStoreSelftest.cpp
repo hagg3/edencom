@@ -30,7 +30,6 @@
 //
 #include "EdenWorldStore.h"
 
-#if defined(EDEN_DIAGNOSTICS)
 
 #include <zlib.h>
 #include <algorithm>
@@ -1162,4 +1161,3 @@ extern "C" EMOD_EXPORT int eden_emod_selftest_web(int flags) {
     return eden_emod_selftest_run("/emod-fixtures", "/emod-work", flags, "", "");
 }
 
-#endif  // EDEN_DIAGNOSTICS

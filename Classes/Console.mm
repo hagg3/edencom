@@ -137,11 +137,7 @@ std::unordered_map<std::string, int> g_index;   // lower-case name -> Ext index
 bool g_inited = false;
 enum { CVAR_BASE = 4096 };
 
-#ifdef EDEN_DIAGNOSTICS
 const bool kDiag = true;
-#else
-const bool kDiag = false;
-#endif
 
 // ---- scrollback, history, anchor ------------------------------------------------------------------
 std::vector<Line> g_scroll;

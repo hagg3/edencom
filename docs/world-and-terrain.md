@@ -199,9 +199,9 @@ Read APIs (world coordinates, `(x, z, y)` order — see
 Write path — always go through these, never poke arrays directly:
 - `Terrain::setLand(x,z,y,type,chunkToo)` — writes `blockarray` and (if `chunkToo`)
   the owning chunk's `pblocks` + `modified` flag. Does **not** mark meshes dirty — except, since
-  H.2 (*modified from stock*), `shadow_onSetLand` after the write keeps the column's shadow top
-  current, and with shadows on dirties the chunks a moved top re-shades (3×3 columns ×
-  `[lo−23, hi−1]`; docs/lighting-liquids-effects.md "Baked shadows"). Every runtime edit comes
+  H.2 (*modified from stock*), `shadow_onSetLand` after the write keeps the column's diagnostic shadow top
+  current, and with shadows on dirties the chunks a block turning into or out of a caster re-shades (3×3 columns ×
+  `[y−23, y−1]`; docs/lighting-liquids-effects.md "Baked shadows"). Every runtime edit comes
   through here; the landing paths (`readColumn`, `fmh_publishColumnFromDefault`, TerrainGenerator)
   do not, and are covered by `addChunk`'s per-column flag and `shadow_syncLandedColumns()`, which
   runs unconditionally right before the mesh pass.

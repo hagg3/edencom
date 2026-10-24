@@ -417,7 +417,7 @@ geometry) is a separate future item (row 24/C2, ES3 instancing) — not done.
 `pass_end(P_…)` (`World::update`, `World::renderFrame`, `Terrain::render`/`render2`, and the native
 seam's present). Each pair adds the pass's CPU milliseconds and the GL shim's draw / vertex /
 issued-setup counters (`eden_gl_stat_live()`, differenced) to `g_pass`. The hooks compile only under
-`EDEN_DIAGNOSTICS` and do nothing until a harness sets `g_pass.on`, so a normal frame pays one
+diagnostics builds (every build, since G.1) and do nothing until a harness sets `g_pass.on`, so a normal frame pays one
 bool test per hook. With `g_pass.finish` set, every boundary first calls `glFinish`, so a pass's
 time becomes an upper bound that includes its own GPU work.
 - **Passes nest.** `r_opaque` (all of `Terrain::render`) contains `r_cull`, `r_chunks`,

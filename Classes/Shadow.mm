@@ -114,11 +114,10 @@ int shadow_syncLandedColumns(){
 
 static inline int floordiv(int a,int b){ return a>=0?a/b:-((-a+b-1)/b); }
 
-// A top change at block column (x,z) from `old` to `now` can re-shade top faces in the 3x3 of
-// columns round it with y in [lo-REACH_END+1, hi-1]. Dirty every chunk covering that.
-static void shadow_dirtyTopChange(int x,int z,int old,int now){
-    const int lo=old<now?old:now,hi=old<now?now:old;
-    int y0=lo-SHADOW_REACH_END+1,y1=hi-1;
+// A block at (x,z,y) turning into or out of a caster can re-shade top faces in the 3x3 of columns
+// round it with y in [y-REACH_END+1, y-1]. Dirty every chunk covering that.
+static void shadow_dirtyCasterChange(int x,int z,int y){
+    int y0=y-SHADOW_REACH_END+1,y1=y-1;
     if(y0<0)y0=0;
     if(y1>=T_HEIGHT)y1=T_HEIGHT-1;
     if(y1<y0)return;
@@ -133,22 +132,20 @@ static void shadow_dirtyTopChange(int x,int z,int old,int now){
             }
 }
 
-void shadow_onSetLand(int x,int z,int y,int type){
+void shadow_onSetLand(int x,int z,int y,int oldtype,int type){
     if(!shadowTop||g_shadow_test_mutation==1)return;
     const int slot=shadow_slot(x,z);
     const int old=shadowTop[slot];
-    int now;
+    int now=old;
     if(g_shadow_caster[(unsigned char)type]){
-        if(y<=old)return;
-        now=y;
-    }else{
-        if(y!=old)return;
+        if(y>old)now=y;
+    }else if(y==old){
         now=shadow_scan((x+g_offcx)%T_SIZE,(z+g_offcz)%T_SIZE,y);
     }
-    if(now==old)return;
     shadowTop[slot]=(unsigned char)now;
-    if(g_shadow_mode!=SHADOW_OFF&&g_shadow_test_mutation!=2&&chunksToUpdate)
-        shadow_dirtyTopChange(x,z,old,now);
+    if(g_shadow_caster[(unsigned char)oldtype]!=g_shadow_caster[(unsigned char)type]&&
+       g_shadow_mode!=SHADOW_OFF&&g_shadow_test_mutation!=2&&chunksToUpdate)
+        shadow_dirtyCasterChange(x,z,y);
 }
 
 static void shadow_apply(){
@@ -170,12 +167,26 @@ void shadow_setOverride(int mode){
     shadow_apply();
 }
 
-void shadow_gather(int x0,int z0,unsigned char* out){
-    if(!shadowTop){ memset(out,0,SHADOW_GATHER_N); return; }
+void shadow_gather(int x0,int z0,int y0,unsigned char* out){
+    if(!blockarray){ memset(out,0,SHADOW_GATHER_BYTES); return; }
+    // Casters up to REACH_END-1 above the chunk's top layer can still reach it.
+    int ytop=y0+CHUNK_SIZE-1+SHADOW_REACH_END-1;
+    if(ytop>=T_HEIGHT)ytop=T_HEIGHT-1;
     for(int dx=0;dx<SHADOW_GATHER;dx++){
-        const unsigned char* row=shadowTop+((x0-1+dx+g_offcx)%T_SIZE)*T_SIZE;
-        for(int dz=0;dz<SHADOW_GATHER;dz++)
-            out[dx*SHADOW_GATHER+dz]=row[(z0-1+dz+g_offcz)%T_SIZE];
+        const int tx=(x0-1+dx+g_offcx)%T_SIZE;
+        for(int dz=0;dz<SHADOW_GATHER;dz++){
+            const int tz=(z0-1+dz+g_offcz)%T_SIZE;
+            const block8* strip=blockarray+tx*g_xz_stride+tz*g_world_height;
+            unsigned char* o=out+(dx*SHADOW_GATHER+dz)*CHUNK_SIZE;
+            int nearest=-1;
+            for(int y=ytop;y>=y0;y--){
+                if(y<y0+CHUNK_SIZE){
+                    const int g=nearest>=0?nearest-y:0;
+                    o[y-y0]=(unsigned char)(g<SHADOW_REACH_END?g:0);
+                }
+                if(g_shadow_caster[(unsigned char)strip[y]])nearest=y;
+            }
+        }
     }
 }
 
