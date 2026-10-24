@@ -791,6 +791,13 @@ else()
   target_compile_options(eden_native PRIVATE -ffunction-sections -fdata-sections)
   target_link_options(eden_native PRIVATE -Wl,--gc-sections)
 endif()
+if(WIN32)
+  # W.3: with -ffunction-sections, ld.lld (mingw) sees the GNU-runtime's per-function weak class-ref alias
+  # (".weak.__objc_class_ref_NSString.default.<fn>", here ~vector<std::string>) as defined in every TU that
+  # instantiates it, and fails "duplicate symbol". The copies are identical by construction (weak, same
+  # inline function), so letting the first win is correct. Not seen on ELF (COMDAT) or Mach-O.
+  target_link_options(eden_native PRIVATE -Wl,--allow-multiple-definition)
+endif()
 
 target_link_libraries(eden_native PRIVATE ${EDEN_SDL3_TARGET})
 if(IOS)
