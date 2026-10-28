@@ -16,7 +16,13 @@
 #include <stdint.h>
 // memcpy/memset/strlen...: engine files got <string.h> transitively from the deleted ES 1.1 shim and PVRT
 // headers (G.5b-7, LG.7). Apple's libc++ still drags it in, Linux libstdc++ does not (CI run 40735042491).
+// Same for INT_MIN/UINT_MAX (run 40735807558) and the other overload-free C headers. <math.h> is left out on
+// purpose: it adds float overloads to the global namespace, which could change float results in a TU.
 #include <string.h>
+#include <limits.h>
+#include <float.h>
+#include <stdio.h>
+#include <assert.h>
 #ifdef __cplusplus
 extern "C"
 #endif
