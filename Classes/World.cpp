@@ -39,11 +39,9 @@ extern "C" int eden_load_failed(void);
 extern "C" int eden_low_memory(void);
 extern "C" int eden_window_radius_for_world(int height);   // Settings.cpp (B.5b-2)
 extern "C" void eden_report_load_failure(const char* world_file_name, const char* reason);
-// Port hook (port/src/render/gl/gl_context.h) — ROADMAP N.4.11. Brackets the play-mode 3D pass so native
-// can render it at the `render_scale` setting and upscale it under a full-density HUD. No-ops on
-// web (the page scales the whole canvas) and at 100%.
-extern "C" void eden_scene_pass_begin(void);
-extern "C" void eden_scene_pass_end(void);
+// ROADMAP N.4.11: R::beginScene/endScene bracket the play-mode 3D pass so it renders at the
+// `render_scale` setting and is composited under a full-density HUD (FT.16: a textured quad; no-ops
+// at 100%). Until FT.16 World called the port's eden_scene_pass_begin/end directly.
 
 //@synthesize cam, terrain, player, hud,fm/*,FLIPPED*/,effects,realtime,bestGraphics,doneLoading;
 //@synthesize game_mode,menu;
@@ -800,7 +798,7 @@ void World::renderFrame(bool draw){
 	}else if(game_mode==GAME_MODE_PLAY){
         pass_begin(P_RENDER);
         pass_begin(P_R_SETUP);
-        eden_scene_pass_begin(); //render-scale: the 3D pass may draw offscreen at its own resolution
+        R::beginScene(); //render-scale: the 3D pass may draw offscreen at its own resolution (FT.16: via R::)
         Graphics::prepareScene();
 		
         
@@ -838,7 +836,7 @@ void World::renderFrame(bool draw){
          R::mv().pop();
         pass_end(P_R_EFFECTS);
         pass_begin(P_R_UPSCALE);
-        eden_scene_pass_end(); //upscale the 3D pass; the hud draws at full resolution
+        R::endScene(); //composite the 3D pass into the window; the hud draws at full resolution
         pass_end(P_R_UPSCALE);
         pass_begin(P_R_HUD);
 		hud->render(); //render hud last

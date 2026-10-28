@@ -31,7 +31,31 @@
 #ifndef __glu_h__
 #define __glu_h__
 
-#include <OpenGLES/ES1/gl.h>
+/* SM.7: glu's own GL vocabulary. The engine no longer includes <OpenGLES/ES1/gl.h> (deleted); these are the
+   platform headers' own types, so a repeat typedef in the GL backend's translation units stays legal. */
+typedef unsigned int   GLenum;
+typedef unsigned int   GLuint;
+typedef unsigned char  GLboolean;
+typedef unsigned char  GLubyte;
+typedef int            GLint;
+typedef float          GLfloat;
+typedef void           GLvoid;
+#ifndef GL_FALSE
+#define GL_FALSE                             0
+#define GL_TRUE                              1
+#endif
+#ifndef GL_NO_ERROR
+#define GL_NO_ERROR                          0
+#define GL_INVALID_ENUM                      0x0500
+#define GL_INVALID_VALUE                     0x0501
+#define GL_INVALID_OPERATION                 0x0502
+#define GL_STACK_OVERFLOW                    0x0503
+#define GL_STACK_UNDERFLOW                   0x0504
+#define GL_OUT_OF_MEMORY                     0x0505
+#endif
+#ifndef GL_INVALID_FRAMEBUFFER_OPERATION_EXT
+#define GL_INVALID_FRAMEBUFFER_OPERATION_EXT 0x0506
+#endif
 
 #ifndef GLAPIENTRY
 #define GLAPIENTRY

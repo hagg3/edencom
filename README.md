@@ -19,7 +19,7 @@ As well as iOS, the code at present can be compiled and run on the following:
 - **iOS / iPadOS** (unsigned builds you sideload; see Releases)
 - Android support is planned.
 
-The original 2.1 engine has been iterated on, rather than remade. There is a light compatibility layer that stands in for iOS/ObjC APIs on non-Apple platforms.
+The original 2.1 engine has been iterated on, rather than remade. The engine is plain C++ (C++20) and draws through its own small renderer; the only Objective-C left is three thin Apple platform files (networking, audio, the iOS keyboard).
 
 
 ## Playing
@@ -57,12 +57,11 @@ Your worlds are saved here, and are never shared with the old Eden app's data:
   corrupt a world. Old `.eden` worlds still import and export.
 - **The default world ships as `Eden.emod`**, baked from the original `Eden.eden` map.
 - **Extras behind settings:** adjustable render distance and a fly mode (Settings › Experiments).
-- The engine's OpenGL ES 1.1 calls are translated to modern GL/ES3 at runtime, since desktop
-  drivers don't speak ES 1.1.
+- The engine draws through its own renderer (`R::`) on desktop GL 3.3+ / OpenGL ES 3.0; the old ES 1.1 calls and the translator that replayed them are gone.
 
 ## Building
 
-You need a C++/Objective-C++ compiler, CMake and SDL3.
+You need a C++20 compiler, CMake and SDL3 (plus Xcode on Apple platforms).
 
 ```
 cd native
@@ -73,7 +72,7 @@ cmake --build build -j8
 
 On macOS, `brew install sdl3` first. On Linux you also need the usual X11/Wayland, audio and GL
 dev packages, and SDL3 itself (Ubuntu only packages it from 25.04). Windows builds with MSYS2's
-CLANG64 toolchain, because MSVC can't compile Objective-C. iOS needs Xcode and a static SDL3.
+CLANG64 toolchain (an experimental clang-cl/MSVC job also runs in CI). iOS needs Xcode and a static SDL3; the minimum is iOS 15.
 
 Don't take the exact package lists from this README: [`.github/workflows/native.yml`](.github/workflows/native.yml)
 is the recipe that actually builds all four platforms on every push, and it's the one that's kept
@@ -85,8 +84,8 @@ Where things live:
 
 | Path | What's there |
 |---|---|
-| `Classes/`, `Lighting.cpp` | The Eden engine, in Objective-C++. Editable; the untouched import is tagged `pristine-engine`. |
-| `port/` | The shared compatibility layer: an ES 1.1 → ES3 translator and, on Linux/Windows, a small Objective-C runtime and Foundation subset. Also build and format tools. |
+| `Classes/`, `Lighting.cpp` | The Eden engine, now plain C++. Editable; the untouched import is tagged `pristine-engine`. |
+| `port/` | The shared port layer: the renderer backends (`R::` over GL), platform seams (app/boot, input, audio, networking), small portable helpers, the test harness, and build and format tools. |
 | `native/` | The SDL3 app: window, input, audio, file I/O, networking, and the CMake build. |
 | `docs/` | Engine reference. Voxel storage, meshing, lighting, save formats, worldgen and so on. |
 | `media/` | Textures, models, sounds and music. |

@@ -56,8 +56,8 @@ the JS/wasm boundary conventions, the Load/New World menu, the `public/*.js` dep
 `World::update()` returns a bool meaning "swap graphics quality"; on iOS
 `EdenViewController.mm` answered it by flipping `IS_IPAD`/`IS_RETINA`/`SCALE_WIDTH`/
 `SCALE_HEIGHT` and recreating the framebuffer at the new density. **This port
-deliberately does neither**, and `EdenViewController::drawFrame()`
-(`port/src/seam/EdenViewController_native.cpp`) carries the reasoning. The short version, because it is the thing to understand before touching any
+deliberately does neither**, and `App::drawFrame()`
+(`port/src/seam/App.cpp`) carries the reasoning. The short version, because it is the thing to understand before touching any
 UI layout here:
 
 > **`IS_IPAD`/`IS_RETINA`/`SCALE_*` are this port's layout coordinate system, not its

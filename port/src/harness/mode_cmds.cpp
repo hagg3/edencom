@@ -150,7 +150,7 @@ int run_cmds_selftest() {
     if (g_opt.haveAt) eden_console_teleport(g_opt.at[0], g_opt.at[1], g_opt.at[2]);
     tick(g_opt.frames / 4);
     if (GLDialog::active()) { GLDialog::dismiss(); tick(2); }   // --world-format=emod's "World converted"
-    g_app->viewController.setFixedEtime(1.0f / 60.0f);
+    g_app->setFixedEtime(1.0f / 60.0f);
     WorldTrailer* t = tr();
     Hud* hud = World::getWorld->hud;
     Player* pl = World::getWorld->player;
@@ -558,7 +558,7 @@ int run_cmds_selftest() {
     CmdScript::press(W);
     tick(2);
     const bool wasGreen = CmdTool::running(W);
-    g_app->viewController.setFixedEtime(0.0f);
+    g_app->setFixedEtime(0.0f);
     save_world();
     if (!quit_to_menu()) return 1;
     std::snprintf(d, sizeof(d), "green before %d; after quit: live %d, green %d", wasGreen, CmdScript::liveCount(), CmdTool::running(W));
@@ -919,7 +919,7 @@ int run_console_selftest() {
     if (g_opt.haveAt) eden_console_teleport(g_opt.at[0], g_opt.at[1], g_opt.at[2]);
     tick(g_opt.frames / 4);
     if (GLDialog::active()) { GLDialog::dismiss(); tick(2); }
-    g_app->viewController.setFixedEtime(1.0f / 60.0f);
+    g_app->setFixedEtime(1.0f / 60.0f);
     Hud* hud = World::getWorld->hud;
     Player* pl = World::getWorld->player;
     const PlayerState ps = player_state();

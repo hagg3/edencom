@@ -12,8 +12,7 @@
 #include <Foundation/Foundation.h>
 #include <OpenGLES/EAGL.h>
 
-#include <OpenGLES/ES1/gl.h>
-#include <OpenGLES/ES1/glext.h>
+#include <stdint.h>
 
 #include "World.h"
 

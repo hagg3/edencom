@@ -108,9 +108,8 @@ static void fmh_read_directory(){
 // ---- B3 Stage 3: the column read, split into read / decode / publish -------------------------
 // Same work, same order, same bytes as the single function this replaced -- see
 // FileManagerHelper.h for why it is in three pieces and which piece can leave the main thread.
-// There is deliberately only ONE copy of the decode, shared by the synchronous path below and by
-// the worker path (Classes/MeshPool.mm), because two copies of an RLE reader is exactly the kind
-// of thing that drifts.
+// The split dates from the retired worker-thread decode (MeshPool, see git history); the pieces
+// stay because the column reader and the A/B check below both call them.
 
 int fmh_defaultBandCount(){
     // How many RLE bands the BUNDLED map actually stores per column -- derived from its own header,
@@ -352,7 +351,7 @@ void fmh_publishColumnFromDefault(int cx,int cz,const block8* blocks,const color
 }
 
 // Scratch for the synchronous path. One shared set of buffers because this is main-thread-only and
-// re-entered once per column; the worker path carries its own per-job copies (Classes/MeshPool.mm).
+// re-entered once per column.
 static unsigned char fmh_raw[(size_t)CHUNKS_PER_COLUMN_MAX*FMH_BAND_RAW_MAX];
 static block8 fmh_blocks[(size_t)CHUNKS_PER_COLUMN_MAX*CHUNK_SIZE3];
 static color8 fmh_colors[(size_t)CHUNKS_PER_COLUMN_MAX*CHUNK_SIZE3];

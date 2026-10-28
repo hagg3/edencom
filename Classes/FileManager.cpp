@@ -15,7 +15,6 @@
 #include "TerrainGen2.h"
 #include "FileArchive.h"
 #include "FileManagerHelper.h"
-#include "MeshPool.h"
 #include "World.h"
 #include <cstddef>   // offsetof, renameWorld
 #include "EdenWorldStore.h"   // emod::eden_detect_bands -- a .eden's height (S.3b)
@@ -960,25 +959,6 @@ void FileManager::saveGenColumn(int cx,int cz,int origin){
 extern block8* blockarray;
 extern int g_offcx;
 extern int g_offcz;
-bool FileManager::readColumnDeferred(int cx,int cz,EdenFile* rcfile){
-    // Only ONE case can be deferred: a column the CURRENT world's directory does not have, on a
-    // default-seed world, which readColumn() below would satisfy from the bundled map via
-    // fmh_readColumnFromDefault(). Everything else -- a column this world has saved (a straight
-    // 32 KB read, no decode to move), a non-default seed (procedural generation, which touches
-    // TerrainGen state) -- falls through to the unchanged synchronous path. The duplicated lookup
-    // is one hashmap_get; duplicating readColumn() itself is what this avoids.
-    Terrain* ter=World::getWorld->terrain;
-    int n=twoToOne(cx,cz);
-    if(n!=0&&ter->tgen->LEVEL_SEED==DEFAULT_LEVEL_SEED){
-        ColumnIndex* colIndex=NULL;
-        hashmap_get(indexes,n,(any_t*)&colIndex);
-        bool absent=emodStore?!emodStore->hasColumn(cx,cz):(colIndex==NULL);
-        if(absent&&mp_dispatchColumnDecode(cx,cz))return false;
-    }
-    readColumn(cx,cz,rcfile);
-    return true;
-}
-
 // H.4: what Terrain's bulk reload charges by time (generator-plan.md §2.1): a column this world has
 // not saved, on a Classic seed (not the flat world, not the bundled map).
 bool FileManager::columnWillGenerate(int cx,int cz){

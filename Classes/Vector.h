@@ -9,7 +9,7 @@
 #ifndef Eden_Vector_h
 #define Eden_Vector_h
 
-#include <OpenGLES/ES1/gl.h>
+#include <stdint.h>
 
 extern "C" {
 struct Vector{
@@ -22,9 +22,9 @@ typedef struct Vector Vector;
 }
 
 typedef struct {
-	GLubyte    x;
-	GLubyte    y;
-	GLubyte    z;
+	uint8_t    x;
+	uint8_t    y;
+	uint8_t    z;
 }Vector8;
 typedef struct {
 	float    x;
@@ -53,9 +53,10 @@ typedef struct _vertexObject
 {
     float position[3];
     float normal[3];
-    GLubyte colors[4]; 
+    uint8_t colors[4]; 
 	float texs[2];
     
 } vertexObject;
+static_assert(sizeof(vertexObject) == 36, "vertexObject is read by R::kFmtObject (render_formats.cpp) at a fixed stride");
 
 #endif

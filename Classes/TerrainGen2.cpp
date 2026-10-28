@@ -7,8 +7,7 @@
 //
 
 
-#include <OpenGLES/ES1/gl.h>
-#include <OpenGLES/ES1/glext.h>
+#include <stdint.h>
 #include "Terrain.h"
 #include "glu.h"
 #include "Resources.h"

@@ -240,13 +240,13 @@ int run_shot() {
         explicit Pin(bool o) : on(o) {
             if (!on) return;
             g_ignoreUserInput = true;
-            g_app->viewController.setFixedEtime(1.0f / 60.0f);
+            g_app->setFixedEtime(1.0f / 60.0f);
             eden_rng_seed(1);
             g_shotPinned = true;
         }
         ~Pin() {
             if (!on) return;
-            g_app->viewController.setFixedEtime(0.0f);
+            g_app->setFixedEtime(0.0f);
             eden_rng_unpin();
             g_ignoreUserInput = false;
             g_shotPinned = false;

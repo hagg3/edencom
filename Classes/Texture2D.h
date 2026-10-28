@@ -1,7 +1,7 @@
 #ifndef Eden_Texture2D_h
 #define Eden_Texture2D_h
 
-#include <OpenGLES/ES1/gl.h>
+#include <stdint.h>
 #include <string>
 #include "eden_image.h"   // G.2b-1 (de-ObjC plan D11): EdenImage, the decoded RGBA8 image (was CGImageRef)
 
@@ -44,11 +44,11 @@ private:
 	size_t						_width,
 								_height;
 	Texture2DPixelFormat		_format;
-	GLfloat						_maxS,
+	float						_maxS,
 								_maxT;
 	// Texels per 2D-ortho unit (N.4.8). 1 for every texture except the density-built text below;
 	// drawText divides the quad extent by it, so a 1 here is the stock behaviour exactly.
-	GLfloat						_density = 1.0f;
+	float						_density = 1.0f;
 
     void initData(const void* data, Texture2DPixelFormat pixelFormat, int width,int height,CGSize size,bool genMips);
     // G.2b-1 (de-ObjC plan D1/D11): paths and text are std::string (never const char*: the raw-data
@@ -58,7 +58,7 @@ private:
     void initFromImage(const EdenImage* image, bool sizeToFit,Texture2DPixelFormat pixelFormat, bool genMips);
     void initFromString(const std::string& string, CGSize dimensions, UITextAlignment alignment, float fontSize);
 public:
-GLuint						name;
+uint32_t						name;
 Texture2D(const void* data ,Texture2DPixelFormat pixelFormat, int width, int height, CGSize size);
 ~Texture2D();
 Texture2D(const void* data ,Texture2DPixelFormat pixelFormat, int width, int height, CGSize size,bool genMips);
@@ -66,11 +66,11 @@ Texture2D(const void* data ,Texture2DPixelFormat pixelFormat, int width, int hei
 @property(readonly) NSUInteger pixelsWide;
 @property(readonly) NSUInteger pixelsHigh;
 
-@property(readonly) GLuint name;
+@property(readonly) uint32_t name;
 
 @property(readonly, nonatomic) CGSize contentSize;
-@property(readonly) GLfloat maxS;
-@property(readonly) GLfloat maxT;*/
+@property(readonly) float maxS;
+@property(readonly) float maxT;*/
 
 
 /*

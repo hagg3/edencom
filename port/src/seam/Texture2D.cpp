@@ -46,7 +46,6 @@
 // the pch's __DEBUG__ branch (`printg(...) printf(__VA_ARGS__)`) unconditionally.
 #define printg(...) printf(__VA_ARGS__)
 
-#include <OpenGLES/ES1/glext.h>   // matches Texture2D.mm's own top-of-file include
 #include "../../../Classes/Texture2D.h"
 #include "../../../Classes/OpenGL_Internal.h"
 #include "../../../Classes/Globals.h"
@@ -708,7 +707,7 @@ R::Geometry quadGeometry(const QuadVertex* q) {
     g.fmt = &R::kFmtUI3UV; g.vmem = q; g.itype = R::I_NONE; g.first = 0; g.count = 4; g.prim = R::TRIANGLE_STRIP;
     return g;
 }
-void drawQuad(GLuint tex, const float* xyz, const float* st) {
+void drawQuad(uint32_t tex, const float* xyz, const float* st) {
     QuadVertex q[4];
     fillQuad(q, xyz, st);
     R::setState(Pen::state());
@@ -717,7 +716,7 @@ void drawQuad(GLuint tex, const float* xyz, const float* st) {
 // drawSky: inside Terrain::render's atlas texture matrix (R::uv() scale (1, 1/ATLAS_TILES)), so the world
 // program (which owns that transform), no alpha test. Since G.5b-6 Terrain::render (the only caller)
 // states the sky's R::State and fog (off) itself and passes the tint.
-void drawSkyQuad(GLuint tex, const float* xyz, const float* st, const R::Rgba& tint) {
+void drawSkyQuad(uint32_t tex, const float* xyz, const float* st, const R::Rgba& tint) {
     QuadVertex q[4];
     fillQuad(q, xyz, st);
     R::drawWorld(quadGeometry(q), tex, tint, -1.0f);
@@ -725,11 +724,11 @@ void drawSkyQuad(GLuint tex, const float* xyz, const float* st, const R::Rgba& t
 }  // namespace
 
 void Texture2D::drawTexture(Texture2D* texture, CGPoint point, CGFloat depth) {
-    GLfloat maxS = texture->_maxS, maxT = texture->_maxT,
+    float maxS = texture->_maxS, maxT = texture->_maxT,
             pixelsWide = texture->_width, pixelsHigh = texture->_height;
-    GLfloat coordinates[] = { 0, maxT, maxS, maxT, 0, 0, maxS, 0 };
-    GLfloat width = (GLfloat)pixelsWide * maxS, height = (GLfloat)pixelsHigh * maxT;
-    GLfloat vertices[] = {
+    float coordinates[] = { 0, maxT, maxS, maxT, 0, 0, maxS, 0 };
+    float width = (float)pixelsWide * maxS, height = (float)pixelsHigh * maxT;
+    float vertices[] = {
         -width / 2 + point.x, -height / 2 + point.y, depth,
          width / 2 + point.x, -height / 2 + point.y, depth,
         -width / 2 + point.x,  height / 2 + point.y, depth,
@@ -751,18 +750,18 @@ void Texture2D::preload() {
 void Texture2D::drawAtPoint(CGPoint point) { drawAtPoint(point, 0.0, false); }
 
 void Texture2D::drawAtPoint(CGPoint point, CGFloat depth, bool center) {
-    GLfloat coordinates[] = { 0, _maxT, _maxS, _maxT, 0, 0, _maxS, 0 };
-    GLfloat width = (GLfloat)_width * _maxS / _density, height = (GLfloat)_height * _maxT / _density;  // N.4.8
+    float coordinates[] = { 0, _maxT, _maxS, _maxT, 0, 0, _maxS, 0 };
+    float width = (float)_width * _maxS / _density, height = (float)_height * _maxT / _density;  // N.4.8
     // Both branches vertically center on point.y; only the horizontal anchor differs
     // (center: point.x is the midpoint; !center: point.x is the left edge) — matches the
     // original's separate cvertices/zvertices arrays exactly.
-    GLfloat cvertices[] = {
+    float cvertices[] = {
         -width / 2 + point.x, -height / 2 + point.y, depth,
          width / 2 + point.x, -height / 2 + point.y, depth,
         -width / 2 + point.x,  height / 2 + point.y, depth,
          width / 2 + point.x,  height / 2 + point.y, depth
     };
-    GLfloat zvertices[] = {
+    float zvertices[] = {
         point.x,         -height / 2 + point.y, depth,
         width + point.x, -height / 2 + point.y, depth,
         point.x,          height / 2 + point.y, depth,
@@ -774,14 +773,14 @@ void Texture2D::drawAtPoint(CGPoint point, CGFloat depth, bool center) {
 void Texture2D::drawInRect(CGRect rect) { drawInRect(rect, 0.0); }
 
 void Texture2D::drawInRect(CGRect rect, CGFloat depth) {
-    GLfloat coordinates[] = { 0, _maxT, _maxS, _maxT, 0, 0, _maxS, 0 };
+    float coordinates[] = { 0, _maxT, _maxS, _maxT, 0, 0, _maxS, 0 };
     if (IS_IPAD) {
         rect.origin.x *= SCALE_WIDTH;
         rect.origin.y *= SCALE_HEIGHT;
         rect.size.width *= SCALE_WIDTH;
         rect.size.height *= SCALE_HEIGHT;
     }
-    GLfloat vertices[] = {
+    float vertices[] = {
         rect.origin.x, rect.origin.y, depth,
         rect.origin.x + rect.size.width, rect.origin.y, depth,
         rect.origin.x, rect.origin.y + rect.size.height, depth,
@@ -792,14 +791,14 @@ void Texture2D::drawInRect(CGRect rect, CGFloat depth) {
 
 void Texture2D::drawInRect2(CGRect rect) {
     CGFloat depth = 0.0;
-    GLfloat coordinates[] = { 0, _maxT, _maxS, _maxT, 0, 0, _maxS, 0 };
+    float coordinates[] = { 0, _maxT, _maxS, _maxT, 0, 0, _maxS, 0 };
     if (IS_IPAD) {
         rect.origin.x *= SCALE_WIDTH;
         rect.origin.y *= SCALE_HEIGHT;
         rect.size.width *= 2;
         rect.size.height *= 2;
     }
-    GLfloat vertices[] = {
+    float vertices[] = {
         rect.origin.x, rect.origin.y, depth,
         rect.origin.x + rect.size.width, rect.origin.y, depth,
         rect.origin.x, rect.origin.y + rect.size.height, depth,
@@ -816,8 +815,8 @@ void Texture2D::drawText(CGRect rect) {
 // used to turn the up-pointing jump icon into a down-pointing crouch icon.
 void Texture2D::drawText(CGRect rect, bool flipX) {
     CGFloat depth = 0.0;
-    GLfloat coordinates[] = { 0, flipX?0:_maxT, _maxS, flipX?0:_maxT, 0, flipX?_maxT:0, _maxS, flipX?_maxT:0 };
-    GLfloat width = roundf((GLfloat)_width * _maxS), height = roundf((GLfloat)_height * _maxT);
+    float coordinates[] = { 0, flipX?0:_maxT, _maxS, flipX?0:_maxT, 0, flipX?_maxT:0, _maxS, flipX?_maxT:0 };
+    float width = roundf((float)_width * _maxS), height = roundf((float)_height * _maxT);
     if (!IS_RETINA && SUPPORTS_RETINA) { width /= 2; height /= 2; }
     // N.4.8: a density-built label is `_density` texels per unit, and its origin is snapped to a
     // DEVICE pixel rather than an ortho unit so those texels stay 1:1. Both are no-ops at 1.
@@ -828,7 +827,7 @@ void Texture2D::drawText(CGRect rect, bool flipX) {
         rect.origin.x = roundf(rect.origin.x * _density) / _density;
         rect.origin.y = roundf(rect.origin.y * _density) / _density;
     }
-    GLfloat vertices[] = {
+    float vertices[] = {
         rect.origin.x, rect.origin.y, depth,
         rect.origin.x + width, rect.origin.y, depth,
         rect.origin.x, rect.origin.y + height, depth,
@@ -839,8 +838,8 @@ void Texture2D::drawText(CGRect rect, bool flipX) {
 
 void Texture2D::drawTextHalfsies(CGRect rect) {
     CGFloat depth = 0.0;
-    GLfloat coordinates[] = { 0, _maxT, _maxS, _maxT, 0, 0, _maxS, 0 };
-    GLfloat width = roundf((GLfloat)_width * _maxS), height = roundf((GLfloat)_height * _maxT);
+    float coordinates[] = { 0, _maxT, _maxS, _maxT, 0, 0, _maxS, 0 };
+    float width = roundf((float)_width * _maxS), height = roundf((float)_height * _maxT);
     if (!IS_RETINA && SUPPORTS_RETINA) { width /= 2; height /= 2; }
     if (IS_IPAD) {
         rect.origin.x *= SCALE_WIDTH;
@@ -848,7 +847,7 @@ void Texture2D::drawTextHalfsies(CGRect rect) {
         rect.origin.x = roundf(rect.origin.x);
         rect.origin.y = roundf(rect.origin.y);
     }
-    GLfloat vertices[] = {
+    float vertices[] = {
         rect.origin.x, rect.origin.y, depth,
         rect.origin.x + width, rect.origin.y, depth,
         rect.origin.x, rect.origin.y + height, depth,
@@ -859,10 +858,10 @@ void Texture2D::drawTextHalfsies(CGRect rect) {
 
 void Texture2D::drawTextNoScale(CGRect rect) {
     CGFloat depth = 0.0;
-    GLfloat coordinates[] = { 0, _maxT, _maxS, _maxT, 0, 0, _maxS, 0 };
-    GLfloat width = roundf((GLfloat)_width * _maxS), height = roundf((GLfloat)_height * _maxT);
+    float coordinates[] = { 0, _maxT, _maxS, _maxT, 0, 0, _maxS, 0 };
+    float width = roundf((float)_width * _maxS), height = roundf((float)_height * _maxT);
     if (!IS_RETINA && SUPPORTS_RETINA) { width /= 2; height /= 2; }
-    GLfloat vertices[] = {
+    float vertices[] = {
         rect.origin.x, rect.origin.y, depth,
         rect.origin.x + width, rect.origin.y, depth,
         rect.origin.x, rect.origin.y + height, depth,
@@ -873,7 +872,7 @@ void Texture2D::drawTextNoScale(CGRect rect) {
 
 void Texture2D::drawTextM(CGRect rect) {
     CGFloat depth = 0.0;
-    GLfloat width = 480, height = roundf((GLfloat)_height * _maxT);
+    float width = 480, height = roundf((float)_height * _maxT);
     if (IS_IPAD) {
         rect.origin.x *= SCALE_WIDTH;
         width = 1024;
@@ -881,13 +880,13 @@ void Texture2D::drawTextM(CGRect rect) {
         rect.origin.x = roundf(rect.origin.x);
         rect.origin.y = roundf(rect.origin.y);
     }
-    GLfloat vertices[] = {
+    float vertices[] = {
         rect.origin.x, rect.origin.y, depth,
         rect.origin.x + width, rect.origin.y, depth,
         rect.origin.x, rect.origin.y + height, depth,
         rect.origin.x + width, rect.origin.y + height, depth
     };
-    GLfloat coordinates[] = { 0, _maxT, _maxS, _maxT, 0, 0, _maxS, 0 };
+    float coordinates[] = { 0, _maxT, _maxS, _maxT, 0, 0, _maxS, 0 };
     drawQuad(name, vertices, coordinates);
 }
 
@@ -901,14 +900,14 @@ void Texture2D::drawNumbers(CGRect rect, int num) {
     float xoff = num * 1 / 16.0f;
     float xwidth = 1;
     if (num == 10) xwidth = 2;
-    GLfloat coordinates[] = {
+    float coordinates[] = {
         xoff, _maxT,
         xoff + _maxS / 16.0f * xwidth, _maxT,
         xoff, 0,
         xoff + _maxS / 16.0f * xwidth, 0
     };
-    GLfloat width = roundf((GLfloat)_width * _maxS / 16.0f), height = roundf((GLfloat)_height * _maxT);
-    if (num == 10) width = roundf((GLfloat)_width * _maxS / 16.0f * 2);
+    float width = roundf((float)_width * _maxS / 16.0f), height = roundf((float)_height * _maxT);
+    if (num == 10) width = roundf((float)_width * _maxS / 16.0f * 2);
     if (!IS_RETINA && SUPPORTS_RETINA) { width /= 2; height /= 2; }
     if (IS_IPAD) {
         rect.origin.x *= SCALE_WIDTH;
@@ -916,7 +915,7 @@ void Texture2D::drawNumbers(CGRect rect, int num) {
         rect.origin.x = roundf(rect.origin.x);
         rect.origin.y = roundf(rect.origin.y);
     }
-    GLfloat vertices[] = {
+    float vertices[] = {
         rect.origin.x, rect.origin.y, depth,
         rect.origin.x + width, rect.origin.y, depth,
         rect.origin.x, rect.origin.y + height, depth,
@@ -931,15 +930,15 @@ void Texture2D::drawButton(Button button) {
 
 void Texture2D::drawButton(Button button, bool flipX) {
     if (button.pressed) {
-        button.size.width = roundf((GLfloat)_width * _maxS) / 2.0f;
-        button.size.height = roundf((GLfloat)_height * _maxT) / 2.0f;
+        button.size.width = roundf((float)_width * _maxS) / 2.0f;
+        button.size.height = roundf((float)_height * _maxT) / 2.0f;
         float offx = button.size.width * .08f;
         float offy = button.size.height * .08f;
         CGRect rect = CGRectMake(button.origin.x + offx, button.origin.y + offy,
                                   button.size.width - offx * 2, button.size.height - offy * 2);
         CGFloat depth = 0.0;
-        GLfloat coordinates[] = { 0, flipX?0:_maxT, _maxS, flipX?0:_maxT, 0, flipX?_maxT:0, _maxS, flipX?_maxT:0 };
-        GLfloat width = rect.size.width, height = rect.size.height;
+        float coordinates[] = { 0, flipX?0:_maxT, _maxS, flipX?0:_maxT, 0, flipX?_maxT:0, _maxS, flipX?_maxT:0 };
+        float width = rect.size.width, height = rect.size.height;
         if (IS_IPAD) {
             rect.origin.x *= SCALE_WIDTH;
             rect.origin.y *= SCALE_HEIGHT;
@@ -948,7 +947,7 @@ void Texture2D::drawButton(Button button, bool flipX) {
             rect.origin.x = roundf(rect.origin.x);
             rect.origin.y = roundf(rect.origin.y);
         }
-        GLfloat vertices[] = {
+        float vertices[] = {
             rect.origin.x, rect.origin.y, depth,
             rect.origin.x + width, rect.origin.y, depth,
             rect.origin.x, rect.origin.y + height, depth,
@@ -992,13 +991,13 @@ void Texture2D::drawSky(CGRect rect, CGFloat depth, float r, float g, float b, f
     // matrix, glScalef(1, 1/32, 1), so 0..32 spanned the whole sky_box.png. D.2t made that scale
     // 1/ATLAS_TILES (128 since H.14) and left this at 32: only the top quarter of the gradient (the
     // deep blue) reached the screen, the pale horizon band the fog colour blends into never did.
-    GLfloat coordinates[] = {
+    float coordinates[] = {
         0, ety * ATLAS_TILES,
         _maxS * rect.size.width / 128, ety * ATLAS_TILES,
         0, sty * ATLAS_TILES,
         _maxS * rect.size.width / 128, sty * ATLAS_TILES
     };
-    GLfloat vertices[] = {
+    float vertices[] = {
         rect.origin.x, rect.origin.y, depth,
         rect.origin.x + rect.size.width, rect.origin.y, depth,
         rect.origin.x, rect.origin.y + rect.size.height, depth,

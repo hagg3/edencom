@@ -379,7 +379,7 @@ extern "C" const char *eden_debug_world_format(void) {
 extern "C" const char *eden_debug_terrain_geometry(void) {
     static char buf[256];
     long long verts = 0, verts2 = 0, objects = 0;
-    int meshed = 0, unpublished = 0, busy = 0, total = 0;
+    int meshed = 0, unpublished = 0, total = 0;
     extern TerrainChunk** chunkTablec;
     if (chunkTablec) {
         const int n = CHUNKS_PER_SIDE * CHUNKS_PER_SIDE * CHUNKS_PER_COLUMN;
@@ -387,21 +387,20 @@ extern "C" const char *eden_debug_terrain_geometry(void) {
             TerrainChunk* c = chunkTablec[i];
             if (!c) continue;
             total++;
-            verts   += c->rtn_vertices;
-            verts2  += c->rtn_vertices2;
-            objects += c->rtnum_objects;
-            if (c->rtn_vertices || c->rtn_vertices2) meshed++;
+            verts   += c->n_vertices;
+            verts2  += c->n_vertices2;
+            objects += c->num_objects;
+            if (c->n_vertices || c->n_vertices2) meshed++;
             if (c->needsVBO) unpublished++;
-            if (c->meshJobState != MESH_JOB_IDLE) busy++;
         }
     }
     // B.5b-1a: streaming counters since launch (Terrain.mm) -- columns the ring landed, bulk reloads.
     extern int g_ring_columns_landed, g_bulk_reloads;
     snprintf(buf, sizeof(buf),
              "{\"chunks\":%d,\"meshed\":%d,\"rt_vertices\":%lld,\"rt_vertices2\":%lld,"
-             "\"rt_objects\":%lld,\"unpublished\":%d,\"jobs_in_flight\":%d,"
+             "\"rt_objects\":%lld,\"unpublished\":%d,"
              "\"ring_cols\":%d,\"bulk_reloads\":%d}",
-             total, meshed, verts, verts2, objects, unpublished, busy,
+             total, meshed, verts, verts2, objects, unpublished,
              g_ring_columns_landed, g_bulk_reloads);
     return buf;
 }
@@ -462,10 +461,10 @@ extern "C" const char *eden_debug_mesh_checksum(void) {
             TerrainChunk* c = chunkTablec[i];
             if (!c) continue;
             chunks++;
-            verts += c->rtn_vertices + c->rtn_vertices2;
-            if (c->rtGeomHash) hashed++;
-            mix(hGeom, c->rtGeomHash);
-            mix(hFull, c->rtFullHash);
+            verts += c->n_vertices + c->n_vertices2;
+            if (c->geomHash) hashed++;
+            mix(hGeom, c->geomHash);
+            mix(hFull, c->fullHash);
         }
     }
     snprintf(buf, sizeof(buf),
@@ -509,7 +508,7 @@ extern "C" const char *eden_debug_chunk_state(void) {
                 ((unsigned long long)(c->needsVBO ? 1 : 0) << 1) |
                 ((unsigned long long)(c->clearOldVerticesOnly ? 1 : 0) << 2) |
                 ((unsigned long long)(unsigned)c->num_objects << 8) |
-                ((unsigned long long)(unsigned)c->rtnum_objects << 32));
+                ((unsigned long long)(unsigned)c->num_objects << 32));
             if (c->has_light) lit++;
             if (c->clearOldVerticesOnly) cleared++;
             const bool isEmpty = tc_typesAllZero(c->pblocks);
@@ -538,7 +537,7 @@ extern "C" long long eden_debug_chunk_empty(int x, int z, int y) {
     if (!c || c->pbounds[0] != x / CHUNK_SIZE * CHUNK_SIZE ||
         c->pbounds[2] != z / CHUNK_SIZE * CHUNK_SIZE) return -1;
     return (tc_typesAllZero(c->pblocks) ? 1 : 0) | (c->typesEmpty ? 2 : 0) |
-           ((long long)(c->rtn_vertices + c->rtn_vertices2) << 2);
+           ((long long)(c->n_vertices + c->n_vertices2) << 2);
 }
 
 // Stage R / R.3 (WORKING/ROADMAP.md): the gate for the light store. R.1 found the mesh checksum
@@ -645,7 +644,7 @@ extern "C" const char *eden_debug_top_shade(int x, int z, int y) {
     return buf;
 }
 
-// H.2: one chunk's published mesh fingerprints (rtGeomHash/rtFullHash), by world block coordinate.
+// H.2: one chunk's published mesh fingerprints (geomHash/fullHash), by world block coordinate.
 // "{}" if the slot does not hold that chunk. Needs eden_debug_set_mesh_checksum(1), like the fold.
 extern "C" const char *eden_debug_chunk_mesh_hash(int x, int z, int y) {
     static char buf[128];
@@ -655,7 +654,7 @@ extern "C" const char *eden_debug_chunk_mesh_hash(int x, int z, int y) {
     if (!c || c->pbounds[0] != x / CHUNK_SIZE * CHUNK_SIZE || c->pbounds[1] != y / CHUNK_SIZE * CHUNK_SIZE ||
         c->pbounds[2] != z / CHUNK_SIZE * CHUNK_SIZE) return "{}";
     snprintf(buf, sizeof(buf), "{\"geom\":\"%016llx\",\"full\":\"%016llx\",\"vertices\":%d}",
-             c->rtGeomHash, c->rtFullHash, c->rtn_vertices + c->rtn_vertices2);
+             c->geomHash, c->fullHash, c->n_vertices + c->n_vertices2);
     return buf;
 }
 

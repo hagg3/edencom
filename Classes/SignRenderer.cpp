@@ -68,7 +68,7 @@ const float kBoardH[3] = {kStandH, 2 * kWallHalfH, 2 * kPanelHalf};
 const unsigned char kOutline[3] = {16, 16, 16};
 
 struct TextTex {
-    GLuint name;
+    uint32_t name;
     int h;          // texels used, from the top (the texture is kTexW x pot(h))
     int potH;
     int bytes;
@@ -216,8 +216,8 @@ std::vector<vertexObject> g_flat;   // boards, posts, buttons: untextured, verte
 std::vector<vertexObject> g_wood;   // standing/wall boards and posts: atlas tiles (planks, trunk side)
 std::vector<vertexObject> g_skin;   // command-block faces (textured): flat on the face, offset
 std::vector<vertexObject> g_text;   // one 6-vertex quad per textured sign
-std::vector<GLuint> g_textTex;      // ...and its texture
-GLuint g_vbo = 0;
+std::vector<uint32_t> g_textTex;      // ...and its texture
+uint32_t g_vbo = 0;
 int g_vboCap = 0;
 
 void vert(std::vector<vertexObject>& out, V3 p, float s, float t, const float rgb[3]) {
@@ -225,9 +225,9 @@ void vert(std::vector<vertexObject>& out, V3 p, float s, float t, const float rg
     memset(&v, 0, sizeof(v));
     v.position[0] = p.x; v.position[1] = p.y; v.position[2] = p.z;
     v.texs[0] = s; v.texs[1] = t;
-    v.colors[0] = (GLubyte)(rgb[0] * 255.0f);
-    v.colors[1] = (GLubyte)(rgb[1] * 255.0f);
-    v.colors[2] = (GLubyte)(rgb[2] * 255.0f);
+    v.colors[0] = (uint8_t)(rgb[0] * 255.0f);
+    v.colors[1] = (uint8_t)(rgb[1] * 255.0f);
+    v.colors[2] = (uint8_t)(rgb[2] * 255.0f);
     v.colors[3] = 255;
     out.push_back(v);
 }

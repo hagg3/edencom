@@ -9,7 +9,7 @@ in `Terrain.cpp` and is documented in [world-and-terrain.md](world-and-terrain.m
 root*, not `Classes/` (`Classes/Lighting.c` exists but is not in the build). **The same goes for the
 header:** the real one is the repo-root `Lighting.h` (the one `Eden.xcodeproj` lists).
 `Classes/Lighting.h` is an empty stock stub with the *same* include guard (`Eden_Lighting_h`), and a
-bare `#import "Lighting.h"` from a file in `Classes/` resolves to the stub first. `Terrain.cpp` did
+bare `#include "Lighting.h"` from a file in `Classes/` resolves to the stub first. `Terrain.cpp` did
 exactly that until R.3 and now imports `"../Lighting.h"`.
 
 - Data (**modified from stock, Stage R / R.3, 2026-10-03**): the light field is one RGB byte-triple
@@ -22,11 +22,10 @@ exactly that until R.3 and now imports `"../Lighting.h"`.
   non-zero value into its slot; no brick means no light. Accessors in `Lighting.h`
   (`light_brickSlot`, `light_brickIndex`, `light_get`), store functions in `Lighting.cpp`
   (`light_storeAllocate/Free/Clear`). Entirely disabled on `LOW_MEM_DEVICE`, as before.
-  - **Bricks are never freed during play.** `MeshPool`'s workers call `calcLight` off the main thread
-    without a lock (only under `EDEN_THREADED`, which no current build defines), which was safe for the dense
-    array only because it never moved. `light_storeClear()` (what the memset was) NULLs each lit slot,
+  - **Bricks are never freed during play.** (Written for the dormant `MeshPool` workers, deleted in SM.8, which
+    called `calcLight` off the main thread; the rule stays as defence in depth.) `light_storeClear()` (what the memset was) NULLs each lit slot,
     zeroes the brick in place and moves it to a pool that `addlight` reuses; only `light_storeFree()`
-    in `Terrain::deallocateMemory`, after `mp_drain`, frees memory. A worker that loaded a pointer
+    in `Terrain::deallocateMemory` frees memory. A worker that loaded a pointer
     before a clear reads zeros or another slot's light, a stale cosmetic value of the same class as
     the dense array's unlocked memset, never freed memory. Pointer loads/stores are
     `__atomic` acquire/release. Peak memory is the most bricks lit at once (bounded by the dense size).
@@ -198,9 +197,7 @@ terms. Plan and gates: `WORKING/feature-archaeology-2026-10-13/shadows-plan.md`.
   chunks covering the 3×3 of columns × `[y−23, y−1]`,
   and `columnMeshable` also waits for the 4 diagonal columns. So **Off schedules and meshes
   byte-for-byte like stock** (same `geom`/`full`, same mesh-bench time).
-- **Workers** (dormant: only under `EDEN_THREADED`, which no current build defines): `shadowTop` is
-  main-thread state, so `mp_dispatch` gathers the 18×18 tops into the
-  `MeshJob` (`tc_meshSetShade`); inline meshes gather their own. Colours only — the counting pass
+- `rebuild2()` gathers the 18×18 tops itself (`shadow_gather`). Colours only — the counting pass
   never sees it.
 - **Cost (Mac, `--mesh-bench=31`, 3 interleaved runs):** Classic +2.2 % (64z) / +1.1 % (256z) per
   re-mesh, Smooth +3.9 % / +3.1 %; Off = stock.

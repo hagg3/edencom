@@ -87,7 +87,7 @@ double eden_platform_now_ms(void);
 const char* eden_platform_documents_root(void);
 const char* eden_platform_bundle_root(void);
 // Native entry points call this before anything touches the filesystem (i.e. before
-// eden_seam_main()). Passing NULL for either leaves that root at its default. No-op after the
+// App::boot()). Passing NULL for either leaves that root at its default. No-op after the
 // first filesystem access, so it is a startup switch, not a runtime one.
 void eden_platform_set_roots(const char* documents, const char* bundle);
 

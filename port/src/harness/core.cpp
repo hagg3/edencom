@@ -17,7 +17,7 @@ Options g_opt;
 int g_meshBenchPasses = 0;                          // --mesh-bench=N (was in mode_boot)
 std::string g_saveBenchList = "1,10,50,144";      // --save-bench=LIST
 
-eden_native::EdenAppDelegate* g_app = nullptr;
+eden_native::App* g_app = nullptr;
 
 // Phase N Stage 4.2 — see the SDL_AddEventWatch() call in main() for why this is a watch and not a
 // case in the poll loop. A named SDLCALL function rather than a lambda because SDLCALL is a real
@@ -58,7 +58,7 @@ bool g_tickInput = false;
 // The settings model, pumped once a frame until it takes. `eden_settings_init()` needs
 // World::getWorld->menu->settings to exist and early-returns until it does, so the contract is
 // "call it every frame and stop when eden_settings_loaded() answers yes" — exactly what
-// public/eden-st.html's rAF loop does on web. It is NOT a one-shot call after eden_seam_main():
+// public/eden-st.html's rAF loop does on web. It is NOT a one-shot call after App::boot():
 // the World is built by the app delegate but the menu's SettingsMenu is not reachable on the
 // first frame, and a single early call is a silent no-op that leaves every port-owned setting at
 // its file-scope initialiser instead of its declared default.
@@ -94,7 +94,7 @@ void tick(int n) {
         settings_pump();
         if (g_tickInput) eden_native_input_tick();
         eden_look_trace_frame();
-        g_app->viewController.drawFrame(true);
+        g_app->drawFrame(true);
         eden_native_audio_tick();
         eden_heap_pressure_tick();
         // The 1 ms yield is not frame pacing any more (setFixedEtime does that) — it is there so

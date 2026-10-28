@@ -140,7 +140,7 @@ settings toggle (as fly mode now is too): the "Crouch mode" row in the
 (`src/seam/Input.cpp`, mirroring `eden_set_fly_mode`/`eden_get_fly_mode`), which is wired through
 `eden_apply_setting()` in `src/seam/Settings.cpp`. When it's off, `Hud.cpp` also hides the crouch
 button entirely — its hit-test loop and its render/draw call are both wrapped in
-`if (CROUCH_ENABLED)` (`extern BOOL CROUCH_ENABLED`) — so there's no dead button sitting on screen,
+`if (CROUCH_ENABLED)` (`extern bool CROUCH_ENABLED`) — so there's no dead button sitting on screen,
 matching how `FLY_MODE` hides its own up/down affordances when off.
 
 Fly state seam (FM.1, `Input.cpp`): `eden_cycle_fly_mode` (V / gamepad Y), `eden_get/set_fly_state`

@@ -163,7 +163,7 @@ int run_mp_replay() {
     for (const auto& e : rep.world) snapz += e.kind == eden_net::MpWorldEvent::Snapz ? e.recs.size() : 0;
     std::printf("[eden-mp-replay] %s: %d lines, %zu world events, %zu SNAPZ records, spawn %.2f %.2f %.2f\n",
                 g_opt.mpReplay.c_str(), rep.lines, rep.world.size(), snapz, rep.spawn[0], rep.spawn[1], rep.spawn[2]);
-    g_app->viewController.setFixedEtime(1.0f / 60.0f);
+    g_app->setFixedEtime(1.0f / 60.0f);
     g_autosave_seconds = 0;
     char d[320];
     auto hex = [](uint64_t h) { char b[24]; std::snprintf(b, sizeof b, "%016llx", (unsigned long long)h); return std::string(b); };
@@ -796,7 +796,7 @@ int run_mp_replay() {
         for (const auto& n : docs1) if (!docs0.count(n)) extra += " " + n;
         check(extra.empty(), "a session writes nothing to the save directory", extra.empty() ? "none" : extra.c_str());
     }
-    g_app->viewController.setFixedEtime(0.0f);
+    g_app->setFixedEtime(0.0f);
     std::printf("[eden-mp-replay] %s (%d failure(s))%s\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures,
                 g_opt.mpMutate.empty() ? "" : (" [mutation " + g_opt.mpMutate + "]").c_str());
     return g_selftestFailures ? 1 : 0;

@@ -37,8 +37,7 @@ the last of that code. Reach for a direct edit when the same change would be wan
 ## Layers not in the root ownership graph
 - `port/src/harness/` — replaces `main.m`: boot, the interactive SDL loop and every
   `--*` harness mode (docs/execution-flow.md "Native boot and loop").
-- `port/src/seam/EdenAppDelegate_native`, `EdenViewController_native`, `main_native`,
-  `SDLView_native.cpp` — replace the UIKit shell; SDL drives the frame loop, not CADisplayLink.
+- `port/src/seam/App.cpp` — replaces the UIKit shell (app delegate, view controller, `EAGLView`; SM.9); SDL drives the frame loop, not CADisplayLink.
 - `port/src/seam/Input_native.cpp` → `port/src/seam/Input.cpp` — SDL events become the engine's
   touch slots ([player-input-camera.md](player-input-camera.md)).
 - (`port/src/shim/objc/`, the hand-written ObjC runtime, was deleted in G.3; [objc-runtime.md](history/objc-runtime.md) is its history.)

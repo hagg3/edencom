@@ -7,7 +7,7 @@
 //
 #include "Geometry.h"
 unsigned short allIndices[INDICES_MAX ];
-GLshort cubeTexture[] = {
+int16_t cubeTexture[] = {
 	
 	1,1,
 	1,0,
@@ -55,7 +55,7 @@ GLshort cubeTexture[] = {
 	1,0,
 	0,0,	
 };
-GLshort liquidTexture[2*6*6]={
+int16_t liquidTexture[2*6*6]={
     1,1,
 	1,0,
 	0,1,	
@@ -103,13 +103,13 @@ GLshort liquidTexture[2*6*6]={
 	0,0,	
 };
 
-GLshort side2ShortVertices[3*6*6];
-GLshort side3ShortVertices[3*6*6];
-GLshort side4ShortVertices[3*6*6];
-GLshort side2Texture[2*6*6];
-GLshort side3Texture[2*6*6];
-GLshort side4Texture[2*6*6];
-GLshort side1Texture[] = {
+int16_t side2ShortVertices[3*6*6];
+int16_t side3ShortVertices[3*6*6];
+int16_t side4ShortVertices[3*6*6];
+int16_t side2Texture[2*6*6];
+int16_t side3Texture[2*6*6];
+int16_t side4Texture[2*6*6];
+int16_t side1Texture[] = {
 	
 	1,1,    //front face
 	1,0,
@@ -160,7 +160,7 @@ GLshort side1Texture[] = {
 	1,0,
 	0,0,
 };
-GLshort side1ShortVertices[] = {
+int16_t side1ShortVertices[] = {
 	-9,-9,-9, //front face
 	-9,-9,-9,
 	-9,-9,-9,
@@ -216,14 +216,14 @@ GLshort side1ShortVertices[] = {
 };
 
 
-GLshort ramp2ShortVertices[3*6*6];
-GLshort ramp3ShortVertices[3*6*6];
-GLshort ramp4ShortVertices[3*6*6];
-GLshort ramp2Texture[2*6*6];
-GLshort ramp3Texture[2*6*6];
-GLshort ramp4Texture[2*6*6];
+int16_t ramp2ShortVertices[3*6*6];
+int16_t ramp3ShortVertices[3*6*6];
+int16_t ramp4ShortVertices[3*6*6];
+int16_t ramp2Texture[2*6*6];
+int16_t ramp3Texture[2*6*6];
+int16_t ramp4Texture[2*6*6];
 
-GLshort ramp1Texture[] = {
+int16_t ramp1Texture[] = {
 	
 	1,1,//front face
 	1,0,
@@ -278,7 +278,7 @@ GLshort ramp1Texture[] = {
 	
 	
 };
-GLshort ramp1ShortVertices[] = {
+int16_t ramp1ShortVertices[] = {
     /*	0,0,0, //front face
      0,1,0,
      1,0,0,
@@ -338,7 +338,7 @@ GLshort ramp1ShortVertices[] = {
 };
 
 
-GLshort cubeShortVertices[] = {
+int16_t cubeShortVertices[] = {
 	0,0,0, //front face
 	0,1,0,
 	1,0,0,
@@ -386,7 +386,7 @@ GLshort cubeShortVertices[] = {
 	1,1,1
 };
 
-GLshort liquidCube[] = {
+int16_t liquidCube[] = {
 	0,0,0, //front face
 	0,4,0,
 	4,0,0,
@@ -434,7 +434,7 @@ GLshort liquidCube[] = {
 	4,4,4
 };
 /*
- const GLfloat cubeVertices[] = {
+ const float cubeVertices[] = {
  0,0,0, //front face
  0,1,0,
  1,0,0,
@@ -512,7 +512,7 @@ GLshort liquidCube[] = {
  0,1,1,	
  1,1,1,
  };*/
-GLubyte cubeColors[] = {
+uint8_t cubeColors[] = {
 	216,216,216, 
 	140,140,140,
 	191,191,191,
@@ -522,7 +522,7 @@ GLubyte cubeColors[] = {
 	
     
 };
-GLfloat zzzzColors[] = {
+float zzzzColors[] = {
 	1,1,1, //front face
 	1,1,1,
 	1,1,1,
@@ -569,7 +569,7 @@ GLfloat zzzzColors[] = {
 	
 };
 
-GLfloat cubeNormals[] = {
+float cubeNormals[] = {
 	0,0,-1, //front face
 	0,0,-1,
 	0,0,-1,

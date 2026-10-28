@@ -51,7 +51,7 @@ void eden_gl_context_get_drawable_size(int* width, int* height);
 static bool  g_safeOverride = false;
 static float g_safeOv[4] = {0, 0, 0, 0};
 
-// Called at boot from SDLView_native.cpp's -establishScreenMetrics (before World::World() reads the
+// Called at boot from App::boot() (before World::World() reads the
 // metrics — the ordering DisplayProfile.h requires) and again on every window size change.
 void eden_native_apply_display_mode(void) {
     SDL_Window* win = eden_native_gl_window();

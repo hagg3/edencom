@@ -556,8 +556,9 @@ Settings › Interface › Crosshair (`eden_get_crosshair()`) is on (default ON 
   `legacy_menu`) are hidden via `eden_settings_native_hidden()` (the retired web build `--wrap`ped this
   screen away and drew a DOM panel). `render_scale` was on that list
   until N.4.11 (2026-10-04); native now renders the 3D pass at it (see rendering.md, "Scene-pass
-  bracket"), so the Video page shows it. **Not on iOS since 2026-10-09 (N.4.12):** the row is hidden and
-  `eden_get_render_scale_pct()` returns 100 there.
+  bracket"), so the Video page shows it. It was hidden on iOS from 2026-10-09 (N.4.12, the composite
+  did not land) until FT.16 (2026-10-28) composited by a textured quad; iOS offers 50/75/100% and seeds 50%
+  on Air 2-class devices (`eden_ios_air2_class`, `hw.machine`).
   **Stage 5.3 added the keybinds entry** (the titlebar's "Controls" button from 5.4, the Keys tile since U.3); since
   U.4 it is the Keys tab's content rather than a screen of its own.
 - **`WorldBrowser`** (`Classes/WorldBrowser.{h,mm}`, **added Stage 5.9, 2026-10-07**) — "Get

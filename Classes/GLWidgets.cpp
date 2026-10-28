@@ -255,8 +255,8 @@ void icon(int id, CGRect r, Color c) {
     const float k = uiScale();
     const float x0 = r.origin.x * k, y0 = r.origin.y * k;
     const float x1 = (r.origin.x + r.size.width) * k, y1 = (r.origin.y + r.size.height) * k;
-    const GLfloat v[] = { x0, y0, 0,  x1, y0, 0,  x0, y1, 0,  x1, y1, 0 };
-    const GLfloat uv[] = { s0, t1,  s1, t1,  s0, t0,  s1, t0 };
+    const float v[] = { x0, y0, 0,  x1, y0, 0,  x0, y1, 0,  x1, y1, 0 };
+    const float uv[] = { s0, t1,  s1, t1,  s0, t0,  s1, t0 };
     Pen::color(c.r, c.g, c.b, c.a);
     Pen::texture(t->name);
     Pen::strip(v, uv, 0, 4);

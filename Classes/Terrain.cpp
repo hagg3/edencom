@@ -16,7 +16,6 @@
 // Classes/Lighting.h first, an empty stock stub with the SAME include guard (Stage R / R.3 needs
 // the real one: the light store's accessors live there).
 #include "../Lighting.h"
-#include "MeshPool.h"
 #include "SignTool.h"
 #include "CmdScript.h"
 #include "FileManagerHelper.h"   // fmh_defaultBandCount (Stage R / R.2b)
@@ -55,11 +54,8 @@ static Terrain* singleton;
 
 static bool* chunksToUpdateImmediatley;
 
-// B3 Stage 2. Handed to the mesh pool so it can put a chunk back on the dirty lists after it
-// publishes a mesh that went stale under a worker (an edit landed after the snapshot was taken) or
-// that rebuild2() refused. Lives here rather than in MeshPool.mm because chunksToUpdate /
-// columnsToUpdate are this file's state.
-static void mp_redirtyChunk(int idxn){
+// Puts a chunk back on the dirty lists (ring streaming dropped its geometry).
+static void redirtyChunk(int idxn){
     if(!chunksToUpdate||!columnsToUpdate)return;
     if(idxn<0||idxn>=CHUNKS_PER_SIDE*CHUNKS_PER_SIDE*CHUNKS_PER_COLUMN)return;
     chunksToUpdate[idxn]=true;
@@ -332,10 +328,6 @@ void Terrain::allocateMemory(){
 }
 
 void Terrain::deallocateMemory(){
-    // B3 Stage 2, invalidation rule 3: nothing may be in flight when the chunks it is reading are
-    // deleted. Discard rather than publish -- these chunks are about to stop existing, and their
-    // destructors free the vertex buffers the workers built.
-    mp_drain(NULL,false);
     for(int i=0;i<CHUNKS_PER_SIDE*CHUNKS_PER_SIDE*CHUNKS_PER_COLUMN;i++){
         if(chunkTablec[i]!=NULL){
             delete chunkTablec[i];
@@ -357,7 +349,7 @@ void Terrain::deallocateMemory(){
     blockarray=NULL;
     shadow_free();
     if(!LOW_MEM_DEVICE)
-light_storeFree();   // R.3: the only place a light brick is freed -- mp_drain above (Lighting.h)
+light_storeFree();   // R.3: the only place a light brick is freed (Lighting.h)
     
 }
 
@@ -474,11 +466,6 @@ void Terrain::loadTerrain(const std::string& name,bool fromArchive){
    
     
 	world_name=name;   // G.2b-2: a copy (safe when `name` is world_name itself: warp/reload pass it)
-    // B3 Stage 2, invalidation rule 1: loadWorld() calls readColumn() for the whole window, which
-    // re-homes every chunk slot. Nothing may be meshing when that happens. (In practice a load is
-    // always preceded by a teardown or a fresh world, so this drains nothing -- it is here so the
-    // rule holds by construction rather than by luck.)
-    mp_drain(mp_redirtyChunk,true);
 	World::getWorld->fm->loadWorld(name,fromArchive);
     
    /* for(int x=0;x<T_SIZE;x++){
@@ -733,7 +720,7 @@ TerrainChunk* rebuildList[CHUNKS_PER_SIDE_MAX*CHUNKS_PER_SIDE_MAX*CHUNKS_PER_COL
 void Terrain::addChunk(TerrainChunk* chunk, int cx,int cy,int cz,bool rebuild){
     // R.2: every path that lands a column's voxels ends here, after pblocks is final --
     // FileManager::readColumn (all three band branches, and the RLE branch that can leave a band
-    // short), fmh_publishColumnFromDefault (also via MeshPool's decode publish), and every
+    // short), fmh_publishColumnFromDefault, and every
     // TerrainGenerator column. So this is the one place the empty bit is computed from scratch.
     tc_refreshTypesEmpty(chunk);
     // H.2: the column's shadow tops are rescanned before the next mesh pass (Shadow.h).
@@ -855,10 +842,6 @@ void Terrain::setLand(int x,int z,int y,int type,bool chunkToo){
         // triggers is what notices a chunk that is now all air (TerrainChunk.h).
         if(type)chunk->typesEmpty=false;
         chunk->modified=true;
-        // B3 Stage 2, invalidation rule 2: if a worker is meshing this chunk it is meshing a
-        // snapshot taken before this edit. That is SAFE -- it cannot tear -- but the mesh it
-        // produces is one edit out of date, so flag it and let the publish step re-dirty.
-        tc_noteChunkWritten(chunk);
         
 		
 	}
@@ -887,7 +870,6 @@ bool Terrain::setColor(int x,int z,int y, color8 color){
     if(c1==color) return false;
     chunk->modified=true;
     chunk->pcolors[x*(CHUNK_SIZE*CHUNK_SIZE)+z*(CHUNK_SIZE)+y]=color;
-    tc_noteChunkWritten(chunk);   // B3 Stage 2, invalidation rule 2 (see Terrain::setLand)
 		
 	// NSLog(@"hi! %f,%f,%f",color.x,color.y,color.z);
     return true;
@@ -2427,23 +2409,6 @@ static int hit_load_counter=0;
 // H.4: the bulk reload's per-frame time for Classic-generated columns (generator-plan.md §2.1).
 // 4 ms is ~11 legacy columns a frame on the iPad Air 2 (0.36 ms each); tune on the device.
 #define GEN_FRAME_BUDGET_MS 4.0
-//
-// RE-TUNED, AND DELIBERATELY LEFT AT 96, after B3 Stage 2 (2026-08-27). Stage 2 turned this from a
-// mesh budget into a DISPATCH budget -- the meshing it gates now happens on a worker -- so what it
-// still governs on the main thread is the column read/decode, the half of the burst that has not
-// moved yet (Stage 3). Swept against build-relthr, 2 runs each, 5 teleport bursts each:
-//
-//   budget | worst main-thread block | frames >16.66ms | window fill time
-//      96  |            15 / 15 ms   |       0 / 0     |   ~265 ms
-//     144  |            11 / 30 ms   |       0 / 1     |   ~183 ms
-//     192  |            24 / 19 ms   |       1 / 1     |   ~135 ms
-//
-// Raising it fills the window visibly faster and it is tempting; it also puts frames back over the
-// 60 fps budget, because what it buys more of per frame is now DECODE. At 96 the threaded build
-// misses the budget zero times across five bursts, which is exactly what B3 was for -- the window
-// filling in at 60 fps rather than 45 (WORKING/b3-off-thread-meshing-plan.md §1). Trading that away
-// for a shorter fill would undo the reason for the change. Revisit at Stage 3, when decode moves off
-// the main thread too and this stops governing main-thread work at all; 144 is the candidate then.
 
 // One stale column of the resident window, plus its squared chunk-space distance to the player,
 // so a budgeted slice can take the nearest ones first (see the reload).
@@ -2478,15 +2443,14 @@ static int compare_stale_column(const void* a,const void* b){
 // with an intermittent out-of-bounds inside the frame tick. That crash is now root-caused and
 // fixed, and it was never about the neighbourhood test: deferring a RESIDENT column is the only
 // way this engine ever draws a chunk that has not been meshed since it was allocated, and
-// TerrainChunk's constructor left the whole rt* geometry block uninitialised, so render()'s
-// `rtn_vertices==0` guard read garbage and the index memcpy walked off allIndices. See the
-// constructor in TerrainChunk.mm. The narrow test only hid it by guaranteeing every drawn chunk
+// TerrainChunk's constructor left the whole mesh-count block uninitialised, so render()'s
+// `n_vertices==0` guard read garbage and the index memcpy walked off allIndices. See the
+// constructor in TerrainChunk.cpp. The narrow test only hid it by guaranteeing every drawn chunk
 // had been meshed at least once.
 //
 // Keep that in mind before assuming a similar deferral is safe: what makes THIS one safe is that
 // a deferred chunk's geometry still belongs to its own pbounds, and the chunk is now empty rather
-// than garbage until it is meshed. A worker-thread mesher produces the same "resident but not yet
-// meshed" state by construction and depends on the same initialisation.
+// than garbage until it is meshed.
 static bool columnMeshable(int x,int z,int ox,int oz,
                            const bool isloaded[CHUNKS_PER_SIDE_MAX][CHUNKS_PER_SIDE_MAX]){
     int wx=((x-ox)%CHUNKS_PER_SIDE+CHUNKS_PER_SIDE)%CHUNKS_PER_SIDE;
@@ -2527,16 +2491,6 @@ static bool slotOnOuterRing(int x,int z){
     return wx==0||wx==CHUNKS_PER_SIDE-1||wz==0||wz==CHUNKS_PER_SIDE-1;
 }
 
-// B3's invalidation rule 1 (mp_columnBusy: a column with a mesh job in flight must not be re-homed),
-// widened to the four laterals by B.5b-1a. A worker meshing a NEIGHBOUR reads one block across the
-// shared face, i.e. into this column's slot, so overwriting the slot under it tears that read. The
-// torn mesh was redone only because addChunk happens to dirty the laterals; now it cannot happen.
-// Asked by both the ring's and the bulk reload's column loops.
-static bool columnOrLateralBusy(int cx,int cz){
-    return mp_columnBusy(cx,cz)||mp_columnBusy(cx-1,cz)||mp_columnBusy(cx+1,cz)||
-           mp_columnBusy(cx,cz-1)||mp_columnBusy(cx,cz+1);
-}
-
 // B.5b-1a ring streaming: columns landed per frame while the window is short of 1..140 columns,
 // which is all the time while walking. A straight walk needs < 0.4 a frame (18 columns per chunk
 // crossing, one crossing per ~2.7 s), a diagonal ~0.8. One is the plan's starting point
@@ -2549,14 +2503,6 @@ void Terrain::prepareAndLoadGeometry(){
     World* world=World::getWorld;
     Player* player=world->player;
 
-    // B3 Stage 2. Publish anything the workers finished since the last frame BEFORE deciding what
-    // to read or mesh this frame: a published chunk is IDLE again, so it is free to be re-dirtied,
-    // re-dispatched, or (the rule that matters) re-homed by a column read. updateAllImportantChunks
-    // publishes a second time at the end of the frame to catch jobs that landed during it -- the
-    // plan doc's §4.2 names that one; this one exists because World::update calls the two back to
-    // back, so publishing only there would keep every dispatched chunk busy for a whole extra frame.
-    mp_publishFinished(mp_redirtyChunk);
-    mp_beginFrame();
     
     
     
@@ -2751,16 +2697,8 @@ void Terrain::prepareAndLoadGeometry(){
                     // frames instead of one long one. Saved and bundled columns keep the chunk budget.
                     double genMs=0; int genCols=0;
                     if(budget>nstale)budget=nstale;
-                    // B3 Stage 2, invalidation rule 1 (plan doc §4.3): readColumn re-homes every
-                    // chunk of the column -- setBounds(), and a wholesale rewrite of pblocks/
-                    // pcolors -- so a column with a mesh job in flight must not be read yet. Skip
-                    // it and take the next-nearest stale column instead; the job finishes in a
-                    // frame or two and the column is still in stale[] next frame. Structurally
-                    // this is the same "wait for the state to be safe" the neighbour test below
-                    // does, and it cannot livelock: workers always finish.
                     for(int i=0,taken=0;i<nstale&&taken<budget&&
                                         (!byBands||spent<BULK_RELOAD_CHUNK_BUDGET);i++){
-                        if(columnOrLateralBusy(stale[i].cx,stale[i].cz))continue;   // B.5b-1a: + laterals
                         if(world->fm->columnWillGenerate(stale[i].cx,stale[i].cz)){
                             if(genCols>0&&genMs>=GEN_FRAME_BUDGET_MS)continue;
                             double g0=eden_platform_now_ms();
@@ -2771,32 +2709,17 @@ void Terrain::prepareAndLoadGeometry(){
                             continue;
                         }
                         //removeLights
-                        // B3 Stage 3: readColumnDeferred may hand the column's RLE decode to a
-                        // worker and answer FALSE, meaning "not landed yet". Then it must NOT be
-                        // marked loaded -- isloaded is what gates meshing (columnMeshable)
-                        // and what decides the reload is finished, and both answers have to stay
-                        // "no" until the decode publishes. The column is still in stale[] next
-                        // frame; mp_columnBusy above is what stops it being read a second time.
-                        if(world->fm->readColumnDeferred( stale[i].cx,stale[i].cz,saveFile)){
-                            isloaded[stale[i].cx-m_chunkOffsetX][stale[i].cz-m_chunkOffsetZ]=true;
-                            if(byBands){
-                                int occupied=0;
-                                for(int cy=0;cy<CHUNKS_PER_COLUMN;cy++){
-                                    TerrainChunk* c=chunkTable[threeToOne(stale[i].cx,cy,stale[i].cz)];
-                                    if(!c||!c->typesEmpty)occupied++;
-                                }
-                                spent+=occupied>0?occupied:1;
+                        world->fm->readColumn(stale[i].cx,stale[i].cz,saveFile);
+                        isloaded[stale[i].cx-m_chunkOffsetX][stale[i].cz-m_chunkOffsetZ]=true;
+                        if(byBands){
+                            int occupied=0;
+                            for(int cy=0;cy<CHUNKS_PER_COLUMN;cy++){
+                                TerrainChunk* c=chunkTable[threeToOne(stale[i].cx,cy,stale[i].cz)];
+                                if(!c||!c->typesEmpty)occupied++;
                             }
-                        }else if(byBands){
-                            // Dispatched to a worker (threaded web only): a bundled-map column,
-                            // which has at most fmh_defaultBandCount() occupied bands.
-                            const int bands=fmh_defaultBandCount();
-                            spent+=bands<CHUNKS_PER_COLUMN?bands:CHUNKS_PER_COLUMN;
+                            spent+=occupied>0?occupied:1;
                         }
                         //addlights
-                        // Counted whether it landed or was dispatched: the budget limits how much
-                        // work one frame STARTS, which is what it has to mean once the work is
-                        // asynchronous.
                         taken++;
                     }
 
@@ -2834,9 +2757,6 @@ void Terrain::prepareAndLoadGeometry(){
             EdenFile* saveFile=world->fm->sessionWorld?NULL:EdenFile::openRead(file_name);   // G.2b-2: was NSFileHandle
             for(int i=0,taken=0;i<nring&&taken<RING_COLUMN_BUDGET;i++){
                 const int cx=ring[i].cx,cz=ring[i].cz;
-                // Skip it if it or a lateral has a mesh job in flight; the job finishes in a frame
-                // or two and the column is still stale then.
-                if(columnOrLateralBusy(cx,cz))continue;
                 // B.5b-1b, per column, in this order (plan §3.3 step 2):
                 // 1. Drop the departing occupant's dynamics. Its burn and liquid nodes are keyed by
                 //    absolute coordinates and read through the toroidal arrays, so left alone they
@@ -2858,12 +2778,9 @@ void Terrain::prepareAndLoadGeometry(){
                         break;
                     }
                 }
-                // Same contract as the bulk slice: FALSE = dispatched to a decode worker (threaded web
-                // only), not landed -- leave it unloaded, mp_columnBusy keeps it from a second read.
-                if(world->fm->readColumnDeferred(cx,cz,saveFile)){
-                    isloaded[cx-m_chunkOffsetX][cz-m_chunkOffsetZ]=true;
-                    g_ring_columns_landed++;
-                }
+                world->fm->readColumn(cx,cz,saveFile);
+                isloaded[cx-m_chunkOffsetX][cz-m_chunkOffsetZ]=true;
+                g_ring_columns_landed++;
                 taken++;
             }
             delete saveFile;
@@ -2876,8 +2793,7 @@ void Terrain::prepareAndLoadGeometry(){
         }
 
         // B.5b-1c: light per landed column (plan §3.3 step 4). Every slot that changed occupant
-        // since its light was computed -- a ring landing above, or a decode a worker published at
-        // the top of this frame -- has its 3x3 of slots re-lit, and the chunks whose light changed
+        // since its light was computed -- a ring landing above -- has its 3x3 of slots re-lit, and the chunks whose light changed
         // are dirtied, so this has to run before the meshing pass below. Not while a full sweep is
         // owed or running (a bulk reload, a load, a warp): that sweep lights the whole window, and
         // whatever lands during it is caught here the frame after it finishes (Lighting.mm).
@@ -2885,8 +2801,7 @@ void Terrain::prepareAndLoadGeometry(){
             light_syncLandedColumns();
 
         // B.5b-1a: the outer ring is data-only (columnMeshable), so nothing on it may be drawn: a
-        // trailing column that was inner last crossing still holds its mesh, and a worker can
-        // publish into a ring chunk. Drop what is there and leave the chunk dirty, so that when a
+        // trailing column that was inner last crossing still holds its mesh. Drop what is there and leave the chunk dirty, so that when a
         // shift back makes it inner again it is meshed rather than left as a hole. (Belt and braces:
         // a column only turns inner again when the column beyond it re-lands, and that addChunk
         // dirties it too -- the walk gate passes with this redirty removed.) Idempotent and cheap
@@ -2896,9 +2811,9 @@ void Terrain::prepareAndLoadGeometry(){
                 for(int cy=0;cy<CHUNKS_PER_COLUMN;cy++){
                     const int n=threeToOne(x+m_chunkOffsetX,cy,z+m_chunkOffsetZ);
                     TerrainChunk* c=chunkTable[n];
-                    if(!c||!c->holdsGeometry()||mp_chunkBusy(c))continue;
+                    if(!c||!c->holdsGeometry())continue;
                     c->dropGeometry();
-                    mp_redirtyChunk(n);
+                    redirtyChunk(n);
                 }
             }
         }
@@ -2989,8 +2904,8 @@ void Terrain::prepareAndLoadGeometry(){
                         // never meshable (columnMeshable).
                         if(!columnMeshable(x,z,m_chunkOffsetX,m_chunkOffsetZ,isloaded))
                             continue;
-                        // B3 Stage 2: set if any chunk of this column had to be left dirty because
-                        // a worker still owns it, so the column flag survives to the next frame.
+                        // Set if any chunk of this column had to be left dirty (the frame_max
+                        // deferral below), so the column flag survives to the next frame.
                         bool column_deferred=false;
                         for(int y=0;y<CHUNKS_PER_COLUMN;y++){
                             if(chunksToUpdate[threeToOne(x,y,z)]){
@@ -2999,15 +2914,6 @@ void Terrain::prepareAndLoadGeometry(){
 
                                 if(n>=CHUNKS_PER_SIDE*CHUNKS_PER_SIDE*CHUNKS_PER_COLUMN||n<0){
                                     printg("out of bounds index: %d\n",n);
-                                }
-                                // A chunk a worker is meshing must not be meshed again underneath
-                                // it, and must not be re-dispatched. Leave its dirty bit set --
-                                // same shape as the frame_max deferral below -- and let the next
-                                // frame, by which time the publish step has put it back to IDLE,
-                                // pick it up.
-                                if(mp_chunkBusy(chunkTable[n])){
-                                    column_deferred=true;
-                                    continue;
                                 }
                                 const bool budgetFree=g_empty_shortcut&&chunkTable[n]&&
                                                       chunkTable[n]->typesEmpty;
@@ -3070,22 +2976,6 @@ void Terrain::prepareAndLoadGeometry(){
 
         for(int i=0;i<idxrl;i++){
             
-                   // B3 Stage 2. Deliberate scope limit (plan doc §4.3): only the bulk-reload /
-                   // streaming path goes to a worker. Player edits, explosions, fire and the
-                   // initial world load keep meshing inline -- they are few, latency-sensitive and
-                   // touch data right next to the player, so sending them off-thread widens the
-                   // invalidation surface for no measured gain (steady state is 0.065 ms/chunk and
-                   // is not felt). Revisit only with a number. mp_dispatch answering FALSE -- no
-                   // threads, no free slot, or something burning in this chunk -- falls straight
-                   // through to the unmodified inline path below.
-                   // R.2: an all-air chunk stays inline -- the shortcut makes it cheaper than the
-                   // 8 KB snapshot a dispatch would take, and it was never counted in the budget
-                   // the pool is sized for (MeshPool.mm).
-                   if(bulk_reload_active&&
-                      !(g_empty_shortcut&&rebuildList[i]->typesEmpty)&&
-                      mp_dispatch(rebuildList[i],rebuildList[i]->idxn))
-                       continue;
-              
                    double _f3m0=f3_now();
                    int _f3r=rebuildList[i]->rebuild2();
                    { double _d=f3_now()-_f3m0;
@@ -3161,14 +3051,6 @@ static void f3_frameEnd(bool loaded){
 void Terrain::updateAllImportantChunks(){
 	double start_time=((eden_platform_now_ms()-start)/1000.0);
 
-    // B3 Stage 2's publish point (plan doc §4.2): a worker fills the non-rt fields, the main
-    // thread copies them into rt* and uploads. This is where the pool's output joins the frame,
-    // alongside the inline mesher's own chunksToUpdateImmediatley backlog below.
-    mp_publishFinished(mp_redirtyChunk);
-    
-    
-   
-   
     int count=0;
    
     for(int x=0;x<CHUNKS_PER_SIDE;x++){
@@ -3245,8 +3127,8 @@ void renderTree(TreeNode* node,int state){
     for(int i=0;i<n;i++){
         TerrainChunk* chunk=chunkTablec[i];
         chunk->in_view=false;
-        bool want1=chunk->rtn_vertices!=0||chunk->rtnum_objects!=0;
-        bool want2=chunk->rtn_vertices2!=0;
+        bool want1=chunk->n_vertices!=0||chunk->num_objects!=0;
+        bool want2=chunk->n_vertices2!=0;
         if(!want1&&!want2)continue;
         if(ViewTestAABB(chunk->rbounds,state)&VT_OUTSIDE) continue;
         if(want1)renderList[r1++]=chunk;
@@ -3571,17 +3453,17 @@ void Terrain::render(){
         lights.modelAmbient[i]=i<3?0.2f:1.0f;
     }
     R::setLights(lights);
-    extern const GLshort cubeShortVertices[36*3];
-    extern const GLshort cubeTexture[36*2];
-    extern const GLfloat cubeNormals[36*3];
-    const GLshort* cubeVertices=cubeShortVertices;
-    const GLshort* cubeTextureCustom=cubeTexture;
+    extern const int16_t cubeShortVertices[36*3];
+    extern const int16_t cubeTexture[36*2];
+    extern const float cubeNormals[36*3];
+    const int16_t* cubeVertices=cubeShortVertices;
+    const int16_t* cubeTextureCustom=cubeTexture;
     StaticObject* doorso[500];
     int num_doors=0;
     for(int i=0;i<chunksr;i++){
-        for(int j=0;j<renderList[i]->rtnum_objects;j++){
-            if(renderList[i]->rtobjects[j].type!=TYPE_DOOR_TOP)continue;
-            if(num_doors<500)doorso[num_doors++]=&renderList[i]->rtobjects[j];
+        for(int j=0;j<renderList[i]->num_objects;j++){
+            if(renderList[i]->objects[j].type!=TYPE_DOOR_TOP)continue;
+            if(num_doors<500)doorso[num_doors++]=&renderList[i]->objects[j];
         }
     }
     vertexObject* objVertices=objBatchStage(&g_doorBatch,num_doors*6*6);
@@ -3623,8 +3505,8 @@ void Terrain::render(){
             }
         }
         float rot=door->rot;
-        /*if(renderList[i].rtobjects[j].ani==0){
-         renderList[i].rtobjects[j].ani=1;
+        /*if(renderList[i].objects[j].ani==0){
+         renderList[i].objects[j].ani=1;
          }*/
         if(door->ani==1){
             door->rot+=6*last_etime;
@@ -3782,8 +3664,8 @@ void Terrain::render(){
     }
     objVertices=objBatchStage(&g_goldenBatch,max_render_objects*6*tess*tess*6);
     for(int i=0;objVertices&&i<chunksr;i++){
-        for(int j=0;j<renderList[i]->rtnum_objects;j++){
-            if(renderList[i]->rtobjects[j].type!=TYPE_GOLDEN_CUBE)continue;
+        for(int j=0;j<renderList[i]->num_objects;j++){
+            if(renderList[i]->objects[j].type!=TYPE_GOLDEN_CUBE)continue;
             int gidx=0;
             for(int f=0;f<6;f++)
                 
@@ -3801,9 +3683,9 @@ void Terrain::render(){
                             objVertices[vert].normal[2]=vn.z;
                             
                             
-                            objVertices[vert].position[0]=4*(renderList[i]->rtobjects[j].pos.x-World::getWorld->fm->chunkOffsetX*CHUNK_SIZE)+1+2.3*vc.x;
-                            objVertices[vert].position[1]=4*renderList[i]->rtobjects[j].pos.y+1+2.3*vc.y;
-                            objVertices[vert].position[2]=4*(renderList[i]->rtobjects[j].pos.z-World::getWorld->fm->chunkOffsetZ*CHUNK_SIZE)+1+2.3*vc.z;
+                            objVertices[vert].position[0]=4*(renderList[i]->objects[j].pos.x-World::getWorld->fm->chunkOffsetX*CHUNK_SIZE)+1+2.3*vc.x;
+                            objVertices[vert].position[1]=4*renderList[i]->objects[j].pos.y+1+2.3*vc.y;
+                            objVertices[vert].position[2]=4*(renderList[i]->objects[j].pos.z-World::getWorld->fm->chunkOffsetZ*CHUNK_SIZE)+1+2.3*vc.z;
                             
                             //objVertices[vert].texs[0]=xoff;
                             //objVertices[vert].texs[1]=yoff;
@@ -3815,8 +3697,8 @@ void Terrain::render(){
                             
                             
                             extern Vector colorTable[256];
-                            Vector color=colorTable[renderList[i]->rtobjects[j].color];
-                            if(renderList[i]->rtobjects[j].color==0){
+                            Vector color=colorTable[renderList[i]->objects[j].color];
+                            if(renderList[i]->objects[j].color==0){
                                 color.x=color.y=color.z=1;
                                 
                             }
@@ -3855,12 +3737,12 @@ void Terrain::render(){
    object=0;
     objVertices=objBatchStage(&g_portalBatch,max_render_objects*6*6);
     for(int i=0;objVertices&&i<chunksr;i++){
-        for(int j=0;j<renderList[i]->rtnum_objects;j++){
-            if(renderList[i]->rtobjects[j].type!=TYPE_PORTAL_TOP)continue;
+        for(int j=0;j<renderList[i]->num_objects;j++){
+            if(renderList[i]->objects[j].type!=TYPE_PORTAL_TOP)continue;
            // printg("drawing portal\n");
             
             float rot=0;
-            int dir=(renderList[i]->rtobjects[j].dir+3)%4;
+            int dir=(renderList[i]->objects[j].dir+3)%4;
             Vector offsets=MakeVector(0,0,0);
             if(dir==0){
                 offsets.x=4;
@@ -3902,9 +3784,9 @@ void Terrain::render(){
                 //if(vc.x>4)vc.x=4;
                 //if(vc.z>4)vc.z=4;
                // vc=rotateVertice(MakeVector(0,rot,0),vc);
-                objVertices[vert].position[0]=4*(renderList[i]->rtobjects[j].pos.x-World::getWorld->fm->chunkOffsetX*CHUNK_SIZE)+vc.x;
-                objVertices[vert].position[1]=4*renderList[i]->rtobjects[j].pos.y+vc.y;
-                objVertices[vert].position[2]=4*(renderList[i]->rtobjects[j].pos.z-World::getWorld->fm->chunkOffsetZ*CHUNK_SIZE)+vc.z;
+                objVertices[vert].position[0]=4*(renderList[i]->objects[j].pos.x-World::getWorld->fm->chunkOffsetX*CHUNK_SIZE)+vc.x;
+                objVertices[vert].position[1]=4*renderList[i]->objects[j].pos.y+vc.y;
+                objVertices[vert].position[2]=4*(renderList[i]->objects[j].pos.z-World::getWorld->fm->chunkOffsetZ*CHUNK_SIZE)+vc.z;
                 
                
                 if(k>=12){
@@ -3923,8 +3805,8 @@ void Terrain::render(){
                     }
                 }
                 extern Vector colorTable[256];
-                Vector color=colorTable[renderList[i]->rtobjects[j].color];
-                if(true||renderList[i]->rtobjects[j].color==0){
+                Vector color=colorTable[renderList[i]->objects[j].color];
+                if(true||renderList[i]->objects[j].color==0){
                     color.x=color.y=color.z=1;
                     
                 }
@@ -4038,9 +3920,9 @@ void Terrain::render(){
     StaticObject* portalso[200];
     int num_portals=0;
     for(int i=0;i<chunksr;i++){
-        for(int j=0;j<renderList[i]->rtnum_objects;j++){
-            if(renderList[i]->rtobjects[j].type!=TYPE_PORTAL_TOP)continue;
-            if(num_portals<200)portalso[num_portals++]=&renderList[i]->rtobjects[j];
+        for(int j=0;j<renderList[i]->num_objects;j++){
+            if(renderList[i]->objects[j].type!=TYPE_PORTAL_TOP)continue;
+            if(num_portals<200)portalso[num_portals++]=&renderList[i]->objects[j];
         }
     }
     objVertices=objBatchStage(&g_swirlBatch,num_portals*6);
@@ -4208,11 +4090,11 @@ void Terrain::render2(){
     R::uv().translate(0,-(int)(frame/16),0);
     R::uv().scale(1,(float)ATLAS_TILES,1);
     
-    extern const GLshort cubeShortVertices[36*3];
-    extern const GLshort cubeTexture[36*2];
-    extern const GLfloat cubeNormals[36*3];
-    const GLshort* cubeVertices=cubeShortVertices;
-    const GLshort* cubeTextureCustom=cubeTexture;
+    extern const int16_t cubeShortVertices[36*3];
+    extern const int16_t cubeTexture[36*2];
+    extern const float cubeNormals[36*3];
+    const int16_t* cubeVertices=cubeShortVertices;
+    const int16_t* cubeTextureCustom=cubeTexture;
     int vert=0;
     int object=0;
     setViewNow();
@@ -4225,10 +4107,10 @@ void Terrain::render2(){
     object=0;
     int flowers=0;
     for(int i=0;i<chunks_rendered;i++){
-        for(int j=0;j<renderList[i]->rtnum_objects;j++){
-            if(renderList[i]->rtobjects[j].type!=TYPE_FLOWER)continue;
+        for(int j=0;j<renderList[i]->num_objects;j++){
+            if(renderList[i]->objects[j].type!=TYPE_FLOWER)continue;
             if(flowers>=MAX_FLOWERS)break;
-            flowerList[flowers]=renderList[i]->rtobjects[j];
+            flowerList[flowers]=renderList[i]->objects[j];
             flowers++;
         }
     }

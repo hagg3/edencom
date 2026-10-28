@@ -170,8 +170,8 @@ Each `TerrainChunk` (`TerrainChunk.h`) owns:
   x*256 + z*16 + y` (y fastest ⇒ vertical strips are contiguous, matching the save
   format).
 - Mesh state (see [rendering.md](rendering.md)): staging vertex arrays, per-face
-  vertex counts, GL buffer names — in two copies, plain and `rt*`-prefixed
-  ("render-thread") versions swapped by `prepareVBO()`.
+  vertex counts, GL buffer names — one copy (the `rt*`-prefixed twin set `prepareVBO()` used to
+  publish into went in SM.8).
 - `StaticObject* objects` — extracted door/portal/golden-cube/flower instances.
 - `modified` flag — set on any edit; drives incremental saving.
 
@@ -305,7 +305,7 @@ item 3, because the bulk path still runs it for teleports. Plan and gates:
    - if the occupant has a `modified` chunk, **evict-save** first (save-before-stream):
      `FileManager::saveWorldKeepDynamics()`, i.e. `saveWorld()` without `endDynamics`, so fire and
      water elsewhere in the window carry on. One save covers every modified resident column;
-   - `readColumnDeferred`.
+   - `readColumn`.
 
    **Autosave** (B.5b-1b): `Terrain::update` saves with `saveWorldKeepDynamics()` once
    `g_autosave_seconds` (60) of engine time have passed since the last commit of any kind
@@ -386,8 +386,7 @@ item 3, because the bulk path still runs it for teleports. Plan and gates:
      **Since Stage R / R.2b (2026-10-03) a landed column is charged its *occupied* chunks**
      (non-`typesEmpty` bands, at least 1), not `CHUNKS_PER_COLUMN`, and a frame reads at most the 64z
      column count (`BULK_RELOAD_CHUNK_BUDGET/4` = 24). Emptiness is only known after the read, so the
-     column that crosses the budget still lands. A worker-decoded column (`EDEN_THREADED` only; no current build) is charged
-     `fmh_defaultBandCount()`, the bundled map's band count. 64z is unchanged (the cap is the old
+     column that crosses the budget still lands. 64z is unchanged (the cap is the old
      budget); a 256z column of 64z-shaped terrain now costs what the 64z column costs, so the reload
      reads ~24 columns a frame instead of 6. **What grows is bytes per frame at 256z** (`.eden` stores
      an air band as 8 KB of zeros), up to 4×: ~3 MB a frame. Mac, F.3 hooks, same binary A/B, medians
@@ -417,12 +416,8 @@ item 3, because the bulk path still runs it for teleports. Plan and gates:
      premium) except on the first touch of new territory, which reads at ~40–70 MB/s cold against
      330–430 MB/s warm; that is the only cost a smaller on-disk format would remove. A Warp Home's worst
      frame (the synchronous 324-column `loadWorld`) is 289–397 ms at 64z and 438–542 ms at 256z.
-4. Drain dirty lists → `rebuild2()` each chunk → queue VBO uploads. On every current build this is
-   all inline on the main thread. *(Under `EDEN_THREADED` — defined only by the retired web build's
-   threaded trees — the chunks dirtied by a bulk reload are meshed on `MeshPool` workers, a column
-   whose chunks have a job in flight is skipped by the column read above, and a bundled-map column's
-   decode runs on a worker via `FileManager::readColumnDeferred` → `fmh_decodeColumnBands`. See
-   rendering.md "Off-thread meshing".)* Two things modify this pass.
+4. Drain dirty lists → `rebuild2()` each chunk → queue VBO uploads, all inline on the main thread
+   (the dormant worker-pool mesher was deleted in SM.8; see rendering.md "Off-thread meshing"). Two things modify this pass.
    A column is skipped, flags intact, unless it **and its four lateral neighbours** have all
    streamed in, because `rebuild2()` reads one block across each side face and meshing early just
    builds geometry for data about to be replaced. **Since B.5b-1a this test runs every frame**, with
@@ -449,7 +444,7 @@ item 3, because the bulk path still runs it for teleports. Plan and gates:
    - `Terrain::addChunk` recomputes it from the voxels (a word-at-a-time OR, ~0.1 µs). **Every
      column landing ends there after `pblocks` is final**: `FileManager::readColumn` (all
      band branches, including the RLE one that can leave a band short and the memset for bands the
-     file lacks), `fmh_publishColumnFromDefault` (also via `MeshPool`'s decode publish), and every
+     file lacks), `fmh_publishColumnFromDefault` and every
      `TerrainGenerator` column (`setLandt` writes before its `addChunk`).
    - `Terrain::setLand(...,chunkToo)` and `TerrainChunk::setLand` clear it on a non-zero write,
      before the next mesh decision. A write of air leaves it alone; the `rebuild2()` scan that
@@ -464,11 +459,11 @@ item 3, because the bulk path still runs it for teleports. Plan and gates:
 
    That neighbourhood test was written, reverted and restored: it is the only thing in the engine
    that draws a chunk which has not been meshed since it was allocated, and until 2026-08-27
-   `TerrainChunk`'s constructor left the whole `rt*` geometry block uninitialised, so
-   `render()`'s `rtn_vertices==0` guard read garbage from a recycled heap and the index `memcpy`
+   `TerrainChunk`'s constructor left the whole mesh-count block uninitialised, so
+   `render()`'s `n_vertices==0` guard read garbage from a recycled heap and the index `memcpy`
    walked off `allIndices`. See [rendering.md](rendering.md) and
    `WORKING/chunk-streaming-redesign-prompt.md` §2. **Any future deferral that leaves a resident
-   chunk unmeshed — a worker-thread mesher (`EDEN_THREADED`), above all — depends on that initialisation.**
+   chunk unmeshed depends on that initialisation.**
 
 The old octree (`TreeNode troot`, `addToTree`, …) is vestigial: `renderTree()` says it
 plainly — "once upon a time this descended an oct-tree, profiling showed it was

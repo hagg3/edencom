@@ -169,6 +169,8 @@ static const Setting kSettings[] = {
   // iOS offers no 125% (N.4.11b): on an iPad Air 2 it took the footprint 372 -> 601 MB, kept 564 MB
   // after going back to 100%, and bought nothing (the device is not fill-bound). max 2 makes
   // eden_settings_set() clamp to 100%; eden_get_render_scale_pct() reads a stored 3 as 100%.
+  // Hidden and read as 100% from N.4.12 until FT.16 (2026-10-28) replaced the blit with a quad.
+  // The default is per device: 50% on Air 2-class hardware (eden_ios_air2_class), 100% elsewhere.
   { "render_scale",      "Render scale",      "Video",     KIND_ENUM,   -1,             0,   2,   1,   2,  NULL, "50%,75%,100%" },
 #else
   { "render_scale",      "Render scale",      "Video",     KIND_ENUM,   -1,             0,   3,   1,   2,  NULL, "50%,75%,100%,125%" },
@@ -360,6 +362,36 @@ void eden_play_switch_toggle_sound(int on) {
 // (crosshair/block_preview already default to sane values for both profiles — see their schema rows
 // and Section 4b — so there is nothing to override for them.)
 extern "C" void eden_settings_set(int i, float v);   // defined further down in this file
+
+#if defined(EDEN_PLATFORM_IOS)
+// FT.16 (plan: WORKING/thermal-power-plan-2026-10-28.md §6, user decision "match 2.1 by default"):
+// A8/A8X/A9-era devices draw the 3D pass at 50%, about stock 2.1's 1024x768 on an iPad (Emod drew
+// 4.0x those pixels at 100%). By hw.machine: iPad5,x (Air 2, mini 4), iPad6,11/12 (iPad 5th gen),
+// iPhone7,x (6/6 Plus), iPhone8,x (6s/6s Plus/SE). The A9X iPad Pros (iPad6,3-8) are not on the list.
+#include <sys/sysctl.h>
+static int eden_ios_air2_class(void) {
+    static int cached = -1;
+    if (cached >= 0) return cached;
+    char m[64] = {0};
+    size_t n = sizeof(m) - 1;
+    cached = 0;
+    if (sysctlbyname("hw.machine", m, &n, nullptr, 0) != 0) return cached;
+    if (std::strncmp(m, "iPad5,", 6) == 0 || std::strcmp(m, "iPad6,11") == 0 ||
+        std::strcmp(m, "iPad6,12") == 0 || std::strncmp(m, "iPhone7,", 8) == 0 ||
+        std::strncmp(m, "iPhone8,", 8) == 0)
+        cached = 1;
+    std::fprintf(stderr, "[eden-settings] device %s: %s render scale default\n", m,
+                 cached ? "Air 2-class, 50%" : "100%");
+    return cached;
+}
+#endif
+// The device's render_scale default, as an option index (0 = 50%, 2 = 100%).
+static int eden_device_render_scale_default(int profileIndex) {
+#if defined(EDEN_PLATFORM_IOS)
+    if (eden_ios_air2_class()) return 0;
+#endif
+    return profileIndex;
+}
 static bool g_profileDefaultsApplied = false;
 static void eden_seed_profile_default(const char* key, int optionIndex) {
     int i = eden_setting_index(key);
@@ -385,7 +417,7 @@ static void eden_apply_profile_defaults(void) {
     if (fps >= 2) fps -= 1;   // profile indices are into {Uncapped,30,45,60}; iOS dropped 45 (P.14): 45 -> 30, 60 -> 60
 #endif
     eden_seed_profile_default("fps_cap",      fps);
-    eden_seed_profile_default("render_scale", rs);
+    eden_seed_profile_default("render_scale", eden_device_render_scale_default(rs));
     // FT.13: crosshair ON with keyboard+mouse, OFF on touch; seeded once from the profile resolved at first run.
     eden_seed_profile_default("crosshair", eden_profile_touch_chrome() ? 0 : 1);
 }
@@ -431,18 +463,21 @@ static SettingsMenu* eden_engine_settings(void) {
 // ---------------------------------------------------------------------------------------------
 static void eden_apply_port_settings(void);
 
-// B.8 presets: enum indexes of view_distance (0 = Auto, 1 = 4 chunks) and render_scale (1 = 75%,
-// 2 = 100%). Index 0 (Custom) has no row. iOS hides render_scale and reads it as 100% whatever is
-// stored, so there the preset is judged on view distance alone.
+// B.8 presets: enum indexes of view_distance (0 = Auto, 1 = 4 chunks) and render_scale (0 = 50%,
+// 1 = 75%, 2 = 100%). Index 0 (Custom) has no row. On iOS (FT.16) Low is 50% and Default is the
+// device's default (eden_preset_render_scale), so an Air 2 at its seeded 50% still reads Default.
 // B.5b-2 adds render_distance (an index into kRenderRadius[]): High is radius 16 on desktop native,
 // and 10 on iOS (P.4 decision 6, after T.B16 measured R10 on the Air 2; R12 is opt-in only there).
 struct GfxPreset { int view_distance, render_scale, render_distance; };
 #if defined(EDEN_PLATFORM_IOS)
-static const GfxPreset kPresets[] = { {0, 0, 5}, {1, 1, 5}, {0, 2, 5}, {0, 2, 6} };   // Custom, Low, Default, High
+static const GfxPreset kPresets[] = { {0, 0, 5}, {1, 0, 5}, {0, 2, 5}, {0, 2, 6} };   // Custom, Low, Default, High
 #else
 static const GfxPreset kPresets[] = { {0, 0, 5}, {1, 1, 5}, {0, 2, 5}, {0, 2, 8} };
 #endif
 static const int kRenderRadius[] = { 4, 5, 6, 7, 8, 9, 10, 12, 16 };
+static int eden_preset_render_scale(int p) {
+    return p == 2 ? eden_device_render_scale_default(kPresets[2].render_scale) : kPresets[p].render_scale;
+}
 static void eden_preset_sync(int changedKnob);
 extern "C" void eden_settings_set(int i, float v);
 static bool g_presetApplying = false;
@@ -513,9 +548,7 @@ static void eden_apply_setting(int i, bool commitEngine) {
             g_presetApplying = true;
             eden_settings_set(eden_setting_index("view_distance"), (float)kPresets[p].view_distance);
             eden_settings_set(eden_setting_index("render_radius"), (float)kPresets[p].render_distance);
-#if !defined(EDEN_PLATFORM_IOS)
-            eden_settings_set(eden_setting_index("render_scale"), (float)kPresets[p].render_scale);
-#endif
+            eden_settings_set(eden_setting_index("render_scale"), (float)eden_preset_render_scale(p));
             g_presetApplying = false;
         }
     } else if (std::strcmp(s.key, "original_lighting") == 0) {
@@ -625,9 +658,7 @@ static void eden_preset_sync(int changedKnob) {
     if (p < 1 || p >= (int)(sizeof(kPresets) / sizeof(kPresets[0]))) return;
     bool match = (int)lroundf(g_value[vi]) == kPresets[p].view_distance &&
                  (int)lroundf(g_value[di]) == kPresets[p].render_distance;
-#if !defined(EDEN_PLATFORM_IOS)
-    match = match && (int)lroundf(g_value[ri]) == kPresets[p].render_scale;
-#endif
+    match = match && (int)lroundf(g_value[ri]) == eden_preset_render_scale(p);
     if (!match) { g_value[pi] = 0.0f; g_hadStored[pi] = true; eden_persist_setting(pi); }
 }
 
@@ -697,10 +728,7 @@ void eden_settings_init(void) {
                 di = eden_setting_index("render_radius");
             bool isDefault = (int)lroundf(g_value[vi]) == kPresets[2].view_distance
                           && (int)lroundf(g_value[di]) == kPresets[2].render_distance
-#if !defined(EDEN_PLATFORM_IOS)
-                          && (int)lroundf(g_value[ri]) == kPresets[2].render_scale
-#endif
-                ;
+                          && (int)lroundf(g_value[ri]) == eden_preset_render_scale(2);
             g_value[pi] = isDefault ? 2.0f : 0.0f;
         }
     }
@@ -891,9 +919,9 @@ int eden_get_render_scale_pct(void) {
     static const int kPct[] = {50, 75, 100, 125};
     int i = (int)lroundf(eden_render_scale);
 #if defined(EDEN_PLATFORM_IOS)
-    // N.4.12: iOS ignores the setting altogether (the row is hidden too). At 50% the iPad showed the HUD over a
-    // frozen menu even after the present-binding fix; the user chose to drop it. A stored 0/1/3 reads as 100%.
-    (void)i; return 100;
+    // N.4.12 read every value as 100% here (the HUD drew over a frozen menu at 50%); FT.16's quad
+    // composite brought the setting back. iOS has no 125%: a stored 3 still reads as 100%.
+    if (i == 3) return 100;
 #endif
     if (i < 0 || i >= (int)(sizeof(kPct) / sizeof(kPct[0]))) return 100;
     return kPct[i];
@@ -1015,9 +1043,6 @@ int eden_settings_native_hidden(int i) {
     const bool touch = eden_effective_input_is_touch() != 0;
     if (std::strncmp(s->key, "touch_look_", 11) == 0) return touch ? 0 : 1;
     if (std::strncmp(s->key, "mouse_sensitivity", 17) == 0) return touch ? 1 : 0;
-#if defined(EDEN_PLATFORM_IOS)
-    if (std::strcmp(s->key, "render_scale") == 0) return 1;   // N.4.12: dropped on iOS (see eden_get_render_scale_pct)
-#endif
     return 0;
 }
 

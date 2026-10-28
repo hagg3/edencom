@@ -10,8 +10,7 @@
 
 
 
-#include <OpenGLES/ES1/gl.h>
-#include <OpenGLES/ES1/glext.h>
+#include <stdint.h>
 
 #include "Texture2D.h"
 #include "glu.h"
@@ -83,35 +82,39 @@ typedef struct _vertexStruct
 {
     float position[3];
     float normal[3];
-    GLubyte colors[4];  
+    uint8_t colors[4];  
 	float texs[2];
 	  
 } vertexStruct;
+static_assert(sizeof(vertexStruct) == 36, "vertexStruct is read by R::kFmt* (render_formats.cpp) at fixed strides");
 
 typedef struct _vertexStructSmall
 {
-    GLshort position[3];
-    GLshort pad;
-    GLubyte colors[4];  
-	GLshort texs[2];
+    int16_t position[3];
+    int16_t pad;
+    uint8_t colors[4];  
+	int16_t texs[2];
 	  
 } vertexStructSmall;
+static_assert(sizeof(vertexStructSmall) == 16, "vertexStructSmall is read by R::kFmt* (render_formats.cpp) at fixed strides");
 
 typedef struct _vertexpStruct
 {
     float position[3];
-    GLubyte colors[4]; 
+    uint8_t colors[4]; 
     float size[1];
 	    
 } vertexpStruct;
+static_assert(sizeof(vertexpStruct) == 20, "vertexpStruct is read by R::kFmt* (render_formats.cpp) at fixed strides");
 
 typedef struct _vertexpBreak
 {
     float position[3];
     float normal[3];
-    GLubyte colors[4]; 
-	GLshort texs[2];
+    uint8_t colors[4]; 
+	int16_t texs[2];
 	    
 } vertexpBreak;
+static_assert(sizeof(vertexpBreak) == 32, "vertexpBreak is read by R::kFmt* (render_formats.cpp) at fixed strides");
 
 #endif

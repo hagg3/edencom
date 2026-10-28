@@ -39,7 +39,6 @@ Classes/VectorUtil.cpp
 Classes/World.cpp
 Classes/zpipe.c
 Classes/StrUtil.cpp
-Classes/MeshPool.cpp
 Classes/GLWidgets.cpp
 Classes/GLDialog.cpp
 Classes/KeybindsMenu.cpp

@@ -12,8 +12,7 @@
 #include "BlockBreak.h"
 #include "Fire.h"
 
-#include <OpenGLES/ES1/gl.h>
-#include <OpenGLES/ES1/glext.h>
+#include <stdint.h>
 #include "Util.h"
 #define pbuffer_size 10000
 

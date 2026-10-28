@@ -43,9 +43,9 @@ void Camera::reset(){
 	pitch=0;
 	mode=0;
 	dist=CAM_TP_DIST;
-	GLfloat projviewf[16];
+	float projviewf[16];
 	memcpy(projviewf, R::proj().top().m, sizeof(projviewf));   // G.5b-3: was glGetFloatv
-	GLfloat modelviewf[16];
+	float modelviewf[16];
 	memcpy(modelviewf, R::mv().top().m, sizeof(modelviewf));
 	float rview[16];
 	MatrixMultiplyBy4x(projviewf,modelviewf,rview);
@@ -159,9 +159,9 @@ void Camera::render(){
 	Vector eye,at;
 	viewPoints(&eye,&at);
 	gluLookAt(eye.x, eye.y, eye.z, at.x, at.y, at.z, 0, 1, 0);	
-	GLfloat projviewf[16];
+	float projviewf[16];
 	memcpy(projviewf, R::proj().top().m, sizeof(projviewf));   // G.5b-3: was glGetFloatv
-	GLfloat modelviewf[16];
+	float modelviewf[16];
 	memcpy(modelviewf, R::mv().top().m, sizeof(modelviewf));
 	float rview[16];
 	MatrixMultiplyBy4x(projviewf,modelviewf,rview);

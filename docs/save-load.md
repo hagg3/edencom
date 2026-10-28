@@ -23,7 +23,7 @@ format itself is specified in [eden-file-format.md](eden-file-format.md).
 
 ## Important files & types
 - `Classes/FileManager.cpp/.h` — everything: `loadWorld` (routes to `loadEmodWorld`), `saveWorld` /
-  `saveWorldKeepDynamics` (both end in `saveEmodWorld`), `readColumn` / `readColumnDeferred`,
+  `saveWorldKeepDynamics` (both end in `saveEmodWorld`), `readColumn`,
   `convertStep` (convert-on-play), `renameWorld`/`deleteWorld`, the read-only `.eden` directory
   machinery, plus the offline `saveGenColumn`/`writeGenToDisk` used by the world generator.
   (`saveColumn` and `convertFile` were deleted with S.8.)

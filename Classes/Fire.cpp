@@ -176,7 +176,7 @@ bool Fire::update(float etime){
 	return false;
 }
 //#define NUM_COLORS 2
-const GLubyte colors[4][3]={
+const uint8_t colors[4][3]={
 	
     
     {255,255,255},
@@ -353,10 +353,10 @@ void Fire::renderFireSprites(){
     
     
     vertexObject objVertices[max_bb*6*6];
-    extern const GLshort cubeShortVertices[36*3];
-    extern const GLshort cubeTexture[36*2];
-    const GLshort* cubeTextureCustom=cubeTexture;
-    const GLshort* cubeVertices=cubeShortVertices;
+    extern const int16_t cubeShortVertices[36*3];
+    extern const int16_t cubeTexture[36*2];
+    const int16_t* cubeTextureCustom=cubeTexture;
+    const int16_t* cubeVertices=cubeShortVertices;
     int vert=0;
     float poof=1.18f;
     float epoofx=1.3f;

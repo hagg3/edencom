@@ -61,8 +61,8 @@ load-bearing (save-before-stream, edit-before-mesh, mesh-before-upload).
 ## Where a root-doc rule needs a port amendment
 - **Threading**: root says "all GL work on the main thread; the only other thread is the
   world-load pthread." Still true for engine code. The port adds one detached thread per HTTP
-  request (`Net_native.cpp`) and SDL's audio device thread; neither runs engine code. `MeshPool`
-  and worker column decode are compiled out (no build defines `EDEN_THREADED`). The web build's
+  request (`Net_native.cpp`) and SDL's audio device thread; neither runs engine code. There is no meshing
+  or column-decode worker (`MeshPool` was deleted in SM.8). The web build's
   single-threaded default (`build-st`) is history.
 - **On-disk structs**: still raw-memcpy'd, still must never be reordered/resized — and a world is
   now an `.emod` whose records carry them ([emod-file-format.md](../../docs/emod-file-format.md)).

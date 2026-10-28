@@ -28,7 +28,7 @@ int run_look_selftest() {
     }
     const char* name = g_opt.world.empty() ? "look-selftest" : g_opt.world.c_str();
     if (!open_world(name, g_opt.height)) return 1;
-    g_app->viewController.setFixedEtime(1.0f / 60.0f);
+    g_app->setFixedEtime(1.0f / 60.0f);
     tick(60);
     Player* pl = World::getWorld->player;
     Hud* hud = World::getWorld->hud;
@@ -158,7 +158,7 @@ int run_look_selftest() {
         float lag60 = 0.0f;
         for (int hold = 1; hold >= 0; --hold) {
             for (int r : rates) {
-                g_app->viewController.setFixedEtime(1.0f / (float)r);
+                g_app->setFixedEtime(1.0f / (float)r);
                 level(0.0f);
                 const int id = ++ident;
                 const float yaw0 = pl->yaw;
@@ -191,7 +191,7 @@ int run_look_selftest() {
         }
         std::snprintf(d, sizeof(d), "lag at the motion's end, 60 Hz: %.3f deg", lag60);
         check(lag60 > 0.05f, "step 4: smoothing 0.5 actually filters (the camera trails the finger)", d);
-        g_app->viewController.setFixedEtime(1.0f / 60.0f);
+        g_app->setFixedEtime(1.0f / 60.0f);
         TOUCH_LOOK_SMOOTH = 0.0f;
     }
 
@@ -675,7 +675,7 @@ int run_touch_selftest() {
             // 20-tick window that caught a slow frame covered more ground than the first. The
             // touch joystick does not go through Movement.cpp's wall-clock EMA on native (only
             // the keyboard path does), so engine etime is the only clock this block reads.
-            g_app->viewController.setFixedEtime(1.0f / 60.0f);
+            g_app->setFixedEtime(1.0f / 60.0f);
             teleport_for_movement();   // the map CENTRE — see its own comment for why --at's is not
             tick(120);
             rise_until_clear(1800);    // and clear of terrain, so "did not move" means the input
@@ -765,7 +765,7 @@ int run_touch_selftest() {
             const PlayerState w1 = player_state();
             push_finger_id(12, SDL_EVENT_FINGER_UP, snx, sny);
             tick(30);
-            g_app->viewController.setFixedEtime(0.0f);
+            g_app->setFixedEtime(0.0f);
             eden_set_fly_mode(1);
             const float dw = std::sqrt((w1.x - w0.x) * (w1.x - w0.x) + (w1.z - w0.z) * (w1.z - w0.z));
             std::snprintf(detail, sizeof(detail),

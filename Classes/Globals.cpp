@@ -6,7 +6,7 @@
 //  Copyright 2010 __MyCompanyName__. All rights reserved.
 //
 #include <cstdio>
-#include <OpenGLES/ES1/gl.h>
+#include <stdint.h>
 #include "Constants.h"
 
 float SCREEN_WIDTH;
@@ -245,7 +245,7 @@ extern "C" int blockinfo[NUM_BLOCKS+1]={
 	
 };
 
-extern "C" const GLubyte creatureColor[NUM_CREATURES+1][3]={
+extern "C" const uint8_t creatureColor[NUM_CREATURES+1][3]={
     [M_MOOF]={70,70,255},
     [M_GREEN]={115,206,74},
     [M_NERGLE]={255,70,255},
@@ -256,7 +256,7 @@ extern "C" const GLubyte creatureColor[NUM_CREATURES+1][3]={
    
     
 };
-extern "C" const GLubyte blockColor[NUM_BLOCKS+1][3]={
+extern "C" const uint8_t blockColor[NUM_BLOCKS+1][3]={
 	[TYPE_NONE]={0},
 	[TYPE_BEDROCK]={90,90,90},
 	[TYPE_DARK_STONE]={120,120,120},

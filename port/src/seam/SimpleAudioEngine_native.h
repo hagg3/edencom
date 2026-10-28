@@ -9,7 +9,7 @@ extern "C" {
 #endif
 
 // OFF for the scripted/headless modes. Must be called before the engine's first sound, i.e.
-// before eden_seam_main(). Same role eden_native_gl_set_headless() plays for the renderer.
+// before App::boot(). Same role eden_native_gl_set_headless() plays for the renderer.
 void eden_native_audio_set_enabled(int on);
 
 // Once per frame: reaps drained voices and re-feeds looping ones. Cheap when nothing is playing

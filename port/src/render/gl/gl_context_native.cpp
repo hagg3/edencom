@@ -10,8 +10,8 @@
 //     preferred: Graphics::initGraphics() issues real glGenBuffers/glBufferData during
 //     construction (R::bufCreate/bufData, texture uploads). port/src/harness/ therefore calls
 //     eden_gl_context_create() as its first act, before the seam builds anything, and there is no
-//     earlier place a window could come from. SDLView_native.cpp publishes G_EAGL_VIEW and the
-//     screen-metric globals afterwards, mirroring EAGLView_web.mm.
+//     earlier place a window could come from. App::boot() (port/src/seam/App.cpp) publishes the
+//     screen-metric globals afterwards.
 //
 //  2. **One global VAO, bound once and never switched.** Core profile REQUIRES a non-zero vertex
 //     array object bound for any draw. R:: sets its attribute pointers per draw against that one
@@ -109,7 +109,10 @@ static GLint g_view_rb = -1;
 static int   g_present_guard_fires = 0;
 int eden_native_gl_present_guard_fires(void) { return g_present_guard_fires; }
 
+static void eden_scene_diag_at_present(void);   // FT.16a, with the scene pass below
+
 void eden_native_gl_present(void) {
+    eden_scene_diag_at_present();
 #if defined(EDEN_PLATFORM_IOS)
     if (g_window && g_present_enabled && g_view_rb >= 0) {
         GLint rb = 0;
@@ -385,11 +388,21 @@ void eden_gl_context_bind_default_framebuffer(void) {
 // rate. Shrinking the DRAWABLE would be the one-line way to trade sharpness for frame rate, and is
 // exactly what web does, but on native it would drag the UI down with it: eden_ui_raster_density()
 // follows the drawable, so a 50% drawable is N.4.8's 1.8x-magnified text all over again. So only
-// the 3D pass moves. eden_scene_pass_begin() points it at an offscreen colour+depth framebuffer
-// of (letterbox box x scale); eden_scene_pass_end() upscales that into the box with one linear
-// blit and puts the window's framebuffer back, and the HUD/menus/dialogs then draw at full
-// density on top. At 100% neither call touches GL: no framebuffer is created, no blit happens,
-// and the frame is the one this port has always drawn.
+// the 3D pass moves. eden_scene_pass_begin() (R::beginScene) points it at an offscreen colour+depth
+// framebuffer of (letterbox box x scale); eden_scene_pass_end() (R::endScene) composites that into
+// the box and puts the window's framebuffer back, and the HUD/menus/dialogs then draw at full
+// density on top. At 100% neither call touches GL: no framebuffer is created, nothing is
+// composited, and the frame is the one this port has always drawn.
+//
+// THE COMPOSITE IS ONE TEXTURED QUAD (FT.16, 2026-10-28), not glBlitFramebuffer. The scene's colour
+// is a texture attachment and the UI program draws it across the box with linear filtering, the same
+// cost as the blit and the same pixels on desktop. The blit was N.4.11's choice; on the Air 2 at 50%
+// it never landed (10-09: the HUD drew over a frozen menu frame, with 0 guard fires and 0 GL errors
+// over SSH), and no scissor or other FBO user exists to explain it, so the ES blit rules leave the
+// picture. Before the quad the window's colour is CLEARED (black, or magenta under --diag-clear):
+// a composite that fails shows black, never a stale menu, and the tile GPU starts the window's frame
+// from a clear instead of loading the last one. The scene framebuffer is cleared at its start too.
+// --diag-clear also clears the window at 100%, under the sky, so a gap in the sky shows magenta.
 //
 // THE WINDOW'S FRAMEBUFFER IS NOT ALWAYS 0. On iOS, SDL's UIKit view draws into a framebuffer
 // object of its own and the system presents its renderbuffer; binding 0 there would send the HUD
@@ -412,21 +425,29 @@ void eden_gl_context_bind_default_framebuffer(void) {
 //   * point sprites (smoke, fire, debris) are sized in framebuffer pixels, so the draw path scales
 //     them by g_point_px_scale (gl_renderer.cpp's sprite draw) to keep their size on screen;
 //   * the camera-mode screenshot (Util.mm glReadPixels) and --shot both read the window's
-//     framebuffer after the blit, so they see the composited frame;
+//     framebuffer after the composite, so they see the composited frame;
 //   * the HUD runs with depth testing off (Graphics::beginHud), so the window framebuffer's depth
 //     no longer receiving the scene's depth changes nothing it draws.
 // Lines (glLineWidth) are not compensated: core profile and ES 3 draw them 1 px wide anyway.
-static GLuint g_scene_fbo = 0, g_scene_color = 0, g_scene_depth = 0;
+//
+// FT.16a's LOG: once per scene size, `[eden-gl] scene-diag` lines give the framebuffer ids at begin,
+// at the composite and at present, the GL error after the composite, and (iOS) the view's colour
+// format, so a device run over SSH says which framebuffer the frame went to without a look.
+static GLuint g_scene_fbo = 0, g_scene_color = 0 /* a texture since FT.16 */, g_scene_depth = 0;
 static int    g_scene_fbo_w = 0, g_scene_fbo_h = 0;
 static GLint  g_scene_prev_fbo = 0;
 static bool   g_scene_active = false;
 static bool   g_scene_failed = false;   // an incomplete FBO once: stop trying, draw at 100%
+static bool   g_diag_clear = false;     // --diag-clear (FT.16a)
+static bool   g_scene_diag_present = false;   // log the binding at the next present (once per size)
+
+void eden_native_gl_set_diag_clear(int on) { g_diag_clear = (on != 0); }
 
 extern "C" int eden_get_render_scale_pct(void);   // Settings.cpp (both targets compile it)
 
 static void eden_scene_fbo_release(void) {
     if (g_scene_fbo)   { glDeleteFramebuffers(1, &g_scene_fbo);    g_scene_fbo = 0; }
-    if (g_scene_color) { glDeleteRenderbuffers(1, &g_scene_color); g_scene_color = 0; }
+    if (g_scene_color) { rgl::forgetTexture(g_scene_color); glDeleteTextures(1, &g_scene_color); g_scene_color = 0; }
     if (g_scene_depth) { glDeleteRenderbuffers(1, &g_scene_depth); g_scene_depth = 0; }
     g_scene_fbo_w = g_scene_fbo_h = 0;
 }
@@ -434,8 +455,10 @@ static void eden_scene_fbo_release(void) {
 // The size the scene renders at for a given box and percentage, clamped to what the GPU will
 // allocate (125% of a 5K window is past most GL_MAX_RENDERBUFFER_SIZEs) and to at least 1 px.
 static void eden_scene_size(int pct, int* w, int* h) {
-    GLint maxrb = 4096;
+    GLint maxrb = 4096, maxtex = 4096;
     glGetIntegerv(GL_MAX_RENDERBUFFER_SIZE, &maxrb);
+    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxtex);
+    if (maxtex < maxrb) maxrb = maxtex;   // the colour is a texture since FT.16
     int sw = (int)((long)g_drawable_w * pct / 100);
     int sh = (int)((long)g_drawable_h * pct / 100);
     if (sw > maxrb || sh > maxrb) {
@@ -448,14 +471,17 @@ static void eden_scene_size(int pct, int* w, int* h) {
 
 void eden_render_note_scene(int begin);   // render_core.cpp: --render-selftest's bracket invariant
 
+static const R::Rgba kDiagMagenta = {1.0f, 0.0f, 1.0f, 1.0f};
+
 void eden_scene_pass_begin(void) {
     eden_render_note_scene(1);
     g_scene_active = false;
-    if (!eden_gl_have_context() || g_scene_failed) return;
-    const int pct = eden_get_render_scale_pct();
+    if (!eden_gl_have_context()) return;
+    const int pct = g_scene_failed ? 100 : eden_get_render_scale_pct();
     if (pct == 100 || g_drawable_w <= 0 || g_drawable_h <= 0) {
         // Back at 100%: give the memory back rather than keep an idle second framebuffer.
         if (g_scene_fbo) eden_scene_fbo_release();
+        if (g_diag_clear) rgl::clear(true, false, kDiagMagenta);
         return;
     }
     int w, h;
@@ -466,12 +492,16 @@ void eden_scene_pass_begin(void) {
         GLint prevRb = 0;
         glGetIntegerv(GL_RENDERBUFFER_BINDING, &prevRb);
         glGenFramebuffers(1, &g_scene_fbo);
-        glGenRenderbuffers(1, &g_scene_color);
+        glGenTextures(1, &g_scene_color);
         glGenRenderbuffers(1, &g_scene_depth);
         glBindFramebuffer(GL_FRAMEBUFFER, g_scene_fbo);
-        glBindRenderbuffer(GL_RENDERBUFFER, g_scene_color);
-        glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, w, h);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, g_scene_color);
+        rgl::bindTextureNow(g_scene_color);   // through the cache, so the next draw rebinds its own
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, g_scene_color, 0);
         glBindRenderbuffer(GL_RENDERBUFFER, g_scene_depth);
         glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, g_scene_depth);
@@ -486,12 +516,18 @@ void eden_scene_pass_begin(void) {
             return;
         }
         g_scene_fbo_w = w; g_scene_fbo_h = h;
-        std::fprintf(stderr, "[eden-gl] scene pass at %d%%: %dx%d px, upscaled into %dx%d.\n",
+        g_scene_diag_present = true;
+        std::fprintf(stderr, "[eden-gl] scene pass at %d%%: %dx%d px, composited into %dx%d.\n",
                      pct, w, h, g_drawable_w, g_drawable_h);
+        std::fprintf(stderr, "[eden-gl] scene-diag begin: window fbo %d, renderbuffer %d (view %d), "
+                             "scene fbo %u tex %u%s\n", (int)g_scene_prev_fbo, (int)prevRb,
+                     (int)g_view_rb, (unsigned)g_scene_fbo, (unsigned)g_scene_color,
+                     g_diag_clear ? ", --diag-clear on" : "");
     } else {
         glBindFramebuffer(GL_FRAMEBUFFER, g_scene_fbo);
     }
     glViewport(0, 0, w, h);
+    rgl::clear(true, true, R::Rgba{0.0f, 0.0f, 0.0f, 1.0f});   // a fresh start for the tiler (FT.16)
     g_point_px_scale = (float)w / (float)g_drawable_w;
     g_scene_active = true;
 }
@@ -501,19 +537,57 @@ void eden_scene_pass_end(void) {
     if (!g_scene_active) return;
     g_scene_active = false;
     g_point_px_scale = 1.0f;
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, g_scene_fbo);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)g_scene_prev_fbo);
-    glBlitFramebuffer(0, 0, g_scene_fbo_w, g_scene_fbo_h,
-                      g_vp_x, g_vp_y, g_vp_x + g_drawable_w, g_vp_y + g_drawable_h,
-                      GL_COLOR_BUFFER_BIT, GL_LINEAR);
 #if defined(EDEN_PLATFORM_IOS)
-    {   // P.11: the scaled scene's depth is dead once blitted; don't let the tiler store it.
+    {   // P.11: the scaled scene's depth is dead once drawn; don't let the tiler store it.
         const GLenum depth = GL_DEPTH_ATTACHMENT;
-        glInvalidateFramebuffer(GL_READ_FRAMEBUFFER, 1, &depth);
+        glInvalidateFramebuffer(GL_FRAMEBUFFER, 1, &depth);
     }
 #endif
     glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)g_scene_prev_fbo);
     eden_apply_viewport();
+    const bool diag = g_scene_diag_present;
+    GLenum errBefore = GL_NO_ERROR;   // what the scene pass left, so "after" is the composite's alone
+    if (diag) { errBefore = glGetError(); while (glGetError() != GL_NO_ERROR) {} }
+    // The window's frame starts here: clear it (letterbox bars included), then the quad covers the box.
+    rgl::clear(true, false, g_diag_clear ? kDiagMagenta : R::Rgba{0.0f, 0.0f, 0.0f, 1.0f});
+    rcore::DrawState& ds = rcore::ds();
+    const R::State keep = ds.state;
+    ds.state = R::State{R::B_OFF, false, false, false, 0.0f, 0.0f};
+    R::proj().push(); R::proj().loadIdentity();
+    R::mv().push();   R::mv().loadIdentity();
+    static const float kQuad[16] = { -1, -1, 0, 0,   1, -1, 1, 0,   1, 1, 1, 1,   -1, 1, 0, 1 };
+    R::Geometry g = {};
+    g.fmt = &R::kFmtUI2UV; g.vmem = kQuad; g.itype = R::I_NONE;
+    g.first = 0; g.count = 4; g.prim = R::TRIANGLE_FAN;
+    rgl::draw2D(g, (R::Tex)g_scene_color, R::Rgba{1.0f, 1.0f, 1.0f, 1.0f});
+    R::mv().pop();
+    R::proj().pop();
+    ds.state = keep;
+    if (diag) {
+        GLint fb = 0, vp[4] = {0, 0, 0, 0};
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fb);
+        glGetIntegerv(GL_VIEWPORT, vp);
+        std::fprintf(stderr, "[eden-gl] scene-diag composite: window fbo %d, viewport %d,%d %dx%d, "
+                             "GL error before 0x%x, after 0x%x\n", (int)fb, vp[0], vp[1], vp[2], vp[3],
+                     (unsigned)errBefore, (unsigned)glGetError());
+    }
+}
+
+// The present half of FT.16a's log: the framebuffer and renderbuffer bound when the frame is handed
+// to the system, and the view's colour format (iOS), once per scene size.
+static void eden_scene_diag_at_present(void) {
+    if (!g_scene_diag_present) return;
+    g_scene_diag_present = false;
+    GLint fb = 0, rb = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fb);
+    glGetIntegerv(GL_RENDERBUFFER_BINDING, &rb);
+    GLint fmt = 0;
+#if defined(EDEN_PLATFORM_IOS)
+    glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_INTERNAL_FORMAT, &fmt);
+#endif
+    std::fprintf(stderr, "[eden-gl] scene-diag present: fbo %d, renderbuffer %d (view %d), view colour "
+                         "format 0x%x, GL error 0x%x\n", (int)fb, (int)rb, (int)g_view_rb,
+                 (unsigned)fmt, (unsigned)glGetError());
 }
 
 }  // extern "C"

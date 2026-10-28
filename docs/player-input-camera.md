@@ -182,7 +182,7 @@ results — callers read them immediately after the call.
   default **`false`**) — `preupdate`'s read site is now
   `CROUCH_ENABLED && (CROUCH_HELD || hud->m_crouch)`, so both the keyboard key and the HUD button are
   inert when it's off. `Hud.cpp` additionally wraps the crouch button's hit-test *and* its render call
-  in `if (CROUCH_ENABLED)` (`extern BOOL CROUCH_ENABLED`), so the on-screen button is hidden entirely,
+  in `if (CROUCH_ENABLED)` (`extern bool CROUCH_ENABLED`), so the on-screen button is hidden entirely,
   not just non-functional, when disabled. Settings › Experiments › **Crouch mode** (`crouch`) flips it
   via `eden_set_crouch_enabled` (`Input.cpp`). See
   [port/docs/player-input-camera.md](../port/docs/player-input-camera.md) for the input wiring.

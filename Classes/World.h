@@ -10,8 +10,7 @@
 
 
 
-#include <OpenGLES/ES1/gl.h>
-#include <OpenGLES/ES1/glext.h>
+#include <stdint.h>
 #include "Texture2D.h"
 #include "Terrain.h"
 #include "Graphics.h"

@@ -35,7 +35,7 @@
 // `WORKING/archive/aspect-ratio-toggle-scope.md`.)
 //
 // ORDER IS LOAD-BEARING at boot: `eden_display_set_viewport()` must be called before
-// `eden_seam_create_eagl_view()` (i.e. from the page's `onRuntimeInitialized`, which fires before
+// `App::boot()` (the web build called it from the page's `onRuntimeInitialized`, which fired before
 // `main()`), because `World::World()` reads the metrics. It is safe to call later too — anything
 // past construction goes through the re-layout path below.
 #ifndef EDEN_DISPLAY_PROFILE_WEB_H

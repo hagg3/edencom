@@ -1459,7 +1459,7 @@ bool ladderExists=false;
 extern Vector colorTable[256];
 extern Vector tranDist;
 //extern Vector minTranDist;
-extern const GLubyte blockColor[NUM_BLOCKS+1][3];
+extern const uint8_t blockColor[NUM_BLOCKS+1][3];
 float poffsetx=0;
 float poffsetz=0;
 bool Player::vertc(){
@@ -2468,7 +2468,7 @@ void Player::render(){
         // (was glDisable/glEnable(GL_CULL_FACE) around it; drawCube sets its own colour).
         R::State noCull = { R::B_ALPHA, true, true, false, 0.0f, 0.0f };
         R::setState(noCull);
-	//glScalef(0, <#GLfloat y#>, <#GLfloat z#>)
+	//glScalef(0, <#float y#>, <#float z#>)
         R::mv().push();
       
         //Graphics::drawCube(bx,by,bz,TYPE_GRADIENT,1);

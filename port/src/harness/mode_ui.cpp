@@ -1056,20 +1056,23 @@ int run_ui_selftest() {
     const float mode0 = iMode >= 0 ? eden_settings_get(iMode) : 0.0f;
     CGRect r;
 
-    {   // B.8: presets drive view_distance (+ render_scale off iOS); a hand edit drops to Custom
+    {   // B.8: presets drive view_distance and render_scale (iOS too since FT.16); a hand edit drops to Custom
         const int iP = settings_index("graphics_preset"), iV = settings_index("view_distance"),
-                  iD = settings_index("render_radius");     // B.5b-2, X.17
+                  iD = settings_index("render_radius"), iS = settings_index("render_scale");     // B.5b-2, X.17
         const float p0 = iP >= 0 ? eden_settings_get(iP) : 0.0f, v0 = iV >= 0 ? eden_settings_get(iV) : 0.0f,
-                    d0 = iD >= 0 ? eden_settings_get(iD) : 0.0f;
+                    d0 = iD >= 0 ? eden_settings_get(iD) : 0.0f, s0 = iS >= 0 ? eden_settings_get(iS) : 0.0f;
 #if defined(EDEN_PLATFORM_IOS)
         const float highD = 6.0f;                              // radius 10 (P.4 decision 6)
+        const float lowS = 0.0f;                               // Low is 50% on iOS (FT.16)
 #else
         const float highD = 8.0f;                              // radius 16 (kRenderRadius[8])
+        const float lowS = 1.0f;                               // 75%
 #endif
-        bool ok = iP >= 0 && iV >= 0 && iD >= 0;
+        bool ok = iP >= 0 && iV >= 0 && iD >= 0 && iS >= 0;
         if (ok) {
             eden_settings_set(iP, 1.0f);                       // Low
-            ok = eden_settings_get(iV) == 1.0f && eden_settings_get(iD) == 5.0f && eden_settings_get(iP) == 1.0f;
+            ok = eden_settings_get(iV) == 1.0f && eden_settings_get(iD) == 5.0f && eden_settings_get(iS) == lowS &&
+                 eden_settings_get(iP) == 1.0f;
             eden_settings_set(iP, 3.0f);                       // High: Auto view, the larger window
             ok = ok && eden_settings_get(iV) == 0.0f && eden_settings_get(iD) == highD && eden_settings_get(iP) == 3.0f;
             eden_settings_set(iV, 3.0f);                       // by hand
@@ -1078,7 +1081,7 @@ int run_ui_selftest() {
             ok = ok && eden_settings_get(iV) == 0.0f && eden_settings_get(iD) == 5.0f;
             eden_settings_set(iD, 2.0f);                       // the radius by hand -> Custom too
             ok = ok && eden_settings_get(iP) == 0.0f;
-            eden_settings_set(iV, v0); eden_settings_set(iD, d0); eden_settings_set(iP, p0);
+            eden_settings_set(iV, v0); eden_settings_set(iD, d0); eden_settings_set(iS, s0); eden_settings_set(iP, p0);
         }
         check(ok, "graphics presets set their knobs; a hand edit becomes Custom", "");
     }

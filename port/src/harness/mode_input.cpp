@@ -121,7 +121,7 @@ int run_fly_selftest() {
     g_tickInput = true;   // W/Space/Ctrl/Shift reach the engine through the input tick
     const char* name = g_opt.world.empty() ? "fly-selftest" : g_opt.world.c_str();
     if (!open_world(name, g_opt.height)) return 1;
-    g_app->viewController.setFixedEtime(1.0f / 60.0f);
+    g_app->setFixedEtime(1.0f / 60.0f);
     tick(60);
     Player* pl = World::getWorld->player;
     char d[240];
@@ -365,7 +365,7 @@ int run_fly_selftest() {
     check(ran > NOCLIP_SPEED * 18.0f && unloaded == 0 && below > 0, "a long noclip run: streaming keeps up", d);
     fly_set_state(0);
 
-    g_app->viewController.setFixedEtime(0.0f);
+    g_app->setFixedEtime(0.0f);
     std::printf("[eden-fly] %s (%d failure(s))\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
     return g_selftestFailures ? 1 : 0;
 }

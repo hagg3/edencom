@@ -63,8 +63,8 @@ Read this before writing any code. These are the implicit rules the codebase fol
   mark the exact hazards; `archive/crashes/` holds the resulting App Store crash logs). The
   double-buffered chunk fields, `chunksToUpdateImmediatley`, and the sanity-check
   printouts are all scaffolding of that design. The load pthread survives, unlocked. *(Port:
-  `Classes/MeshPool.{h,mm}` is a later worker pool for meshing and column decode, but it compiles only
-  under `EDEN_THREADED`, which only the retired web build defined; every native target meshes inline.)*
+  a later worker pool for meshing and column decode, `MeshPool`, only the retired web build compiled; SM.8
+  deleted it, so every target meshes inline. It is in git history.)*
 - **Global mutable state**: FileManager's static file handle/header, Terrain's file
   statics, Model's static pools — none of it is re-entrant; exactly one world at a
   time, one of each system.

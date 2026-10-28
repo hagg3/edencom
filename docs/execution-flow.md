@@ -14,26 +14,25 @@ everything below it are shared.
   `SDL_InitSubSystem(EVENTS)` → `SDL_AddEventWatch` (background/terminate save, below) →
   `eden_gl_context_create()` (window + GL context; must precede the engine, because
   `World::World()` issues real GL calls; a failure leaves the engine running headless) →
-  `eden_seam_main()` (`port/src/seam/main_native.cpp`: publishes the screen-metric globals that
-  `EAGLView` used to set, then `EdenAppDelegate::didFinishLaunching()` →
-  `EdenViewController::construct()` (`new World()`) and `startAnimation()`) → input init → settings
+  `App::boot()` (`port/src/seam/App.cpp`: publishes the screen-metric globals that
+  `EAGLView` used to set, builds the `World` (`new World()`) and `startAnimation()`) → input init → settings
   load → either a `--*` harness mode or the interactive loop. The default and saves directories
   come from `eden_platform_documents_root()` (`port/src/eden_app_identity.h`).
 - **Interactive loop**: sleep to the Settings fps cap (`eden_get_fps_cap()`; 0 = uncapped,
   vsync-bound), then `pump_events()` (SDL events: quit, focus, resize, input) → `settings_pump()` →
   `eden_native_input_tick()` (queued input, *before* the engine tick that consumes it) →
-  `EdenViewController::drawFrame(true)` → `eden_native_audio_tick()` → `eden_heap_pressure_tick()`.
-- **`drawFrame`** (`port/src/seam/EdenViewController_native.cpp`): wall-clock `etime`, clamped to
+  `App::drawFrame(true)` → `eden_native_audio_tick()` → `eden_heap_pressure_tick()`.
+- **`drawFrame`** (`port/src/seam/App.cpp`): wall-clock `etime`, clamped to
   0.1 s (a harness may fix it), inside an autorelease pool → `world->update(etime)` →
   `world->renderFrame(draw)` (always called, even when not drawing — it owns the WAIT promotion and
   the exit check) → present. The `TRUE` "retina swap" answer of `World::update` is **ignored by
   design**: `IS_IPAD`/`SCALE_*` are the layout point space here, not the resolution.
 - **Lifecycle**: `SDL_EVENT_QUIT` and (via the event watch) `SDL_EVENT_WILL_ENTER_BACKGROUND` /
-  `SDL_EVENT_TERMINATING` call `EdenAppDelegate::onPageHide()` — save the open world
+  `SDL_EVENT_TERMINATING` call `App::onPageHide()` — save the open world
   (`eden_app_will_background()`, docs/save-load.md "Save-on-background"), then `stopAnimation()`.
   Focus loss only pauses the loop (`onVisibilityHidden`, no save); focus gain / foreground resume it.
 - `LOW_MEM_DEVICE` and `LOW_GRAPHICS` are never set on native (a decision, commented above
-  `eden_seam_main()` in `main()`), and `eden_low_memory()` stays 0.
+  `App::boot()` in `main()`), and `eden_low_memory()` stays 0.
 
 ## Important files (stock iOS shell)
 - `main.m` — trivial `UIApplicationMain`.
@@ -52,7 +51,7 @@ everything below it are shared.
    `IS_IPAD`, `IS_RETINA`, `SUPPORTS_RETINA`, `IS_WIDESCREEN`, `SCREEN_WIDTH/HEIGHT`,
    `SCALE_WIDTH/HEIGHT`, `P_ASPECT_RATIO`, and probes for an ES2 context purely to
    decide the far plane: `P_ZFAR=120` if ES2-capable hardware, else `20`
-   (in `initWithCoder:`; on the port `eden_seam_create_eagl_view` sets the screen metrics and the far
+   (in `initWithCoder:`; on the port `App::boot()` sets the screen metrics and the far
    plane is set by `Graphics::setZFAR` per the view-distance setting). **Pitfall:** on a Retina iPhone, `IS_IPAD` is set to `TRUE` —
    the flag really means "2× logical scale", not "is an iPad".
 3. `EdenViewController awakeFromNib`:
@@ -109,10 +108,10 @@ stateDiagram-v2
 
 - `GAME_MODE_WAIT` is a one-frame buffer state: `World::render()` in WAIT does nothing
   but promote `target_game_mode` — this gives the framebuffer swap a clean frame.
-- `exit_to_menu` is a file-static BOOL in `World.cpp` set by the HUD menu; it is checked
+- `exit_to_menu` is a file-static bool in `World.cpp` set by the HUD menu; it is checked
   at the *end* of `World::render()` so teardown never happens mid-frame.
 - **Modified from stock (2026-07-30):** those two transitions are the reason
-  `render()` is now a one-line wrapper over `World::renderFrame(BOOL draw)`.
+  `render()` is now a one-line wrapper over `World::renderFrame(bool draw)`.
   `renderFrame(FALSE)` draws nothing but still runs the WAIT promotion and the
   `exit_to_menu` check, so a caller that wants to drop a frame's *drawing* (the native
   `drawFrame(false)`; first the web build's frame-rate cap) can do so without wedging a
@@ -160,8 +159,8 @@ session both are no-ops ([networking.md](networking.md) "The live world").
 6. Effects, fireworks, player (the build preview; in third person the fallback body box when the
    creature PODs are not loaded — the Green body itself draws in step 4), HUD last.
 
-Port additions: the 3D pass is bracketed by `eden_scene_pass_begin/end` (render scale: it may draw
-offscreen and be upscaled; the HUD draws at full resolution — rendering.md "Scene-pass bracket"),
+Port additions: the 3D pass is bracketed by `R::beginScene/endScene` (render scale: it may draw
+offscreen and be composited by a quad; the HUD draws at full resolution — rendering.md "Scene-pass bracket"),
 and the in-game Settings modal and an active `GLDialog` draw last, on top.
 
 Note the world-to-GL translation: everything after the chunk passes runs inside
@@ -217,14 +216,14 @@ loading; `doneLoading` acts as the state: 0 idle → 1 loading → 2 finished.
 | Port: the multiplayer network thread (one `std::thread` per `MpSession`, `port/src/net/`, MP.2) | connects, reads/writes the socket, frames lines, inflates `SNAPZ` and classifies lines into plain data on mutex-guarded queues; never touches engine state. The main thread drains with `drainSide`/`drainWorld`. Started by the join flow (`port/src/seam/MpLink_native.cpp`, MP.3b; `MpWorld::tick` pumps it each frame), stopped (joined) when `MpWorld::endSession`/`dropLink` releases the link. `--mp-replay` feeds recorded lines with no thread |
 | Port: SDL's audio device thread | mixes the `SDL_AudioStream`s that `eden_native_audio_tick()` feeds from the main thread; no engine code runs there |
 
-`MeshPool` (off-thread meshing) and worker column decode exist in the tree but are compiled
-out: no build defines `EDEN_THREADED` (docs/rendering.md "Off-thread meshing").
+There is no meshing or column-decode worker: the dormant `MeshPool` was deleted in SM.8
+(docs/rendering.md "Off-thread meshing").
 
 Historically there was a chunk-building background thread and a column-streaming
 thread — both are commented out in `Terrain.cpp` and `World.cpp`, with the author's own
 race-condition annotations left in place (the `//issue #1..#3` comments in
-`Terrain.cpp`). The `rt*` double-buffered fields on `TerrainChunk` and the
-`chunksToUpdateImmediatley` list are surviving scaffolding from that design.
+`Terrain.cpp`). The `chunksToUpdateImmediatley` list is surviving scaffolding from that design
+(the `rt*` double-buffered chunk fields went in SM.8).
 **Caution:** the load pthread *does* touch the same chunk table the render thread reads
 (`doneLoading` handshake is the only synchronization; there are no locks). Don't add
 work to the loading thread without understanding this.

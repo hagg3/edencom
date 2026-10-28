@@ -17,12 +17,9 @@
 
 
 extern Vector colorTable[256];
-// EDEN_MESH_TLS (TerrainChunk.h): empty single-threaded, `thread_local` once the build has
-// threads. rebuild2() resets all of these at entry and consumes them before it returns, so
-// per-thread copies are all the isolation they need -- see TerrainChunk.h note 1.
-EDEN_MESH_TLS static int v_idx=0;
+static int v_idx=0;
 
-EDEN_MESH_TLS static int v_idx2=0;
+static int v_idx2=0;
 static Terrain* ter;
 
 // Stage R / R.2: the empty-chunk shortcut (TerrainChunk.h, typesEmpty). g_empty_shortcut is the
@@ -35,80 +32,31 @@ bool g_empty_selfcheck = false;
 int  g_empty_selfcheck_runs = 0;
 int  g_empty_selfcheck_stale = 0;
 
-// ---- off-thread meshing hooks (TerrainChunk.h notes 2 and 3). All NULL = stock behaviour. -----
-EDEN_MESH_TLS static const block8* t_mesh_blocks=NULL;
-EDEN_MESH_TLS static const color8* t_mesh_colors=NULL;
-EDEN_MESH_TLS static const unsigned char* t_mesh_burn=NULL;
-EDEN_MESH_TLS static MeshSideEffect* t_mesh_sink=NULL;
-EDEN_MESH_TLS static int t_mesh_sink_max=0;
-EDEN_MESH_TLS static int* t_mesh_sink_count=NULL;
-// H.2: the shadow tops a worker meshes with (gathered at dispatch, Shadow.h), and the mode they
-// were gathered for. Read only while t_mesh_blocks is set; NULL = shadows Off = the stock colours.
-EDEN_MESH_TLS static const unsigned char* t_mesh_shade=NULL;
-EDEN_MESH_TLS static int t_mesh_shade_mode=0;
-
-void tc_meshSetSource(const block8* blocks,const color8* colors,const unsigned char* burnMask,
-                      MeshSideEffect* sink,int sink_max,int* sink_count){
-    t_mesh_blocks=blocks;
-    t_mesh_colors=colors;
-    t_mesh_burn=burnMask;
-    t_mesh_sink=sink;
-    t_mesh_sink_max=sink_max;
-    t_mesh_sink_count=sink_count;
-    if(sink_count)*sink_count=0;
-}
-void tc_meshSetShade(const unsigned char* tops,int mode){
-    t_mesh_shade=mode?tops:NULL;
-    t_mesh_shade_mode=mode;
-}
-void tc_meshClearSource(){
-    t_mesh_shade=NULL;
-    t_mesh_shade_mode=0;
-    t_mesh_blocks=NULL;
-    t_mesh_colors=NULL;
-    t_mesh_burn=NULL;
-    t_mesh_sink=NULL;
-    t_mesh_sink_max=0;
-    t_mesh_sink_count=NULL;
-}
-// Queue a side effect for the main thread, or perform it now when nobody asked us to defer.
-// Dropping one on a full sink is deliberate and survivable: a portal that fails to register
-// re-registers on the chunk's next rebuild (the block is still there), and the repair path is
-// for block bytes that are already corrupt.
-static void mesh_deferOrDo(int kind,int x,int y,int z,int a,int b);
-// A block is burning if the main thread said so at dispatch (worker) or if burnList says so now
-// (main thread). Only affects vertex COLOUR, never vertex count -- but burnList is a linked list
-// the main thread edits, so a worker must not walk it.
-static inline bool mesh_isOnFire(const unsigned char* burn,int idx,int gx,int gz,int gy){
-    if(burn)return burn[idx]!=0;
-    return isOnFire(gx,gz,gy);
-}
-
 extern unsigned short allIndices[INDICES_MAX];
 
-extern GLshort cubeTexture[];
-extern GLshort liquidTexture[2*6*6];
-extern GLshort side2ShortVertices[3*6*6];
-extern GLshort side3ShortVertices[3*6*6];
-extern GLshort side4ShortVertices[3*6*6];
-extern GLshort side2Texture[2*6*6];
-extern GLshort side3Texture[2*6*6];
-extern GLshort side4Texture[2*6*6];
-extern GLshort side1Texture[2*6*6];
-extern GLshort side1ShortVertices[3*6*6];
-extern GLshort ramp1ShortVertices[3*6*6];
-extern GLshort ramp2ShortVertices[3*6*6];
-extern GLshort ramp3ShortVertices[3*6*6];
-extern GLshort ramp4ShortVertices[3*6*6];
-extern GLshort ramp2Texture[2*6*6];
-extern GLshort ramp3Texture[2*6*6];
-extern GLshort ramp4Texture[2*6*6];
-extern GLshort ramp1Texture[2*6*6];
-extern GLshort cubeShortVertices[3*6*6];
-extern GLshort liquidCube[3*6*6];
-extern GLubyte cubeColors[3*6];
-extern GLfloat zzzzColors[3*6*6];
-extern GLfloat cubeNormals[3*6*6];
+extern int16_t cubeTexture[];
+extern int16_t liquidTexture[2*6*6];
+extern int16_t side2ShortVertices[3*6*6];
+extern int16_t side3ShortVertices[3*6*6];
+extern int16_t side4ShortVertices[3*6*6];
+extern int16_t side2Texture[2*6*6];
+extern int16_t side3Texture[2*6*6];
+extern int16_t side4Texture[2*6*6];
+extern int16_t side1Texture[2*6*6];
+extern int16_t side1ShortVertices[3*6*6];
+extern int16_t ramp1ShortVertices[3*6*6];
+extern int16_t ramp2ShortVertices[3*6*6];
+extern int16_t ramp3ShortVertices[3*6*6];
+extern int16_t ramp4ShortVertices[3*6*6];
+extern int16_t ramp2Texture[2*6*6];
+extern int16_t ramp3Texture[2*6*6];
+extern int16_t ramp4Texture[2*6*6];
+extern int16_t ramp1Texture[2*6*6];
+extern int16_t cubeShortVertices[3*6*6];
+extern int16_t liquidCube[3*6*6];
+extern uint8_t cubeColors[3*6];
+extern float zzzzColors[3*6*6];
+extern float cubeNormals[3*6*6];
 
 
 void TerrainChunk::resetForReuse(){
@@ -117,10 +65,9 @@ void TerrainChunk::resetForReuse(){
    // printg("leaking memory freeing small blocks\n");
  //   memset(sblocks,0,sizeof(SmallBlock*)*CHUNK_SIZE3);
     memset(pcolors,0,sizeof(color8)*CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE);
-    if(rtobjects){free(rtobjects);rtobjects=NULL;}   // Q.1 F6
-    rtnum_objects=0;
-    rtobjects=NULL;
-    rtn_vertices=0;
+    if(objects){free(objects);objects=NULL;}   // Q.1 F6
+    num_objects=0;
+    n_vertices=0;
     typesEmpty=false;   // R.2: "not known" until Terrain::addChunk sees what lands in it
    
     
@@ -133,8 +80,7 @@ TerrainChunk::TerrainChunk(const int* boundz,Terrain* terrain){
     
   //  pblocks2=blocks2;
     
-    rtnum_objects=0;
-    rtobjects=NULL;
+    num_objects=0;
     objects=NULL;
     needsVBO=false;
     modified=false;
@@ -143,7 +89,6 @@ TerrainChunk::TerrainChunk(const int* boundz,Terrain* terrain){
     
     memset(pcolors,0,sizeof(color8)*CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE);
     indices=NULL;
-    rtindices=NULL;
 	ter=terrain;
 	vertexBuffer=vertexBuffer2=elementBuffer=0;
 	vbCapacity=vb2Capacity=0;
@@ -161,30 +106,24 @@ TerrainChunk::TerrainChunk(const int* boundz,Terrain* terrain){
     }*/
 
     isTesting=0;
-    // B3 Stage 2: no worker has ever seen this chunk. Same reasoning as the rt* block below --
-    // a field the main thread branches on every frame must not start as heap garbage.
-    meshJobState=MESH_JOB_IDLE;
-    meshJobStale=false;
 	n_vertices=0;
     n_vertices2=0;
     verticesbg=NULL;
     verticesbg2=NULL;
-    // A brand-new chunk has no geometry, and render() decides that by testing rtn_vertices==0 --
+    // A brand-new chunk has no geometry, and render() decides that by testing n_vertices==0 --
     // so every field the draw path reads has to say "empty" from the moment the object exists, not
     // from the first rebuild2()/prepareVBO() pair. These were left uninitialized: a chunk is
-    // allocated out of a heap that has just held vertex and colour data, so rtn_vertices came up
+    // allocated out of a heap that has just held vertex and colour data, so n_vertices came up
     // garbage-nonzero, render() sailed past its guard, and the index memcpy read
-    // allIndices+rtface_idx[i] with rtface_idx[i] in the tens of millions -- an out-of-bounds
-    // access with a NULL rtindices for a destination. Stock never reached it because every chunk
+    // allIndices+face_idx[i] with face_idx[i] in the tens of millions -- an out-of-bounds
+    // access with a NULL indices for a destination. Stock never reached it because every chunk
     // was meshed before it could be drawn; deferring the mesh of a RESIDENT chunk (a wider
-    // "don't mesh it yet" test during a sliced bulk reload, and equally a worker-thread mesher
-    // whose output lands a frame late) makes it reachable. See WORKING/chunk-streaming-redesign-
+    // "don't mesh it yet" test during a sliced bulk reload) makes it reachable. See WORKING/chunk-streaming-redesign-
     // prompt.md's "Decision (2026-08-13, pass 70)" §2, which recorded the crash without a cause.
-    rtn_vertices=0;
-    rtn_vertices2=0;
-    rtGeomHash=0;   // Phase N Stage 1 — same reason the two counts above are zeroed here: a chunk
-    rtFullHash=0;   // is allocated out of a heap that has just held vertex data.
-    rtvis_vertices=0;
+    n_vertices=0;
+    n_vertices2=0;
+    geomHash=0;   // Phase N Stage 1 — same reason the two counts above are zeroed here: a chunk
+    fullHash=0;   // is allocated out of a heap that has just held vertex data.
     vis_vertices=0;
     idxn=0;
     for(int i=0;i<7;i++){
@@ -193,15 +132,8 @@ TerrainChunk::TerrainChunk(const int* boundz,Terrain* terrain){
         num_vertices2[i]=0;
         face_idx2[i]=0;
         visibleFaces[i]=false;
-        rtnum_vertices[i]=0;
-        rtface_idx[i]=0;
-        rtnum_vertices2[i]=0;
-        rtface_idx2[i]=0;
-        rtvisibleFaces[i]=false;
     }
    
-        rtobjects=NULL;
-        
   //  needsRebuild=FALSE;//just a flag for terrain to use right now, not used internally
     
     
@@ -216,9 +148,9 @@ void TerrainChunk::setBounds( int* boundz){
 		rbounds[i]=(float)pbounds[i]*BLOCK_SIZE;
 	}	
 }
-EDEN_MESH_TLS static int face_visibility[CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE];
+static int face_visibility[CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE];
 //static Vector lighting[CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE];
-EDEN_MESH_TLS static short face_size[CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE*6];
+static short face_size[CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE*6];
 
 //static vertexStructSmall vertices[CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE*6*6];
 //static vertexStructSmall vertices2[CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE*6*6];
@@ -268,11 +200,11 @@ extern bool isSideFaceSolid[4][6];
 const static int dz2[6]={-1,1,0,0,0,0};
 const static int dx2[6]={0,0,-1,1,0,0};
 const static int dy2[6]={0,0,0,0,-1,1};
-extern const GLubyte blockColor[NUM_BLOCKS+1][3];
+extern const uint8_t blockColor[NUM_BLOCKS+1][3];
 
 
-EDEN_MESH_TLS static bool hasBlocky[CHUNK_SIZE];
-EDEN_MESH_TLS static bool hasVisy[CHUNK_SIZE];
+static bool hasBlocky[CHUNK_SIZE];
+static bool hasVisy[CHUNK_SIZE];
 
 
 extern block8* blockarray;
@@ -282,31 +214,6 @@ extern int getLevel(int type);
 extern int getBaseType(int type);
 extern int g_offcx;
 extern int g_offcz;
-
-static void mesh_applySideEffect(int kind,int x,int y,int z,int a,int b){
-    if(kind==MESH_SE_PORTAL)
-        World::getWorld->terrain->portals->addPortal(x,y,z,a,b);
-    else if(kind==MESH_SE_REPAIR&&ter)
-        ter->setLand(x,z,y,a,true);
-}
-// Perform a global mutation now, or queue it for the main thread when a worker asked us to defer.
-// Dropping one on a full sink is deliberate and survivable: a portal that fails to register
-// re-registers on the chunk's next rebuild (the block is still there), and the repair path only
-// fires on block bytes that are already corrupt.
-static void mesh_deferOrDo(int kind,int x,int y,int z,int a,int b){
-    if(t_mesh_sink){
-        if(t_mesh_sink_count&&*t_mesh_sink_count<t_mesh_sink_max){
-            MeshSideEffect* se=&t_mesh_sink[(*t_mesh_sink_count)++];
-            se->kind=kind; se->x=x; se->y=y; se->z=z; se->a=a; se->b=b;
-        }
-        return;
-    }
-    mesh_applySideEffect(kind,x,y,z,a,b);
-}
-void tc_meshReplaySideEffects(const MeshSideEffect* sink,int count){
-    for(int i=0;i<count;i++)
-        mesh_applySideEffect(sink[i].kind,sink[i].x,sink[i].y,sink[i].z,sink[i].a,sink[i].b);
-}
 
 int TerrainChunk::rebuild2(){   //here be dragons//
     rebuildCounter++;
@@ -322,12 +229,6 @@ int TerrainChunk::rebuild2(){   //here be dragons//
     
     clearOldVerticesOnly=false;
     has_light=false;
-    // TerrainChunk.h note 2: a worker meshes from a private snapshot of the chunk's voxels, so the
-    // counting pass and the fill pass below cannot disagree about what is in this chunk. Resolved
-    // once per rebuild rather than per voxel; single-threaded these are always pblocks/pcolors.
-    const block8* const mblocks=t_mesh_blocks?t_mesh_blocks:pblocks;
-    const color8* const mcolors=t_mesh_colors?t_mesh_colors:pcolors;
-    const unsigned char* const mburn=t_mesh_burn;
     
    
     v_idx=0;
@@ -340,17 +241,16 @@ int TerrainChunk::rebuild2(){   //here be dragons//
     }
    
     
-   // self.rtnum_objects=self.rtn_vertices=self.rtn_vertices2=0;
+   // self.num_objects=self.n_vertices=self.n_vertices2=0;
 	clearMeshes();
     memset(hasBlocky,0,sizeof(bool)*CHUNK_SIZE);
     // Stage R / R.2: an all-air chunk takes the "return early 1" below without the 4096-voxel scan.
     // Everything above has already run, so the chunk is left exactly as the scan would leave it --
     // needsVBO=TRUE, has_light=FALSE, num_objects=0 (clearMeshes), clearOldVerticesOnly=TRUE, and
     // the vertex counts zeroed -- because on an all-zero type plane the scan sets nothing. It sits
-    // ahead of BOTH mesher passes, so their counting/fill agreement is not involved. Main thread
-    // only: a worker meshes a snapshot (t_mesh_blocks) the bit does not describe.
+    // ahead of BOTH mesher passes, so their counting/fill agreement is not involved.
     // g_empty_selfcheck runs the scan anyway and counts a bit that was wrong.
-    const bool emptyShortcut=g_empty_shortcut&&!t_mesh_blocks&&typesEmpty;
+    const bool emptyShortcut=g_empty_shortcut&&typesEmpty;
     if(emptyShortcut&&!g_empty_selfcheck){
         clearOldVerticesOnly=true;
         return 0;
@@ -370,19 +270,18 @@ int TerrainChunk::rebuild2(){   //here be dragons//
     for(int y=0;y<CHUNK_SIZE;y++){
         for(int x=0;x<CHUNK_SIZE;x++){
 			for(int z=0;z<CHUNK_SIZE;z++){
-				int type=mblocks[CC(x,z,y)];
+				int type=pblocks[CC(x,z,y)];
                 if( type==TYPE_LIGHTBOX){
                     has_light=true;
                     //[self setLand:x:z:y:TYPE_GRASS];
                     //type=TYPE_GRASS;
                 }
 				if(type<0||type>NUM_BLOCKS){
-					// Repairs a corrupt block byte in the WORLD, not just in this mesh -- so a
-					// worker queues it instead (TerrainChunk.h note 3). The mesh itself still
+					// Repairs a corrupt block byte in the WORLD, not just in this mesh. The mesh itself still
 					// treats the block as stone either way, since face_visibility/pblocks are
 					// re-read by nobody between here and the fill pass.
-					mesh_deferOrDo(MESH_SE_REPAIR,x+pbounds[0],y+pbounds[1],z+pbounds[2],TYPE_STONE,0);
-					if(!t_mesh_sink)setLand(x,z,y,TYPE_STONE);
+					if(ter)ter->setLand(x+pbounds[0],z+pbounds[2],y+pbounds[1],TYPE_STONE,true);
+					setLand(x,z,y,TYPE_STONE);
                     
                     hasAnything=true;
                     hasBlocky[y]=true;
@@ -463,8 +362,8 @@ int TerrainChunk::rebuild2(){   //here be dragons//
 		}
 	}
     // R.2: the scan just read every type, so it can refresh the bit -- this is how a chunk dug back
-    // to all air rejoins the shortcut (setLand never sets the bit). Not on a worker's snapshot.
-    if(!t_mesh_blocks)typesEmpty=!hasAnything;
+    // to all air rejoins the shortcut (setLand never sets the bit).
+    typesEmpty=!hasAnything;
     if(emptyShortcut&&hasAnything){
         g_empty_selfcheck_stale++;
         printg("R.2 empty-bit self-check: chunk at %d %d %d was marked empty and is not\n",
@@ -515,13 +414,13 @@ int TerrainChunk::rebuild2(){   //here be dragons//
                             if(blockinfo[type]&IS_ATLAS2){
                                 if(blockinfo[type]&IS_LIQUID){
                                     if(blockinfo[type]==blockinfo[blockarray[idx1]]) 
-                                        if((f==4||f==5||getLevel(type)>=getLevel(blockarray[idx1]))&&mcolors[(gx-pbounds[0])*(CHUNK_SIZE*CHUNK_SIZE)+(gz-pbounds[2])*(CHUNK_SIZE)+(gy-pbounds[1])]==nbColor(gx+dx2[f],gz+dz2[f],gy+dy2[f])){
+                                        if((f==4||f==5||getLevel(type)>=getLevel(blockarray[idx1]))&&pcolors[(gx-pbounds[0])*(CHUNK_SIZE*CHUNK_SIZE)+(gz-pbounds[2])*(CHUNK_SIZE)+(gy-pbounds[1])]==nbColor(gx+dx2[f],gz+dz2[f],gy+dy2[f])){
                                             isvisible&=~(1<<f);
                                         }
                                     
                                 }else 
                                     if(type==blockarray[idx1]){
-                                        if(mcolors[(gx-pbounds[0])*(CHUNK_SIZE*CHUNK_SIZE)+(gz-pbounds[2])*(CHUNK_SIZE)+(gy-pbounds[1])]==nbColor(gx+dx2[f],gz+dz2[f],gy+dy2[f])){
+                                        if(pcolors[(gx-pbounds[0])*(CHUNK_SIZE*CHUNK_SIZE)+(gz-pbounds[2])*(CHUNK_SIZE)+(gy-pbounds[1])]==nbColor(gx+dx2[f],gz+dz2[f],gy+dy2[f])){
                                             
                                             
                                             isvisible&=~(1<<f);
@@ -589,7 +488,7 @@ int TerrainChunk::rebuild2(){   //here be dragons//
     }else if(pbounds[1]+CHUNK_SIZE==T_HEIGHT){
         for(int x=0;x<CHUNK_SIZE;x++)
             for(int z=0;z<CHUNK_SIZE;z++)
-                if(mblocks[x*CHUNK_SIZE*CHUNK_SIZE+z*CHUNK_SIZE+CHUNK_SIZE-1]){
+                if(pblocks[x*CHUNK_SIZE*CHUNK_SIZE+z*CHUNK_SIZE+CHUNK_SIZE-1]){
                     face_visibility[x*(CHUNK_SIZE*CHUNK_SIZE)+z*(CHUNK_SIZE)+CHUNK_SIZE-1]|=FACE_TOP;
                     hasAnything=true;
                     hasVisy[CHUNK_SIZE-1]=true;
@@ -610,7 +509,7 @@ int TerrainChunk::rebuild2(){   //here be dragons//
 			for(int z=0;z<CHUNK_SIZE;z++){
                 if(!face_visibility[x*(CHUNK_SIZE*CHUNK_SIZE)+z*(CHUNK_SIZE)+y])continue;
                 
-				int type=mblocks[x*CHUNK_SIZE*CHUNK_SIZE+z*CHUNK_SIZE+y];
+				int type=pblocks[x*CHUNK_SIZE*CHUNK_SIZE+z*CHUNK_SIZE+y];
                 if((blockinfo[type]&IS_OBJECT)||(blockinfo[type]&IS_PORTAL)){
                     for(int f=0;f<6;f++)
                     face_size[x*(CHUNK_SIZE*CHUNK_SIZE*6)+z*(CHUNK_SIZE*6)+y*6+f]=1;
@@ -674,13 +573,13 @@ int TerrainChunk::rebuild2(){   //here be dragons//
 			for(int z=0;z<CHUNK_SIZE;z++){
                 if(!face_visibility[x*(CHUNK_SIZE*CHUNK_SIZE)+z*(CHUNK_SIZE)+y])continue; 
                 
-                int type=mblocks[x*CHUNK_SIZE*CHUNK_SIZE+z*CHUNK_SIZE+y];
+                int type=pblocks[x*CHUNK_SIZE*CHUNK_SIZE+z*CHUNK_SIZE+y];
                 int isvisible=face_visibility[x*(CHUNK_SIZE*CHUNK_SIZE)+z*(CHUNK_SIZE)+y];
                 if(blockinfo[type]&IS_PORTAL){
                    
                     if(type==TYPE_PORTAL_TOP){
                         
-                        objects[objidx].color=mcolors[x*CHUNK_SIZE*CHUNK_SIZE+z*CHUNK_SIZE+y];
+                        objects[objidx].color=pcolors[x*CHUNK_SIZE*CHUNK_SIZE+z*CHUNK_SIZE+y];
                        
                         objects[objidx].open=false;
                         objects[objidx].type=TYPE_PORTAL_TOP;
@@ -688,9 +587,8 @@ int TerrainChunk::rebuild2(){   //here be dragons//
                         objects[objidx].pos.x=x+pbounds[0];
                         objects[objidx].pos.y=y-1+pbounds[1];
                         objects[objidx].pos.z=z+pbounds[2];
-                        // Mutates the global portal list -- deferred to the main thread when a
-                        // worker is meshing (TerrainChunk.h note 3).
-                        mesh_deferOrDo(MESH_SE_PORTAL,x+pbounds[0],y+pbounds[1],z+pbounds[2],objects[objidx].dir,objects[objidx].color);
+                        // Mutates the global portal list.
+                        World::getWorld->terrain->portals->addPortal(x+pbounds[0],y+pbounds[1],z+pbounds[2],objects[objidx].dir,objects[objidx].color);
                         
                         objidx++;
                     }
@@ -710,7 +608,7 @@ int TerrainChunk::rebuild2(){   //here be dragons//
                         face_visibility[x*(CHUNK_SIZE*CHUNK_SIZE)+z*(CHUNK_SIZE)+y]=0;
                         if(type==TYPE_DOOR_TOP){
                             
-                            objects[objidx].color=mcolors[x*CHUNK_SIZE*CHUNK_SIZE+z*CHUNK_SIZE+y];
+                            objects[objidx].color=pcolors[x*CHUNK_SIZE*CHUNK_SIZE+z*CHUNK_SIZE+y];
                             objects[objidx].open=false;
                             objects[objidx].type=TYPE_DOOR_TOP;
                             objects[objidx].dir=getLandc(x+pbounds[0],z+pbounds[2],y+pbounds[1]-1)-TYPE_DOOR1;
@@ -750,7 +648,7 @@ int TerrainChunk::rebuild2(){   //here be dragons//
                             objidx++;
                         }else if(type==TYPE_GOLDEN_CUBE){
                             // printg("got cube\n");
-                            objects[objidx].color=mcolors[x*CHUNK_SIZE*CHUNK_SIZE+z*CHUNK_SIZE+y];
+                            objects[objidx].color=pcolors[x*CHUNK_SIZE*CHUNK_SIZE+z*CHUNK_SIZE+y];
                             objects[objidx].open=false;
                             objects[objidx].type=TYPE_GOLDEN_CUBE;
                             objects[objidx].dir=0;
@@ -761,7 +659,7 @@ int TerrainChunk::rebuild2(){   //here be dragons//
                             objidx++;
                         }else if(type==TYPE_FLOWER){
                             // printg("got flower\n");
-                            objects[objidx].color=mcolors[x*CHUNK_SIZE*CHUNK_SIZE+z*CHUNK_SIZE+y];
+                            objects[objidx].color=pcolors[x*CHUNK_SIZE*CHUNK_SIZE+z*CHUNK_SIZE+y];
                             objects[objidx].open=false;
                             objects[objidx].type=TYPE_FLOWER;
                             objects[objidx].dir=0;
@@ -870,15 +768,11 @@ int TerrainChunk::rebuild2(){   //here be dragons//
     float light[3]={1.0f,1.0f,1.0f};
     if(!LOW_MEM_DEVICE&&v_equals(World::getWorld->terrain->final_skycolor,colorTable[54]))
         skylight=.35f;
-    // H.2: the shadow tops round this chunk. A worker was handed them at dispatch (shadowTop is
-    // main-thread state); inline, gather them now. NULL = Off: every colour below is stock.
+    // H.2: the shadow tops round this chunk, gathered now. NULL = Off: every colour below is stock.
     unsigned char shadeLocal[SHADOW_GATHER_BYTES];
     const unsigned char* mshade=NULL;
     int mshadeMode=SHADOW_OFF;
-    if(t_mesh_blocks){
-        mshade=t_mesh_shade;
-        mshadeMode=t_mesh_shade_mode;
-    }else if(g_shadow_mode!=SHADOW_OFF){
+    if(g_shadow_mode!=SHADOW_OFF){
         shadow_gather(pbounds[0],pbounds[2],pbounds[1],shadeLocal);
         mshade=shadeLocal;
         mshadeMode=g_shadow_mode;
@@ -890,13 +784,13 @@ int TerrainChunk::rebuild2(){   //here be dragons//
         if(!face_visibility[idx])continue;
         
         int isvisible=face_visibility[idx];        
-        int type=mblocks[idx];
+        int type=pblocks[idx];
         int y=idx%CHUNK_SIZE;
         int z=(idx/CHUNK_SIZE)%CHUNK_SIZE;
         int x=(idx/CHUNK_SIZE2)%CHUNK_SIZE;        
         
         bool burned=false;
-        if(IS_FLAMMABLE&blockinfo[type]&&mesh_isOnFire(mburn,idx,x+pbounds[0],z+pbounds[2],y+pbounds[1])){
+        if(IS_FLAMMABLE&blockinfo[type]&&isOnFire(x+pbounds[0],z+pbounds[2],y+pbounds[1])){
             burned=true;
             
         }
@@ -982,8 +876,8 @@ int TerrainChunk::rebuild2(){   //here be dragons//
                         for(int i=0;i<3;i++)
                             paint[i]=(float)blockColor[type][i]/255;
                     }
-                    const GLshort* cubeVertices=cubeShortVertices;
-                    const GLshort* cubeTextureCustom=cubeTexture;
+                    const int16_t* cubeVertices=cubeShortVertices;
+                    const int16_t* cubeTextureCustom=cubeTexture;
                     if(blockinfo[type]&IS_LIQUID){
                         isLiquid=TRUE;
                         int level=getLevel(type);
@@ -1049,7 +943,7 @@ int TerrainChunk::rebuild2(){   //here be dragons//
                         
                         if(maxlevel==level)maxleveld=0;
                         if(maxlevel<level)maxleveld=(2+maxleveld)%4;
-                        const GLshort* cubeVerticesTop;
+                        const int16_t* cubeVerticesTop;
                         //  printg("maxleveld:%d",maxleveld);
                         if(maxleveld==0){                
                             cubeVerticesTop=side3Texture;
@@ -1248,7 +1142,7 @@ int TerrainChunk::rebuild2(){   //here be dragons//
         }*/
         float paint[3];
         
-        color8 clr=mcolors[idx];
+        color8 clr=pcolors[idx];
         if(blockinfo[type]&IS_PORTAL){
             clr=0;
           
@@ -1339,8 +1233,8 @@ int TerrainChunk::rebuild2(){   //here be dragons//
                 paint[i]=(float)blockColor[type][i]/255;
             }
         }
-        const GLshort* cubeVertices=cubeShortVertices;
-        const GLshort* cubeTextureCustom=cubeTexture;
+        const int16_t* cubeVertices=cubeShortVertices;
+        const int16_t* cubeTextureCustom=cubeTexture;
         if(blockinfo[type]&IS_LIQUID){
             isLiquid=true;
             int level=getLevel(type);
@@ -1406,7 +1300,7 @@ int TerrainChunk::rebuild2(){   //here be dragons//
             
             if(maxlevel==level)maxleveld=0;
             if(maxlevel<level)maxleveld=(2+maxleveld)%4;
-            const GLshort* cubeVerticesTop;
+            const int16_t* cubeVerticesTop;
             //  printg("maxleveld:%d",maxleveld);
             if(maxleveld==0){                
                 cubeVerticesTop=side3Texture;
@@ -1665,7 +1559,7 @@ int TerrainChunk::rebuild2(){   //here be dragons//
 // implementation may keep a deleted buffer alive until the GPU has drained it. Same fix row E3 gave
 // the object batches (Terrain.mm objBatchDraw): keep the name, track its byte capacity, and
 // glBufferSubData when the new geometry fits, glBufferData (grow only, never shrink) when it does
-// not. prepareVBO() is the worker->main publish barrier and runs on the main thread, so an in-place
+// not. prepareVBO() runs on the main thread, so an in-place
 // re-spec here is no less safe than the per-frame glBufferData render() already does on elementBuffer.
 // G.5b-6: the buffers are R::Buf (bufCreate/bufData/bufSubData/bufDestroy); same calls underneath.
 static void chunkUploadArray(R::Buf* name,int* capBytes,const void* data,int bytes){
@@ -1717,26 +1611,30 @@ void TerrainChunk::prepareVBO(){
     // assigned from them further down.
     if(g_mesh_checksum_enabled){
         if(clearOldVerticesOnly||!needsVBO){
-            if(clearOldVerticesOnly){ rtGeomHash=0; rtFullHash=0; }
+            if(clearOldVerticesOnly){ geomHash=0; fullHash=0; }
         } else {
             unsigned long long geom=1469598103934665603ULL, full=1469598103934665603ULL;
             eden_mesh_hash_vertices(geom,full,verticesbg,n_vertices);
             eden_mesh_hash_vertices(geom,full,verticesbg2,n_vertices2);
-            rtGeomHash=geom; rtFullHash=full;
+            geomHash=geom; fullHash=full;
         }
     }
+    // Q.1 F7: rebuild2() returns early for a chunk with no faces after filling objects, so an
+    // objects-only chunk (a lone door, flower, golden cube) keeps them. The earlier early returns
+    // leave num_objects counted but objects unallocated: that must read as 0.
+    if(!objects)num_objects=0;
     if(clearOldVerticesOnly){
        // printg("clearing some old vertices\n");
        
-        rtn_vertices=n_vertices=0;
-        rtn_vertices2=n_vertices2=0;
-        rtvis_vertices=vis_vertices=0;
+        n_vertices=0;
+        n_vertices2=0;
+        vis_vertices=0;
         for(int i=0;i<7;i++){
-            rtnum_vertices[i]=num_vertices[i]=0;
-            rtface_idx[i]=face_idx[i]=0;
-            rtnum_vertices2[i]=num_vertices2[i]=0;
-            rtface_idx2[i]=face_idx2[i]=0;
-            rtvisibleFaces[i]=visibleFaces[i]=0;
+            num_vertices[i]=0;
+            face_idx[i]=0;
+            num_vertices2[i]=0;
+            face_idx2[i]=0;
+            visibleFaces[i]=0;
             
         }
         
@@ -1744,7 +1642,7 @@ void TerrainChunk::prepareVBO(){
         if(n_vertices){
             
           
-            void* oldmem=rtindices;
+            void* oldmem=indices;
            
             if(oldmem){
                 free(oldmem);
@@ -1771,73 +1669,27 @@ void TerrainChunk::prepareVBO(){
         free(verticesbg2);
         verticesbg=NULL;
         verticesbg2=NULL;
-        // Q.1 F6: free on the pointer, not the count (a zeroed count used to leak the array).
-        if(rtobjects){free(rtobjects);rtobjects=NULL;}
-        rtnum_objects=0;
-        //printg("not freeing %d objects2\n",rtnum_objects);
-        // Q.1 F7: rebuild2() returns early for a chunk with no faces after filling objects, so
-        // an objects-only chunk (a lone door, flower, golden cube) publishes them here or never.
-        // The earlier early returns leave num_objects counted but objects unallocated: publish 0.
-        rtobjects=objects;
-        rtnum_objects=objects?num_objects:0;
-        objects=NULL;
-        num_objects=0;
         needsVBO=false;
        
     }
     if(!needsVBO){return;}
    
-   	rtn_vertices=n_vertices;
-  
-    rtn_vertices2=n_vertices2;
-    rtvis_vertices=vis_vertices;
-    
-    
-    //printg("not freeing %d objects\n",rtnum_objects);
-    if(rtobjects){free(rtobjects);rtobjects=NULL;}   // Q.1 F6
-    rtnum_objects=num_objects;
-    rtobjects=objects;
-
-    if(num_objects>0){
-        //printg("vertice 1: (%d,%d,%d)\n",verticesbg[0].position[0],verticesbg[0].position[1],verticesbg[0].position[2]);
-        }
-        
-
-    
-    for(int i=0;i<7;i++){
-        rtnum_vertices[i]=num_vertices[i];
-        rtface_idx[i]=face_idx[i];
-        rtnum_vertices2[i]=num_vertices2[i];
-        rtface_idx2[i]=face_idx2[i];
-        rtvisibleFaces[i]=visibleFaces[i];
-        
-    }
-   
-    
     if(n_vertices){
-       
-        indices=(unsigned short*)malloc(sizeof(unsigned short)*rtn_vertices);
-        void* oldmem=rtindices;
-        rtindices=indices;
-        if(oldmem){
-            free(oldmem);
-            
-        }
-        
-        
+        free(indices);
+        indices=(unsigned short*)malloc(sizeof(unsigned short)*n_vertices);
     }
     
     // M3(a): re-upload into the persistent buffer names rather than delete/recreate them. render()
-    // early-returns on rtn_vertices==0 and render2() is only called for chunks with rtn_vertices2>0
+    // early-returns on n_vertices==0 and render2() is only called for chunks with n_vertices2>0
     // (Terrain.mm:2721), so a name left allocated with stale contents is never drawn.
-    if(rtn_vertices){
-        chunkUploadArray(&vertexBuffer, &vbCapacity, verticesbg, sizeof(vertexStructSmall)*rtn_vertices);
+    if(n_vertices){
+        chunkUploadArray(&vertexBuffer, &vbCapacity, verticesbg, sizeof(vertexStructSmall)*n_vertices);
         if(elementBuffer==0)
             elementBuffer=R::bufCreate(R::BK_INDEX,R::U_STATIC);
     }
 
-    if(rtn_vertices2){
-        chunkUploadArray(&vertexBuffer2, &vb2Capacity, verticesbg2, sizeof(vertexStructSmall)*rtn_vertices2);
+    if(n_vertices2){
+        chunkUploadArray(&vertexBuffer2, &vb2Capacity, verticesbg2, sizeof(vertexStructSmall)*n_vertices2);
     }
     if(verticesbg)
         free(verticesbg);
@@ -1974,7 +1826,6 @@ void TerrainChunk::setLand(int x,int z,int y,int type){
         
 		pblocks[x*CHUNK_SIZE*CHUNK_SIZE+z*CHUNK_SIZE+y]=type;
         if(type)typesEmpty=false;    // R.2 (TerrainChunk.h): never leave an empty bit on a block
-        tc_noteChunkWritten(this);   // B3 Stage 2: invalidates an in-flight worker mesh
 		ter->setLand(x+pbounds[0] ,z+pbounds[2] ,y+pbounds[1] ,type ,false);
 	}
 
@@ -1987,24 +1838,22 @@ void TerrainChunk::unbuild(){
    
     clearMeshes();
     
-    if(rtobjects){free(rtobjects);rtobjects=NULL;}   // Q.1 F6: freed whatever rtnum_objects says
-    rtnum_objects=0;//disable objects for now
-	rtn_vertices=n_vertices=0;
-    rtn_vertices2=n_vertices2=0;
-    rtvis_vertices=vis_vertices=0;
+	n_vertices=0;
+    n_vertices2=0;
+    vis_vertices=0;
     for(int i=0;i<7;i++){
-        rtnum_vertices[i]=num_vertices[i]=0;
-        rtface_idx[i]=face_idx[i]=0;
-        rtnum_vertices2[i]=num_vertices2[i]=0;
-        rtface_idx2[i]=face_idx2[i]=0;
-        rtvisibleFaces[i]=visibleFaces[i]=0;
+        num_vertices[i]=0;
+        face_idx[i]=0;
+        num_vertices2[i]=0;
+        face_idx2[i]=0;
+        visibleFaces[i]=0;
         
     }
     
     
     
-        void* oldmem=rtindices;
-        rtindices=indices=0;
+        void* oldmem=indices;
+        indices=0;
         if(oldmem)
             free(oldmem);
             
@@ -2032,34 +1881,31 @@ void TerrainChunk::unbuild(){
 // M3(a) rule prepareVBO relies on), and the next upload reuses it instead of re-creating it. Also
 // resets the flags rebuild2() leaves behind (needsVBO, clearOldVerticesOnly, has_light), so a dropped
 // chunk is in the same state however it got here -- which is what lets a walked window and a fresh
-// load at the same spot hash equal (eden_debug_chunk_state). Main thread, and never on a chunk a
-// worker owns (the callers check mp_chunkBusy / the column read's own busy rule).
+// load at the same spot hash equal (eden_debug_chunk_state). Main thread.
 void TerrainChunk::dropGeometry(){
     clearMeshes();
-    if(rtobjects){free(rtobjects);rtobjects=NULL;}   // Q.1 F6: freed whatever rtnum_objects says
-    rtnum_objects=0;//disable objects for now
-	rtn_vertices=n_vertices=0;
-    rtn_vertices2=n_vertices2=0;
-    rtvis_vertices=vis_vertices=0;
+	n_vertices=0;
+    n_vertices2=0;
+    vis_vertices=0;
     for(int i=0;i<7;i++){
-        rtnum_vertices[i]=num_vertices[i]=0;
-        rtface_idx[i]=face_idx[i]=0;
-        rtnum_vertices2[i]=num_vertices2[i]=0;
-        rtface_idx2[i]=face_idx2[i]=0;
-        rtvisibleFaces[i]=visibleFaces[i]=0;
+        num_vertices[i]=0;
+        face_idx[i]=0;
+        num_vertices2[i]=0;
+        face_idx2[i]=0;
+        visibleFaces[i]=0;
     }
-    void* oldmem=rtindices;
-    rtindices=indices=0;
+    void* oldmem=indices;
+    indices=0;
     if(oldmem)
         free(oldmem);
-    rtGeomHash=0;
-    rtFullHash=0;
+    geomHash=0;
+    fullHash=0;
     needsVBO=false;
     clearOldVerticesOnly=false;
     has_light=false;
 }
 bool TerrainChunk::holdsGeometry() const{
-    return rtn_vertices||rtn_vertices2||n_vertices||n_vertices2||needsVBO||rtindices||
+    return n_vertices||n_vertices2||n_vertices||n_vertices2||needsVBO||indices||
            verticesbg||verticesbg2||clearOldVerticesOnly||has_light;
 }
 
@@ -2068,25 +1914,23 @@ TerrainChunk::~TerrainChunk(){
 	
     clearMeshes();
     
-    if(rtobjects){free(rtobjects);rtobjects=NULL;}   // Q.1 F6: freed whatever rtnum_objects says
-    rtnum_objects=0;//disable objects for now
-	rtn_vertices=n_vertices=0;
-    rtn_vertices2=n_vertices2=0;
-    rtvis_vertices=vis_vertices=0;
+	n_vertices=0;
+    n_vertices2=0;
+    vis_vertices=0;
     for(int i=0;i<7;i++){
-        rtnum_vertices[i]=num_vertices[i]=0;
-        rtface_idx[i]=face_idx[i]=0;
-        rtnum_vertices2[i]=num_vertices2[i]=0;
-        rtface_idx2[i]=face_idx2[i]=0;
-        rtvisibleFaces[i]=visibleFaces[i]=0;
+        num_vertices[i]=0;
+        face_idx[i]=0;
+        num_vertices2[i]=0;
+        face_idx2[i]=0;
+        visibleFaces[i]=0;
         
     }
     for(int i=0;i<6;i++)
         pbounds[i]=0;
     
     
-    void* oldmem=rtindices;
-    rtindices=indices=0;
+    void* oldmem=indices;
+    indices=0;
     if(oldmem)
         free(oldmem);
     
@@ -2113,8 +1957,8 @@ TerrainChunk::~TerrainChunk(){
 void TerrainChunk::clearMeshes(){
    // printg("vb %d, %d, %d",vertexBuffer,vertexBuffer2,elementBuffer);
     
+    if(objects){free(objects);objects=NULL;}   // Q.1 F6: freed whatever num_objects says
     num_objects=0;
-    objects=NULL;
     if(verticesbg)
     free(verticesbg);
     if(verticesbg2)
@@ -2140,7 +1984,7 @@ void TerrainChunk::clearMeshes(){
 
 int TerrainChunk::render(){
     
-	if(rtn_vertices==0)
+	if(n_vertices==0)
         return 0;
    
     /*if(isTesting==0){
@@ -2148,7 +1992,7 @@ int TerrainChunk::render(){
         glBeginQueryEXT( GL_ANY_SAMPLES_PASSED_EXT,query);
         isTesting=1;
     }else if(isTesting==2){
-        GLint res;
+        int32_t res;
         glGetQueryObjectivEXT(query, GL_QUERY_RESULT_AVAILABLE_EXT,&res);
         printg(@"av result for %d: %d",(int)query,res); 
         if(res){
@@ -2197,30 +2041,30 @@ int TerrainChunk::render(){
 	0,1,0, //top face*/
     bool rebuildIndices=false;
     bool curVis[7];
-    curVis[5]=cam->y>=pbounds[1]&&rtnum_vertices[5]!=0;
+    curVis[5]=cam->y>=pbounds[1]&&num_vertices[5]!=0;
     
-    curVis[1]=cam->z>=pbounds[2]&&rtnum_vertices[1]!=0;
+    curVis[1]=cam->z>=pbounds[2]&&num_vertices[1]!=0;
      
     
-    curVis[0]=cam->z<=pbounds[5]&&rtnum_vertices[0]!=0;
+    curVis[0]=cam->z<=pbounds[5]&&num_vertices[0]!=0;
    
     
     
     
-    curVis[3]=cam->x>=pbounds[0]&&rtnum_vertices[3]!=0;
+    curVis[3]=cam->x>=pbounds[0]&&num_vertices[3]!=0;
     
     
-    curVis[2]=cam->x<=pbounds[3]&&rtnum_vertices[2]!=0;
+    curVis[2]=cam->x<=pbounds[3]&&num_vertices[2]!=0;
     
     
-    curVis[4]=cam->y<=pbounds[4]&&rtnum_vertices[4]!=0;
+    curVis[4]=cam->y<=pbounds[4]&&num_vertices[4]!=0;
     
     
-    curVis[6]=rtnum_vertices[6]!=0;
+    curVis[6]=num_vertices[6]!=0;
     
     for(int i=0;i<7;i++){
-        if(curVis[i]!=rtvisibleFaces[i]){
-            rtvisibleFaces[i]=curVis[i];
+        if(curVis[i]!=visibleFaces[i]){
+            visibleFaces[i]=curVis[i];
             rebuildIndices=true;
         }
     }
@@ -2229,42 +2073,42 @@ int TerrainChunk::render(){
     if(rebuildIndices){
        // printg("rebuilding");
        for(int i=0;i<7;i++){ 
-           if(rtvisibleFaces[i]){
-               if(n+rtnum_vertices[i]>=INDICES_MAX)
+           if(visibleFaces[i]){
+               if(n+num_vertices[i]>=INDICES_MAX)
                    continue;
-           memcpy((char*)(rtindices+n),
-                  (char*)(allIndices+rtface_idx[i]),
-                  rtnum_vertices[i]*sizeof(unsigned short));
-           n+=rtnum_vertices[i];
+           memcpy((char*)(indices+n),
+                  (char*)(allIndices+face_idx[i]),
+                  num_vertices[i]*sizeof(unsigned short));
+           n+=num_vertices[i];
              
            }
            
        }
         
-       // if(n>0&&n<=rtvis_vertices)
-       //     glBufferSubData(GL_ELEMENT_ARRAY_BUFFER,0,sizeof(unsigned short)*n,rtindices);
+       // if(n>0&&n<=vis_vertices)
+       //     glBufferSubData(GL_ELEMENT_ARRAY_BUFFER,0,sizeof(unsigned short)*n,indices);
         //else
-            R::bufData(elementBuffer,rtindices,sizeof(unsigned short)*n);
+            R::bufData(elementBuffer,indices,sizeof(unsigned short)*n);
         g_f3.up_bytes+=sizeof(unsigned short)*n;
-        rtvis_vertices=n;
+        vis_vertices=n;
         
     }
     int totalvert=0;         
     for(int i=0;i<7;i++){
         
-        totalvert+=rtnum_vertices[i];
+        totalvert+=num_vertices[i];
     }
-    if(totalvert>rtn_vertices||rtface_idx[6]+rtnum_vertices[6]>rtn_vertices||rtvis_vertices>rtn_vertices){
+    if(totalvert>n_vertices||face_idx[6]+num_vertices[6]>n_vertices||vis_vertices>n_vertices){
         printg("Great\n");
     }
-    if(rtvis_vertices!=0){
+    if(vis_vertices!=0){
     
        /* if(modified==TRUE){
             glDisable(GL_TEXTURE_2D);
         }*/
         R::Geometry g={};
         g.fmt=&R::kFmtTerrain; g.vbuf=vertexBuffer; g.ibuf=elementBuffer; g.itype=R::I_U16;
-        g.first=0; g.count=rtvis_vertices; g.prim=R::TRIANGLES;
+        g.first=0; g.count=vis_vertices; g.prim=R::TRIANGLES;
         const R::Rgba white={1,1,1,1};
         R::drawWorld(g,Resources::getResources->atlas->name,white);
         //if(modified==TRUE){
@@ -2278,7 +2122,7 @@ int TerrainChunk::render(){
     R::mv().pop();
     
    //glTranslatef(-(rtbounds[0]-World::getWorld->fm.chunkOffsetX*CHUNK_SIZE)*4, -rtbounds[1]*4, -(rtbounds[2]-World::getWorld->fm.chunkOffsetZ*CHUNK_SIZE)*4);
-	return rtvis_vertices;
+	return vis_vertices;
 
 	
 
@@ -2303,12 +2147,12 @@ void TerrainChunk::render2(){
      extern Vector g_cullEye;   // Q.1 F19
      const Vector* cam=&g_cullEye;
 
-    bool v5=cam->y>=pbounds[1]&&rtnum_vertices2[5]!=0;
-    bool v1=cam->z>=pbounds[2]&&rtnum_vertices2[1]!=0;
-    bool v0=cam->z<=pbounds[5]&&rtnum_vertices2[0]!=0;
-    bool v3=cam->x>=pbounds[0]&&rtnum_vertices2[3]!=0;
-    bool v2=cam->x<=pbounds[3]&&rtnum_vertices2[2]!=0;
-    bool v4=cam->y<=pbounds[4]&&rtnum_vertices2[4]!=0;
+    bool v5=cam->y>=pbounds[1]&&num_vertices2[5]!=0;
+    bool v1=cam->z>=pbounds[2]&&num_vertices2[1]!=0;
+    bool v0=cam->z<=pbounds[5]&&num_vertices2[0]!=0;
+    bool v3=cam->x>=pbounds[0]&&num_vertices2[3]!=0;
+    bool v2=cam->x<=pbounds[3]&&num_vertices2[2]!=0;
+    bool v4=cam->y<=pbounds[4]&&num_vertices2[4]!=0;
 
     // Row #20 (perf-audit): faces 0-5 are laid out back-to-back in vertexBuffer2 by construction
     // (face_idx2[i]=num_vertices2[i-1]+face_idx2[i-1] above), so when EVERY face is being drawn —
@@ -2324,16 +2168,16 @@ void TerrainChunk::render2(){
     // faces — typically a chunk at the world's edge, where an order change would be most visible)
     // is deliberately left on the original per-face path below, unmodified.
     if(v0&&v1&&v2&&v3&&v4&&v5){
-        int total=rtnum_vertices2[0]+rtnum_vertices2[1]+rtnum_vertices2[2]+
-                   rtnum_vertices2[3]+rtnum_vertices2[4]+rtnum_vertices2[5];
-        DRAW2(rtface_idx2[0], total);
+        int total=num_vertices2[0]+num_vertices2[1]+num_vertices2[2]+
+                   num_vertices2[3]+num_vertices2[4]+num_vertices2[5];
+        DRAW2(face_idx2[0], total);
     }else{
-        if(v5) DRAW2(rtface_idx2[5], rtnum_vertices2[5]);
-        if(v1) DRAW2(rtface_idx2[1], rtnum_vertices2[1]);
-        if(v0) DRAW2(rtface_idx2[0], rtnum_vertices2[0]);
-        if(v3) DRAW2(rtface_idx2[3], rtnum_vertices2[3]);
-        if(v2) DRAW2(rtface_idx2[2], rtnum_vertices2[2]);
-        if(v4) DRAW2(rtface_idx2[4], rtnum_vertices2[4]);
+        if(v5) DRAW2(face_idx2[5], num_vertices2[5]);
+        if(v1) DRAW2(face_idx2[1], num_vertices2[1]);
+        if(v0) DRAW2(face_idx2[0], num_vertices2[0]);
+        if(v3) DRAW2(face_idx2[3], num_vertices2[3]);
+        if(v2) DRAW2(face_idx2[2], num_vertices2[2]);
+        if(v4) DRAW2(face_idx2[4], num_vertices2[4]);
     }
 #undef DRAW2
 

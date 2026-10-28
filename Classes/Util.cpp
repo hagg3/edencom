@@ -7,7 +7,7 @@
 //
 #include "Globals.h"
 #include "Util.h"
-#include <OpenGLES/ES1/gl.h>
+#include <stdint.h>
 #include "World.h"
 #include "Renderer.h"   // G.5b-3: readPixels, pickViewport, the matrix stacks
 #include "glu.h"
@@ -79,7 +79,7 @@ int sign(float f){
     if(f>0)return 1;
     else return -1;
 }
-extern GLshort cubeShortVertices[];
+extern int16_t cubeShortVertices[];
 const static float cubeFaceNormals[] = {
 	0,0,1, //front face
 	0,0,-1, //back face
@@ -406,14 +406,14 @@ void takeScreenshot(){
 	NSInteger myDataLength = width * height * 4;
 	
 	// allocate array and read pixels into it.
-	GLubyte *buffer = (GLubyte *) malloc(myDataLength);
+	uint8_t *buffer = (uint8_t *) malloc(myDataLength);
 	glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, buffer);
 	
     
     
 	// gl renders "upside down" so swap top to bottom into new array.
 	// there's gotta be a better way, but this works.
-    GLubyte *buffer2 = (GLubyte *) malloc(myDataLength);
+    uint8_t *buffer2 = (uint8_t *) malloc(myDataLength);
 	//BOOL flip=World::getWorld->FLIPPED;
 	for(int y = 0; y < height; y++)
 	{
@@ -421,7 +421,7 @@ void takeScreenshot(){
 		{
 			for(int b=0;b<4;b++){
 				//if(flip)
-				//buffer2[x * width * 4 + y*4 ] = (GLubyte)buffer[x * 4 * width + (height-1-y)*4 ];
+				//buffer2[x * width * 4 + y*4 ] = (uint8_t)buffer[x * 4 * width + (height-1-y)*4 ];
 				//else
                 /*if(IS_WIDESCREEN){
                     buffer2[((y+(int)((float)(568-480)/2.0f))) * 4 * width + x*4 +b] = buffer[(height-1-y) * 4 * width + x*4 +b];
@@ -633,10 +633,10 @@ Point3D findWorldCoords(int mx,int my,int mode){
     fwc_result=-1;
 	Point3D point;
 	point.x=-1;
-	GLint viewport[4];
+	int32_t viewport[4];
 	GLdouble modelview[16];
 	GLdouble projection[16];
-	GLfloat winX, winY;
+	float winX, winY;
 	GLdouble posX, posY, posZ;
 	GLdouble posX2, posY2, posZ2;
 	R::mv().loadIdentity();   // G.5b-7: Camera::render2's gluLookAt multiplies onto it

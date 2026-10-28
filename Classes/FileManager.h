@@ -133,7 +133,6 @@ public:
     // if the column has landed synchronously (the caller marks it loaded), FALSE if a decode job
     // was dispatched and the column will land in a later frame. readColumn() itself is unchanged
     // and still synchronous for every other caller, world load included.
-    bool readColumnDeferred(int cx,int cz,EdenFile* file);
     bool columnWillGenerate(int cx,int cz);   // H.4: readColumn would run the Classic generator
     void saveWorld();
     void saveWorld(Vector warp);

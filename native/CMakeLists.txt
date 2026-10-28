@@ -70,7 +70,7 @@ set(EDEN_PORT_DIR "${EDEN_PARENT_DIR}/port")
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 
 # Diagnostics are always compiled in (G.0 decision, 2026-10-23; the OFF configuration had been broken
 # since d92fd8c and is deleted): the scripted-drive probes, DevConsole, `--live-cmds` and every
@@ -213,12 +213,9 @@ list(TRANSFORM EDEN_HARNESS_SOURCES PREPEND "${EDEN_PORT_DIR}/src/harness/")
 list(TRANSFORM EDEN_HARNESS_SOURCES APPEND ".cpp")
 set(EDEN_NATIVE_SOURCES
   ${EDEN_HARNESS_SOURCES}
-  ${EDEN_PORT_DIR}/src/seam/SDLView_native.cpp
+  ${EDEN_PORT_DIR}/src/seam/App.cpp
   ${EDEN_PORT_DIR}/src/seam/DisplayMode_native.cpp
   ${EDEN_PORT_DIR}/src/seam/Input_native.cpp
-  ${EDEN_PORT_DIR}/src/seam/EdenViewController_native.cpp
-  ${EDEN_PORT_DIR}/src/seam/EdenAppDelegate_native.cpp
-  ${EDEN_PORT_DIR}/src/seam/main_native.cpp
   ${EDEN_PORT_DIR}/src/seam/HeapProbe_native.cpp
   ${EDEN_PORT_DIR}/src/seam/seam_link_stubs_native.cpp
   ${EDEN_PORT_DIR}/src/seam/SimpleAudioEngine_native.cpp
@@ -401,13 +398,11 @@ endif()
 # Include paths — ORDER MATTERS
 # ---------------------------------------------------------------------------------------------
 # port/src/render/gl/framework MUST come first: it supplies <GLES/gl.h> and <GLES2/gl2.h> (the
-# platform's real GL, for the GL backend in port/src/render/gl/ only), and the <OpenGLES/ES1/gl.h>
-# and <OpenGLES/ES1/glext.h> the ENGINE headers include by name (Camera.h, World.h, Graphics.h, ...
-# — angle-bracket includes, the only kind that can be redirected this way). Since G.5b-7 the engine
-# pair declares GL types and a few enum values and no function, so an engine GL call cannot compile.
+# platform's real GL, for the GL backend in port/src/render/gl/ only). SM.7 deleted the engine-facing
+# <OpenGLES/ES1/gl.h>/glext.h: the engine uses <stdint.h> types, so an engine GL call cannot compile.
 target_include_directories(eden_native PRIVATE
   "${EDEN_PORT_DIR}/src/shim/vendor/zstd"           # <zstd.h>: the PINNED 1.5.7, never Homebrew's/the SDK's
-  "${EDEN_PORT_DIR}/src/render/gl/framework"         # <GLES/...>, <GLES2/...>, <OpenGLES/ES1/...>
+  "${EDEN_PORT_DIR}/src/render/gl/framework"         # <GLES/...>, <GLES2/...>
   "${EDEN_PORT_DIR}/src/shim/foundation"
   "${EDEN_PORT_DIR}/src/render/gl"                   # gl_context.h (the host's context API)
   "${EDEN_PORT_DIR}/src/shim/vendor"                 # stb_image.h / stb_truetype.h
@@ -438,7 +433,7 @@ list(FILTER EDEN_PREFIX_SOURCES INCLUDE REGEX "/(Classes|src/seam|src/harness|sr
 # Engine plain C++ (CreatureModel, EdenWorld*, WorldTrailer, StrUtil, ColorUtil, VectorUtil) and the seams/
 # natives that wrap a platform API or stand alone (no engine headers).
 list(FILTER EDEN_PREFIX_SOURCES EXCLUDE REGEX "/Classes/(CreatureModel|EdenWorld|WorldTrailer|StrUtil|ColorUtil|VectorUtil)")
-list(FILTER EDEN_PREFIX_SOURCES EXCLUDE REGEX "/src/seam/(DisplayMode|Input|EdenAppDelegate|main|HeapProbe|TextRaster|CodecBench|WorldTools|Prefs|BaseSelftest|PlayerReadme|Net|PortableAudio|AutoreleasePool)_native\\.cpp$")
+list(FILTER EDEN_PREFIX_SOURCES EXCLUDE REGEX "/src/seam/(DisplayMode|Input|HeapProbe|TextRaster|CodecBench|WorldTools|Prefs|BaseSelftest|PlayerReadme|Net|PortableAudio|AutoreleasePool)_native\\.cpp$")
 list(APPEND EDEN_PREFIX_SOURCES "${EDEN_PORT_DIR}/src/render/render_formats.cpp")   # R::kFmt* from the engine's vertex structs
 if(MSVC)
   set(EDEN_PREFIX_INCLUDE "/FI${EDEN_PORT_DIR}/src/shim/foundation/eden_prefix.h")   # clang-cl / cl spelling

@@ -136,8 +136,7 @@ parallelize loading.
 
 Since B3/B6 it is three functions rather than one — a main-thread
 `fmh_readColumnRawFromDefault` (the store's zstd read, or the RLE fallback's seek + read), a pure
-`fmh_decodeColumnBands` (run-expansion + the `CC(x,z,y)`↔`CC(y,z,x)` band transpose, which could
-run on a worker under `EDEN_THREADED`, defined by no current build) and a main-thread
+`fmh_decodeColumnBands` (run-expansion + the `CC(x,z,y)`↔`CC(y,z,x)` band transpose) and a main-thread
 `fmh_publishColumnFromDefault`. *RLE fallback only (history since S.6):* the raw read pulls the **whole column record in one `readDataOfLength:`** of
 `FMH_RECORD_HINT` (4 KB), slicing the four bands' 2-byte length prefixes and payloads
 out of memory, with a top-up read for the rare record that runs past the hint. It used

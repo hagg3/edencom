@@ -80,6 +80,7 @@
   X(void,           glFinish,                  (void))                                           \
   X(void,           glFlush,                   (void))                                           \
   X(void,           glFramebufferRenderbuffer, (GLenum target, GLenum attachment, GLenum renderbuffertarget, GLuint renderbuffer)) \
+  X(void,           glFramebufferTexture2D,    (GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level)) \
   X(void,           glGenBuffers,              (GLsizei n, GLuint *buffers))                     \
   X(void,           glGenFramebuffers,         (GLsizei n, GLuint *framebuffers)) \
   X(void,           glGenRenderbuffers,        (GLsizei n, GLuint *renderbuffers)) \
@@ -214,6 +215,7 @@ enum { EDEN_GL_ENTRY_POINT_COUNT = 0 EDEN_GL_ENTRY_POINTS(EDEN_GL_COUNT_ONE) };
 #define glFinish                   eden_glfp_glFinish
 #define glFlush                    eden_glfp_glFlush
 #define glFramebufferRenderbuffer  eden_glfp_glFramebufferRenderbuffer
+#define glFramebufferTexture2D     eden_glfp_glFramebufferTexture2D
 #define glGenBuffers               eden_glfp_glGenBuffers
 #define glGenFramebuffers          eden_glfp_glGenFramebuffers
 #define glGenRenderbuffers         eden_glfp_glGenRenderbuffers

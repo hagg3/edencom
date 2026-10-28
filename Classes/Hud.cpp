@@ -1204,7 +1204,7 @@ bool Hud::update(float etime){
 
 //extern float P_ZFAR;
 
-extern const GLubyte blockColor[NUM_BLOCKS+1][3];
+extern const uint8_t blockColor[NUM_BLOCKS+1][3];
     
 bool Hud::handlePickColor(int x,int y){
     bool handled=false;
@@ -1433,8 +1433,8 @@ static CGRect picker_inner(CGRect cell,bool pressed){
 static void picker_face(CGRect r,CGPoint tp,bool triangle){
     const float s=picker_scale();
     const float x0=r.origin.x*s, y0=r.origin.y*s, x1=(r.origin.x+r.size.width)*s, y1=(r.origin.y+r.size.height)*s;
-    GLfloat coordinates[] = { 0, tp.y+tp.x,  1, tp.y+tp.x,  0, tp.x,  1, tp.x };
-    GLfloat vertices[] = { x0,y0,0,  x1,y0,0,  x0,y1,0,  x1,y1,0 };
+    float coordinates[] = { 0, tp.y+tp.x,  1, tp.y+tp.x,  0, tp.x,  1, tp.x };
+    float vertices[] = { x0,y0,0,  x1,y0,0,  x0,y1,0,  x1,y1,0 };
     Pen::strip(vertices, coordinates, 0, triangle?3:4);
 }
 
@@ -1667,7 +1667,7 @@ void Hud::renderBlockAndBorder(CGRect recto){
     if(blockinfo[type]&IS_BLOCKTNT){
         tp=Resources::getResources->getBlockTex(TEX_BLOCKTNT);
     }
-    GLfloat				coordinates[] = {
+    float				coordinates[] = {
         0,			tp.y+tp.x,
         1,			tp.y+tp.x,
         0,				tp.x,
@@ -1689,7 +1689,7 @@ void Hud::renderBlockAndBorder(CGRect recto){
 	
 	0,0,
 */
-        GLfloat				coordinates2[] = {
+        float				coordinates2[] = {
             0,			tp.y+tp.x,
             1,			tp.y+tp.x,
             0,				tp.x,
@@ -1744,14 +1744,14 @@ void Hud::renderBlockAndBorder(CGRect recto){
             off*=2;
         }
    
-		/*GLfloat				vertices[] = {
+		/*float				vertices[] = {
 			rect.origin.x+off+bb-offx,							rect.origin.y+off-bb-offy,							0,
 			rect.origin.x + size+bb-offx,		rect.origin.y+off-bb-offy,							0,
 			rect.origin.x+off+bb-offx,							rect.origin.y + size-bb-offy,		0,
 			rect.origin.x + size+bb-offx,		rect.origin.y + size-bb-offy,		0
 		};*/
     
-    GLfloat				bvertices[] = {
+    float				bvertices[] = {
         off+bb+offx,			off-bb+offy,							0,
         size+bb+offx,		off-bb+offy,							0,
         off+bb+offx,			size-bb+offy,                        0,
@@ -1772,14 +1772,14 @@ void Hud::renderBlockAndBorder(CGRect recto){
     };
     
     
-    GLfloat				vertices[3*6*3]; 
+    float				vertices[3*6*3]; 
     for(int i=0;i<3*6*2;i+=3){
         vertices[i]=bvertices[i]+rect.origin.x;
         vertices[i+1]=bvertices[i+1]+rect.origin.y;
         vertices[i+2]=bvertices[i+2];
     }    
     int cory=-3;
-    GLfloat				bvertices2[] = {
+    float				bvertices2[] = {
         off+bb+offx,			off-bb+offy,					 0,
         size+bb+offx,		off-bb+offy,						 0,
         off+bb+offx,			size-bb+offy+cory,                    0,
@@ -1799,7 +1799,7 @@ void Hud::renderBlockAndBorder(CGRect recto){
         
     };
     
-    GLfloat				vertices2[3*6*3];
+    float				vertices2[3*6*3];
     
     /*= {
         rect.origin.x+off+bb-offx,							rect.origin.y+off-bb-offy,			0,
@@ -1874,7 +1874,7 @@ void Hud::renderBlockAndBorder(CGRect recto){
             }else if(subtype==TYPE_WEAVE){
                  tp= Resources::getResources->getBlockTex(TEX_CLOUD);
             }
-            GLfloat				coordinates3[] = {
+            float				coordinates3[] = {
                 0,			tp.y+tp.x,
                 1,			tp.y+tp.x,
                 0,				tp.x,

@@ -29,7 +29,7 @@ passes, special objects, sky, and the per-vertex data formats.
 - Stock: a single 16-bit depth buffer, RGBA8 color, the depth attachment discarded before present
   (`EAGLView`). *Port:* 24-bit depth (`gl_context_native.cpp`). SDL's swap does not discard, so on
   iOS `eden_native_gl_present` invalidates the view FBO's depth before `SDL_GL_SwapWindow` and
-  `eden_scene_pass_end` invalidates the scaled scene FBO's after its blit (P.11,
+  `eden_scene_pass_end` invalidates the scaled scene FBO's before its composite (P.11,
   `glInvalidateFramebuffer`; ≈ 12.6 MB/frame of tile store on an Air 2). Desktop does not.
 
 ## Important files
@@ -94,8 +94,9 @@ and the fog ends 5 blocks short of it, as 145 does at radius 9; at radius 9 Auto
 before. **Draw-culling only**: meshing and streaming are unchanged. Changing the setting re-calls `setZFAR`
 immediately.
 **Graphics preset** (B.8; `graphics_preset` row, `kPresets[]` in `Settings.cpp`): Custom / Low / Default / High is a
-shortcut that writes `view_distance` (and `render_scale`, except on iOS where that row is hidden) — Low = 4 chunks + 75%,
-Default = Auto + 100% (the pre-B.8 look; shots match within animation noise). High = Default plus `render_radius`
+shortcut that writes `view_distance` and `render_scale` — Low = 4 chunks + 75% (50% on iOS since FT.16),
+Default = Auto + 100% (the pre-B.8 look; shots match within animation noise; on iOS the device default, 50% on
+Air 2-class hardware). High = Default plus `render_radius`
 (B.5b-2): radius 16 on desktop, 10 on iOS (P.4 decision 6; T.B16 measured R10/R12 on the Air 2). Moving any of
 the three knobs by hand sets the preset to Custom. It does not touch `LOW_MEM_DEVICE`/`LOW_GRAPHICS`: those pick resources at
 load time and are not switchable mid-session.
@@ -109,9 +110,7 @@ CPU-side, runs on the main thread inside `prepareAndLoadGeometry`. Stages:
    `clearMeshes()` and the counter resets and **before both mesher passes**, with
    `clearOldVerticesOnly=TRUE`. That is exactly the state stage 1 leaves on an all-air chunk
    (it sets nothing when every type is 0; `has_light` FALSE, `num_objects` 0, `needsVBO` TRUE),
-   so this only skips the 4096-voxel scan (~4 µs Mac, ~11 µs A8X). It is main-thread only (a
-   worker meshes a snapshot the bit doesn't describe), and stage 1, when it does run on the main
-   thread, writes the bit back (`typesEmpty = !hasAnything`), which is how a chunk dug back to air
+   so this only skips the 4096-voxel scan (~4 µs Mac, ~11 µs A8X). Stage 1, when it does run, writes the bit back (`typesEmpty = !hasAnything`), which is how a chunk dug back to air
    rejoins the shortcut. Who maintains the bit is in [world-and-terrain.md](world-and-terrain.md),
    under "The per-chunk empty bit". Gates: `eden_debug_chunk_state()` (state hash + bit audit),
    `--empty-bit-selftest`, and `--empty-selfcheck`, which runs the scan anyway and counts a bit
@@ -154,87 +153,26 @@ CPU-side, runs on the main thread inside `prepareAndLoadGeometry`. Stages:
 
 Empty-result chunks set `clearOldVerticesOnly` so `prepareVBO` frees GL buffers.
 
-### Re-entrancy (modified from stock, 2026-08-27)
-`rebuild2()` is now safe to run on a thread other than the one that owns the world, because the
-mesher is being moved onto a worker (`WORKING/b3-off-thread-meshing-plan.md`). Nothing about *what*
-it meshes changed. Three things did:
-
-- Its scratch (`v_idx`, `v_idx2`, `face_visibility[]`, `face_size[]`, `hasBlocky[]`, `hasVisy[]`)
-  was file-scope `static`, i.e. one copy shared by every call. It is now tagged `EDEN_MESH_TLS`,
-  which is `thread_local` when the build defines `EDEN_THREADED` and **empty otherwise** — the
-  single-threaded and iOS builds are unchanged.
-- The counting pass and the fill pass both read the chunk's own `pblocks`/`pcolors`, and
-  `Terrain::setLand` writes those directly on every block edit. A write landing between the two
-  passes changes a block's face count and overruns the vertex buffer, so a worker meshes from a
-  private 8 KB snapshot instead: `tc_meshSetSource()` installs it and `rebuild2()` resolves it once
-  per call into `mblocks`/`mcolors`. Its *other* global reads (neighbour `blockarray`, `lightarray`,
-  `getColorc`) all feed `face_visibility[]`, which is private scratch computed **before** both
-  passes — so staleness there is cosmetic and cannot break the invariant.
-- The three things it did to global state are now deferrable: `Portal::addPortal` (portal tops) and
-  the corrupt-type `setLand` repair queue into a caller-supplied `MeshSideEffect` sink that the main
-  thread replays via `tc_meshReplaySideEffects()`, and `isOnFire()`'s walk of the main thread's
-  mutable `burnList` is replaced by a precomputed per-chunk burn mask. With no sink and no mask
-  installed — the single-threaded default — all three behave exactly as stock.
-
-### Off-thread meshing (modified from stock, 2026-08-27; dormant — no live build compiles it)
-**No current build defines `EDEN_THREADED`** (the retired web build's threaded trees were its only
-users), so the whole pool below compiles to no-ops and every native target meshes and decodes
-inline on the main thread. The design is kept for a future threaded native build.
-
-The re-entrancy above exists because bulk-reload chunks are now meshed on **worker threads**
-(`Classes/MeshPool.{h,mm}`; design in `WORKING/b3-off-thread-meshing-plan.md`). The split follows
-the `rt*` boundary that `prepareVBO()` already was:
-
-> a worker fills the chunk's **non-`rt`** fields via `rebuild2()`; the main thread calls
-> `prepareVBO()` to publish them into `rt*` and upload. **GL never leaves the main thread**, so
-> convention #4 holds unchanged — and it costs nothing, because upload is under 1% of a burst.
-
-- **Scope, deliberately narrow.** Only chunks dirtied by a **bulk window reload** (`Terrain.cpp`'s
-  `bulk_reload_active`) go to a worker. Player edits, explosions, fire and the initial world load
-  still mesh inline, in the same frame, exactly as before — they are few, latency-sensitive and next
-  to the player.
-- **Dispatch** is in `Terrain::prepareAndLoadGeometry` where `rebuild2()` used to be called;
-  **publish** is `mp_publishFinished()`, called both at the top of that function and in
-  `updateAllImportantChunks`. Each chunk carries an atomic `meshJobState`
-  (`IDLE→QUEUED→RUNNING→DONE→IDLE`); the worker's `DONE` is a release store and the main thread's
-  read an acquire, which is what orders the vertex buffer against the counts describing it.
-- **A worker never touches live world state.** It meshes an 8 KB snapshot of the chunk's own
-  `pblocks`/`pcolors`, is handed a precomputed burn mask instead of walking `burnList`, and queues
-  its two global mutations into a `MeshSideEffect` sink the main thread replays at publish time.
-- **Three invalidation rules carry the correctness** and are the things to preserve when touching
-  any of this:
-  1. *A chunk with a job in flight is never recycled.* `readColumn()` re-homes a whole column
-     (`setBounds()` plus a wholesale voxel rewrite), so the reload skips a column whose chunks are
-     not all `IDLE` and takes the next-nearest stale one instead; the dirty-list build skips busy
-     chunks the same way, leaving their flags set. `Terrain::deallocateMemory` and `loadTerrain`
-     drain the pool.
-  2. *An edit during a job makes the mesh stale, not torn* — the worker read a snapshot. The mesh is
-     **published anyway** and the chunk re-dirtied. Discarding it would leave the chunk with no
-     geometry at all, which draws as a hole.
-  3. *Fire meshes inline.* `burnList` is a list the main thread frees nodes from.
-- **Two kill switches, both intentional.** Without `EDEN_THREADED` every `mp_*` entry point compiles
-  to a no-op and `mp_dispatch()` always answers "mesh it yourself" — the stock path, byte for byte.
-  And "no free job slot → mesh inline" means a pool size of 0 disables the feature without removing
-  it. **Only the retired web build's threaded trees (`build-thr`, `relthr`) defined it.** No native
-  target does, iOS included (re-checked 2026-10-14), so every mesh and every column decode runs
-  inline on the main thread, even though native links real pthreads.
-- The same pool also **decodes streamed columns** off-thread. `fmh_readColumnFromDefault` is split
-  into a main-thread raw read, a **pure** `fmh_decodeColumnBands()` (RLE run-expansion + the
-  `CC(x,z,y)`↔`CC(y,z,x)` band transpose) that a worker runs, and a main-thread publish that
-  re-homes the chunks and writes `blockarray`. A decode job owns a whole **column**, so all its
-  chunks are marked busy together. `FileManager::readColumnDeferred()` is the reload's entry point;
-  answering FALSE means "dispatched, not landed", and the column must not be marked resident yet.
-  `readColumn()` itself is unchanged and still synchronous for every other caller.
-- Measured effect on a teleport burst (on the retired threaded web build): frames over the 16.66 ms budget 4–7 per 5 bursts → 0,
-  frames over 8.3 ms 60–66 → 19–24, main-thread column read 129–147 → 110–119 ms, with the window
-  still filling in the same wall clock and the resulting geometry byte-identical to the inline
-  mesher's. The mesher (not the decoder) is what produced the frame-level change.
+### Off-thread meshing (removed in SM.8, 2026-10-28)
+The 2026-08-27 worker-pool mesher (`Classes/MeshPool.{h,cpp}`, `EDEN_THREADED`, the `MeshSideEffect` sink, the
+per-chunk `meshJobState`, worker column decode via `FileManager::readColumnDeferred`) was only ever compiled by
+the retired web build's threaded trees; no native target defined it. SM.8 deleted it, along with the thread-local
+mesher scratch and the snapshot/burn-mask hooks in `rebuild2()`: `rebuild2()` is single-threaded and reads the
+chunk's own `pblocks`/`pcolors`, and meshes, column reads and uploads all run inline on the main thread. It is
+recoverable from git (the last commit that has it is the one before the SM.8 commit; design in
+`WORKING/b3-off-thread-meshing-plan.md`). If a threaded mesher is ever wanted again, the things it had to
+guarantee were: a private snapshot of the voxels (the counting and fill passes must agree, rule 7), deferred
+`Portal::addPortal` / corrupt-type `setLand` repair, a precomputed burn mask instead of walking `burnList`, and
+never recycling a chunk or re-homing a column with a job in flight.
 
 ### VBO upload — `TerrainChunk::prepareVBO()`
-Copies the plain fields into the `rt*` (render) fields, mallocs the per-chunk index
-scratch `rtindices`, uploads the two vertex streams and (re)creates `elementBuffer`,
-then frees the staging arrays. The plain/`rt` split is leftover double-buffering from the
-removed background meshing thread — today both halves are always in sync.
+Mallocs the per-chunk index scratch `indices`, uploads the two vertex streams and (re)creates
+`elementBuffer`, then frees the staging arrays. The mesh fields (`n_vertices`, `num_vertices[]`,
+`face_idx[]`, `objects`, …) are single copies: `rebuild2()` fills them and `prepareVBO()` runs later in the
+same `World::update` (`Terrain::update` meshes, `updateAllImportantChunks` uploads), always before
+`render()`. Until SM.8 there was a second `rt*`-prefixed set that `prepareVBO()` copied them into, left over
+from the removed background meshing thread. Never let a frame render between `rebuild2()` and `prepareVBO()`:
+the counts would describe the new mesh while the buffers still hold the old one.
 
 **Since ROADMAP Phase M / M3(a) (2026-08-31) the GL buffer names persist across re-meshes.**
 `prepareVBO` used to `glDeleteBuffers` + `glGenBuffers` all three names every rebuild, so a
@@ -243,13 +181,13 @@ full-window reload burst did ~1,500 buffer create/delete calls in a couple of se
 never shrinks) and re-uploads with `glBufferSubData` when the new geometry fits, `glBufferData`
 only to grow — the same pattern row E3 gave the object batches. The names are still deleted for
 real in `unbuild()`, the destructor, and the `clearOldVerticesOnly` clear path. `render()`
-early-returns on `rtn_vertices==0` and `render2()` only runs for chunks with `rtn_vertices2>0`,
+early-returns on `n_vertices==0` and `render2()` only runs for chunks with `n_vertices2>0`,
 so a name left allocated with stale contents is never drawn. Done for driver/CPU churn, not
 memory — on the web build, where this was done, the buffers lived in the browser's GPU process
 (`WORKING/web-port-memory-plan.md` §M3).
 
 **Since Phase N Stage 1 (2026-09-05) `prepareVBO()` can also fingerprint what it publishes.**
-`rtGeomHash`/`rtFullHash` (`TerrainChunk.h`) are FNV-1a hashes of the vertex arrays, folded *just
+`geomHash`/`fullHash` (`TerrainChunk.h`) are FNV-1a hashes of the vertex arrays, folded *just
 before* the staging arrays are freed and read back by `eden_debug_mesh_checksum()`. They live on
 the chunk rather than in the probe for a structural reason worth knowing: after `prepareVBO()` the
 only copy of the vertex data is inside a GL buffer, so a probe that walks `chunkTablec` in a
@@ -262,17 +200,16 @@ This is what proved the native (SDL3 + desktop GL) build meshes byte-identically
 retired) web build at both heights: `WORKING/phase-n-stage1-results-2026-09-05.md`. Today every
 native target must match the pair pinned in `.github/scripts/check-stage1.py`.
 
-**`render()`'s only "is there geometry" test is `rtn_vertices==0`, so every `rt*` field has to
+**`render()`'s only "is there geometry" test is `n_vertices==0`, so every mesh-count field has to
 say "empty" from construction, not from the first `prepareVBO()`.** The constructor did not
 initialise them until 2026-08-27: a chunk is allocated out of a heap that has just held vertex and
-colour data, so `rtn_vertices` came up garbage-nonzero, `render()` sailed past the guard, and the
-index re-pack `memcpy`'d from `allIndices + rtface_idx[i]` with `rtface_idx[i]` in the tens of
-millions (into a NULL `rtindices`) — an out-of-bounds trap inside the frame tick. Stock never
+colour data, so `n_vertices` came up garbage-nonzero, `render()` sailed past the guard, and the
+index re-pack `memcpy`'d from `allIndices + face_idx[i]` with `face_idx[i]` in the tens of
+millions (into a NULL `indices`) — an out-of-bounds trap inside the frame tick. Stock never
 reached it because a chunk was always meshed before it could be drawn. **Anything that lets a
 resident chunk be drawn before its first mesh — the bulk reload's neighbourhood deferral
-([world-and-terrain.md](world-and-terrain.md)), or a worker-thread mesher whose output lands a
-frame late — depends on that initialisation.** Note the re-pack still bounds only its
-*destination* cursor against `INDICES_MAX`, not `rtface_idx[i]+rtnum_vertices[i]`; that is fine
+([world-and-terrain.md](world-and-terrain.md)) — depends on that initialisation.** Note the re-pack still bounds only its
+*destination* cursor against `INDICES_MAX`, not `face_idx[i]+num_vertices[i]`; that is fine
 while a chunk cannot exceed 32768 vertices, and is the guard to revisit if one ever can.
 
 ## Frame passes
@@ -365,14 +302,22 @@ whatever blend func the previous frame's HUD left, which is `SA,1-SA` except wit
 
 ### Scene-pass bracket (modified from stock, 2026-10-04, ROADMAP N.4.11)
 
-`World::renderFrame`'s play-mode branch now calls `eden_scene_pass_begin()` before
-`Graphics::prepareScene()` and `eden_scene_pass_end()` just before `hud->render()`. Everything
+`World::renderFrame`'s play-mode branch now calls `R::beginScene()` before
+`Graphics::prepareScene()` and `R::endScene()` just before `hud->render()` (until FT.16, 2026-10-28, it called
+the port's `eden_scene_pass_begin/end` directly; `R::` forwards to them). Everything
 between them (sky, terrain passes 1 and 2, creatures, effects, fireworks, the player's selection
 outline) is the **3D pass**; the HUD, menus and `GLDialog` come after it. Both are port hooks
-(`port/src/render/gl/gl_context.h`); at 100% they are no-ops. On iOS `render_scale` is always 100% (N.4.12: the setting was dropped there). At any other `render_scale` the native
-context (`port/src/render/gl/gl_context_native.cpp`) points the 3D pass at an offscreen colour+depth
-framebuffer of drawable × scale and blits it, linearly filtered, into the letterbox box at `_end`,
-so the 2D UI still draws at full density. Point-sprite sizes are compensated for the scale; picking
+(`port/src/render/gl/gl_context.h`); at 100% they are no-ops. At any other `render_scale` the native
+context (`port/src/render/gl/gl_context_native.cpp`) points the 3D pass at an offscreen framebuffer of
+drawable × scale (colour TEXTURE + depth renderbuffer, both cleared at its start) and at `_end` clears the
+window's colour (black; magenta under `--diag-clear`) and composites the scene with one linearly filtered
+textured quad (the UI program) into the letterbox box, so the 2D UI still draws at full density.
+**FT.16 (2026-10-28) replaced N.4.11's `glBlitFramebuffer` with the quad:** on the Air 2 at 50% the blit
+never landed (10-09: HUD over a frozen menu frame; no scissor or other FBO user exists in the port), so the
+setting was hidden on iOS from N.4.12 until FT.16 re-showed it (50/75/100%; Air 2-class iPads/iPhones
+default to 50%, about stock 2.1's 1024×768). The window clear means a failed composite shows black, never
+a stale frame. `--diag-clear` also logs `[eden-gl] scene-diag` lines once per scene size (framebuffer ids
+at begin, composite and present; GL errors; the iOS view's colour format). Point-sprite sizes are compensated for the scale; picking
 is unaffected (it unprojects against the fixed point-space viewport). Anything new that belongs to
 the world must draw *before* `_end`, and anything that is UI must draw *after* it, or it renders at
 the wrong resolution.
@@ -499,6 +444,6 @@ time becomes an upper bound that includes its own GPU work.
 - **F9 (object batches):** the golden cube's rotated corners/normals (`gcV`/`gcN`, 144 each) are built once per frame, not per cube. **F10 (signs):** `SignRenderer::render` orphans its VBO (`glBufferData(NULL)`) every frame before the sub-uploads. **F18:** `CalcEnvMap`'s sphere-map V is `*ATLAS_TILES` (was 32), next to X.8's sky note; changes the golden cube's look.
 
 ### Q.1b notes (2026-10-21)
-- **F6 (object array ownership):** `rtobjects` is freed on the pointer, never on `rtnum_objects` (in `prepareVBO`'s two paths, `unbuild`, `dropGeometry`, `resetForReuse`, `~TerrainChunk`). Stock zeroed the count first, so every chunk drop and world exit leaked the array (measured 54–56 root leaks a warp, `TESTERS/perf-audit/leakobj3.*.leaks`; 0 after, `TESTERS/q1b/`). `objects` aliases `rtobjects` after a publish; `clearMeshes` only NULLs it, so free through `rtobjects` alone.
-- **F7 (objects-only chunks):** `rebuild2` returns early (`clearOldVerticesOnly`) when a chunk has objects but no faces (a lone golden cube, door top or flower in air). `prepareVBO`'s clear branch now publishes `objects` to `rtobjects` there (count 0 when `objects` is NULL: the earlier early returns count objects without allocating them). Stock never drew these.
+- **F6 (object array ownership):** `objects` is freed on the pointer, never on `num_objects` (`clearMeshes()`, which `rebuild2`, `unbuild`, `dropGeometry` and `~TerrainChunk` all call, plus `resetForReuse`). Stock zeroed the count first, so every chunk drop and world exit leaked the array (measured 54–56 root leaks a warp, `TESTERS/perf-audit/leakobj3.*.leaks`; 0 after, `TESTERS/q1b/`). Since SM.8 `objects` is the one published array (there is no `rtobjects`), so `clearMeshes` frees it; `prepareVBO` zeroes `num_objects` when `objects` is NULL.
+- **F7 (objects-only chunks):** `rebuild2` returns early (`clearOldVerticesOnly`) when a chunk has objects but no faces (a lone golden cube, door top or flower in air). `prepareVBO` keeps `objects` there and zeroes `num_objects` when it is NULL (the earlier early returns count objects without allocating them). Stock never drew these.
 - **F19 (cull/sort eye):** `TerrainChunk::render`/`render2`'s per-direction face culling and `compare_back2front` read `g_cullEye` (`Terrain.cpp`), set at the top of `Terrain::render` from `Camera::viewPoints`. In third person that is the real eye, not the pivot `cam->px/py/pz`. First-person culling is unchanged; the transparent sort now measures from the eye (`player->pos` + 0.3·boxheight), not the feet.

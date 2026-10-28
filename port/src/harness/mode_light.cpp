@@ -529,7 +529,7 @@ int run_evict_selftest() {
     g_autosave_seconds = 0;
     // Engine time per tick fixed at 1/60 s, so frame counts below are engine seconds: a burn node
     // lives 6 s, spreads after 1 s; the autosave period is in engine seconds too.
-    g_app->viewController.setFixedEtime(1.0f / 60.0f);
+    g_app->setFixedEtime(1.0f / 60.0f);
     // The bundled map's centre unless --at says otherwise (the default --at is the world origin,
     // outside the map, where a -x walk would reach negative chunk coordinates).
     const float X0 = g_opt.haveAt ? g_opt.at[0] : 65536.5f, Y0 = g_opt.haveAt ? g_opt.at[1] : 60.0f,
@@ -679,7 +679,7 @@ int run_evict_selftest() {
     std::snprintf(d, sizeof(d), "%d/3 columns equal after quit + reload", same);
     check(same == 3, "gate 2: edits survive a save and reload", d);
     g_autosave_seconds = 60;
-    g_app->viewController.setFixedEtime(0.0f);
+    g_app->setFixedEtime(0.0f);
 
     std::printf("[eden-evict] %s (%d failure(s))%s\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures,
                 g_opt.evictMutate.empty() ? "" : (" [mutation " + g_opt.evictMutate + "]").c_str());

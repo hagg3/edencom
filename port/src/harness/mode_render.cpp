@@ -155,7 +155,7 @@ int run_scene_shot() {
         if (name == eden_menu_world_name(i)) { eden_menu_delete_at(i); break; }
     g_pass.track = true;
     g_ignoreUserInput = true;
-    g_app->viewController.setFixedEtime(1.0f / 60.0f);
+    g_app->setFixedEtime(1.0f / 60.0f);
     eden_rng_seed(1);
     if (!open_world(name.c_str(), g_opt.height)) return 1;
     if (!g_opt.haveAt) { g_opt.at[0] = 65536.5f; g_opt.at[1] = 60.0f; g_opt.at[2] = 65536.5f; }
@@ -193,7 +193,7 @@ int run_scene_shot() {
                 if (shot(std::string(base) + "-" + eden_render_category_name((int)bit), bit)) ++written;
         }
     }
-    g_app->viewController.setFixedEtime(0.0f);
+    g_app->setFixedEtime(0.0f);
     eden_rng_unpin();
     g_pass.track = false;
     g_ignoreUserInput = false;

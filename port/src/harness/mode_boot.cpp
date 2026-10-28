@@ -77,7 +77,7 @@ void mesh_bench(const char* phase) {
     std::vector<TerrainChunk*> meshed;
     for (int i = 0; i < n; ++i) {
         TerrainChunk* c = t->chunkTable[i];
-        if (c && (c->rtn_vertices > 0 || c->rtn_vertices2 > 0)) meshed.push_back(c);
+        if (c && (c->n_vertices > 0 || c->n_vertices2 > 0)) meshed.push_back(c);
     }
     const int x0 = World::getWorld->fm->chunkOffsetX * CHUNK_SIZE, z0 = World::getWorld->fm->chunkOffsetZ * CHUNK_SIZE;
     // Pass C first, on the settled window: whole frames (World::update + renderFrame; the GL calls
@@ -87,7 +87,7 @@ void mesh_bench(const char* phase) {
     std::vector<double> frameMs;
     for (int k = 0; k < 300; ++k) {
         Uint64 a = SDL_GetPerformanceCounter();
-        g_app->viewController.drawFrame(true);
+        g_app->drawFrame(true);
         frameMs.push_back((double)(SDL_GetPerformanceCounter() - a) * 1000.0 / (double)SDL_GetPerformanceFrequency());
     }
     std::sort(frameMs.begin(), frameMs.end());

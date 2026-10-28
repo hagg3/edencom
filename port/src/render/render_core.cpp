@@ -180,8 +180,8 @@ void noteDraw(bool renderer) {
 
 using namespace rcore;
 
-// G.5b-0: the scene bracket is eden_scene_pass_begin/end's (gl_context_native.cpp) until G.5b-6 moves
-// World onto R::beginScene; both ends report here so the invariant holds either way.
+// The scene bracket: R::beginScene/endScene (World::renderFrame since FT.16) forward to
+// eden_scene_pass_begin/end (gl_context_native.cpp), which report both ends here.
 extern "C" void eden_render_note_scene(int begin) {
     if (begin) { ++g_openScene; return; }
     if (--g_openScene < 0) { g_openScene = 0; if (inv().unbalancedScene++ == 0) fail("endScene without beginScene"); }

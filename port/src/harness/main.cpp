@@ -643,6 +643,7 @@ static int parse_one_arg(const char* a) {
         else if (starts_with(a, "--bundle="))         g_opt.bundle = a + 9;
         else if (starts_with(a, "--live-cmds="))      g_opt.liveCmds = a + 12;
         else if (starts_with(a, "--render-scale="))   g_opt.renderScalePct = atoi(a + 15);
+        else if (!std::strcmp(a, "--diag-clear"))     eden_native_gl_set_diag_clear(1);
         else if (!std::strcmp(a, "--scale-probe"))    g_opt.mode = "scale-probe";
         else if (!std::strcmp(a, "--preset-probe"))   g_opt.mode = "preset-probe";
         else if (!std::strcmp(a, "--mem-trace"))      g_eden_mem_trace = 1;
@@ -810,7 +811,7 @@ static int eden_main_after_args(int argc, char** argv) {
     // poll loop: it is a normal event and the loop must also stop running.)
     SDL_AddEventWatch(eden_lifecycle_event_watch, nullptr);
 
-    // The GL context MUST be live before eden_seam_main(), and that is measured rather than
+    // The GL context MUST be live before App::boot(), and that is measured rather than
     // preferred: World::World() -> Graphics::initGraphics() issues real glGenBuffers/glBufferData
     // during construction. A failure here is NOT fatal — the shim's context guard keeps the whole
     // engine running headless, which is exactly what the scripted modes want.
@@ -826,14 +827,14 @@ static int eden_main_after_args(int argc, char** argv) {
     // device that measures over criterion 3 (300 MB) with the fix in; the predicate would then be
     // SDL_GetSystemRAM(). Never LOW_MEM_DEVICE: that turns coloured lighting off.
     // W.2 (b): a window's boot applies the display profile BEFORE World::World() loads textures
-    // (SDLView_native.cpp -> DisplayMode_native.cpp), so IS_IPAD is set and the ipad~ assets load --
+    // (App.cpp -> DisplayMode_native.cpp), so IS_IPAD is set and the ipad~ assets load --
     // the only paint mask that ships is ipad~paint_mask.png. Headless has no window and applies it
     // only once the settings load, after the textures, so a headless boot holds the 1x set and no
     // paint mask. --recolor-selftest asserts the pipeline a device runs, so it boots in that order.
     // Every other mode keeps the headless order its pinned checksums were taken under.
     if (g_opt.mode && !std::strcmp(g_opt.mode, "recolor-selftest")) eden_display_refresh();
-    eden_native::eden_seam_main();
-    g_app = eden_native::eden_seam_get_app_delegate();
+    eden_native::App::boot();
+    g_app = eden_native::App::get();
     eden_mem_trace("world-constructed");
     eden_native_input_init(eden_native_gl_window());
 
@@ -842,7 +843,7 @@ static int eden_main_after_args(int argc, char** argv) {
     // modes only — an interactive session should not pay for it.
     if (g_opt.mode) eden_debug_set_mesh_checksum(1);
 
-    // NOT ENABLED: `g_app->viewController.setFixedEtime(1.0f/60.0f)` for the scripted modes. It is
+    // NOT ENABLED: `g_app->setFixedEtime(1.0f/60.0f)` for the scripted modes. It is
     // the obviously right idea — "N frames" should be N/60 s of engine time regardless of machine
     // load — and it was tried here. It does not work on its own, because this build has THREE time
     // bases and only one of them would move: the engine's etime (fixed), Movement.cpp's
@@ -1014,7 +1015,7 @@ static int eden_main_after_args(int argc, char** argv) {
             eden_native_input_tick();
             eden_live_commands_tick();
             eden_look_trace_frame();   // L.0: after the pump, before World::update reads the touches
-            if (g_app->viewController.isAnimating()) g_app->viewController.drawFrame(true);
+            if (g_app->isAnimating()) g_app->drawFrame(true);
             // AFTER the tick that queued this frame's sounds, so a sound fired now is bound to
             // the device in the same frame rather than the next one.
             eden_native_audio_tick();

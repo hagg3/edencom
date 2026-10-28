@@ -10,7 +10,7 @@
 
 
 #include "Constants.h"
-#include <OpenGLES/ES1/gl.h> // GLubyte below; UIKit.h used to bring it (G.2b-3)
+#include <stdint.h>
 
 
 //#define SCALE_WIDTH 2.0f
@@ -42,7 +42,7 @@ extern bool LOW_GRAPHICS;
 
 
 extern const int blockTypeFaces[NUM_BLOCKS+1][6];
-extern const GLubyte blockColor[NUM_BLOCKS+1][3];
+extern const uint8_t blockColor[NUM_BLOCKS+1][3];
 // non-const since H.8: Terrain.mm toggles IS_FLAMMABLE on ice/vine at runtime
 extern int blockinfo[NUM_BLOCKS+1];
 

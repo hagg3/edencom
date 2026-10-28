@@ -2162,12 +2162,12 @@ void LoadVbos(int idx)
 static const R::VertexFormat kFmtPos3={12,{R::A_F32,3,0},{R::A_NONE,0,0},{R::A_NONE,0,0},{R::A_NONE,0,0},
                                        {R::A_NONE,0,0},{R::A_NONE,0,0},{R::A_NONE,0,0}};
 static R::Rgba g_boxTint={1,1,1,1};
-static void drawLines(const GLfloat* verts,int n,R::Prim prim){
+static void drawLines(const float* verts,int n,R::Prim prim){
     const R::Geometry g={&kFmtPos3,0,verts,0,nullptr,R::I_NONE,0,n,prim};
     R::drawWorld(g,0,g_boxTint);
 }
 void DrawBox(Polyhedra*p){
-    GLfloat				verts[9*3];
+    float				verts[9*3];
     int v=0;
    // printg("----\n");
     for(int i=0;i<p->n_points;i++){
@@ -2190,7 +2190,7 @@ void DrawBox(Polyhedra*p){
 
 void DrawBox(Vec3f min,Vec3f max){
    
-        GLfloat				verts[] = {
+        float				verts[] = {
             min.x,	min.y,min.z,
             min.x,	max.y,min.z,
             max.x,	max.y,min.z,
@@ -2207,11 +2207,11 @@ void DrawBox(Vec3f min,Vec3f max){
               
         
       
-        GLfloat loop[11*3];   // was a GL_LINE_LOOP: the strip plus its first vertex again
+        float loop[11*3];   // was a GL_LINE_LOOP: the strip plus its first vertex again
         memcpy(loop, verts, sizeof verts);
         loop[30]=verts[0];loop[31]=verts[1];loop[32]=verts[2];
         drawLines(loop, 11, R::LINE_STRIP);
-    GLfloat				verts2[] = {
+    float				verts2[] = {
        
         min.x,	max.y,min.z,
         min.x,	max.y,max.z,
@@ -2294,7 +2294,7 @@ void DrawShadows(){
             continue;}
         dist=(4-dist)/4.0f;
         
-        GLfloat				coordinates[] = {
+        float				coordinates[] = {
             0,				1,
            
             0,				0,
@@ -2302,19 +2302,19 @@ void DrawShadows(){
             1,			0
         };
         //printg("(%f,%f,%f)",point.x,point.y,point.z);
-        GLfloat				width = dist*shadow_size[guys[i].model_type],
+        float				width = dist*shadow_size[guys[i].model_type],
         height = dist*shadow_size[guys[i].model_type];
-        GLfloat				vertices[] = {
+        float				vertices[] = {
             -width / 2 + point.x,	point.y,	-height / 2 + point.z,		
            	
             -width / 2 + point.x,	point.y,	height / 2 + point.z,	
              width / 2 + point.x,	point.y,	-height / 2 + point.z,	
             width / 2 + point.x,	point.y,	height / 2 + point.z,		
         };
-        GLfloat quad[4*5];   // interleaved for R::kFmtUI3UV: x,y,z,u,v
+        float quad[4*5];   // interleaved for R::kFmtUI3UV: x,y,z,u,v
         for(int k=0;k<4;k++){
-            memcpy(&quad[k*5], &vertices[k*3], 3*sizeof(GLfloat));
-            memcpy(&quad[k*5+3], &coordinates[k*2], 2*sizeof(GLfloat));
+            memcpy(&quad[k*5], &vertices[k*3], 3*sizeof(float));
+            memcpy(&quad[k*5+3], &coordinates[k*2], 2*sizeof(float));
         }
         const R::Geometry g = { &R::kFmtUI3UV, 0, quad, 0, nullptr, R::I_NONE, 0, 4, R::TRIANGLE_STRIP };
         R::drawWorld(g, shadowTex, R::Rgba{1, 1, 1, .4f});

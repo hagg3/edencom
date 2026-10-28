@@ -20,11 +20,11 @@ extern float SCREEN_WIDTH;
 extern float SCREEN_HEIGHT;
 extern float P_ASPECT_RATIO;
 
-extern const GLshort cubeTexture[CUBE_VERTICES*2] ;
+extern const int16_t cubeTexture[CUBE_VERTICES*2] ;
 
-extern const GLshort cubeShortVertices[CUBE_VERTICES*3] ;
+extern const int16_t cubeShortVertices[CUBE_VERTICES*3] ;
 /*
-const static GLfloat skyboxVertices[]={
+const static float skyboxVertices[]={
 	// Render the front quad	
 	0, 0,   0.5f, -0.5f, -0.5f ,
 	1, 0,  -0.5f, -0.5f, -0.5f ,
@@ -70,7 +70,7 @@ const static GLfloat skyboxVertices[]={
 };
 
 
-const static GLfloat cubeTexture12[] = {
+const static float cubeTexture12[] = {
 	1, 1, 	//4
 	0, 1, 	//3
 	1,0,	//7  A front
@@ -105,7 +105,7 @@ const static GLfloat cubeTexture12[] = {
 //         |  F   \|          Top  F+G
 //         3-------4       Bottom  C+J
 //
-const static GLfloat cubeVertices12[] = {
+const static float cubeVertices12[] = {
 	0.5, 0.5, 0.5 ,	//4
 	-0.5, 0.5, 0.5 ,	//3
 	0.5,-0.5, 0.5 ,	//7  A front
@@ -123,7 +123,7 @@ const static GLfloat cubeVertices12[] = {
 	
 };
 
-const static GLfloat cubeNormals12[] = {
+const static float cubeNormals12[] = {
 	0, 0, 0 ,		//4
 	0, 0, 0 ,	//3
 	0, 0, 1 ,		//7  A front
@@ -471,7 +471,7 @@ void Graphics::prepareScene(){
 	
 }*/
 void Graphics::drawRect(float x1,float y1,float x2,float y2){
-	GLfloat rectVertices[] = {
+	float rectVertices[] = {
 		x1	  ,y1	 ,-.5   ,
 		x2    ,y1    ,-.5   ,		
 		x1	  ,y2    ,-.5   ,
@@ -580,19 +580,19 @@ void Graphics::drawSkybox(){
 	
 }
 
-extern const GLubyte blockColor[NUM_BLOCKS+1][3];
+extern const uint8_t blockColor[NUM_BLOCKS+1][3];
 extern const int blockTypeFaces[NUM_BLOCKS+1][6];
 extern Vector colorTable[256];
-//extern GLshort cubeShortVertices[];
-extern GLshort ramp2ShortVertices[3*6*6];
-extern GLshort ramp3ShortVertices[3*6*6];
-extern GLshort ramp4ShortVertices[3*6*6];
-extern const GLshort ramp1ShortVertices[];
-extern GLshort side2ShortVertices[3*6*6];
-extern GLshort side3ShortVertices[3*6*6];
-extern GLshort side4ShortVertices[3*6*6];
-extern const GLshort side1ShortVertices[];
-extern const GLfloat cubeNormals[36*3];
+//extern int16_t cubeShortVertices[];
+extern int16_t ramp2ShortVertices[3*6*6];
+extern int16_t ramp3ShortVertices[3*6*6];
+extern int16_t ramp4ShortVertices[3*6*6];
+extern const int16_t ramp1ShortVertices[];
+extern int16_t side2ShortVertices[3*6*6];
+extern int16_t side3ShortVertices[3*6*6];
+extern int16_t side4ShortVertices[3*6*6];
+extern const int16_t side1ShortVertices[];
+extern const float cubeNormals[36*3];
 
 void Graphics::drawFirework(float x,float y,float z, int color, float scale, float rot){
     // G.5b-4: an R::drawLit (Firework::render sets the light). The texture and colour also go to the pen,

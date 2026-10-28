@@ -9,8 +9,7 @@
 //
 // With no scripted mode it just plays: SDL event pump plus the frame loop.
 
-#include "../seam/main_native.h"
-#include "../seam/EdenAppDelegate_native.h"
+#include "../seam/App.h"
 #include "../seam/Input_native.h"
 #include "../seam/SimpleAudioEngine_native.h"
 #include "save_backup.h"                 // port/src/shim/foundation — the shared backup rules
@@ -99,10 +98,11 @@ void  eden_settings_init(void);
 void  eden_set_detected_touch(int isTouch);
 int   eden_settings_loaded(void);
 void  eden_heap_pressure_tick(void);
-int   eden_native_thermal_state(void);   // SDLView_native.cpp (P.1a)
+int   eden_native_thermal_state(void);   // App.cpp (P.1a)
 void  eden_native_gl_set_headless(int on);
 void  eden_native_gl_set_present(int on);
 int   eden_native_gl_present_guard_fires(void);
+void  eden_native_gl_set_diag_clear(int on);   // --diag-clear (FT.16a): magenta window clear in play
 SDL_Window* eden_native_gl_window(void);
 
 void  eden_ui_force_legacy(int on);
@@ -330,7 +330,7 @@ extern std::string g_saveBenchList;
 bool SDLCALL eden_lifecycle_event_watch(void*, SDL_Event* ev);
 void eden_setenv(const char* k, const char* v);
 extern Options g_opt;
-extern eden_native::EdenAppDelegate* g_app;
+extern eden_native::App* g_app;
 extern bool g_tickInput;
 void settings_pump();
 void tick(int n);
