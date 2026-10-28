@@ -524,7 +524,9 @@ int run_menu_selftest() {
         const int before = eden_menu_world_count();
         ui_tap_rect(m->controlRect("new"));
         tick(3);
+        // FT.3: world names keep only A-Z, a-z, 0-9, space and '; the typed "í" must be dropped.
         const char* typed = "Selftest V\xC3\xADlag";   // "Selftest Vílag"
+        const char* kept = "Selftest Vlag";
         push_text(typed);
         tick(2);
         int flatTile = -1;
@@ -536,8 +538,8 @@ int run_menu_selftest() {
         tick(2);
         std::snprintf(detail, sizeof(detail), "type %d (flat tile %d) height %d name \"%s\" focused %d",
                       nw->type(), flatTile, nw->choice("height"), nw->text("name"), nw->focused("name") ? 1 : 0);
-        check(nw->type() == flatTile && nw->choice("height") == 64 && std::strcmp(nw->text("name"), typed) == 0 &&
-              !nw->focused("name"), "the rail picks Flat, the pair picks Original 64, the name is typed (and a tap elsewhere blurs it)", detail);
+        check(nw->type() == flatTile && nw->choice("height") == 64 && std::strcmp(nw->text("name"), kept) == 0 &&
+              !nw->focused("name"), "the rail picks Flat, the pair picks Original 64, the name is typed and filtered (and a tap elsewhere blurs it)", detail);
         ui_tap_rect(nw->controlRect("play"));
         tick(2);
         bool dialog = false;
@@ -553,13 +555,13 @@ int run_menu_selftest() {
         if (!quit_to_menu()) return 1;
         tick(30);
         int at = -1;
-        for (int i = 0; i < eden_menu_world_count(); ++i) if (std::strcmp(eden_menu_world_name(i), typed) == 0) at = i;
+        for (int i = 0; i < eden_menu_world_count(); ++i) if (std::strcmp(eden_menu_world_name(i), kept) == 0) at = i;
         std::string onDisk;
         if (at >= 0) {
             onDisk = World::getWorld->fm->getName(eden_menu_world_file(at));
         }
         std::snprintf(detail, sizeof(detail), "listed at %d, header name \"%s\"", at, onDisk.c_str());
-        check(at >= 0 && onDisk == typed, "the world's file header carries the typed name", detail);
+        check(at >= 0 && onDisk == kept, "the world's file header carries the typed name", detail);
 
         // Escape over the screen is its Back. The field has focus (desktop), so the first Escape
         // only leaves the field; the second closes the screen.
@@ -1219,7 +1221,7 @@ int run_ui_selftest() {
                   GLDialog::active() ? 1 : 0, wp->lastResult());
     check(!wp->isOpen() && !menu->showprops && !GLDialog::active() && wp->lastResult() == WP_WROTE_NAME,
           "a name-only save raises no dialog and closes the screen", detail);
-    const char* want = "Renamed \xC3\x9C";
+    const char* want = "Renamed";   // FT.3: the "Ü" is filtered and the trailing space trimmed
     const std::string listed = eden_menu_world_name(idx);   // copy: one static buffer per accessor family
     std::string onDisk = World::getWorld->fm->getName(eden_menu_world_file(idx));
     std::snprintf(detail, sizeof(detail), "listed \"%s\" on disk \"%s\"", listed.c_str(), onDisk.c_str());
