@@ -8,31 +8,23 @@
 #ifndef Eden_ShareUtil_h
 #define Eden_ShareUtil_h
 
-#import <Foundation/Foundation.h>
-#import "FileDownload.h"
+#include <string>
 
-@interface ShareUtil : NSObject {
-   FileDownload* dlmanager;
-    BOOL isPreview,isWorldlist;
-    NSString* listresult;
-}
--(void)canceldl;
--(void)loadShared:(NSString*)file_name;
--(void)reportWorld:(NSString*)file_name;
--(void)loadSharedPreview:(NSString*)file_name;
-- (void)shareWorld:(NSString*)file_name;
-- (void)getSharedWorldList;
-- (NSData *)gzipInflate:(NSData*)data;
--(void)uploadSuccess:(id)obj;
--(void)uploadError:(id)obj;
--(void)downloadSuccess:(id)obj;
--(void)reportSuccess:(id)obj;
--(void)reportError:(id)obj;
-
--(void)downloadError:(id)obj;
-- (NSString*)searchSharedWorlds:(NSString*)query;
-@property(nonatomic,assign)   NSString* listresult;
-@end
+// G.2b-2 (de-ObjC plan D13): a C++ class with the stock method names (was an NSObject @interface
+// over FileDownload). Every target stubs it (seam_link_stubs_native.cpp); the stock body is
+// archive/stock-unbuilt/ShareUtil.mm. Get Worlds is WorldBrowser now.
+class ShareUtil {
+public:
+    bool isPreview,isWorldlist;
+    std::string listresult;
+    void canceldl();
+    void loadShared(const std::string& file_name);
+    void reportWorld(const std::string& file_name);
+    void loadSharedPreview(const std::string& file_name);
+    void shareWorld(const std::string& file_name);
+    void getSharedWorldList();
+    std::string searchSharedWorlds(const std::string& query);
+};
 
 
 #endif

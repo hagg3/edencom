@@ -10,13 +10,13 @@
 
 
 
-#import <math.h>
-#import "Util.h"
+#include <math.h>
+#include "Util.h"
 
-#import "World.h"
-#import "Camera.h"
-#import "Input.h"
-#import "OpenGL_Internal.h"
+#include "World.h"
+#include "Camera.h"
+#include "Input.h"
+#include "OpenGL_Internal.h"
 
 #define MAX_PORTAL 1000
 typedef struct _portal{
@@ -34,7 +34,7 @@ public:
     Vector2 enterPortal(int x,int y,int z,Vector vel);
     // Nearest portal to `pos` (block centers), for the proximity-ambience distance fade -- returns
     // FALSE (leaving *outPos untouched) when the world has no portals at all.
-    BOOL nearestPortal(Vector pos,Vector* outPos);
+    bool nearestPortal(Vector pos,Vector* outPos);
 private:
    int n_portal;
    sportal portals[MAX_PORTAL];

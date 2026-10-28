@@ -10,18 +10,18 @@
 
 
 
-#import <OpenGLES/ES1/gl.h>
-#import <OpenGLES/ES1/glext.h>
-#import "Texture2D.h"
-#import "Terrain.h"
-#import "Graphics.h"
-#import "Camera.h"
-#import "Resources.h"
-#import "Player.h"
-#import "Hud.h"
-#import "Menu.h"
-#import "FileManager.h"
-#import "SpecialEffects.h"
+#include <OpenGLES/ES1/gl.h>
+#include <OpenGLES/ES1/glext.h>
+#include "Texture2D.h"
+#include "Terrain.h"
+#include "Graphics.h"
+#include "Camera.h"
+#include "Resources.h"
+#include "Player.h"
+#include "Hud.h"
+#include "Menu.h"
+#include "FileManager.h"
+#include "SpecialEffects.h"
 
 
 class FileManager;
@@ -48,16 +48,16 @@ public:
 	//BOOL FLIPPED;
     int doneLoading;
     float realtime;
-    BOOL bestGraphics;
-    BOOL sanityCheck;
+    bool bestGraphics;
+    bool sanityCheck;
     
     World();
     ~World();
     static World* getWorld;
-    BOOL update(float etime);
-    void loadWorld(NSString* name);
+    bool update(float etime);
+    void loadWorld(const std::string& name);
     void render();
-    void renderFrame(BOOL draw);
+    void renderFrame(bool draw);
     void exitToMenu();
     
     

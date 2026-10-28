@@ -5,15 +5,27 @@ Everything drawn on screen: GL state management, chunk meshing, the two terrain
 passes, special objects, sky, and the per-vertex data formats.
 
 ## Fixed constraints
-- **OpenGL ES 1.1, fixed-function.** The engine has no shaders of its own. *(Port: its ES 1.1
-  calls run through the ES1→ES3/GL translator in `port/src/shim/gl/` ([gl-shim.md](../port/docs/gl-shim.md)),
-  which supplies the shaders: one shared program, whose fragment shader emulates the alpha test with
-  a `discard`, and a second one for the matrix palette. Fixed-function semantics — fog, texture
-  matrix, `GL_LIGHT*`, matrix palette — are what the engine sees, not what the GPU runs.)*
+- **OpenGL ES 1.1, fixed-function.** The engine has no shaders of its own. *(Port: since G.5b-7 (2026-10-28) the engine
+  makes no GL call at all: it draws through its own renderer `R::` ([renderer.md](../port/docs/renderer.md)),
+  whose five programs reproduce the fixed-function semantics the engine was written against (fog, texture
+  matrix, alpha test, point attenuation, matrix-palette skinning, `GL_LIGHT*` behind *Original lighting*).
+  The ES 1.1 translator that served it until then is history: [gl-shim.md](../port/docs/history/gl-shim.md).)*
 - Lighting effects are baked into vertex colors. GL lighting (`GL_LIGHT0`/`GL_LIGHT1`) is used only
   for immediate-mode objects: doors and the golden cube's env-mapped specular highlight
-  (`Terrain.mm`), creatures (`Model.mm`), block-break debris (`BlockBreak.mm`) and the rising
-  firework cube (`Firework.mm`).
+  (`Terrain.cpp`), creatures (`Model.cpp`), block-break debris (`BlockBreak.cpp`) and the rising
+  firework cube (`Firework.cpp`).
+  *(Port, G.5b-4: debris and the firework cube are `R::drawLit` draws with an `R::LightSet`, lit per
+  vertex as 2.1 did only while Settings › Video › *Original lighting* is on (default); off, they draw
+  unlit. Two stock details this exposed: debris was **flat shaded** (`initGraphics` sets `GL_FLAT`;
+  `BlockBreak`'s `glShadeModel(GL_SMOOTH)` comes after its draw), and its light position is loaded while
+  the matrix mode is `GL_TEXTURE`, so the effects pass's modelview places it far off in eye space, a
+  nearly directional light. The port draws everything else smooth (the shim always ignored `glShadeModel`).
+  `port/docs/renderer.md` § Original lighting; gate `--lit-oracle`. G.5b-6 did the same for doors (LIGHT0
+  at the eye, ambient .3 / diffuse .7, night .17 / .3) and golden cubes (LIGHT1 alone at eye (1,1,0),
+  .3 / .3, night .15 / .15, white specular, shininess 100), both smooth. **Terrain stays smooth**: 2.1.1 drew
+  the chunk passes under `GL_FLAT` too (only the objects section switched to smooth), but the port has
+  drawn them smooth since it began, stock faces are mostly one colour per face anyway, and the port's
+  *Smooth* shadows (`lighting-liquids-effects.md`) are per-vertex and need the interpolation.)*
 - Stock: a single 16-bit depth buffer, RGBA8 color, the depth attachment discarded before present
   (`EAGLView`). *Port:* 24-bit depth (`gl_context_native.cpp`). SDL's swap does not discard, so on
   iOS `eden_native_gl_present` invalidates the view FBO's depth before `SDL_GL_SwapWindow` and
@@ -21,14 +33,21 @@ passes, special objects, sky, and the per-vertex data formats.
   `glInvalidateFramebuffer`; ≈ 12.6 MB/frame of tile store on an Air 2). Desktop does not.
 
 ## Important files
-- `Classes/Graphics.mm/.h` — static GL state helpers + the vertex struct definitions.
-- `Classes/TerrainChunk.mm` — mesh generation (`rebuild2`), VBO upload (`prepareVBO`),
+- `Classes/Graphics.cpp/.h` — static GL state helpers + the vertex struct definitions.
+- `Classes/Renderer.h` — the engine-owned renderer (Stage G.5, from 2026-10-25): matrix stacks the ES 1.1
+  calls forwarded into, explicit per-draw state, five programs. The 2D brackets and fill (G.5b-1), every
+  `Texture2D` upload and quad draw, the screenshot/picking/frustum readbacks (G.5b-3), the effects pass
+  (Fire, BlockBreak, Firework, the player's held cube), the signs pass (G.5b-4), the creatures (G.5b-5) and
+  the terrain passes (G.5b-6: chunks, object batches, sky, flowers, the brackets and fog in `Graphics`) are
+  on it, and since G.5b-7 everything else: the HUD's own quads (`Pen::strip`) and the 2D code's immediate-mode
+  state, kept engine-side as the **pen** (`Pen::` in `Graphics.h`); `port/docs/renderer.md`.
+- `Classes/TerrainChunk.cpp` — mesh generation (`rebuild2`), VBO upload (`prepareVBO`),
   chunk draw (`render`, `render2`).
-- `Classes/Terrain.mm` — frame-level terrain passes, object batches, sky.
-- `Classes/Geometry.mm` — the canonical cube/ramp/side/liquid vertex+UV tables and the
+- `Classes/Terrain.cpp` — frame-level terrain passes, object batches, sky.
+- `Classes/Geometry.cpp` — the canonical cube/ramp/side/liquid vertex+UV tables and the
   shared `allIndices[32768]` identity index array.
-- `Classes/Frustum.mm` — plane extraction + AABB test (`ViewTestAABB`).
-- `Classes/Camera.mm` — view matrix from player state.
+- `Classes/Frustum.cpp` — plane extraction + AABB test (`ViewTestAABB`).
+- `Classes/Camera.cpp` — view matrix from player state.
 - `Classes/glu.h`, `project.c` — GLU port used for `gluPerspective`/`gluUnProject`.
 
 ## Vertex formats (`Graphics.h`; `vertexObject` is in `Vector.h`)
@@ -38,12 +57,12 @@ passes, special objects, sky, and the per-vertex data formats.
   (`chunkOffset` follows every window shift since B.5b-1a; any value works because meshes are
   chunk-local, as long as it changes between frames, never mid-frame. The window's outer ring of
   columns is never meshed and draws nothing: docs/world-and-terrain.md "Streaming" 2a)
-  and `Terrain::render2` wraps everything in `glScalef(.25,.25,.25)`; pass 1 relies on
-  the modelview already being scaled the same way via `Graphics::beginTerrain`.
+  and `Terrain::render2` wraps everything in a ×.25 scale; pass 1 relies on
+  the modelview already being scaled the same way via `Graphics::beginTerrain` (both on `R::mv()` since G.5b-6).
   UV shorts are normalized by a **texture matrix** trick: `glMatrixMode(GL_TEXTURE);
   glScalef(1, 1/ATLAS_TILES, 1)` around the terrain passes and `BlockBreak::render` (each atlas
   is a 1×`ATLAS_TILES` strip). **Modified from stock (D.2t, 2026-10-10):** stock was 1/32 with
-  32-tile atlases; both grew to 64 (`Constants.h` `ATLAS_TILES`) to carry blocks 112–127, then to **128 (H.14, 2026-10-16; the PNG loader's size cap in `Texture2D_web.mm` had to go 2048→4096 with it, or every tile loads half-res)** for tile 64 `TEX_GRASS_FLOWER` (block 12's top, `grass3o.png`, full colour so the mesher leaves its paint white; `port/tools/atlas-h14.py`) — atlas2's
+  32-tile atlases; both grew to 64 (`Constants.h` `ATLAS_TILES`) to carry blocks 112–127, then to **128 (H.14, 2026-10-16; the PNG loader's size cap in `Texture2D.cpp` had to go 2048→4096 with it, or every tile loads half-res)** for tile 64 `TEX_GRASS_FLOWER` (block 12's top, `grass3o.png`, full colour so the mesher leaves its paint white; `port/tools/atlas-h14.py`) — atlas2's
   extra 32 tiles are transparent padding so one constant serves both passes. Every consumer reads
   it: the two passes, `BlockBreak`, `Resources::getBlockTex`/`getBlockTexShort` (normalized
   `type/ATLAS_TILES` for the HUD icons, picker and `Graphics::drawCube`). The door, portal-frame and portal-swirl immediate batches (`Terrain::render`) used to hardcode `*32` to cancel the 1/32 matrix for their own non-atlas textures; they now multiply by `ATLAS_TILES` (X.7 — at `*32` only the top half of the door texture was sampled, stretched over both blocks). The image loader's cap is
@@ -52,16 +71,20 @@ passes, special objects, sky, and the per-vertex data formats.
   portals, flowers, creatures env-map).
 - `vertexpStruct` / `vertexpBreak` — point-sprite particles / block-break debris.
 
-## Graphics state helpers (`Graphics.mm`)
+## Graphics state helpers (`Graphics.cpp`)
 `prepareScene` (clear + `gluPerspective(eden_fov_degrees, aspect, 0.012, ZFAR-25)` — the fovy
 was a hard-coded `80` until Phase N Stage 2.5; it now reads the shared FOV setting
-(`port/src/seam/Settings_web.mm`, `> 0` guard falls back to 80).),
-`beginTerrain/endTerrain` (fog on, color arrays, atlas bind, ×0.25 scale),
-`beginHud/endHud` and `prepareMenu/endMenu` (ortho 2D), `setZFAR` (also re-derives the
+(`port/src/seam/Settings.cpp`, `> 0` guard falls back to 80).),
+`beginTerrain/endTerrain` (fog on, color arrays, atlas bind, ×0.25 scale; since G.5b-6: the pass's `R::State`
+(no blend, depth test + write, cull), `applyWorldFog()` → `R::setFog`, the ×0.25 on `R::mv()`, and an exit
+hand-off of the state stock left, on the pen since G.5b-7 — the chunk draws state their own
+texture), `setFogColor`/`applyWorldFog` (G.5b-6: the fog colour Terrain sets, kept engine-side for `R::setFog`;
+`RenderModels` uses `applyWorldFog` too since G.5b-7),
+`beginHud/endHud` and `prepareMenu/endMenu` (ortho 2D, on `R::begin2D`/`R::end2D` since G.5b-1), `setZFAR` (also re-derives the
 linear fog band: start `ZFAR-ZFAR/1.6`, end `ZFAR-30`). Fog color tracks sky color
 (`Terrain::update`). `setZFAR` ignores its argument: it picks a per-tier value (`LOW_MEM_DEVICE` 90,
 `LOW_GRAPHICS` 115, else 145) and passes it through `Graphics::viewDistanceZFAR`, which applies the user's
-**View distance** setting (B.5a; `view_distance` enum, `eden_view_distance` global in `Settings_web.mm`:
+**View distance** setting (B.5a; `view_distance` enum, `eden_view_distance` global in `Settings.cpp`:
 0 = Auto = the tier value, 1..6 = 4..9 chunks). The far plane is `ZFAR-25`, so ZFAR = blocks + 25, and blocks
 are capped at `eden_meshed_radius_blocks()` = `(T_RADIUS−1)·16−8`, the meshed radius (120 at the default radius 9 —
 the old `VIEW_DISTANCE_MAX_BLOCKS` literal — not the 144-block resident window). **B.5b-2:** with a larger window
@@ -70,7 +93,7 @@ it out: ZFAR = meshed radius + 25 (161 / 193 / 257 at radius 10 / 12 / 16), so t
 and the fog ends 5 blocks short of it, as 145 does at radius 9; at radius 9 Auto is the tier value exactly as
 before. **Draw-culling only**: meshing and streaming are unchanged. Changing the setting re-calls `setZFAR`
 immediately.
-**Graphics preset** (B.8; `graphics_preset` row, `kPresets[]` in `Settings_web.mm`): Custom / Low / Default / High is a
+**Graphics preset** (B.8; `graphics_preset` row, `kPresets[]` in `Settings.cpp`): Custom / Low / Default / High is a
 shortcut that writes `view_distance` (and `render_scale`, except on iOS where that row is hidden) — Low = 4 chunks + 75%,
 Default = Auto + 100% (the pre-B.8 look; shots match within animation noise). High = Default plus `render_radius`
 (B.5b-2): radius 16 on desktop, 10 on iOS (P.4 decision 6; T.B16 measured R10/R12 on the Air 2). Moving any of
@@ -166,7 +189,7 @@ the `rt*` boundary that `prepareVBO()` already was:
 > `prepareVBO()` to publish them into `rt*` and upload. **GL never leaves the main thread**, so
 > convention #4 holds unchanged — and it costs nothing, because upload is under 1% of a burst.
 
-- **Scope, deliberately narrow.** Only chunks dirtied by a **bulk window reload** (`Terrain.mm`'s
+- **Scope, deliberately narrow.** Only chunks dirtied by a **bulk window reload** (`Terrain.cpp`'s
   `bulk_reload_active`) go to a worker. Player edits, explosions, fire and the initial world load
   still mesh inline, in the same frame, exactly as before — they are few, latency-sensitive and next
   to the player.
@@ -279,7 +302,7 @@ had the row-#20 problem below — only pass 2's `glDrawArrays` path did.
 
 **Pass-2 chunk draw batching (perf-audit row #20, `TerrainChunk::render2`).** The 6 face
 buckets in `vertexBuffer2` are laid out back-to-back by construction
-(`face_idx2[i]=num_vertices2[i-1]+face_idx2[i-1]`, `TerrainChunk.mm` around the mesher's
+(`face_idx2[i]=num_vertices2[i-1]+face_idx2[i-1]`, `TerrainChunk.cpp` around the mesher's
 counting pass), but `render2()` used to issue one `glDrawArrays` per visible bucket, in a
 scrambled per-axis order (5,1,0,3,2,4, not ascending index order) — 6 draw calls, an ES1
 artefact once WebGL (and now the shim on every target) made per-call overhead real (§2/C2 of the perf audit). Since 2026-07-30
@@ -298,31 +321,35 @@ diagrammed above — is untouched; this is purely an intra-chunk optimization.
 Water/lava animation: atlas 2 rows are animation frames; `render2` advances a global
 `frame` counter and translates the texture matrix by `(int)(frame/16)` rows.
 
-**Signs (D.3b, 2026-10-10 — not stock).** `SignRenderer::render()` (`Classes/SignRenderer.mm`) runs
+**Signs (D.3b, 2026-10-10 — not stock).** `SignRenderer::render()` (`Classes/SignRenderer.cpp`) runs
 between `RenderModels()` and `Terrain::render2()` in `World::renderFrame`, so signs sit after the opaque
 pass and under the sorted transparent one. It reads the trailer model (`fm->trailer()`), keeps signs
 within 32 blocks of the player (which also keeps every anchor inside the toroidal window — `getLand`
 wraps outside it), hides one whose anchor is air or whose front cell is opaque (`!IS_NOTSOLID`), and
-builds one dynamic VBO per frame: boards, posts and command-block buttons as untextured vertex-coloured
-boxes (one `glDrawArrays`), then one textured quad per sign's text. Text textures come from the text
+builds one dynamic VBO per frame: command-block buttons as untextured vertex-coloured boxes (one
+`glDrawArrays`); standing and wall-sign boards as boxes textured with the atlas planks tile (`TEX_WOOD`,
+FT.14, turned a quarter so the planks run along the board, modulated by the sign's paint colour) and the standing post with the same planks tile unturned and 30% darker, ending at the board's lower edge (no overlap), one draw; then one textured quad per sign's text. Text textures come from the text
 raster seam (`eden_rasterize_text_rgba`, one call per wrapped line, body face), outlined here by
 dilating the coverage, 256 texels across the board, mipmapped; an LRU cache keyed by (board kind, text),
 ≤ 256 textures / 24 MB (64 / 8 MB until 2026-10-17: past the 64 nearest a dense server spawn drew blank boards), nearest signs first, ≤ 4 built a frame. Shapes (D.4b resized them to Minecraft's
 2:1, the user 2026-10-10): a standing sign (a = 3) is a 1 × 0.5 board on a 0.5 post facing `c`; a wall
 sign is a 7/8 × 1/2 board centred on the face, 1/32 off it; on a face of a block with a `CMB1` record it
-fills the skin's 0.75 panel instead.
+fills the skin's 0.75 panel instead. Since G.5b-4 the pass is all `R::` (`texCreate`/`texDestroy` for the
+text, `bufCreate`/`bufData`/`bufSubData` for the VBO, explicit state and fog-off per draw; the skin draw
+keeps its polygon offset −1/−4 and the text its 0.02 alpha reference) and leaves no ES 1.1 state behind.
 
 **Command blocks (D.4b, 2026-10-10 — not stock)** are drawn by the same pass: every non-air block with a
-`CMB1` record within 64 blocks gets a fixed skin on each exposed face (neighbour not opaque) — an orange
-frame (four strips), a charcoal panel and a square button box that is red idle / green while
+`CMB1` record within 64 blocks gets a fixed skin on each exposed face (neighbour not opaque) — one quad
+textured with the community `cmd_block_V2_icon.png` (`Resources::getArtTex(ART_CMD_BLOCK)`, 32×32,
+mipmapped, modulated by the face shade; an orange frame + charcoal panel before 2026-10-27) and a square button box that is red idle / green while
 `CmdTool::running()` (D.4c sets it: while an instance of the script is alive, and for at least
 0.25 s after a press so an instant script still flashes), with a fixed per-face shade (top 1.0, sides
 0.8/0.7, bottom 0.55). While green the button is pushed in to 0.036 (1/32 + 0.005, still in front of a
 board) from 0.047.
-Never the voxel's paint, never meshed: the steel underneath stays stock steel. Frame + panel are a
+Never the voxel's paint, never meshed: the steel underneath stays stock steel. The textured face is a
 separate draw under `glPolygonOffset(-1, -4)` 0.002 off the face — at `P_ZNEAR` 0.012 a 24-bit depth
 step is ~0.02 block at 64, so distance alone would z-fight; the button stands 0.047 out, past a wall
-sign's board (1/32), so a sign on the face never hides it. Buffer layout `[skin | flat | text]`.
+sign's board (1/32), so a sign on the face never hides it. Buffer layout `[skin | flat | wood | text]`.
 Everything is unlit, with cull face off for the pass; it enters with texture on / lighting off / blend
 off / cull on / `GL_ARRAY_BUFFER` 0 and leaves exactly so. `eden_debug_signs()` reports the last
 frame's counts (`cmds`, `cmdInRange`, `cmdFaces`, `cmdRunning` since D.4b).
@@ -330,15 +357,20 @@ frame's counts (`cmds`, `cmdInRange`, `cmdFaces`, `cmdRunning` since D.4b).
 The sky is not a skybox mesh — it's screen-space ortho quads (`Texture2D::drawSky`)
 drawn *between* pass 1 and pass 2 at near-far depth, with a colored/B&W crossfade
 state machine for sky-color regions (the `drawSky` calls in `Terrain::render`, `ICO_SKY_BOX`/`ICO_SKY_BOX_BW`).
+*(Port, G.5b-6: the ortho bracket is on `R::proj()/mv()`, each layer states its `R::State` and passes its tint
+to `drawSky(rect, depth, r, g, b, a)`; fog stays off from the sky to the end of pass 1, so the portal swirls
+after it draw unfogged, as stock. The crossfading B&W layer is always `B_ALPHA`: stock blended it with
+whatever blend func the previous frame's HUD left, which is `SA,1-SA` except with the HUD hidden
+(`hideui`), where `beginHud`'s `ONE,ONE` leaked through and a sky transition brightened additively.)*
 
 ### Scene-pass bracket (modified from stock, 2026-10-04, ROADMAP N.4.11)
 
 `World::renderFrame`'s play-mode branch now calls `eden_scene_pass_begin()` before
 `Graphics::prepareScene()` and `eden_scene_pass_end()` just before `hud->render()`. Everything
 between them (sky, terrain passes 1 and 2, creatures, effects, fireworks, the player's selection
-outline) is the **3D pass**; the HUD, menus and `GLDialog` come after it. Both are port hooks in the
-GL shim (`gl_es1_shim.h`); at 100% they are no-ops. On iOS `render_scale` is always 100% (N.4.12: the setting was dropped there). At any other `render_scale` the native
-shim (`native/src/shim/gl/gl_context_native.cpp`) points the 3D pass at an offscreen colour+depth
+outline) is the **3D pass**; the HUD, menus and `GLDialog` come after it. Both are port hooks
+(`port/src/render/gl/gl_context.h`); at 100% they are no-ops. On iOS `render_scale` is always 100% (N.4.12: the setting was dropped there). At any other `render_scale` the native
+context (`port/src/render/gl/gl_context_native.cpp`) points the 3D pass at an offscreen colour+depth
 framebuffer of drawable × scale and blits it, linearly filtered, into the letterbox box at `_end`,
 so the 2D UI still draws at full density. Point-sprite sizes are compensated for the scale; picking
 is unaffected (it unprojects against the fixed point-space viewport). Anything new that belongs to
@@ -354,7 +386,7 @@ passed. The allocation now restores the previous binding, and `eden_native_gl_pr
 iOS-only **present guard**: it rebinds the view's renderbuffer if anything else is bound, logs
 `[eden-gl] PRESENT GUARD` once, and `--smoke` fails if it ever fired.
 
-## Camera (`Camera.mm`)
+## Camera (`Camera.cpp`)
 First-person: position = player pos (eye offset), yaw/pitch from touch-look. `render()`
 builds the modelview (rotate, then translate by `-(pos - chunkOffset*16)`); `render2()`
 is the same matrix used by the picking raycast. Third person (H.12: `CAMERA_VIEW`, `cam->mode` 1 behind,
@@ -363,7 +395,7 @@ the scene lookAt — stock built the frustum from the first-person pair, culling
 against a view it was not drawn with. Keep the two lookAts the same pair. Details:
 [player-input-camera.md](player-input-camera.md) § Camera.
 
-## Frustum culling (`Frustum.mm`)
+## Frustum culling (`Frustum.cpp`)
 `setFrustum(viewproj)` extracts 6 planes each frame (called from `Camera::render`);
 `ViewTestAABB(rbounds, state)` does plane/AABB rejection with an inside-plane bitmask
 optimization. Chunks failing entirely are skipped; there is no hierarchy (octree
@@ -373,14 +405,15 @@ removed).
 Doors, golden cubes, portal frames, portal swirls and flowers are still rebuilt on the
 CPU every frame (animation — door swing, cube rotation, portal UV swirl, flower
 billboard yaw — is unavoidable), but each batch now owns a persistent
-`GL_DYNAMIC_DRAW` buffer (`Terrain.mm`: `ObjectBatch`/`objBatchStage`/`objBatchDraw`,
+`GL_DYNAMIC_DRAW` buffer (an `R::Buf` with `U_DYNAMIC` since G.5b-6, drawn with `R::drawWorld`, or
+`R::drawLit` for doors and golden cubes; `Terrain.cpp`: `ObjectBatch`/`objBatchStage`/`objBatchDraw`,
 `g_doorBatch`/`g_goldenBatch`/`g_portalBatch`/`g_swirlBatch`/`g_flowerBatch`) instead of
 filling a stack-local `vertexObject objVertices[]` and handing GL four client-side
 array pointers. The frame still fills a staging array exactly as before; the change is
 one `glBufferSubData` upload per batch (growing via `glBufferData` in power-of-two
 steps) instead of the GL shim silently re-uploading all four client arrays' worth of
 the same bytes per draw (`gl_fixed_function.cpp`, `eden_gl_setup_attributes` — client-side
-vertex data isn't legal in the core/ES3 contexts the shim targets; since Q.5 the shim's own path, still used by HUD, Fire and BlockBreak, copies an interleaved struct once, only the vertices used, into shared rings: `port/docs/gl-shim.md`). One buffer per batch, not a shared one — a shared
+vertex data isn't legal in the core/ES3 contexts the shim targeted; since Q.5 the client-memory path (the shim's until G.5b-7, now `R::`'s for every `vmem` draw) copies an interleaved struct once, only the vertices used, into shared rings: `port/docs/history/gl-shim.md`). One buffer per batch, not a shared one — a shared
 buffer would make its `glBufferSubData` a write the previous batch's draw is still
 reading (driver sync stall each batch); five small elidable rebinds cost less than
 that. Measured live in Safari on the retired web build (`web-port-final:web/tools/safari-objbatch-probe.js`;
@@ -406,9 +439,9 @@ geometry) is a separate future item (row 24/C2, ES3 instancing) — not done.
 - `INDICES_MAX = 32768` (`Geometry.h`) caps vertices per chunk stream; faces beyond it
   are silently dropped (`render` guards with `continue`).
 - `max_render_objects = 300` caps doors/cubes/portals per frame; `MAX_FLOWERS 10000`.
-- Non-mip textures upload no mip chain and sample `GL_NEAREST` (P.15, `Texture2D_web.mm` `initData`).
+- Non-mip textures upload no mip chain and sample `GL_NEAREST` (P.15, `Texture2D.cpp` `initData`).
   A texture that sets a mip filter must be loaded with mips, or it samples an incomplete texture
-  and draws black (the UI icon atlas, `GLWidgets.mm` `iconAtlas()`, did until 2026-10-14).
+  and draws black (the UI icon atlas, `GLWidgets.cpp` `iconAtlas()`, did until 2026-10-14).
 - Disabled experiments you may see: occlusion queries (`isTesting`), distance-based
   ZFAR throttling by FPS, face merging.
 
@@ -436,6 +469,10 @@ time becomes an upper bound that includes its own GPU work.
   compare a pass against itself, never as that pass's GPU cost.
   `WORKING/low-end-perf-audit-2026-10-12.md` §5.1 has the evidence.
 - Harness: `--pass-probe` and `--stage1 --walk … --pass-timers` (native/README.md). Each pass reports `p50`, `p90`, `max` (2026-10-16) and `mean` ms.
+- **`g_pass.track` (G.5b-0, 2026-10-25)** makes every `pass_begin`/`pass_end` also report to the renderer's
+  pass tracker (`eden_render_pass_mark`, `port/src/render/render_passes.cpp`), so a draw knows its innermost
+  pass: `--scene-shot` captures each pass alone with it, `--state-trace` names it, and `--render-selftest`
+  checks the signs pass contract at `P_R_SIGNS` and that passes balance over a frame. Off unless a harness sets it.
 
 ## Common pitfalls
 - Terrain vertex positions are shorts in quarter-block units — forgetting the ×4/×0.25
@@ -464,4 +501,4 @@ time becomes an upper bound that includes its own GPU work.
 ### Q.1b notes (2026-10-21)
 - **F6 (object array ownership):** `rtobjects` is freed on the pointer, never on `rtnum_objects` (in `prepareVBO`'s two paths, `unbuild`, `dropGeometry`, `resetForReuse`, `~TerrainChunk`). Stock zeroed the count first, so every chunk drop and world exit leaked the array (measured 54–56 root leaks a warp, `TESTERS/perf-audit/leakobj3.*.leaks`; 0 after, `TESTERS/q1b/`). `objects` aliases `rtobjects` after a publish; `clearMeshes` only NULLs it, so free through `rtobjects` alone.
 - **F7 (objects-only chunks):** `rebuild2` returns early (`clearOldVerticesOnly`) when a chunk has objects but no faces (a lone golden cube, door top or flower in air). `prepareVBO`'s clear branch now publishes `objects` to `rtobjects` there (count 0 when `objects` is NULL: the earlier early returns count objects without allocating them). Stock never drew these.
-- **F19 (cull/sort eye):** `TerrainChunk::render`/`render2`'s per-direction face culling and `compare_back2front` read `g_cullEye` (`Terrain.mm`), set at the top of `Terrain::render` from `Camera::viewPoints`. In third person that is the real eye, not the pivot `cam->px/py/pz`. First-person culling is unchanged; the transparent sort now measures from the eye (`player->pos` + 0.3·boxheight), not the feet.
+- **F19 (cull/sort eye):** `TerrainChunk::render`/`render2`'s per-direction face culling and `compare_back2front` read `g_cullEye` (`Terrain.cpp`), set at the top of `Terrain::render` from `Camera::viewPoints`. In third person that is the real eye, not the pivot `cam->px/py/pz`. First-person culling is unchanged; the transparent sort now measures from the eye (`player->pos` + 0.3·boxheight), not the feet.

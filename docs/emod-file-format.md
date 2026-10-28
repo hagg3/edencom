@@ -192,7 +192,7 @@ Properties appends a newer `GENERATOR` (same seed and profile, changed settings)
 `WORLD_HEADER`; like every singleton, the newest committed version is the one that counts, so this
 needed no format change. The save itself still writes it at most once (only while the file has none). Codec 0, like `WORLD_HEADER`.
 Its absence means: seed 0 → flat, seed 333333 → the bundled map, any other seed → the legacy
-profile, decided again at every load (`FileManager.mm` `fm_setupGenerator`).
+profile, decided again at every load (`FileManager.cpp` `fm_setupGenerator`).
 
 | offset | type | field |
 |---|---|---|

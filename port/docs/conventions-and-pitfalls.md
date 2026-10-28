@@ -49,12 +49,12 @@ load-bearing (save-before-stream, edit-before-mesh, mesh-before-upload).
    V-flip).
 4. **On the GNU ObjC ABI (Linux/Windows), a send that crashes in dispatch almost always means a
    missing `@implementation`** (it links fine and dispatches into nothing), not a bad prototype —
-   check that first ([objc-runtime.md](objc-runtime.md)).
+   check that first ([objc-runtime.md](history/objc-runtime.md)).
 5. **Headless is the fast loop for logic questions; a window or a human is for pixels and feel.**
    `eden_native --headless …` with a fresh `--docs=` (port/CLAUDE.md "Headless driving"). Before
    trusting a screenshot, prove the loop is stepping.
 6. **Settings and keybinds each live in exactly one place, both C tables:**
-   `src/seam/Settings_web.mm`'s `kSettings[]` and `kKeybinds[]` (a binding is a USB HID usage ID —
+   `src/seam/Settings.cpp`'s `kSettings[]` and `kKeybinds[]` (a binding is a USB HID usage ID —
    the number SDL3 scancodes use). The GL Settings screen renders both; add a row there, nowhere
    else. See [ui.md](ui.md).
 

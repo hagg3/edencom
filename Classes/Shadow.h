@@ -21,8 +21,8 @@
 #ifndef Eden_Shadow_h
 #define Eden_Shadow_h
 
-#import "Constants.h"
-#import "Globals.h"
+#include "Constants.h"
+#include "Globals.h"
 
 // A covering column counts fully when its NEAREST caster above the face is 1..SHADOW_REACH_FULL
 // blocks up, fades linearly to nothing at SHADOW_REACH_END, and is ignored beyond that. Nearest, not
@@ -57,7 +57,7 @@ void shadow_clear();                      // Terrain::clearBlocks: every top 0, 
 void shadow_markLanded(int cx,int cz);    // Terrain::addChunk (world chunk coordinates)
 void shadow_markAllStale();               // diagnostics: what a reload would cause
 int  shadow_pendingColumns();
-BOOL shadow_slotPending(int colslot);     // by getColIndex slot (diagnostics)
+bool shadow_slotPending(int colslot);     // by getColIndex slot (diagnostics)
 int  shadow_syncLandedColumns();          // prepareAndLoadGeometry, right before the mesh pass
 void shadow_onSetLand(int x,int z,int y,int oldtype,int type);   // Terrain::setLand, after the GBLOCK write
 // The setting (0/1/2) and the native --shadows= override (-1 = none). Changing the effective

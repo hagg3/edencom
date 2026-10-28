@@ -9,18 +9,18 @@
 #define Eden_Menu_h
 
 
-#import "Texture2D.h"
-#import "SettingsMenu.h"
-#import "NewWorldMenu.h"
-#import "Input.h"
-#import "ShareUtil.h"
-#import "statusbar.h"
-#import "SharedList.h"
-#import "ShareMenu.h"
-#import "Util.h"
-#import "Menu_background.h"
-#import "GLWidgets.h"
-#import "WorldBrowser.h"
+#include "Texture2D.h"
+#include "SettingsMenu.h"
+#include "NewWorldMenu.h"
+#include "Input.h"
+#include "ShareUtil.h"
+#include "statusbar.h"
+#include "SharedList.h"
+#include "ShareMenu.h"
+#include "Util.h"
+#include "Menu_background.h"
+#include "GLWidgets.h"
+#include "WorldBrowser.h"
 
 
 class ShareMenu;
@@ -42,8 +42,8 @@ public:
 	WorldNode* world_list;
 	WorldNode* world_list_end;
 	WorldNode* selected_world;
-	BOOL activeLeftArrow;
-	BOOL activeRightArrow;
+	bool activeLeftArrow;
+	bool activeRightArrow;
 	
 	
 	CGRect rect_loading;
@@ -70,15 +70,15 @@ public:
 	
 	int loading;
 	int loading_world_list;
-    // MP.3a: a multiplayer session's "mp:<host>:<port>" while it loads (MpWorld::openSession); nil otherwise.
+    // MP.3a: a multiplayer session's "mp:<host>:<port>" while it loads (MpWorld::openSession); "" otherwise.
     // The loading branch below plays it instead of selected_world.
-    NSString* session_world_name;
-	BOOL delete_mode;
+    std::string session_world_name;
+	bool delete_mode;
 	int is_sharing;
-	BOOL share_mode;
-	BOOL showsettings;
-	BOOL showlistscreen;
-    BOOL loadShared(SharedListNode* sharedNode);
+	bool share_mode;
+	bool showsettings;
+	bool showlistscreen;
+    bool loadShared(SharedListNode* sharedNode);
     // Recomputes every screen-space rect from the CURRENT SCREEN_WIDTH/SCREEN_HEIGHT. Split out of
     // the constructor so the point space can change after construction; see Hud::layoutForScreen.
     void layoutForScreen();
@@ -128,7 +128,12 @@ public:
     // (My Worlds -> the list above; Multiplayer -> ServerListMenu since MP.6; Get Worlds) and Settings
     // beneath. The list ("My Worlds") is the screen with showhome FALSE: it has Back and no logo.
     // Quit to Menu (activate()) and a Get Worlds download land on the list.
-    BOOL showhome;
+    bool showhome;
+    // About / licences placeholder (reached from the home screen's About button).
+    bool showabout;
+    void layoutAbout();
+    void renderAbout();
+    void updateAbout(float etime);
     void layoutHome();
     void renderHome();
     void updateHome(float etime);
@@ -140,7 +145,7 @@ public:
     // servers), a full screen over the menu background like settings. Offered only where the host
     // can fetch (WorldBrowser::available(); never on web, whose DOM screen is its browser).
     WorldBrowser* browser;
-    BOOL showbrowser;
+    bool showbrowser;
     bool browserOffered();
     void openBrowser();
 
@@ -149,15 +154,15 @@ public:
     // startNewWorld(): the list entry, selected, and loading=1 — the type and height are already
     // parked in the pending seam, so the stock world-type prompt never shows for it.
     NewWorldMenu* newworld;
-    BOOL shownewworld;
+    bool shownewworld;
     void openNewWorld();
-    void startNewWorld(NSString* name);
+    void startNewWorld(const std::string& name);
 
     // Stage H / H.15: "Properties" (the rect_rename button, which was N.4.5's Rename) opens
     // World Properties for the selected world, a full screen over the menu background like New
     // World. The world is closed, so its Save writes the file directly (FileManager::applyWorldProperties).
     WorldPropertiesMenu* props;
-    BOOL showprops;
+    bool showprops;
     bool propertiesOffered();
     void openProperties();
 
@@ -165,17 +170,17 @@ public:
     // freezes nothing; World::update runs console->update first and then the whole play step without
     // player input. In play only (opened from the pause menu or the `console` key).
     ConsoleMenu* console;
-    BOOL showconsole;
+    bool showconsole;
 
     // Stage MP / MP.6: "Multiplayer" -- the saved server list, its forms and the join's Connecting
     // window (Classes/ServerListMenu.h), opened by the home screen's tile. Drawn in place of the home
     // screen / world list (not as an early-returning screen) so the loading ladder below still runs
     // when a join reaches "Loading world". A session's Exit lands here (activate()).
     ServerListMenu* servers;
-    BOOL showservers;
+    bool showservers;
     void openServers();
 
-    void a_genFlat(BOOL b);
+    void a_genFlat(bool b);
     void a_deleteCancel();
     void a_deleteConfirm();
     Menu();

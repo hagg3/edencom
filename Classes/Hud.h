@@ -9,16 +9,16 @@
 #define Eden_Hud_h
 
 
-#import "Input.h"
-#import "Util.h"
-#import "glu.h"
-#import "Terrain.h"
-#import "Graphics.h"
-#import "World.h"
-#import "Gamepad.h"
-#import "Joystick.h"
-#import "statusbar.h"
-#import "Globals.h"
+#include "Input.h"
+#include "Util.h"
+#include "glu.h"
+#include "Terrain.h"
+#include "Graphics.h"
+#include "World.h"
+#include "Gamepad.h"
+#include "Joystick.h"
+#include "statusbar.h"
+#include "Globals.h"
 #define MODE_CAMERA 0
 #define MODE_PICK_BLOCK 1
 #define MODE_BUILD 2
@@ -36,7 +36,7 @@
 // SIGN and CMD tools. The tools are SENTINELS, not block ids: they can never be a block8 or index
 // a [NUM_BLOCKS+1] table, so every table read on a picker cell goes through hud_picker_is_tool().
 #define NUM_PICKER_PAGES 2
-#define NUM_PICKER_PAGE2_CELLS 19
+#define NUM_PICKER_PAGE2_CELLS 20
 #define HUD_TOOL_SIGN 1000
 #define HUD_TOOL_CMD 1001
 static inline bool hud_picker_is_tool(int type){ return type>=HUD_TOOL_SIGN; }
@@ -121,19 +121,19 @@ public:
     // setting, and re-runs this on resize. Idempotent: every margin it consumes is reset at the
     // top, so calling it twice gives the same answer as calling it once.
     void layoutForScreen();
-    BOOL handlePickBlock(int x,int y);
+    bool handlePickBlock(int x,int y);
     // D.2p: step the block picker's page by `delta` (wraps). FALSE (and nothing happens) unless
     // the block picker is open — the ◀ ▶ taps, [ ] and the wheel all come through here.
-    BOOL pickerPageStep(int delta);
+    bool pickerPageStep(int delta);
     // D.2p: the type in picker cell `i` of `page` (-1 = no cell there).
     static int pickerCell(int page,int i);
     static int pickerCellCount(int page);
     // D.2p: a tool cell is selectable only once its row lands (SIGN: D.3c, CMD: D.4b).
     static bool pickerToolEnabled(int type);
-    BOOL handlePickColor(int x,int y);
-    BOOL handlePickMenu(int x,int y);
+    bool handlePickColor(int x,int y);
+    bool handlePickMenu(int x,int y);
     void worldLoaded();
-    BOOL update(float etime);
+    bool update(float etime);
     void render();
     void asetHome();
     void awarpHome();
@@ -147,7 +147,7 @@ private:
     void layoutPauseMenu();       // Stage 5.5: the six action rects + the panel, from SCREEN_*
     void renderBlockScreen();
     
-    BOOL pickSecondBlock;
+    bool pickSecondBlock;
 };
 
 

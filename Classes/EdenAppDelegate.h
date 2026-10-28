@@ -9,8 +9,8 @@
 #define Eden_Appdelegate_h
 
 
-#import <UIKit/UIKit.h>
-#import <Foundation/Foundation.h>
+#include <UIKit/UIKit.h>
+#include <Foundation/Foundation.h>
 @class EdenViewController;
 
 

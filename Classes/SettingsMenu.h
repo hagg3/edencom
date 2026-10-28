@@ -10,27 +10,27 @@
 
 
 
-#import "Texture2D.h"
-#import "Input.h"
-#import "GLWidgets.h"
+#include "Texture2D.h"
+#include "Input.h"
+#include "GLWidgets.h"
 #include <string>
 #include <vector>
 
 class KeybindsMenu;
 typedef struct{
 	int value;
-	NSString* name;
+	const char* name;   // G.2b-1: the eden_prefs key
 	CGRect box;
 	Texture2D* tex;
 }property;
 #define NUM_PROP 5
 
 // Phase N Stage 2.5: the GL settings screen is a generic list over the shared kSettings[] table
-// (port/src/seam/Settings_web.mm), reached through eden_settings_* accessors — see SettingsMenu.mm.
+// (port/src/seam/Settings.cpp), reached through eden_settings_* accessors — see SettingsMenu.mm.
 // Stage 5.4 reskinned it onto the GL widget kit (Classes/GLWidgets.h).
 // `properties[]` and load()/save()/getNewWorldName() are untouched: the engine-visible meaning of
-// the five engine-backed toggles and the NSUserDefaults round-trip still live there, and
-// Settings_web.mm's ENG_* mapping still indexes it.
+// the five engine-backed toggles and the prefs round-trip (eden_prefs since G.2b-1) still live there, and
+// Settings.cpp's ENG_* mapping still indexes it.
 //
 // Stage U.3 (WORKING/ui-rework-plan-2026-10-11.md §3) rebuilt the screen on the reference layout: a
 // FIXED panel (the same size on every tab), a vertical IconRail of 7 tabs, the tab's rows as
@@ -47,7 +47,7 @@ public:
     void render();
     void save();
     void load();
-    NSString* getNewWorldName();
+    std::string getNewWorldName();
     // Stage 5.3's programmatic entry point into the keybinds list; since U.4 it selects the Keys
     // tab. Exists so harnesses can reach it without hit-testing a rail tile.
     void showKeybinds();

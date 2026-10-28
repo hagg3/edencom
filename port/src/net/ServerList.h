@@ -1,6 +1,6 @@
 // ServerList.h — MP.6: the saved server list (`servers.txt`) and the server probe
 // (WORKING/multiplayer-server-list-plan-2026-10-17.md §4–§6). Plain C++, no engine includes; the
-// UI in Classes/ reaches it through the C seam in native/src/seam/MpServers_native.mm.
+// UI in Classes/ reaches it through the C seam in port/src/seam/MpServers_native.cpp.
 //
 // The probe never sends JOIN: one TCP connect (its time is the ping), `INFO\n`, one line read for
 // 1.5 s, close. Official servers and ewb-server builds before MP.9 drop pre-JOIN lines, so they

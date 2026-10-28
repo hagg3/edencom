@@ -22,9 +22,9 @@
 #ifndef Eden_WorldPropertiesMenu_h
 #define Eden_WorldPropertiesMenu_h
 
-#import "GLWidgets.h"
-#import "WorldProps.h"
-#import "Util.h"        // WorldNode
+#include "GLWidgets.h"
+#include "WorldProps.h"
+#include "Util.h"        // WorldNode
 #include <string>
 
 #define WP_MAX_ROWS 20   // both tabs: 8-10 World rows + 8 Terrain rows

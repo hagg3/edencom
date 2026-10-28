@@ -10,8 +10,8 @@
 
 
 
-#import "hashmap.h"
-#import "Globals.h"
+#include "hashmap.h"
+#include "Globals.h"
 
 
 typedef struct wnode{
@@ -46,7 +46,7 @@ typedef struct _pnode2{
 class Liquids{
 public:
     Liquids();
-    BOOL update(float etime);
+    bool update(float etime);
     void render();
     void clearLiquids();
     void addSource(int x,int z,int y);

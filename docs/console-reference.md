@@ -168,8 +168,8 @@ A variable is `group.name`. **`NAME`** prints it, **`NAME VALUE`** sets it. Name
 |---|---|---|---|---|
 | `gameplay.health` | on / off | on | at once | Falls, fire and creatures hurt. |
 | `gameplay.autojump` | on / off | on | at once | Auto-jump |
-| `gameplay.creatures` | on / off | on | at once | Off is faster. |
-| `gameplay.fly` | on / off | off | at once | V or the fly button: Off, Fly, Noclip. |
+| `gameplay.creatures` | on / off | on | at once | Creatures |
+| `gameplay.fly` | on / off | off | at once | Allow fly |
 | `gameplay.fly_accel` | 0.05 to 1 | 1 | at once | Lower is gentler and easier to hold still. |
 | `gameplay.fly_max_speed` | 0 to 100 | 0 | at once | Blocks per second. 0 is unlimited. |
 | `gameplay.fly_braking` | 0 to 1 | 0 | at once | Higher stops sooner when you let go. |
@@ -182,10 +182,8 @@ A variable is `group.name`. **`NAME`** prints it, **`NAME VALUE`** sets it. Name
 | `audio.music` | on / off | on | at once | Music |
 | `audio.sound` | on / off | on | at once | Sound effects |
 | `audio.music_volume` | 0 to 1 | 1 | at once | Music volume |
-| `audio.ambience_volume` | 0 to 1 | 1 | at once | Wind and water. |
+| `audio.ambience_volume` | 0 to 1 | 1 | at once | Ambience volume |
 | `audio.effects_volume` | 0 to 1 | 1 | at once | Effects volume |
-| `audio.night_ambience` | on / off | off | at once | Looping night sound when the sky is dark. |
-| `audio.touch_controls_sound` | on / off | off | at once | Clicks on joystick and button taps. |
 
 #### `controls.`
 
@@ -199,7 +197,7 @@ A variable is `group.name`. **`NAME`** prints it, **`NAME VALUE`** sets it. Name
 | `controls.touch_look_speed` | 0.25 to 3 | 1 | at once | Drag camera, left-right. (diagnostics builds) |
 | `controls.touch_look_speed_y` | 0.25 to 3 | 1 | at once | Drag camera, up-down. (diagnostics builds) |
 | `controls.touch_look_smoothing` | 0 to 1 | 0.2 | at once | 0 follows your finger exactly. (diagnostics builds) |
-| `controls.touch_look_glide` | 0 to 0.6 | 0 | at once | Camera keeps turning after you lift your finger; the value is the half-life in seconds, 0 stops at once. (diagnostics builds) |
+| `controls.touch_look_glide` | 0 to 0.6 | 0 | at once | Camera keeps turning after you lift your finger. 0 stops at once. (diagnostics builds) |
 | `controls.gamepad` | on / off | on | at once | Use a connected controller. |
 | `controls.gamepad_look_sensitivity` | 0.25 to 3 | 1 | at once | Gamepad look speed |
 | `controls.gamepad_deadzone` | 0.05 to 0.5 | 0.15 | at once | Raise it if the camera drifts. |
@@ -208,17 +206,18 @@ A variable is `group.name`. **`NAME`** prints it, **`NAME VALUE`** sets it. Name
 
 | Variable | Values | Default | Applies | What |
 |---|---|---|---|---|
-| `video.graphics_preset` | Custom, Low, Default, High | Default | at once | Low is faster; High sees further. |
+| `video.graphics_preset` | Custom, Low, Default, High | Default | at once | Graphics preset |
 | `video.fov` | 60 to 110 | 80 | at once | 80 is the original. |
-| `video.view_distance` | Auto, 4, 5, 6, 7, 8, 9 | Auto | at once | In chunks. Lower is faster. |
-| `video.render_radius` | 4, 5, 6, 7, 8, 9, 10, 12, 16 | 9 | when a world opens | Less is faster and lighter; more uses more memory. Applies when a world opens. |
-| `video.shadows` | Off, Classic, Smooth | Off | at once | Shade ground under trees and roofs. |
+| `video.view_distance` | Auto, 4, 5, 6, 7, 8, 9 | Auto | at once | View distance |
+| `video.render_radius` | 4, 5, 6, 7, 8, 9, 10, 12, 16 | 9 | when a world opens | Applies when a world opens. |
+| `video.shadows` | Off, Classic, Smooth | Classic | at once | Shadows |
+| `video.original_lighting` | on / off | on | at once | Light debris and fireworks as Eden 2.1 did. |
 | `video.display_mode` | Fixed, Fit window, Fullscreen | Fixed | at once | Display (diagnostics builds) |
 | `video.ui_scale` | Auto, 100%, 125%, 150%, 200% | Auto | at once | UI scale (diagnostics builds) |
-| `video.display_layout` | Auto, Classic 16:9, Adaptive | Auto | at once | Adaptive fits the window; Classic letterboxes. (diagnostics builds) |
-| `video.render_scale` | 50%, 75%, 100%, 125% | 100% | at once | Lower is faster and softer. |
-| `video.dpr_cap` | 1x, 1.5x, 2x | 2x | at once | Lower it if the frame rate suffers. (diagnostics builds) |
-| `video.fps_cap` | Uncapped, 30, 45, 60 | Uncapped | at once | Lower saves battery and heat. |
+| `video.display_layout` | Auto, Classic 16:9, Adaptive | Auto | at once | Layout aspect (diagnostics builds) |
+| `video.render_scale` | 50%, 75%, 100%, 125% | 100% | at once | Render scale |
+| `video.dpr_cap` | 1x, 1.5x, 2x | 2x | at once | Max pixel ratio (diagnostics builds) |
+| `video.fps_cap` | Uncapped, 30, 45, 60 | Uncapped | at once | Frame rate cap |
 
 #### `interface.`
 
@@ -233,10 +232,11 @@ A variable is `group.name`. **`NAME`** prints it, **`NAME VALUE`** sets it. Name
 | Variable | Values | Default | Applies | What |
 |---|---|---|---|---|
 | `experiments.fps_normalize` | on / off | on | at once | Same walk speed at any refresh rate. |
-| `experiments.advanced_movement` | on / off | off | at once | Zero-delay bunny-hop and wheel-jump. |
 | `experiments.crouch` | on / off | off | at once | Adds a crouch key for 1-block gaps. |
 | `experiments.fire_melts_ice` | on / off | off | at once | Burning ice turns to water. |
 | `experiments.fire_chars_vines` | on / off | off | at once | Burning vines turn to dark stone. |
+| `experiments.night_ambience` | on / off | off | at once | Night ambience |
+| `experiments.touch_controls_sound` | on / off | off | at once | Touch controls sound |
 | `experiments.creature_walk_voices` | on / off | off | at once | Creatures call out as they start walking. |
 | `experiments.double_brush` | on / off | off | at once | A key builds 2x2x2 blocks at a time. |
 | `experiments.camera_view` | First person, Third person, Third person (front) | First person | at once | Third person shows your body. F5 cycles. |
@@ -245,8 +245,8 @@ A variable is `group.name`. **`NAME`** prints it, **`NAME VALUE`** sets it. Name
 
 | Variable | Values | Default | Applies | What |
 |---|---|---|---|---|
-| `saves.save_backup` | on / off | on | at once | Keep the previous save as a .bak. |
-| `saves.autosave` | Off, 1 min, 2 min, 5 min | 1 min | at once | Off still saves on exit and warp. |
+| `saves.save_backup` | on / off | off | at once | Keep the previous save as a .bak. |
+| `saves.autosave` | Off, 1 min, 2 min, 5 min | 5 min | at once | Off still saves on exit and warp. |
 | `saves.upgrade_256z` | on / off | on | at the next conversion | Room to build up to y 255. Uses more memory. |
 
 #### `keys.`
@@ -314,7 +314,7 @@ A variable is `group.name`. **`NAME`** prints it, **`NAME VALUE`** sets it. Name
 
 ## Adding to it
 
-- **A variable:** add a row to `kSettings[]` (`port/src/seam/Settings_web.mm`) or a keybind — `Console::init()` registers
+- **A variable:** add a row to `kSettings[]` (`port/src/seam/Settings.cpp`) or a keybind — `Console::init()` registers
   it with no console code. A feature with its own state calls `Console::addCvar(Cvar{…})` from its init path.
 - **A console verb:** `Console::addCommand(name, usage, help, flags, argKinds, fn)` from the feature's init path (not a
   static initialiser). Flags: `CF_WORLD` needs a world, `CF_DIAG` exists only in diagnostics builds, `CF_EDITS` marks

@@ -10,7 +10,7 @@
 #ifndef Eden_WorldProps_h
 #define Eden_WorldProps_h
 
-#import "TerrainGenerator.h"
+#include "TerrainGenerator.h"
 #include <string>
 
 // Stage H / H.15: what the world list's Properties screen shows and saves

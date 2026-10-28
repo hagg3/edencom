@@ -41,7 +41,7 @@ DEST = (66548.5, 40.0, 66130.5)
 RADIUS = 9            # the session's Render distance cap (engine plan §6.1)
 RECONCILE_HALF = 208  # engine plan §6.3: the server's R = 224 less one chunk
 KEEP = (int(SPAWN[0]) - 7, 45, int(SPAWN[2]) + 7, 13)   # leg 3's post-REGION local edit: a brick in the air
-LIQUID = {20, 23, 59, 60, 61, 62, 63, 64}   # blockinfo IS_LIQUID (Classes/Globals.mm)
+LIQUID = {20, 23, 59, 60, 61, 62, 63, 64}   # blockinfo IS_LIQUID (Classes/Globals.cpp)
 NUM_BLOCKS = 127
 
 # ---- the client model ------------------------------------------------------------------------------

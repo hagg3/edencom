@@ -6,7 +6,7 @@
 //  Console screen's Chat tab draws it), the HUD feed (the last lines, fading after 10 s, inert to
 //  touch), the sending side (local echo, a client-side rate guard, `/login` masking, Up/Down history)
 //  and the touch HUD's chat button. The wire is the host's: lines arrive through addWire() from
-//  native/src/seam/MpLink_native.mm and leave through MpWorld::link()->sendLine("MSG:...").
+//  port/src/seam/MpLink_native.cpp and leave through MpWorld::link()->sendLine("MSG:...").
 //
 #ifndef Eden_ChatFeed_h
 #define Eden_ChatFeed_h

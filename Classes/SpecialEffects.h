@@ -9,19 +9,19 @@
 #define Eden_SpecialEffects_h
 
 
-#import "BlockBreak.h"
-#import "Fire.h"
+#include "BlockBreak.h"
+#include "Fire.h"
 
-#import <OpenGLES/ES1/gl.h>
-#import <OpenGLES/ES1/glext.h>
-#import "Util.h"
+#include <OpenGLES/ES1/gl.h>
+#include <OpenGLES/ES1/glext.h>
+#include "Util.h"
 #define pbuffer_size 10000
 
 class SpecialEffects{
     
 public:
     SpecialEffects();
-    BOOL update(float etime);
+    bool update(float etime);
     void addBlockBreak(int x, int z, int y,int type,int color);
     void addBlockExplode(int x, int z,int y,int type,int color);
     void addCreatureVanish(float x,float z,float y,int color,int type);

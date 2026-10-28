@@ -9,13 +9,13 @@
 #define Eden_Player_h
 
 
-#import <math.h>
-#import "Util.h"
-#import "Terrain.h"
-#import "World.h"
-#import "Camera.h"
-#import "Input.h"
-#import "OpenGL_Internal.h"
+#include <math.h>
+#include "Util.h"
+#include "Terrain.h"
+#include "World.h"
+#include "Camera.h"
+#include "Input.h"
+#include "OpenGL_Internal.h"
 class World;
 
 // Player::takeDamage cause, picks the death sound (H.6).
@@ -34,41 +34,41 @@ public:
     Vector walk_force;
 	float yaw,pitch;	
 	float speed,hspeed,vspeed;	
-	BOOL move_back;
-	BOOL jumping;
-    BOOL doublejump;
+	bool move_back;
+	bool jumping;
+    bool doublejump;
 	World* world;
     
 	int invertcam;
-    BOOL inPortal;
-    BOOL climbing;
-    BOOL inLiquid;
+    bool inPortal;
+    bool climbing;
+    bool inLiquid;
     float flash;
-    BOOL onIce;
-    BOOL dead;
-    BOOL autojump_option;
-    BOOL health_option;
+    bool onIce;
+    bool dead;
+    bool autojump_option;
+    bool health_option;
     float life;
-    BOOL crouching;  // web port crouch key (CROUCH_HELD, Player.mm) halves boxheight to fit 1x1 gaps
+    bool crouching;  // web port crouch key (CROUCH_HELD, Player.mm) halves boxheight to fit 1x1 gaps
     
     void groundPlayer();
     void reset();
     void horizc();
-    BOOL preupdate(float etime);
-    BOOL vertc();
+    bool preupdate(float etime);
+    bool vertc();
     void processInput(float etime);
-    BOOL update(float etime);
+    bool update(float etime);
     Player(World* world);
-    BOOL test(int x,int y,int z,float r);
-    BOOL canFit(float testHeight);
+    bool test(int x,int y,int z,float r);
+    bool canFit(float testHeight);
     void move(float etime);
     void takeDamage(float damage,int cause=DEATH_NONE);
     void render();
     void setSpeed(Vector svel,float speed);
-    BOOL checkCollision();
-    BOOL postMove(float etime);       // FM.2: update()'s tail after move(), shared with noclip
+    bool checkCollision();
+    bool postMove(float etime);       // FM.2: update()'s tail after move(), shared with noclip
     void noclipUpdate(float etime);   // FM.2
-    BOOL boxBlocked();                // FM.2: box overlaps a block vertc() treats as solid
+    bool boxBlocked();                // FM.2: box overlaps a block vertc() treats as solid
     void unstick();                   // FM.2: pop up out of solid on leaving noclip
     Vector lol[50];
     

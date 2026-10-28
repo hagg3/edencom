@@ -15,6 +15,7 @@ class Menu_background {
     
 public:
     Menu_background();
+    void reset();
     void update(float etime);
     void render();
 private:

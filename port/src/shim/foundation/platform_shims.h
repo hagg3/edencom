@@ -18,44 +18,8 @@
 
 #include <stdint.h>
 
-// Phase N Stage 1 (WORKING/native-migration-plan-2026-09-04.md): portable stand-in for
-// EMSCRIPTEN_KEEPALIVE on the seam files BOTH targets compile. It is the same call
-// gl_es1_shim.h's EDEN_GL_EXPORT made in Stage 0.2, and Stage 0.4 explicitly deferred it to here:
-// an export that exists so the host page can call it (Module._eden_*) is meaningless off
-// Emscripten, but deleting the annotation would break web and forking the file would be worse.
-//
-// The macro's job on web is to keep the symbol alive through -flto and the linker's dead-symbol
-// pass. On native every `extern "C"` symbol in the executable is already reachable from the
-// binary's own code (the entry point calls them directly), so the no-op is correct rather than
-// merely tolerable.
-#define EDEN_EXPORT
-
-// --- "does this build have more than one thread?" --------------------------------------------
-// Phase N Stage 3.2, and it cost a real bug. Three shim files carry per-thread state — the ObjC
-// runtime's dispatch caches (objc_runtime.cpp), the autorelease-pool stack (NSAutoreleasePool.mm)
-// and the retain-count side table's lock (NSObject.mm) — and all three asked the question as
-// `#if defined(__EMSCRIPTEN_PTHREADS__)`. That was the right question for two targets and the
-// wrong question in general: it is FALSE on every native build, including the ones that run
-// `Classes/World.mm`'s world-load pthread and `Classes/MeshPool.mm`'s worker pool unconditionally.
-// So on Linux the dispatch cache and the pool stack were process-global while two threads used
-// them, and the engine died with SIGSEGV inside `objc_msg_lookup_sender`, called from
-// `-[NSAutoreleasePool release]` on the main thread, while the load thread sat in
-// `fmh_decodeColumnBands`. Intermittent, as races are: the same commit passed 64z and failed
-// 256z on one run and the reverse on the next.
-//
-// The honest predicate is the negative one: a build is single-threaded ONLY when it is Emscripten
-// WITHOUT pthreads. Native always has real threads — that is stated as an upside in
-// native/CMakeLists.txt's link section ("Native has real pthreads, so World.mm's load thread and
-// MeshPool.mm's worker pool both work unmodified"), which is exactly why the shim must assume it.
-//
-// Written as one shared macro rather than four copies of the same `#if` so it can only be got
-// right or wrong once. Web's single-threaded codegen is unchanged: the macro is 0 in precisely
-// the case the old condition was false.
-#if 0
-#define EDEN_BUILD_HAS_THREADS 0
-#else
-#define EDEN_BUILD_HAS_THREADS 1
-#endif
+// (EDEN_BUILD_HAS_THREADS went in G.3 with its three users, the shim ObjC runtime's dispatch cache,
+// NSAutoreleasePool.mm and NSObject.mm: every native build has real threads.)
 
 #ifdef __cplusplus
 extern "C" {
@@ -103,7 +67,7 @@ void srandom(unsigned seed);
 // clock, portable between Emscripten (emscripten_get_now(), i.e. performance.now()) and native
 // (std::chrono::steady_clock). The four real emscripten_get_now() call sites in this port —
 // this file's own RNG seed, NSFileHandle.mm's opt-in I/O timing, CoreFoundation.mm's
-// CFAbsoluteTimeGetCurrent, and MeshTiming_web.mm's mesh/upload timers — all only need
+// CFAbsoluteTimeGetCurrent, and MeshTiming.cpp's mesh/upload timers — all only need
 // monotonicity, never wall time or sub-call overhead, so one implementation covers all four.
 double eden_platform_now_ms(void);
 
@@ -115,7 +79,7 @@ double eden_platform_now_ms(void);
 // the web target (the defaults ARE the old literals).
 //
 // `documents` is the engine's save directory: NSSearchPathForDirectoriesInDomains(NSDocumentDirectory)
-// answers with it, and FileManager.mm builds every world path under it.
+// answers with it, and FileManager.cpp builds every world path under it.
 // `bundle` is the read-only asset root: NSBundle's -bundlePath/-resourcePath, and the base of the
 // basename index NSBundle.mm builds over <bundle>/media.
 //
@@ -126,6 +90,15 @@ const char* eden_platform_bundle_root(void);
 // eden_seam_main()). Passing NULL for either leaves that root at its default. No-op after the
 // first filesystem access, so it is a startup switch, not a runtime one.
 void eden_platform_set_roots(const char* documents, const char* bundle);
+
+// G.5b-0: the engine's one RNG hook (eden_prefix.h renames every engine arc4random() call to
+// eden_arc4random()). Unpinned it forwards to the platform's arc4random; eden_rng_seed() pins it to a
+// PCG32 stream so a harness (--scene-shot) can replay particles, fire, creature spawns and wander
+// exactly. Main thread only while pinned: the world-load thread must not draw from it.
+uint32_t eden_arc4random(void);
+void eden_rng_seed(uint64_t seed);   // pin (and restart) the stream
+void eden_rng_unpin(void);
+int  eden_rng_pinned(void);
 
 #ifdef __cplusplus
 }
@@ -153,8 +126,8 @@ void eden_platform_set_roots(const char* documents, const char* bundle);
 
 // ...and the same shape for mkdir, for a smaller reason: the mingw CRT's takes ONE argument where
 // POSIX's takes two, which is a compile error rather than a portability footnote.
-// (NSUserDefaults_native.mm has the same problem and solves it with SDL_CreateDirectory, which it
-// can — nothing under port/src/shim/foundation may depend on SDL, because the web build has none.)
+// (port/src/seam/Prefs_native.cpp solves it with SDL_CreateDirectory, which it can: nothing under
+// port/src/shim/foundation depends on SDL.)
 #if defined(_WIN32)
 #define eden_mkdir(path) _mkdir(path)
 #else

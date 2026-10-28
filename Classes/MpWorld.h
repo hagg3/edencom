@@ -29,6 +29,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
 class TerrainChunk;
 
@@ -52,8 +53,8 @@ void setSpawn(float x, float y, float z);
 bool openSession();
 // Free the overlay and the trailer, lift the gates. World::exitToMenu calls it; a no-op outside a session.
 void endSession();
-// "mp:<host>:<port>" (retained by MpWorld; nil outside a session).
-void* worldName();   // NSString*, as void* so this header stays Foundation-free
+// "mp:<host>:<port>" ("" outside a session).
+const std::string& worldName();
 // The synthesised WorldFileHeader the session loads from and its saves update (pos, yaw).
 void* header();      // WorldFileHeader*
 
@@ -108,7 +109,7 @@ extern size_t overlayCapBytes;
 bool gateCreatures(bool wanted);
 
 // ==== MP.3b: the live world (engine plan §5-§7) =================================================
-// The host's half of a session (native/src/seam/MpLink_native.cpp: the socket, via port/src/net's
+// The host's half of a session (port/src/seam/MpLink_native.cpp: the socket, via port/src/net's
 // MpSession). MpWorld owns it from setLink() on: tick() calls pump() once a frame (the host drains
 // its queues into the enqueue* calls below and handles side events there), the REGION pacer calls
 // sendLine(), and dropLink() / endSession() call release() exactly once, never from inside pump().

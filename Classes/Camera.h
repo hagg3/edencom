@@ -10,17 +10,17 @@
 
 
 
-#import <OpenGLES/ES1/gl.h>
-#import <OpenGLES/ES1/glext.h>
-#import "Glu.h"
-#import "Util.h"
+#include <OpenGLES/ES1/gl.h>
+#include <OpenGLES/ES1/glext.h>
+#include "glu.h"
+#include "Util.h"
 
 class Camera {
 public:
     Camera();
     ~Camera();
     void reset();
-    BOOL update(float etime);
+    bool update(float etime);
     void render();
     void render2();
     // H.12: the one place the (eye, target) pair is derived from px/py/pz/yaw/pitch/mode/dist,

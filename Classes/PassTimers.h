@@ -42,6 +42,10 @@ enum EdenPass {
 extern "C" double eden_platform_now_ms(void);
 extern "C" long eden_gl_stat_live(int which);
 extern "C" void eden_gl_finish(void);
+// G.5b-0: the renderer's pass tracker (port/src/render/render_core.cpp), for --scene-shot's per-pass
+// draw mask, --state-trace's pass column and --render-selftest's pass contracts. Called only while a
+// harness has set g_pass.track.
+extern "C" void eden_render_pass_mark(int pass, int begin);
 
 static const char* const kEdenPassNames[P_COUNT] = {
     "update", "u_terrain", "u_hud", "u_creatures", "u_player", "u_effects", "u_mesh", "u_upload",
@@ -52,6 +56,7 @@ static const char* const kEdenPassNames[P_COUNT] = {
 struct PassState {
     bool on = false;       // set by a harness (--pass-probe, --pass-timers)
     bool finish = false;   // glFinish at every pass boundary (--pass-finish)
+    bool track = false;    // G.5b-0: tell the renderer which pass each draw belongs to (--scene-shot, --state-trace, --render-selftest)
     // per frame, cleared by pass_frame_reset(); a pass entered twice in a frame accumulates
     double ms[P_COUNT] = {0};
     long draws[P_COUNT] = {0}, verts[P_COUNT] = {0}, setup[P_COUNT] = {0};
@@ -65,12 +70,14 @@ static inline void pass_frame_reset() {
     for (int i = 0; i < P_COUNT; ++i) { g_pass.ms[i] = 0; g_pass.draws[i] = g_pass.verts[i] = g_pass.setup[i] = 0; }
 }
 static inline void pass_begin(int p) {
+    if (g_pass.track) eden_render_pass_mark(p, 1);
     if (!g_pass.on) return;
     if (g_pass.finish) eden_gl_finish();
     g_pass.d0[p] = eden_gl_stat_live(0); g_pass.v0[p] = eden_gl_stat_live(4); g_pass.s0[p] = eden_gl_stat_live(1);
     g_pass.t0[p] = eden_platform_now_ms();
 }
 static inline void pass_end(int p) {
+    if (g_pass.track) eden_render_pass_mark(p, 0);
     if (!g_pass.on) return;
     if (g_pass.finish) eden_gl_finish();
     g_pass.ms[p] += eden_platform_now_ms() - g_pass.t0[p];

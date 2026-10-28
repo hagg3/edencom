@@ -9,12 +9,12 @@ Read [`../../docs/resources-and-audio.md`](../../docs/resources-and-audio.md) fi
 the `Resources` manager, texture atlas layout, and asset catalog are unchanged. This
 file covers the two engine files that were seam-replaced (audio, textures) plus asset packaging.
 
-## Audio: `native/src/seam/SimpleAudioEngine_native.mm`
+## Audio: `port/src/seam/SimpleAudioEngine_native.cpp`
 Replaces `Classes/SimpleAudioEngine.mm` (the CocosDenshion/OpenAL façade). The header comment of
 that file is the reference; in short:
 - **Effects** are decoded once, cached by name, and mixed as `SDL_AudioStream`s bound to one playback
   device; `setEffectsVolume`/`getEffectsVolume` scale every voice. Per-sound distance attenuation is
-  **not** implemented (the `playEffect` overload for it is dead code in `Resources.mm`).
+  **not** implemented (the `playEffect` overload for it is dead code in `Resources.cpp`).
 - **Five channels** stream long files: `0` = music, `1` = ambience bed, `2` = water/lava proximity,
   `3` = portal proximity, `4` = treasure-cube proximity (docs/resources-and-audio.md's ambience
   write-up). `Classes/SimpleAudioEngine.h` exposes channel 0 as the unchanged
@@ -38,7 +38,7 @@ that file is the reference; in short:
 - `eden_native_audio_tick()` runs once per frame after the engine tick; harness modes other than
   `--audio-selftest` disable audio.
 
-## Textures: `src/seam/Texture2D_web.mm`
+## Textures: `src/seam/Texture2D.cpp`
 Replaces `Classes/Texture2D.mm` (`UIImage`/`CoreGraphics` decode — no web
 equivalent), following the "reuse the original `.h`, replace only the `.mm`" pattern
 forced because `Texture2D.h` is quote-included by 8+ other engine headers. Decodes
@@ -53,42 +53,47 @@ re-investigate that theory without a fresh measurement.
 was deferred as "P2b (creature skin/mask recolor pipeline)" and then never picked up.
 Four live call sites went through it, and all four drew nothing: the HUD paint icon
 (`Resources::getPaintTex`), the painted build icons for flowers/gold cubes/portals/
-doors (`getPaintedTex`), door blocks in the world (`Resources::getDoorTex`, called from `Terrain.mm`),
-and creature skins (`getSkin`, `Model.mm`). The mechanism is worth remembering because
+doors (`getPaintedTex`), door blocks in the world (`Resources::getDoorTex`, called from `Terrain.cpp`),
+and creature skins (`getSkin`, `Model.cpp`). The mechanism is worth remembering because
 it is completely silent: a null `CGImageRef` reaches `new Texture2D(cgimage, …)`,
 `initFromImage`'s `if (image == NULL) return;` leaves the GL `name` at 0, and every
 subsequent draw binds "no texture" — no GL error, no warning, just missing art. That
 is the invisible-paint-icon bug root-caused in pass 49.
 
-It is now real, entirely in the seam/shim (no `Classes/` edit):
+It is now real. **Since G.2b-1 (de-ObjC plan D11)** the image is `EdenImage` (`src/shim/foundation/eden_image.h`,
+plain C/C++, the same struct that was `CGImage`), `Resources.cpp` holds `EdenImage*` directly, `Texture2D`
+takes `const EdenImage*` (no orientation), paths/text as `const std::string&` and a font as a `float`
+point size; `UIImage` and `CGImageRef` survive in the shim only for dead stock code until G.3.
 
-- **`CGImage` is a real struct** (`src/shim/foundation/uikit_stubs.h`): one
+- **`EdenImage` (was `CGImage`) is a real struct** (`src/shim/foundation/eden_image.h`): one
   tightly-packed RGBA8 buffer, row 0 = top, **straight (non-premultiplied) alpha**.
   Straight because stb_image never premultiplies, so every other texture in the port
   is straight too; CoreGraphics' `CGBitmapContext` does premultiply, but inside the
   recolored region the source art is alpha 255 (measured: 487 of 490 masked pixels on
   the real assets), so the two agree exactly where it matters.
-- **`UIImage` is a real retain-counted owner of one `CGImage`.** Both ivars are POD
-  on purpose — see [objc-runtime.md](objc-runtime.md) on why a C++ ivar in a shim
+- *(Before G.2b-1)* **`UIImage` was a retain-counted owner of one `CGImage`.** Both ivars are POD
+  on purpose — see [objc-runtime.md](history/objc-runtime.md) on why a C++ ivar in a shim
   `@implementation` is never constructed or destroyed (Linux/Windows).
 - **`Texture2D::initFromImage` carries the upload pipeline** (POT rounding for `sizeToFit`
   only since Q.2, otherwise the image's own size with the width rounded up so a 16/24/8-bit row
   stays 4-byte aligned; canvas placement; pixel-format packing; since Q.4 a grey+alpha PNG asked
-  for `Automatic` packs as LA88) and `initFromPath` decodes to a `CGImage` and calls
+  for `Automatic` packs as LA88) and `initFromPath` decodes to an `EdenImage` and calls
   it — which is the engine's own shape, and means the PNG path and the recolor path
   share one code path instead of two.
 - **`initFromPath` now runs the engine's `storeImage` block**, filling
-  `Resources.mm`'s `storedPaint`/`storedPaintMask`/`storedSkins[5][2]`/… globals. This
+  `Resources.cpp`'s `storedPaint`/`storedPaintMask`/`storedSkins[5][2]`/… globals. This
   is a **positional** scheme, not a lookup: `Resources::loadResources` zeroes
   `storedSkinCounter` immediately before loading the 15 creature-skin PNGs (every
   third — the Rage variant — is deliberately not stored, giving 10) and
   `storedMaskCounter` before the 10 MASK PNGs, and the slot is decided by how many
-  textures have loaded since. **Reorder texture loads in `Resources.mm` and creatures
+  textures have loaded since. **Reorder texture loads in `Resources.cpp` and creatures
   wear each other's skins.** The counters advance before the decode and regardless of
   whether it succeeds, so a missing asset must never skip them.
-- **Ownership**: the ~14 images the recolor reads back from are wrapped in a `UIImage`
-  and kept forever (~5.4 MB, dominated by the 20 256×256 skin/mask pairs); the other
-  ~110 are freed as soon as their pixels are in GL. The load path uses
+- **Ownership (since G.2b-1)**: the ~14 images the recolor reads back from are kept as the
+  `EdenImage` itself (~5.4 MB, dominated by the 20 256×256 skin/mask pairs; a reload frees the
+  slot's previous one); the other ~110 are freed (`eden_image_free`) as soon as their pixels are in
+  GL. A recolour's result is freed by `Resources.cpp` right after `new Texture2D(image, …)` copies it.
+  No autorelease pool is involved any more. *Before G.2b-1:* the load path used
   `-[UIImage initWithCGImage:]`, **not** `+imageWithCGImage:` — `loadResources` runs
   during `World` construction, before any frame and therefore before any real
   autorelease pool exists, and the shim's fallback root pool is never drained. Using
@@ -99,11 +104,11 @@ It is now real, entirely in the seam/shim (no `Classes/` edit):
 Native `--recolor-selftest` guards all of this (asset capture, decode sizes, non-zero GL names,
 per-colour cache behaviour, and the two positional counters landing on exactly 10; W.2, it
 replaced the web `headless-recolor-test.js`). The probe it drives (`eden_debug_recolor_state`) is
-`EDEN_DIAGNOSTICS`-gated like every other probe in `DebugState_web.mm`.
+`EDEN_DIAGNOSTICS`-gated like every other probe in `DebugState.cpp`.
 
 `ManipulateImagePixelData2` (the maskless variant) is implemented too, faithfully
 including its quirk of deriving luminance from the blue channel alone. Every call site
-of it is commented out in `Resources.mm`; it is implemented rather than stubbed so the
+of it is commented out in `Resources.cpp`; it is implemented rather than stubbed so the
 symbol does not lie about what it does.
 
 ## Asset packaging
@@ -113,7 +118,7 @@ asset from `media/` (textures, UI, HUD art, models, sounds, music, fonts) flat b
 into the `.app`. The bundled map is `Eden.emod`. `screens/` (marketing art) is not shipped.
 
 ## Memory note
-Decoded textures are RGBA8; since P.15 only textures that ask for mips get a chain (gl-shim.md
+Decoded textures are RGBA8; since P.15 only textures that ask for mips get a chain (history/gl-shim.md
 "Texture uploads"). No compressed texture formats are used — a plausible future memory win, not
 implemented (audit row C3).
 

@@ -8,8 +8,8 @@
 // uikit_stubs.h used to hold. `NSUInteger`/`NSInteger` are NOT provided (D8: the 13 uses become
 // size_t/long in their files).
 //
-// Safe to include twice, and after or before framework/objc/objc.h and uikit_stubs.h: every
-// definition is guarded by the macro the older header already uses.
+// Safe to include twice: every definition is guarded (the guards are the ones the deleted G.3 shim
+// headers, framework/objc/objc.h and uikit_stubs.h, used).
 #ifndef EDEN_BASE_H
 #define EDEN_BASE_H
 
@@ -28,7 +28,7 @@ typedef signed char BOOL;
 #define NO ((BOOL)0)
 #endif
 #if !defined(__OBJC__) && !defined(nil)
-#define nil 0                             // ObjC TUs get ((id)0) from framework/objc/objc.h
+#define nil 0
 #endif
 
 typedef float CGFloat;                    // 32-bit, as on armv7 (the shim's long-standing choice)

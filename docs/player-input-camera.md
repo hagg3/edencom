@@ -4,28 +4,30 @@
 Touch handling, the block-pick raycast, player physics/collision, and the camera.
 
 ## Important files
-- `Classes/Input.mm/.h` — raw touch bookkeeping (5-slot `itouch` array).
-- `Classes/TouchLook.mm/.h` — **post-import (Stage L, 2026-10-23)**: the touch drag camera's
+- `Classes/Input.cpp/.h` — raw touch bookkeeping (5-slot `itouch` array).
+- `Classes/TouchLook.cpp/.h` — **post-import (Stage L, 2026-10-23)**: the touch drag camera's
   arithmetic (degrees per window point, smoothing, glide). See "Touch look" below.
-- `Classes/Player.mm` (~2,300 lines) — input interpretation, physics, block editing,
+- `Classes/Player.cpp` (~2,300 lines) — input interpretation, physics, block editing,
   portals, damage. The single biggest gameplay file.
-- `Classes/Util.mm` — `findWorldCoords` raycast, SAT polyhedra collision
+- `Classes/Util.cpp` — `findWorldCoords` raycast, SAT polyhedra collision
   (`collidePolyhedra`, `makeBox/makeRamp/makeSide`), math helpers.
-- `Classes/Camera.mm` — view matrix.
-- `Classes/Joystick.mm` — virtual stick used by the HUD. `Joystick::layoutForScreen()` (I.2, run by
+- `Classes/Camera.cpp` — view matrix.
+- `Classes/Joystick.cpp` — virtual stick used by the HUD. `Joystick::layoutForScreen()` (I.2, run by
   `Hud::layoutForScreen`) puts the pad 20 points in from the safe rect's bottom-left (`docs/ui.md`).
   `padbounds` (the pad's screen rect) is a
   plain global, mutable from outside this file; the web port's "move controls" feature (audit row
-  17/G1, `port/src/seam/Input_web.mm`'s `eden_joystick_*` exports) set it from a drag gesture.
+  17/G1, `port/src/seam/Input.cpp`'s `eden_joystick_*` exports) set it from a drag gesture.
   Those exports are still compiled but no native UI calls them (a native Controls page is ROADMAP W.6).
   `joystickCustomizeMode` (also global, default false) makes `Joystick::update` no-op entirely —
   no movement input, no `joystick_pos` tracking — while that feature has this on, so a
   repositioning drag can never fight real gameplay touch handling; `render()` is unaffected, so the
   pad stays visible (wherever it currently is) while customize mode is on.
 
-## Input layer (`Input.mm`)
+## Input layer (`Input.cpp`)
 `EAGLView` forwards `touchesBegan/Moved/Ended/Cancelled` to the `Input` singleton,
-which maintains `touches[5]` slots keyed by `UITouch*`:
+which maintains `touches[5]` slots keyed by touch pointer (`UITouch*` in stock; **since G.2b-1** a
+`const EdenTouch*`, the engine struct in `Input.h`: `location`, `phase`, `timestamp`, `identity`,
+`isReal`, passed as `touchesBegan(const EdenTouch* const* touches, int n)` with no `UIEvent`):
 current/previous/first positions (`mx/my`, `pmx/pmy`, `fx/fy`), `down` state
 (`M_DOWN/M_RELEASE/M_NONE`), `moved`, `movecam` (was this touch dragging the camera),
 per-touch block preview state, and hold time `etime`. **Since Stage L** each slot also carries
@@ -36,9 +38,13 @@ Menu) poll this array every frame — there is no event dispatch. `clearAll()` r
 world load. `keyTyped` feeds the custom GL keyboard (`VKeyboard`).
 
 **On the port** there is no `EAGLView`: SDL events are translated in
-`native/src/seam/Input_native.cpp` — mouse buttons and `SDL_EVENT_FINGER_*` become
-`eden_input_pointer_event(phase, identity, x, y)` (`port/src/seam/Input_web.mm`), which synthesises
-the same `touches[]` slots, so every consumer above is unchanged. Keys go through the keybind model
+`port/src/seam/Input_native.cpp` — mouse buttons and `SDL_EVENT_FINGER_*` become
+`eden_input_pointer_event(phase, identity, x, y)` (`port/src/seam/Input.cpp`), which synthesises
+the same `touches[]` slots, so every consumer above is unchanged. It keeps **one heap `EdenTouch` per
+live pointer identity** from begin to end/cancel, so `touch_id` stays a stable pointer and the `==`
+matches keep their meaning (a real finger id 0 is valid and the synthetic keyboard/mouse/HUD ids are
+negative, so an `int` id could not stand for "no touch"); `isReal` is `identity >= 0`. Gates: the
+look/fly/touch selftests and their mutation legs. Keys go through the keybind model
 (docs/ui.md "The keybind model") to movement axes, HUD taps and the picker; `SDL_Gamepad` feeds the
 same paths. `VKeyboard` is seam-excluded; text entry is `GLW::TextField` (docs/ui.md).
 
@@ -58,7 +64,7 @@ unreachable, because the iPad branch that would have set those metrics is commen
 `EAGLView initWithCoder:`. A stale `scr_height` inverts the Y of every touch, so anything that changes
 `SCREEN_HEIGHT` owes this call.
 
-## Block picking — `findWorldCoords(mx, my, mode)` (`Util.mm`)
+## Block picking — `findWorldCoords(mx, my, mode)` (`Util.cpp`)
 1. Rebuilds the camera matrix, `gluUnProject`s the touch at depth 0 and 1 → ray.
 2. Marches the ray in 1/8-block steps up to 15 blocks.
 3. Each step first tests creatures (`PointTestModels`) — a hit stores the creature
@@ -70,7 +76,7 @@ unreachable, because the iPad branch that would have set those metrics is commen
 Globals `fwc_result` (creature hit index) and `fpoint` (exact hit point) carry side
 results — callers read them immediately after the call.
 
-## Player (`Player.mm`)
+## Player (`Player.cpp`)
 
 ### Update pipeline (`preupdate` → `processInput` → `update` → `move` → collisions)
 - **`processInput`**: walks the touch slots. Touches on HUD controls were
@@ -100,9 +106,8 @@ results — callers read them immediately after the call.
     up). This works out of the box on touch and on the port's keyboard controls —
     no separate mechanism was needed. The 2-frame gap costs lateral speed (ground
     friction `×0.9` plus the jump's own `vel.x*=.9` lateral tax apply
-    during it), so chained hops decay rather than build. The Experiments row
-    "Advanced movement (bhop)" (`advanced_movement`) removed that cost on the web build only; its
-    consumer was a web link-time wrap, so on native the row is **inert** (it still shows).
+    during it), so chained hops decay rather than build. (The old
+    "Advanced movement (bhop)" Experiments row was removed in FT.2 (middle-click pick block also refuses bedrock, FT.1); a Source-style movement mod is planned later.)
   - Creature interactions: tapping a creature in pick mode grabs it
     (`PickupModel`), tap again places (`PlaceModel`); paint mode colors it
     (`ColorModel`); mine mode hits it (`HitModel`); burn sets it on fire.
@@ -114,7 +119,7 @@ results — callers read them immediately after the call.
   1-block steps.
 - **Collision**: player is a box (`boxbase=2/3` block wide, `boxheight=1.85`);
   `vertc`/`horizc`/`checkCollision` test the surrounding blocks' polyhedra using the
-  SAT implementation in `Util.mm` (`collidePolyhedra` + `minTranDist` minimum
+  SAT implementation in `Util.cpp` (`collidePolyhedra` + `minTranDist` minimum
   translation vector). Ramps are walkable because their true sloped polyhedra
   are tested (`onramp`).
 - **Damage/health** (`health_option`): lava contact (`takeDamage(.08)/frame`),
@@ -129,7 +134,7 @@ results — callers read them immediately after the call.
   difference between landing and being left embedded in rock in a 256-tall world
   (`WORKING/256z-format-backport-plan-2026-08-05.md`, breaker B2).
 - **Fly state** (this fork, FM.1; `FLY_MODE`/`FLY_UP`/`FLY_DOWN`/`NOCLIP_MODE`/`FLY_ALLOWED` at the top
-  of `Player.mm`): the state is Off / Fly / Noclip. `FLY_MODE` means "flying" (Fly *or* Noclip), so
+  of `Player.cpp`): the state is Off / Fly / Noclip. `FLY_MODE` means "flying" (Fly *or* Noclip), so
   existing readers stay right; `NOCLIP_MODE` marks Noclip (see **Noclip** below). `fly_set_state(0|1|2)` / `fly_cycle_state()` / `fly_get_state()` (declared in
   `Player.h`) own every transition: they clear `FLY_UP/FLY_DOWN`, and a cycle toasts through
   `hud->sb->setStatus` (*Fly ON* / *NOCLIP on* / *Fly OFF*). `fly_cycle_state()` does nothing
@@ -173,13 +178,13 @@ results — callers read them immediately after the call.
   rate-limited by `canFit()` scanning the slice being added each frame — under a low ceiling the
   animation just freezes at whatever height still fits instead of snapping into the ceiling block
   (the old instant-toggle version could clip the box into terrain and drop the player through the
-  world here). The whole feature is gated by a new `bool CROUCH_ENABLED` global (top of `Player.mm`,
+  world here). The whole feature is gated by a new `bool CROUCH_ENABLED` global (top of `Player.cpp`,
   default **`false`**) — `preupdate`'s read site is now
   `CROUCH_ENABLED && (CROUCH_HELD || hud->m_crouch)`, so both the keyboard key and the HUD button are
-  inert when it's off. `Hud.mm` additionally wraps the crouch button's hit-test *and* its render call
+  inert when it's off. `Hud.cpp` additionally wraps the crouch button's hit-test *and* its render call
   in `if (CROUCH_ENABLED)` (`extern BOOL CROUCH_ENABLED`), so the on-screen button is hidden entirely,
   not just non-functional, when disabled. Settings › Experiments › **Crouch mode** (`crouch`) flips it
-  via `eden_set_crouch_enabled` (`Input_web.mm`). See
+  via `eden_set_crouch_enabled` (`Input.cpp`). See
   [port/docs/player-input-camera.md](../port/docs/player-input-camera.md) for the input wiring.
 
 ### Rendering
@@ -189,12 +194,12 @@ person (H.12) it draws the **fallback** body only when `!PlayerBodyAvailable()` 
 `GL_OES_matrix_palette`): `drawCube(..., TYPE_CLOUD, -1)`, which is what reaches `Graphics::drawCube`'s
 `THIRD_PERSON && TYPE_CLOUD && buildsize==-1` branch scaling a cube to the collision box
 (`0.667 × 1.85 × 0.667`). Stock passed `TYPE_GRADIENT`, so its branch never fired; the `buildsize==-1`
-marker keeps a cloud-block build preview 1×1×1. Otherwise the body is a Green creature in `Model.mm`'s
+marker keeps a cloud-block build preview 1×1×1. Otherwise the body is a Green creature in `Model.cpp`'s
 `PLAYER_BODY` slot ([entities-and-creatures.md](entities-and-creatures.md)), posed each frame from
 `Player::update` (`!onground && !FLY_MODE` → jump, horizontal speed > 0.5 → walk, else idle; feet at
 `pos.y - boxheight/2`, so crouching lowers it) and hidden in first person and while dead.
 
-## Camera (`Camera.mm`)
+## Camera (`Camera.cpp`)
 Follows the player exactly: `px/py/pz` = player pos + eye height; `update` smooths
 nothing (direct copy); `render` applies pitch/yaw rotations then translates by
 `-(pos − chunkOffset·16)` and hands the view-projection to `setFrustum` for culling.
@@ -216,13 +221,13 @@ repaired rather than replaced:
   through to the first-person matrix (the front camera looks back at the player, so taps and the
   crosshair aim along the player's own look).
 - Chunk face culling and the transparent back-to-front sort use the same eye (`g_cullEye`, set once per frame in `Terrain::render`; Q.1 F19, `docs/rendering.md`). Before, they used the pivot, so a strip of camera-facing faces could be culled when eye and pivot were on opposite sides of a chunk plane.
-- **Pick origin** (`findWorldCoords`, `Util.mm`): in mode 1 the ray origin slides forward to the pivot
+- **Pick origin** (`findWorldCoords`, `Util.cpp`): in mode 1 the ray origin slides forward to the pivot
   (`skip = dot(pivot − wp1, dir)`), so reach stays 15 blocks from the player's eye and blocks between the
   camera and the player can neither be picked nor block the ray.
 - **Pull-in** (`Camera::updateThirdPerson`, called from `Player::update` after the camera fields are
   written — `Camera::update` runs before `preupdate` and would see last frame's position): marches from
   the pivot toward the eye in 0.25 steps up to 4.0 (`CAM_TP_DIST`, stock's `n=4.0f`); the first block that
-  is not air or shallow liquid (`Player.mm`'s preview test; `-1` counts as passable) caps `dist` at
+  is not air or shallow liquid (`Player.cpp`'s preview test; `-1` counts as passable) caps `dist` at
   `max(t − 0.3, 0.6)`. Shrinks instantly, grows back at 8 blocks/s. The body is not drawn while
   `dist < 1`.
 - Underwater tint and the ambience beds stay **player**-based, so in third person the screen can show the
@@ -235,10 +240,10 @@ repaired rather than replaced:
 Air 2 (L.0, `WORKING/touch-camera-plan-2026-10-17.md`): 6.5% of a medium drag lost when two moves land
 in one frame (D1), 37% zero-turn frames on slow drags (D2), speed varying with aspect and UI scale (D3),
 a ~27 iOS pt dead zone (D4), and a drag sweeping back past its start stopping there (D5). Now:
-- **Every event counts**: `Input.mm` adds each move's float delta to `ldx/ldy`; `touchlook_step`
+- **Every event counts**: `Input.cpp` adds each move's float delta to `ldx/ldy`; `touchlook_step`
   consumes it.
 - **Degrees per window point** (an iOS pt): `TOUCH_PT_SCALE` (window pt per engine pt) is written by
-  `DisplayProfile_web.mm` on every display apply, with `TOUCH_LOOK_DEG_PER_PT` 0.5 on a tablet and
+  `DisplayProfile.cpp` on every display apply, with `TOUCH_LOOK_DEG_PER_PT` 0.5 on a tablet and
   0.65 on a phone (window short side < 500 pt). `TOUCH_LOOK_SENS_X/Y` multiply it (1; the Settings › Controls sliders `touch_look_speed` / `touch_look_speed_y`).
 - **One slop for tap and look**, `TOUCH_SLOP_PT` = 12 window pt, Chebyshev from `ffx/ffy`. Inside it
   `ldx/ldy` are discarded (no jump on crossing; only the travel past the edge turns). Crossing it
@@ -258,7 +263,7 @@ a ~27 iOS pt dead zone (D4), and a drag sweeping back past its start stopping th
 - Unchanged: `inuse`, `movecam`, the `num > 1` rule (a second not-yet-looking world finger gives up the camera), invert
   (`invertcam` negates both axes as before), the pitch clamp, mouse and gamepad look.
 - Gate: `--look-selftest` steps 0–9 plus `--look-mutate=` legs (native/README.md). `TOUCH_LOOK_MUTATE`
-  bits are test-only hooks in `Input.mm`/`Player.mm`/`TouchLook.mm`; 0 in every real run.
+  bits are test-only hooks in `Input.cpp`/`Player.cpp`/`TouchLook.cpp`; 0 in every real run.
 
 ## Common pitfalls
 - The same touch can be claimed by HUD, camera-look, and block-edit logic; the
@@ -278,7 +283,7 @@ a ~27 iOS pt dead zone (D4), and a drag sweeping back past its start stopping th
   (`vel` stays non-zero, so nothing looks stuck). Fly mode (`*= .995`, ×10 speed) clears the
   ULP, which is why "fly works, walking doesn't" means *tick rate*, not touch delivery or
   `onground` (that read 120/120 throughout). A host must feed the engine **one tick per
-  displayed frame**. Native's loop paces to its fps cap (`eden_main_native.cpp`, interactive
+  displayed frame**. Native's loop paces to its fps cap (`port/src/harness/`, interactive
   loop) instead of running update-without-draw (the retired web build got that free from rAF).
   The touch joystick's `setSpeed` is not frame-rate-normalised on native (the keyboard path is).
 - `Player::test` uses `hud->blocktype` implicitly — it tests the *candidate* block

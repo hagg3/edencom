@@ -1,0 +1,80 @@
+Emod (Eden: Community Edition)
+==============================
+
+Emod is a fan project. It is not affiliated with, endorsed by, or sponsored by
+Kingly Games or Ari Ronen.
+
+0. Overall licence: GNU GPL v3
+------------------------------
+Emod is a fork of Eden: World Builder's source code. Per community records (old Discord
+posts), Ari Ronen released that source in 2018 under the GNU General Public License v3.
+This has NOT been confirmed in writing by Ari Ronen (ROADMAP LG.1). On that basis Emod as
+a whole - the combined, compiled program and every binary package - is distributed under
+the GPL v3 (see COPYING). Recipients get the source (github.com/hagg3/Emod) and the
+GPL's freedoms. Emod's own files may also be used on their own under the MIT licence
+(section 2), which is GPL-compatible.
+
+1. Eden-derived material
+------------------------
+Eden: World Builder is (c) Ari Ronen / Kingly Games. The following are derived from
+it:
+
+  - the game engine in Classes/ and Lighting.cpp/.h, as written by Ari Ronen
+    (GPL v3 as above; Emod's modifications to those files are Emod's own work, but
+    they cannot be separated from the code they modify);
+  - the assets in media/ that come from Eden (textures, models, sounds), the default
+    map (Eden.eden, Eden.emod) and the Eden file format documentation. UNCONFIRMED:
+    the reported GPL grant was for the source code; whether it extends to these
+    assets is not known, so treat them as (c) Ari Ronen / Kingly Games, used on the
+    understanding that the rights holder tolerates a non-commercial community fork;
+  - the name "Eden" and related marks (not licensed).
+
+Removal on the rights holder's request: see README, "Policy".
+
+2. Emod's own work (MIT, see LICENSE; part of the GPL v3 whole)
+-------------------------------------
+Copyright (c) 2026 Emod contributors. This covers port/, native/, cmake/, the CI
+workflows, the build and format tools, the docs written for Emod, and the new
+files and modifications in Classes/ made by this project.
+
+3. Third-party components and credits
+-------------------------------------
+Music: Kevin MacLeod (incompetech.com), licensed under Creative Commons: By Attribution
+4.0 (https://creativecommons.org/licenses/by/4.0/). The title track
+(media/music/title-new.mp3) was generated with Suno.
+
+zstd 1.5.7 (port/src/shim/vendor/zstd/) - BSD 3-Clause
+  Copyright (c) Meta Platforms, Inc. and affiliates. All rights reserved.
+  Redistribution and use in source and binary forms, with or without
+  modification, are permitted provided that the following conditions are met:
+  * Redistributions of source code must retain the above copyright notice, this
+    list of conditions and the following disclaimer.
+  * Redistributions in binary form must reproduce the above copyright notice,
+    this list of conditions and the following disclaimer in the documentation
+    and/or other materials provided with the distribution.
+  * Neither the name Facebook, nor Meta Platforms, nor the names of its
+    contributors may be used to endorse or promote products derived from this
+    software without specific prior written permission.
+  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+  ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+  WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+  DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+  ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+  (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+  LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+  ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+  (Full text: port/src/shim/vendor/zstd/LICENSE.)
+
+Lucide icons (media/ui/ui_icons.png) - ISC
+  Full notice: media/ui/LUCIDE-LICENSE.txt.
+
+Mesa GLU port (Classes/glu.h, glue.c, project.c, registry.c, error.c) -
+SGI Free Software License B (version 2.0); the notices are in the file headers.
+
+stb_image / stb_truetype (port/src/shim/vendor/) - public domain / MIT
+(Sean Barrett), as stated in the file headers.
+
+SDL3 (linked dynamically; shipped as libSDL3 / SDL3.dll in binary packages) - zlib
+licence, Copyright (c) Sam Lantinga and SDL contributors.

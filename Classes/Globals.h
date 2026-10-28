@@ -9,7 +9,8 @@
 #define Eden_Globals_h
 
 
-#import "Constants.h"
+#include "Constants.h"
+#include <OpenGLES/ES1/gl.h> // GLubyte below; UIKit.h used to bring it (G.2b-3)
 
 
 //#define SCALE_WIDTH 2.0f

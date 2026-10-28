@@ -10,10 +10,8 @@
 
 
 
-#import "Texture2D.h"
-#import <UIKit/UIKit.h>
-#import "Sound.h"
-#import "Vector.h"
+#include "Texture2D.h"
+#include "Vector.h"
 #include <vector>
 #define MAX_SOURCES 10
 class Resources {
@@ -26,7 +24,6 @@ public:
     
     std::vector<Texture2D*> textures;
 	std::vector<Texture2D*> menutextures;
-	Sound* sound;
 	float burnSoundTimer,playing;
 	int playmusic,playsound;
 	int burn_id;
@@ -53,7 +50,7 @@ public:
     void update(float etime);
     void playMenuTune();
     void stopMenuTune();
-    void musicToggled(BOOL on);   // the Music setting's side effect (port, 2026-10-05)
+    void musicToggled(bool on);   // the Music setting's side effect (port, 2026-10-05)
     void soundEventBed(int actionid);
     void soundEventBed(int actionid,Vector location);
     void soundEventProximity(int actionid);
@@ -62,11 +59,12 @@ public:
     // docs/resources-and-audio.md) so they never fight the bed/water-lava-proximity layers or each
     // other. Unlike soundEventProximity these aren't part of the AMBIENT_* enum/ambientFiles table --
     // just an on/off + a location, since each is always the same single file.
-    void soundEventPortalProximity(BOOL active,Vector location);
-    void soundEventTreasureProximity(BOOL active,Vector location);
+    void soundEventPortalProximity(bool active,Vector location);
+    void soundEventTreasureProximity(bool active,Vector location);
     int getDoorTex(int color);
     Texture2D* getPaintTex(int color);
     Texture2D* getPaintedTex(int type,int color);
+    Texture2D* getArtTex(int id);   // ART_* below: port art outside the stock table
     void voSound(int action,int type,Vector location);
     //static Resources* getResources();
     
@@ -391,5 +389,19 @@ enum ICON_TYPES{
     //10 texs after this reserved for coloring
     
 };
+
+// Port art (the Maysunbo set, 2026-10-27; media/ui): kept out of the ICO_* table above, whose
+// indices the skin and mask counters own. Resources::getArtTex loads each on first use and keeps
+// it for the app's life, like GLWidgets' icon atlas.
+enum {
+    ART_SIGN_ICON,       // the Sign tool's picker cell and HUD block button
+    ART_CMD_BLOCK,       // a command block's face (SignRenderer's skin) and its picker cell
+    ART_CROUCH,          // the touch Crouch / Fly-down button, idle
+    ART_CROUCH_ACTIVE,   // ... held
+    ART_CONSOLE,         // the pause menu's Console row
+    ART_CHAT,            // the multiplayer chat button
+    ART_COUNT
+};
+
 
 #endif

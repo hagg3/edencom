@@ -85,7 +85,7 @@ Where things live:
 
 | Path | What's there |
 |---|---|
-| `Classes/`, `Lighting.mm` | The Eden engine, in Objective-C++. Editable; the untouched import is tagged `pristine-engine`. |
+| `Classes/`, `Lighting.cpp` | The Eden engine, in Objective-C++. Editable; the untouched import is tagged `pristine-engine`. |
 | `port/` | The shared compatibility layer: an ES 1.1 → ES3 translator and, on Linux/Windows, a small Objective-C runtime and Foundation subset. Also build and format tools. |
 | `native/` | The SDL3 app: window, input, audio, file I/O, networking, and the CMake build. |
 | `docs/` | Engine reference. Voxel storage, meshing, lighting, save formats, worldgen and so on. |
@@ -104,6 +104,27 @@ this fork has changed in the engine.
 There's no test framework. The binary tests itself: run it with one of the `--*-selftest` flags
 (`--emod-selftest`, `--touch-selftest`, and so on) and CI runs the lot on every platform. Linux, Windows and
 iOS builds only exist in CI, so for those the workflow is your test run.
+
+## Licence
+
+Emod is a fork of Eden: World Builder's source code, which Ari Ronen reportedly released in 2018 under
+the **GNU General Public License v3** (taken from community records; not yet confirmed in writing by Ari,
+ROADMAP LG.1). Emod as a whole is therefore distributed under the [GPL v3](COPYING), with its source here.
+Emod's own files (`port/`, `native/`, `cmake/`, CI, tools, our changes in `Classes/`) are also available
+on their own under the [MIT licence](LICENSE), which is GPL-compatible. The Eden assets (textures, sounds,
+models, the default map) are (c) Ari Ronen / Kingly Games, and whether the GPL grant covers them is
+unconfirmed. Music credit: Kevin MacLeod ([incompetech.com](https://incompetech.com), CC BY 4.0).
+[`NOTICE`](NOTICE) has the split, the credits and the third-party notices; the same text is in the game's
+**About** screen (home screen, bottom left).
+
+## Policy
+
+- Emod is a fan project, not affiliated with or endorsed by Kingly Games.
+- It carries no Eden trademark in its identity: the app, window and data directory are named Emod.
+- It is free and non-commercial: no ads, sales, donations-for-access or other monetisation.
+- If the rights holder asks for any part of this project to be changed or removed, we will do so
+  promptly. Open an issue on this repository or contact the repo owner on GitHub.
+- Please be polite to Ari's servers (`edengame.net`): no scraping, no load testing.
 
 ## Credits
 

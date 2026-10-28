@@ -10,14 +10,14 @@
 
 
 
-#import "Vector.h"
+#include "Vector.h"
 
 
 class Fire
 {
 public:
     Fire();
-    BOOL update(float etime);
+    bool update(float etime);
     int addFire(float x,float z, float y, int type, float life);
     void render();
     void removeFire(int ppid);

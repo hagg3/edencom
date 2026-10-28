@@ -52,3 +52,22 @@ std::string path_strip_ext(const std::string& p) {
     if (ext.empty()) return p;
     return p.substr(0, p.size() - ext.size() - 1);
 }
+
+bool utf8_valid(const std::string& s) {
+    const unsigned char* p = (const unsigned char*)s.data();
+    const size_t n = s.size();
+    for (size_t i = 0; i < n;) {
+        const unsigned c = p[i];
+        size_t len; unsigned lo = 0x80, hi = 0xBF;
+        if (c < 0x80) { i++; continue; }
+        else if (c >= 0xC2 && c <= 0xDF) len = 2;
+        else if (c >= 0xE0 && c <= 0xEF) { len = 3; if (c == 0xE0) lo = 0xA0; else if (c == 0xED) hi = 0x9F; }
+        else if (c >= 0xF0 && c <= 0xF4) { len = 4; if (c == 0xF0) lo = 0x90; else if (c == 0xF4) hi = 0x8F; }
+        else return false;
+        if (i + len > n) return false;
+        if (p[i + 1] < lo || p[i + 1] > hi) return false;
+        for (size_t k = 2; k < len; k++) if (p[i + k] < 0x80 || p[i + k] > 0xBF) return false;
+        i += len;
+    }
+    return true;
+}

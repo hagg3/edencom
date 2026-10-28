@@ -25,7 +25,7 @@
 	<!-- EMOD, NOT EDEN. This is a community fork of the 2.1.1 source release and must be a
 	     distinct application to the OS: a distinct identifier means a distinct container, so it
 	     cannot share a save directory with the shipped game the way the desktop legs did until
-	     2026-09-06 (native/src/eden_app_identity.h). The reverse-DNS is this fork's own
+	     2026-09-06 (port/src/eden_app_identity.h). The reverse-DNS is this fork's own
 	     repository, deliberately not edengame.net. -->
 	<key>CFBundleIdentifier</key>
 	<string>io.github.hagg3.emod</string>
@@ -45,9 +45,7 @@
 	<array>
 		<string>@EDEN_IOS_PLATFORM@</string>
 	</array>
-	<!-- The installer reads THIS, not the Mach-O load command. 12.0 is the stage's whole point:
-	     it is what puts A7/A8 devices (iPad Air 2, iPhone 6) — unreachable for the WebGL-2-only
-	     web build — back in range. -->
+	<!-- The installer reads THIS, not the Mach-O load command. The iOS floor (15.0, SM.1). -->
 	<key>MinimumOSVersion</key>
 	<string>@EDEN_IOS_MIN_VERSION@</string>
 	<key>LSRequiresIPhoneOS</key>
@@ -94,7 +92,7 @@
 	</array>
 	<!-- The only way a .eden world gets OFF an iOS device. This pair is what makes
 	     `<container>/Documents` the right save root there (see default_docs() in
-	     native/src/entry/eden_main_native.cpp) — the Files app and Finder both read it. -->
+	     port/src/harness/) — the Files app and Finder both read it. -->
 	<!-- ROADMAP 5.9, the world browser. The Eden servers (app/app2/files/files2.edengame.net) are
 	     plain HTTP — app.* refuses TLS outright — and App Transport Security blocks plain HTTP in
 	     an app by default. The exception is for that one domain only; the community archive

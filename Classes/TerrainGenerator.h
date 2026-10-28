@@ -9,7 +9,7 @@
 #define Eden_TerrainGenerator_h
 
 
-#import "Terrain.h"
+#include "Terrain.h"
 
 // Stage H / H.4: the seeded "Classic" generator, the 1.x generateColumn revived and pinned
 // (WORKING/feature-archaeology-2026-10-13/generator-plan.md §3; docs/terrain-generation.md).
@@ -59,7 +59,7 @@ void classic_set_mutation(int m);
 class TerrainGenerator{
 public:
     TerrainGenerator(Terrain* parent);
-    void generateColumn(int x,int z, BOOL bgthread);
+    void generateColumn(int x,int z, bool bgthread);
     void generateEmptyColumn(int cx,int cz);
     void generateCloud();
     void placeTree(int x,int z,int y);

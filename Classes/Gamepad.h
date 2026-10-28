@@ -1,3 +1,4 @@
+#pragma once
 //
 //  Gamepad.h
 //  prototype
@@ -6,7 +7,7 @@
 //  Copyright 2010 __MyCompanyName__. All rights reserved.
 //
 /*
-#import <Foundation/Foundation.h>
+#include <Foundation/Foundation.h>
 
 
 @interface Gamepad : NSObject {

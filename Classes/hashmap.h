@@ -58,7 +58,7 @@ extern int hashmap_put(map_t in, int key, any_t value);
  * Get an element from the hashmap. Return MAP_OK or MAP_MISSING.
  */
 extern int hashmap_get(map_t in, int key, any_t *arg);
-extern BOOL hashmap_contains(map_t in, int key);
+extern bool hashmap_contains(map_t in, int key);
 /*
  * Remove an element from the hashmap. Return MAP_OK or MAP_MISSING.
  */
@@ -80,7 +80,7 @@ extern void hashmap_free(map_t in);
  */
 extern int hashmap_length(map_t in);
 
-extern int hashmap_remove_all(map_t in,BOOL shouldFree);
+extern int hashmap_remove_all(map_t in,bool shouldFree);
 
 extern int hashmap_iterate_range(map_t in, PFany f, any_t item,int start,int frac);
 

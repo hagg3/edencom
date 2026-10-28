@@ -9,14 +9,14 @@ new one) has any. Every G.2b commit lowers the baseline: `--write` regenerates i
   python3 -I port/tools/objc-surface.py --check        # CI
   python3 -I port/tools/objc-surface.py --write        # after a commit that lowered it
   python3 -I port/tools/objc-surface.py --report       # print the table, sorted
-Scope: Classes/, root Lighting.*, port/src/, native/src/ (.mm .m .cpp .c .h). The tool is a regex
+Scope: Classes/, root Lighting.*, port/src/, port/src/ (.mm .m .cpp .c .h). The tool is a regex
 inventory, not a parser: it counts the same way on every run, which is all a ratchet needs."""
 import os, re, sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BASELINE = os.path.join(REPO, 'port', 'tools', 'objc-surface-baseline.txt')
 EXTS = ('.mm', '.m', '.cpp', '.c', '.h')
-ROOTS = ['Classes', 'port/src', 'native/src']
+ROOTS = ['Classes', 'port/src']
 SKIP_DIRS = {'zstd', 'vendor'}          # third-party code; never ObjC
 
 SEND = re.compile(r'\[\s*([A-Za-z_]\w*(?:\[[^\[\]]*\])?(?:\s*(?:->|\.)\s*\w+(?:\[[^\[\]]*\])?)*|\[[^\[\]]*\]|self|super)\s+([a-zA-Z_]\w*)\s*([:\]])')
@@ -39,7 +39,7 @@ def files():
             dirs[:] = [x for x in dirs if x not in SKIP_DIRS]
             # not symlinks: native/CMakeLists.txt links wrong-case names (input.h -> Input.h) into Classes/ on Linux
             out += [os.path.join(d, f) for f in fs if f.endswith(EXTS) and not os.path.islink(os.path.join(d, f))]
-    out += [os.path.join(REPO, f) for f in ('Lighting.mm', 'Lighting.h') if os.path.exists(os.path.join(REPO, f))]
+    out += [os.path.join(REPO, f) for f in ('Lighting.cpp', 'Lighting.h') if os.path.exists(os.path.join(REPO, f))]
     return sorted(out)
 
 def measure():
@@ -81,6 +81,15 @@ def main():
             if any(x > y for x, y in zip(v, b)):
                 bad += 1
                 print(f'objc-surface: RISE {p}: sends/ids/literals {v} > baseline {b}', file=sys.stderr)
+        # G.3: the shim is gone, so the only ObjC anywhere is the Apple-only walls (own object libraries,
+        # native/CMakeLists.txt). Any other .mm/.m, counted or not, fails. Classes/main.m is the stock
+        # iOS entry point, never compiled.
+        ok_mm = ('port/src/seam/Apple', 'port/src/seam/IOSKeyboard')
+        for f in files():
+            p = os.path.relpath(f, REPO)
+            if p.endswith(('.mm', '.m')) and not p.startswith(ok_mm) and p != 'Classes/main.m':
+                bad += 1
+                print(f'objc-surface: {p} is ObjC outside the Apple walls', file=sys.stderr)
         lowered = [p for p in base if tuple(cur.get(p, (0, 0, 0))) < base[p]]
         print(f'objc-surface: {len(cur)} files, {sum(v[0] for v in cur.values())} sends; '
               f'{len(lowered)} below baseline (run --write to lock it in)')

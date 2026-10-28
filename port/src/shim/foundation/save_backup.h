@@ -11,7 +11,7 @@
 // instead, and this file is what both call.
 //
 // The rules are the shim's, unchanged, and each one is there because of a specific failure:
-//   * the "save_backup" setting (kSettings[] in Settings_web.mm, default ON) is off -> skip. An
+//   * the "save_backup" setting (kSettings[] in Settings.cpp, default ON) is off -> skip. An
 //     explicit opt-out, not a new failure mode -- but note eden_load_restore_backup() (the
 //     corrupted-load recovery prompt) has nothing to offer once this is off;
 //   * no source file yet -> nothing to back up (first save of a world);

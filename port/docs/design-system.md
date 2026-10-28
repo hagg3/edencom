@@ -204,5 +204,5 @@ Two rules fall out of it, and both are load-bearing for callers:
 - New icon? Add the Lucide path to `../tools/eden-icons.js` and re-run `ui-icons.py` (regenerates
   `media/ui/ui_icons.png` and `Classes/UIIcons.h`). Never a *new* PNG; the only raster allowed is art
   the engine already ships.
-- New setting row? Add it to `kSettings[]` in `src/seam/Settings_web.mm`; the GL Settings screen
+- New setting row? Add it to `kSettings[]` in `src/seam/Settings.cpp`; the GL Settings screen
   renders the table generically.

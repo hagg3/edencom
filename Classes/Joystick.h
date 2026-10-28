@@ -17,7 +17,7 @@ class Joystick{
     // I.2: puts the pad its stock 20 points in from the SAFE rect's bottom-left corner (not the
     // screen's). Re-run by Hud::layoutForScreen; idempotent.
     void layoutForScreen();
-    BOOL update(float etime);
+    bool update(float etime);
     void render();
 };
 

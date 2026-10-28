@@ -22,7 +22,7 @@
 #ifndef Eden_GLDialog_h
 #define Eden_GLDialog_h
 
-#import "GLWidgets.h"
+#include "GLWidgets.h"
 
 #define GLDIALOG_MAX_BUTTONS 6
 

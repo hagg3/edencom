@@ -10,7 +10,7 @@
 
 
 
-#import "FileManager.h"
+#include "FileManager.h"
 
 
 void fmh_init(FileManager* tfm);
@@ -43,7 +43,7 @@ int fmh_defaultBandCount();
 // MAIN THREAD. Seek to (cx,cz)'s record and read its `bands` raw band payloads into `raw`
 // (band i at raw + i*FMH_BAND_RAW_MAX, its length in lens[i]). FALSE = the bundled map has no
 // such column, and the caller should fall back to fmh_readColumnFromDefault's own handling.
-BOOL fmh_readColumnRawFromDefault(int cx,int cz,unsigned char* raw,int* lens);
+bool fmh_readColumnRawFromDefault(int cx,int cz,unsigned char* raw,int* lens);
 
 // PURE -- safe to call on any thread. Expands and transposes `bands` bands into outBlocks/
 // outColors (band i at out* + i*CHUNK_SIZE3). status[i] is 1 if the band decoded to exactly

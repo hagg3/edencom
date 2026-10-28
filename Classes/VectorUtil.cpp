@@ -2,12 +2,12 @@
 
 #include "VectorUtil.h"
 
-#include "PVRTVector.h"
+#include "VecMath.h"
 
 Vector rotateVertice(Vector rot,Vector v){
     Vector r;
-    PVRTVec4 pt=PVRTVec4(v.x,v.y,v.z,1);
-    PVRTMat4 mat4=PVRTMat4::RotationX(rot.x)*PVRTMat4::RotationY(rot.y)*PVRTMat4::RotationZ(rot.z);
+    Vec4f pt=Vec4f(v.x,v.y,v.z,1);
+    Mat4f mat4=Mat4f::RotationX(rot.x)*Mat4f::RotationY(rot.y)*Mat4f::RotationZ(rot.z);
     //for(int j=0;j<16;j++){
     ///printg("%f ",mat4.f[j]);
     // }

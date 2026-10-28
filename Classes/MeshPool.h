@@ -31,7 +31,7 @@ void mp_beginFrame();
 // again until the pool publishes it. FALSE = "not taken, mesh it inline right now", which is the
 // unmodified single-threaded path and the reason this change is safe to leave enabled.
 // idxn is the chunk's index in Terrain's chunkTable, remembered so the publish step can re-dirty it.
-BOOL mp_dispatch(TerrainChunk* chunk,int idxn);
+bool mp_dispatch(TerrainChunk* chunk,int idxn);
 
 // B3 Stage 3. Try to hand column (cx,cz)'s RLE decode to a worker. The RAW READ happens inside
 // this call, on the main thread, because it is FileManager singleton state (one open handle, a
@@ -40,7 +40,7 @@ BOOL mp_dispatch(TerrainChunk* chunk,int idxn);
 // the main thread. TRUE = accepted: the caller must NOT mark the column loaded, and nothing may
 // touch its chunks until mp_publishFinished() lands it. FALSE = "read it inline yourself", the
 // stock synchronous path, which is again both the fallback and the kill switch.
-BOOL mp_dispatchColumnDecode(int cx,int cz);
+bool mp_dispatchColumnDecode(int cx,int cz);
 
 // Main thread: publish every job that has finished since the last call -- replay its deferred side
 // effects, prepareVBO() it, hand the slot back. `redirty` is called for any chunk whose mesh went
@@ -51,15 +51,15 @@ void mp_publishFinished(void (*redirty)(int idxn));
 // Does this chunk / any chunk of toroidal chunk-table column (cx,cz) have a job in flight? The
 // invalidation rule the plan doc's §4.3 calls rule 1: a chunk a worker is reading must not be
 // recycled -- no setBounds(), no resetForReuse(), no readColumn() that re-homes its slot.
-BOOL mp_chunkBusy(const TerrainChunk* chunk);
-BOOL mp_columnBusy(int cx,int cz);
+bool mp_chunkBusy(const TerrainChunk* chunk);
+bool mp_columnBusy(int cx,int cz);
 
 // Wait until nothing is in flight. `publish` FALSE discards the finished meshes instead of
 // uploading them, which is what teardown wants (the chunks are about to be deleted). Worker
 // threads are NOT stopped -- they park on a condvar and are reused by the next world.
-void mp_drain(void (*redirty)(int idxn),BOOL publish);
+void mp_drain(void (*redirty)(int idxn),bool publish);
 
-// Measurement, for tools/headless-mesh-burst-probe.js via src/seam/MeshTiming_web.mm. snapshotMs
+// Measurement, for tools/headless-mesh-burst-probe.js via src/seam/MeshTiming.cpp. snapshotMs
 // is the cost of the 8 KB pblocks+pcolors memcpy per dispatched chunk -- the one piece of work
 // this change ADDS to the main thread, and unmeasured until now (10.6 MB per 64z burst).
 extern "C" void mp_getStats(double* snapshotMs,unsigned* dispatched,unsigned* inlined,

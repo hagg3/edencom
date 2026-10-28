@@ -1,7 +1,7 @@
 # The `.eden` World File Format
 
 Authoritative reference, reconstructed from `Classes/FileManager.h/.mm`,
-`FileManagerHelper.mm`, and cross-checked against the two documents in `docs/reference/`:
+`FileManagerHelper.cpp`, and cross-checked against the two documents in `docs/reference/`:
 - `Eden_file_format.txt` — the developer's own 24-line summary.
 - `MROB.txt` — Robert Munafo's pre-source-release reverse engineering (matches the
   code exactly for v2-era files; his "12×12 columns" observation is the 1.7-era
@@ -190,13 +190,13 @@ replaced the retired web `headless-save-trailer-test.js`) and `emod.py trailer -
 `--emod-selftest` round-trips the trailer record inside the `.emod` fixtures. Test input: the literal 192 bytes from `quarry.eden`. Full provenance:
 `WORKING/newformat256z-sign-trailer-2026-08-24.md`.
 
-The engine draws signs (D.3b, `Classes/SignRenderer.mm`, docs/rendering.md) and places, edits and removes
-them (D.3c, `Classes/SignTool.mm`, docs/ui.md); the model that stores them is D.3a, below. **What Emod
+The engine draws signs (D.3b, `Classes/SignRenderer.cpp`, docs/rendering.md) and places, edits and removes
+them (D.3c, `Classes/SignTool.cpp`, docs/ui.md); the model that stores them is D.3a, below. **What Emod
 writes** for a new sign: `a` = the face tapped (never 2 — the bottom is refused), `b` = the build paint
 (`hud->block_paintcolor`) or **45** (charcoal) with none — the 2026 game writes 2 — and `c` = the face's own
 direction for a wall sign (0/2/1/3 for a = 0/1/4/5; the game writes the placer's quarter there, and nothing
 reads it), the quarter facing the player for a standing one. For a new **command block** (D.4b, the CMD tool,
-`CmdTool` in `Classes/SignTool.mm`): an unpainted steel (74) voxel plus a `CMB1` record with `flags` 0 and an
+`CmdTool` in `Classes/SignTool.cpp`): an unpainted steel (74) voxel plus a `CMB1` record with `flags` 0 and an
 empty script; editing rewrites the script only (≤ 511 bytes, printable ASCII; empty is allowed and keeps the
 block); Emod refuses a 513th command block per world. Any live edit that turns a block into air drops
 every sign and the `CMB1` record anchored on it (`Terrain::updateChunks`, docs/world-and-terrain.md).
@@ -278,7 +278,7 @@ Neither carries the trailer into a 64z file. The exporter (`Classes/EdenWorldExp
 
 > **S.6 (2026-10-10): the game no longer reads this variant by default.** The app bundle ships
 > `Eden.emod` (an ordinary `.emod`, 4 bands, zstd-19) baked from `Eden.eden` by `emod.py
-> bake-default`; the RLE reader in `FileManagerHelper.mm` survives only as the fallback for a bundle
+> bake-default`; the RLE reader in `FileManagerHelper.cpp` survives only as the fallback for a bundle
 > with no `Eden.emod` and as the gate's reference. `Eden.eden` stays in the repo as the source.
 
 The shipped `Eden.eden` (repo root / app bundle) uses the same header/directory but
@@ -544,7 +544,7 @@ engine-written world.
 ## Uncertainties
 - `EntityData.touched/extra2/extra3/extra4` semantics are only partially clear
   (`touched` is a timer in creature AI; the extras appear unused — confidence: medium.
-  Verify in `Model.mm` `SaveModels`/`LoadModels2` before repurposing).
+  Verify in `Model.cpp` `SaveModels`/`LoadModels2` before repurposing).
 - Exact byte offsets inside the 192-byte header past `name` depend on compiler padding;
   they were stable across the shipped armv7 builds but **verify with a hex dump before
   hard-coding offsets in an external tool** (the repo's `Eden.eden` is a ready-made

@@ -10,19 +10,19 @@
 
 
 
-#import <OpenGLES/ES1/gl.h>
-#import <OpenGLES/ES1/glext.h>
-#import "Texture2D.h"
-#import "Graphics.h"
-#import "TerrainChunk.h"
-#import "Player.h"
-#import "Util.h"
-#import "TerrainGenerator.h"
-#import "hashmap.h"
-#import "Globals.h"
-#import "Liquids.h"
-#import "Portal.h"
-#import "Firework.h"
+#include <OpenGLES/ES1/gl.h>
+#include <OpenGLES/ES1/glext.h>
+#include "Texture2D.h"
+#include "Graphics.h"
+#include "TerrainChunk.h"
+#include "Player.h"
+#include "Util.h"
+#include "TerrainGenerator.h"
+#include "hashmap.h"
+#include "Globals.h"
+#include "Liquids.h"
+#include "Portal.h"
+#include "Firework.h"
 //#import "Constants.h"
 class Player;
 class TerrainChunk;
@@ -54,14 +54,14 @@ class Terrain  {
 public:
 	TerrainGenerator* tgen;
 	int n_chunks;
-	BOOL loaded;
+	bool loaded;
 	Vector home;
 	int level_seed;
 	int nburn;
     Vector skycolor,final_skycolor;
     TerrainChunk **chunkTable;
 
-	NSString* world_name;
+	std::string world_name;   // G.2b-2: the open world's file name ("" = none; was a retained NSString*)
     Liquids* liquids;
     Portal* portals;
     Firework* fireworks;
@@ -69,14 +69,14 @@ public:
     
     Terrain();
     ~Terrain();
-    void loadTerrain(NSString* name,BOOL fromArchive);
-    BOOL update(float etime);
-    void setLand(int x,int z,int y,int type, BOOL chunkToo);
-    BOOL setColor(int x,int z,int y, color8 color);
+    void loadTerrain(const std::string& name,bool fromArchive);
+    bool update(float etime);
+    void setLand(int x,int z,int y,int type, bool chunkToo);
+    bool setColor(int x,int z,int y, color8 color);
     void buildBlock(int x,int z,int y);
     void paintBlock(int x,int z,int y, int color);
     void destroyBlock(int x,int z,int y);
-    void burnBlock(int x,int z,int y, BOOL causedByExplosion);
+    void burnBlock(int x,int z,int y, bool causedByExplosion);
     void updateChunks(int x,int z,int y,int type);
     // MP.3b: one cell to (type, color) with no refusals and no effects -- liquid source out/in,
     // lightbox light out/in, updateChunks (air drops signs/CMB1), the paint, the light refresh.
@@ -92,14 +92,14 @@ public:
     void addToUpdateList2(int cx,int cy,int cz);
     void updateAllImportantChunks();
     void prepareAndLoadGeometry();
-    void addChunk(TerrainChunk* chunk,int cx,int cy,int cz, BOOL rebuild);
+    void addChunk(TerrainChunk* chunk,int cx,int cy,int cz, bool rebuild);
     void render();
     void render2();
-    void unloadTerrain(BOOL exitToMenu);
+    void unloadTerrain(bool exitToMenu);
     void warpToHome();
     void clearBlocks();
     void colort(float r,float g,float b);
-    void endDynamics(BOOL endLiquids);
+    void endDynamics(bool endLiquids);
     // B.5b-1b ring streaming: chunk column (cx,cz) is leaving the window. Its burn nodes end the way
     // endDynamics ends them (the block becomes air) and its liquid nodes are dropped, so nothing
     // keyed by its absolute coordinates outlives it to simulate against the column that lands in

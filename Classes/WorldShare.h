@@ -19,7 +19,7 @@
 #ifndef Eden_WorldShare_h
 #define Eden_WorldShare_h
 
-#import "Util.h"
+#include "Util.h"
 
 namespace WorldShare {
     // Whether the menu offers the Share button at all (native; a world selected; nothing running).

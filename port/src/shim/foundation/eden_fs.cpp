@@ -4,6 +4,7 @@
 #include "platform_shims.h"   // eden_fseek64/eden_ftell64, eden_platform_bundle_root
 
 #include <algorithm>
+#include <cctype>    // eden_path_is_absolute (Windows drive letters)
 #include <cstring>
 #include <unordered_map>
 #if defined(_WIN32)
@@ -11,7 +12,7 @@
 #include <system_error>
 #include <io.h>      // _chsize_s, _fileno
 #else
-// POSIX, not std::filesystem: that is unavailable below iOS 13 and the iOS deployment target is 12.
+// POSIX, not std::filesystem: that is unavailable below iOS 13; kept POSIX because it is the engine's established idiom.
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>  // ftruncate
@@ -190,4 +191,13 @@ std::string eden_bundle_path(const std::string& name) {
     std::string root = std::string(eden_platform_bundle_root()) + "/" + name;
     if (x_is_file(root)) return root;
     return std::string();
+}
+
+bool eden_path_is_absolute(const std::string& s) {
+#if defined(_WIN32)
+    if (s.size() >= 3 && std::isalpha((unsigned char)s[0]) && s[1] == ':' && (s[2] == '\\' || s[2] == '/'))
+        return true;
+    if (!s.empty() && s[0] == '\\') return true;
+#endif
+    return !s.empty() && s[0] == '/';
 }

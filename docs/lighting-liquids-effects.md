@@ -1,15 +1,15 @@
 # Lighting, Liquids, Portals, Fireworks & Effects
 
 Grab-bag of the dynamic systems layered on the voxel grid. Fire/TNT propagation lives
-in `Terrain.mm` and is documented in [world-and-terrain.md](world-and-terrain.md).
+in `Terrain.cpp` and is documented in [world-and-terrain.md](world-and-terrain.md).
 
-## Lighting (root-level `Lighting.mm` + `Lighting.h`)
+## Lighting (root-level `Lighting.cpp` + `Lighting.h`)
 
-**Note the file location:** the compiled lighting code is `Lighting.mm` in the *repo
+**Note the file location:** the compiled lighting code is `Lighting.cpp` in the *repo
 root*, not `Classes/` (`Classes/Lighting.c` exists but is not in the build). **The same goes for the
 header:** the real one is the repo-root `Lighting.h` (the one `Eden.xcodeproj` lists).
 `Classes/Lighting.h` is an empty stock stub with the *same* include guard (`Eden_Lighting_h`), and a
-bare `#import "Lighting.h"` from a file in `Classes/` resolves to the stub first. `Terrain.mm` did
+bare `#import "Lighting.h"` from a file in `Classes/` resolves to the stub first. `Terrain.cpp` did
 exactly that until R.3 and now imports `"../Lighting.h"`.
 
 - Data (**modified from stock, Stage R / R.3, 2026-10-03**): the light field is one RGB byte-triple
@@ -20,7 +20,7 @@ exactly that until R.3 and now imports `"../Lighting.h"`.
   one pointer per toroidal chunk slot (1296 / 5184), each NULL or a 12 KB brick of
   `CHUNK_SIZE`³ triples laid out `CC(x,z,y)`. A brick is allocated the first time `addlight` writes a
   non-zero value into its slot; no brick means no light. Accessors in `Lighting.h`
-  (`light_brickSlot`, `light_brickIndex`, `light_get`), store functions in `Lighting.mm`
+  (`light_brickSlot`, `light_brickIndex`, `light_get`), store functions in `Lighting.cpp`
   (`light_storeAllocate/Free/Clear`). Entirely disabled on `LOW_MEM_DEVICE`, as before.
   - **Bricks are never freed during play.** `MeshPool`'s workers call `calcLight` off the main thread
     without a lock (only under `EDEN_THREADED`, which no current build defines), which was safe for the dense
@@ -40,7 +40,7 @@ exactly that until R.3 and now imports `"../Lighting.h"`.
     (−16.7) and 148.8 → 84.5 MB on `F3 W256` (−64.2); `phys_footprint` 59.6 → 37.9 and 164.4 → 95.7 MB.
     The lit store on those worlds is 8 bricks (6 lightboxes): 119 KB at 64z, 181 KB at 256z including
     the tables. The per-warp memset (16 / 64 MB; 1.2 / 4.2 ms on the A8X, F.3) is now 8 × 12 KB.
-- `addlight(x,z,y, brightness, color)` (`Lighting.mm`, body `light_splat`) — adds (or with
+- `addlight(x,z,y, brightness, color)` (`Lighting.cpp`, body `light_splat`) — adds (or with
   brightness=−1, subtracts) a spherical falloff light of radius `LIGHT_RADIUS 5`:
   `contribution = 64·(1−dist/5)·brightness·color`, clamped 0..255 per channel.
   Called when lightboxes are placed/destroyed/repainted.
@@ -49,7 +49,7 @@ exactly that until R.3 and now imports `"../Lighting.h"`.
   *opposite* edge's column. A voxel whose column is not resident (`isColumnResident`, one `pbounds`
   compare per (x,z) of the sphere) now gets nothing. Every writer — edits, both sweeps, the per-column
   rebuild below — goes through `light_splat`, so a load and a walk agree on what the edge gets.
-- `calculateLighting()` (`Lighting.mm`) — full rebuild: finds every `TYPE_LIGHTBOX` in the resident
+- `calculateLighting()` (`Lighting.cpp`) — full rebuild: finds every `TYPE_LIGHTBOX` in the resident
   window and re-adds its light, refreshing affected chunk meshes.
   Triggered via `updateLightingBegin()` (sets `update_lighting`, clears the brick store with
   `light_storeClear()`, resets the sliced sweep cursor) after world
@@ -88,7 +88,7 @@ exactly that until R.3 and now imports `"../Lighting.h"`.
   - **Lightbox-free columns are not rescanned (P.10, 2026-10-14; modified from stock).** Of the 25
     slots a rebuild visits, 24 were scanned by the previous landings, and on a world with no
     lightboxes the scan *was* the cost (0.51 / 1.01 ms per landed column on the A8X at 64z / 256z).
-    `Lighting.mm` keeps, per column slot, a "scanned, holds no lightbox" byte (`lbfree`) and the world
+    `Lighting.cpp` keeps, per column slot, a "scanned, holds no lightbox" byte (`lbfree`) and the world
     column it was true for (`lbfree_col`); `sweepLightingColumn` returns 0 at once while both hold. Only
     "none" is ever trusted — a slot with lightboxes is always scanned — so the one way to be wrong is
     a lightbox appearing behind the flag's back, and every route clears it: an occupant change
@@ -121,7 +121,7 @@ exactly that until R.3 and now imports `"../Lighting.h"`.
     chunk of the column present, stacked at `cy*CHUNK_SIZE` and sharing x/z bounds; otherwise (a
     deferred or unpublished slot) the old per-chunk scan runs, honouring each chunk's own `pbounds`.
     That fallback was kept verbatim, not deleted.
-- `calculateLightingSlice()` (`Lighting.mm`, port perf change 2026-08-27) — the
+- `calculateLightingSlice()` (`Lighting.cpp`, port perf change 2026-08-27) — the
   same sweep but a budgeted strip of columns per frame, holding a cursor between frames and
   returning TRUE only when the window is fully swept. This is what the **post-bulk-reload**
   `update_lighting` path calls: the old full scan was one unbudgeted ~20 ms (64z) / ~80 ms (256z)
@@ -148,7 +148,7 @@ exactly that until R.3 and now imports `"../Lighting.h"`.
   `8f02…` / `349d…`. Use a world with lightboxes (Diane's home window has 6; `F3 W64` is its lossless
   `--to-64` copy, `--at=65408,30,66288`) and compare an FNV-1a hash of the light after the sweep
   completes, and run it once with the bug put back. Since R.3 that hash is permanent:
-  `eden_debug_light_state()` (`port/src/seam/DebugState_web.mm`; `.light` on native `--stage1`) walks
+  `eden_debug_light_state()` (`port/src/seam/DebugState.cpp`; `.light` on native `--stage1`) walks
   every voxel in the dense order through `lightAtToroidal()`, so it reads the same for the dense array
   and the bricks (`580637df278f24c9` on W64, `7fd87220d15161e5` on W256, 2732 lit voxels, both).
   **`--stage1` alone does not exercise brick reuse:** a deliberately broken clear (bricks pooled
@@ -157,7 +157,7 @@ exactly that until R.3 and now imports `"../Lighting.h"`.
   `destroyBlock`, across the toroidal seam and both y clips, then a fresh sweep) caught it at once.
   `--light-selfcheck` keeps the stock dense array beside the bricks, written by the stock code, and
   reports voxels where they differ (`mismatch`, must be 0).
-- Consumption: `calcLight(x,z,y, skylight, channel)` (`Terrain.mm`) adds
+- Consumption: `calcLight(x,z,y, skylight, channel)` (`Terrain.cpp`) adds
   `light/64` to the base skylight and clamps to 1.5; the mesher bakes this into
   vertex colors. Skylight is 1.0 by day, 0.35 when the sky color is the night palette
   entry (`colorTable[54]`). There is no sun direction; `getShadow` still returns a constant 1.0
@@ -167,7 +167,7 @@ exactly that until R.3 and now imports `"../Lighting.h"`.
 ### Baked shadows (`Classes/Shadow.{h,mm}`) — *modified from stock (H.2, 2026-10-14)*
 The 1.x feature (top faces under a canopy, roof or overhang are darker), restored on the port's
 terms. Plan and gates: `WORKING/feature-archaeology-2026-10-13/shadows-plan.md`.
-- **Setting:** Video › *Shadows* = Off / Classic / Smooth (`shadows` in `Settings_web.mm`; engine
+- **Setting:** Video › *Shadows* = Off / Classic / Smooth (`shadows` in `Settings.cpp`; engine
   global `g_shadow_mode`). **Default Off** until the user's T look picks the shipped one. Not in
   the graphics presets (CPU meshing only). Native `--shadows=off|classic|smooth` is a
   **non-persisting override** (`shadow_setOverride`): native prefs are global, not per `--docs`, so
@@ -210,7 +210,7 @@ terms. Plan and gates: `WORKING/feature-archaeology-2026-10-13/shadows-plan.md`.
   pinned in `check-stage1.py`). Probes: `eden_debug_shadow_state` (`stale` must be 0),
   `eden_debug_top_shade`, `eden_debug_chunk_mesh_hash`.
 
-## Liquids (`Classes/Liquids.mm`)
+## Liquids (`Classes/Liquids.cpp`)
 
 Water and lava are voxels with the fill level encoded in the type
 (`TYPE_WATER` full=4 → `WATER3/2/1`; same for lava). Helpers: `getLevel(type)`,
@@ -238,7 +238,7 @@ Water and lava are voxels with the fill level encoded in the type
 - Note: the `WetNode`/`wetmap` machinery in the header is a dead earlier design;
   `updateHeights` returns FALSE immediately.
 
-## Portals (`Classes/Portal.mm`)
+## Portals (`Classes/Portal.cpp`)
 
 - Registry of up to `MAX_PORTAL 1000` `sportal{x,y,z,dir,color}` records.
 - Populated **from the mesher**: when `rebuild2` encounters `TYPE_PORTAL_TOP` it calls
@@ -250,7 +250,7 @@ Water and lava are voxels with the fill level encoded in the type
 - Rendered as extracted `StaticObject`s with the swirl texture and rotating UVs
   (`Terrain::render`), plus the frame blocks as normal geometry.
 
-## Fireworks (`Classes/Firework.mm`)
+## Fireworks (`Classes/Firework.cpp`)
 
 `sfirework{pos, color, fuse, vel}` pool (`MAX_FIREWORK 80`). A burning
 `TYPE_FIREWORK` block launches one (`Terrain::shootFirework`): rises with a fuse,
@@ -258,19 +258,19 @@ then explodes into particles colored by the block's paint
 (`SpecialEffects::addFirework`). While rising it is drawn as a small spinning, lit, textured cube
 (`Graphics::drawFirework`, `blockTypeFaces[TYPE_CLOUD]` faces, `GL_LIGHT0`).
 
-## Particles & block-break effects (`SpecialEffects.mm`, `Fire.mm`, `BlockBreak.mm`)
+## Particles & block-break effects (`SpecialEffects.cpp`, `Fire.cpp`, `BlockBreak.cpp`)
 
 `SpecialEffects` is the façade `World` owns:
-- `addBlockBreak/addBlockExplode(x,z,y,type,color)` — `BlockBreak.mm` spawns textured
+- `addBlockBreak/addBlockExplode(x,z,y,type,color)` — `BlockBreak.cpp` spawns textured
   debris cubes with physics using the broken block's texture and paint.
-- `addFire(x,z,y,type,life)` / `removeFire(pid)` / `updateFire` — `Fire.mm` flame +
+- `addFire(x,z,y,type,life)` / `removeFire(pid)` / `updateFire` — `Fire.cpp` flame +
   smoke particle emitters (point sprites, `vertexpStruct`); ids returned so the
   burn system (`BurnNode.pid`) can extinguish emitters.
 - `addCreatureVanish(x,z,y,color,type)` — the poof used by TNT/creature death.
 - `clearAllEffects()` from `endDynamics`/world load.
 Buffer cap: `pbuffer_size 10000` particles.
 
-## Sky color system (partly in `TerrainGen2.mm`)
+## Sky color system (partly in `TerrainGen2.cpp`)
 
 Per-world 4×4 grid of sky palette indices (`regionSkyColors`, persisted in the header
 as `skycolors[16]`). `updateSkyColor1/2` map the player's position in the default
@@ -278,7 +278,8 @@ world onto the grid and set `terrain->final_skycolor`; `Terrain::update` interpo
 `skycolor` toward it (X.6: the region index clamps to [0,3]; it used to clamp to 4, one past the
 array, reachable on flat worlds and on unbounded worlds past the bundled square) and updates the fog color; `Terrain::render` crossfades the
 colored/B&W skybox textures. The sky quad (`Texture2D::drawSky`, the port's copy is
-`port/src/seam/Texture2D_web.mm`) draws *inside* `render`'s atlas texture matrix `glScalef(1,1/ATLAS_TILES,1)`, so
+`port/src/seam/Texture2D.cpp`) draws *inside* `render`'s atlas texture matrix `glScalef(1,1/ATLAS_TILES,1)` (`R::uv()`
+since G.5b-6, which also hands it its tint and state explicitly: `docs/rendering.md` sky note), so
 its t range is `0..ATLAS_TILES` (stock wrote `32`, then the atlas size; left at 32 after D.2t it showed only the top
 quarter of `sky_box.png`, losing the pale horizon the fog colour blends into: X.8). Pitch picks the rows: level shows
 the whole gradient, looking down shows its pale bottom. Painting the sky (`paintSky`) recolors the region the
@@ -305,7 +306,7 @@ GL lights for doors/creatures).
   infinite loops), the mesher→portal registry coupling, lighting rebuild triggers.
 
 ## `startDynamics()` is a stub
-`Terrain::startDynamics()` (`Terrain.mm`) has an empty body: the original full-window liquid rescan is
+`Terrain::startDynamics()` (`Terrain.cpp`) has an empty body: the original full-window liquid rescan is
 commented out. So liquids that were flowing when a world was saved stay still after it loads until
 something disturbs them. Restoring the rescan re-floods worlds (every source in the window restarts),
 so it was parked on purpose (ROADMAP Stage H, report item 8).

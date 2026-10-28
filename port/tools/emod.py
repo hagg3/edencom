@@ -1682,7 +1682,7 @@ def sha256_file(p):
 def rle_band(rec, off):
     """One RLE band of the bundled map at rec[off:]: (type plane, paint plane, next offset), both in
     the file's transposed CC(y,z,x) order. {int8 type, uint8 color, uint8 count} runs after a
-    big-endian u16 length that counts itself (FileManagerHelper.mm fmh_decodeColumnBands)."""
+    big-endian u16 length that counts itself (FileManagerHelper.cpp fmh_decodeColumnBands)."""
     n = (rec[off] << 8 | rec[off + 1]) - 2
     if n < 0 or off + 2 + n > len(rec):
         die('RLE band length %d runs past the record' % n)

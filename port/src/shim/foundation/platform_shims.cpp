@@ -1,6 +1,8 @@
 // platform_shims.cpp — see platform_shims.h for what belongs here and why.
 #include "platform_shims.h"
 
+#include <stdlib.h>   // arc4random (eden_arc4random forwards to it)
+
 #include <chrono>
 
 extern "C" double eden_platform_now_ms(void) {
@@ -117,6 +119,36 @@ uint32_t arc4random_uniform(uint32_t upper_bound) {
   return r % upper_bound;
 }
 #endif  // EDEN_PROVIDE_ARC4RANDOM
+
+// G.5b-0: see platform_shims.h. PCG32 (O'Neill's pcg32_random_r, the XSH-RR output), pinned only by
+// a harness; this file is not prefixed, so `arc4random` below is the platform's (or the one above).
+static bool     g_rng_pinned = false;
+static uint64_t g_rng_state = 0;
+static const uint64_t kRngInc = 1442695040888963407ULL;   // any odd stream constant
+
+static uint32_t eden_pcg32(void) {
+  const uint64_t old = g_rng_state;
+  g_rng_state = old * 6364136223846793005ULL + kRngInc;
+  const uint32_t xorshifted = (uint32_t)(((old >> 18u) ^ old) >> 27u);
+  const uint32_t rot = (uint32_t)(old >> 59u);
+  return (xorshifted >> rot) | (xorshifted << ((-rot) & 31));
+}
+
+uint32_t eden_arc4random(void) {
+  if (g_rng_pinned) return eden_pcg32();
+  return arc4random();
+}
+
+void eden_rng_seed(uint64_t seed) {
+  g_rng_pinned = true;
+  g_rng_state = 0;
+  eden_pcg32();
+  g_rng_state += seed;
+  eden_pcg32();
+}
+
+void eden_rng_unpin(void) { g_rng_pinned = false; }
+int  eden_rng_pinned(void) { return g_rng_pinned ? 1 : 0; }
 
 #if defined(EDEN_PROVIDE_RANDOM)
 // Windows only — see platform_shims.h. Built on the same generator as arc4random above (which is

@@ -3,8 +3,8 @@
 //  Eden
 //
 //  MP.6: the C seam between the multiplayer screens (ServerListMenu, ServerFormMenu) and the
-//  host's network side (native/src/seam/MpServers_native.mm over port/src/net/ServerList, and
-//  MpLink_native.mm's join flow). Classes/ never includes port/src/net: everything crosses here as
+//  host's network side (port/src/seam/MpServers_native.cpp over port/src/net/ServerList, and
+//  MpLink_native.cpp's join flow). Classes/ never includes port/src/net: everything crosses here as
 //  plain C structs. WORKING/multiplayer-server-list-plan-2026-10-17.md §4-§6 (data),
 //  multiplayer-ui-plan-2026-10-17.md §2-§7 (screens).
 //
@@ -81,11 +81,11 @@ int  eden_mp_servers_poll(void);                              // applies results
 // --- validation (port/src/net's rules) ---
 int  eden_mp_parse_address(const char* in, char* host, int hostCap, int* port, char* err, int errCap);   // 1 = valid
 int  eden_mp_name_problem(const char* name, char* err, int errCap);   // 1 = a problem (in err)
-// --- the profile (UI plan §4): port settings in NSUserDefaults ---
+// --- the profile (UI plan §4): port settings in eden_prefs ---
 int  eden_mp_profile_name(char* buf, int cap);                // 0 = no name saved
 void eden_mp_profile_set(const char* name, int character);
 int  eden_mp_profile_character(void);                         // 0..6 (characterType)
-// --- the join (MpLink_native.mm) ---
+// --- the join (MpLink_native.cpp) ---
 int  eden_mp_join(const char* host, int port, const char* name, int characterType, const char* password);
 int  eden_mp_join_state(EdenMpJoinState* out);                // the stage
 int  eden_mp_join_line(int i, char* buf, int cap);

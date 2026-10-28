@@ -4,6 +4,10 @@
 </codex>
 */
 
+#ifdef __cplusplus
+#include "Renderer.h"   /* CHECK_GL_ERROR (G.5b-7) */
+#endif
+
 /* Degrees / Radians conversion */
 #define DEGREES_TO_RADIANS(__ANGLE__) ((__ANGLE__) / 180.0 * M_PI)
 #define RADIANS_TO_DEGREES(__ANGLE__) ((__ANGLE__) / M_PI * 180.0)
@@ -14,8 +18,9 @@
 #define REPORT_ERROR(__FORMAT__, ...) printg("%s: %s\n", __FUNCTION__, [[NSString stringWithFormat:__FORMAT__, __VA_ARGS__] UTF8String])
 
 /* EAGL and GL functions calling wrappers that log on error */
-#define CALL_EAGL_FUNCTION(__FUNC__, ...) ({ EAGLError __error = __FUNC__( __VA_ARGS__ ); if(__error != kEAGLErrorSuccess) printg("%s() called from %s returned error %i\n", #__FUNC__, __FUNCTION__, __error); (__error ? NO : YES); })
-#define CHECK_GL_ERROR() ({ GLenum __error = glGetError(); if(__error) printg("OpenGL error '%s' in %s\n", gluErrorString(__error), __FUNCTION__); (__error ? NO : YES); })
+#define CALL_EAGL_FUNCTION(__FUNC__, ...) ({ EAGLError __error = __FUNC__( __VA_ARGS__ ); if(__error != kEAGLErrorSuccess) printg("%s() called from %s returned error %i\n", #__FUNC__, __FUNCTION__, __error); (__error ? false : true); })
+/* G.5b-7: R::takeError (Classes/Renderer.h) is GL's glGetError, which no engine file calls itself. */
+#define CHECK_GL_ERROR() ({ GLenum __error = R::takeError(); if(__error) printg("OpenGL error '%s' in %s\n", gluErrorString(__error), __FUNCTION__); (__error ? false : true); })
 
 /* Optional delegate methods support */
 #ifndef __DELEGATE_IVAR__

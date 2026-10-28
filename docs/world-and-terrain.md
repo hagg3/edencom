@@ -24,12 +24,12 @@ World height used to be hard-capped at 64 by a `#define`. It is now a **per-worl
 value**: 64 or 256 — the 256-block-tall "New Dawn" variant (header `version` 5 or 6 in a `.eden`,
 16 bands in an `.emod`; see [eden-file-format.md](eden-file-format.md)). One binary opens both, and
 **a 64z world costs exactly what it always cost**. A new world gets the height the New World screen
-parked (its default choice is New Dawn 256, `NewWorldMenu.mm` `kHeights`, S.5e); conversion writes
+parked (its default choice is New Dawn 256, `NewWorldMenu.cpp` `kHeights`, S.5e); conversion writes
 256z by default too (the `upgrade_256z` setting).
 
 `T_HEIGHT`, `T_BLOCKS`, `CHUNKS_PER_COLUMN` and `MAX_CREATURES_SAVED` are now macros over
 globals (`g_world_height`, `g_t_blocks`, `g_chunks_per_column`, `g_max_creatures_saved`), set
-by `eden_set_world_height()` / `eden_set_creature_slots()` in `Classes/Globals.mm`. Three
+by `eden_set_world_height()` / `eden_set_creature_slots()` in `Classes/Globals.cpp`. Three
 rules follow, and breaking any of them is silent:
 
 1. **A fixed-size declaration cannot use them.** Use `T_HEIGHT_MAX` (256),
@@ -51,10 +51,10 @@ rules follow, and breaking any of them is silent:
 
 The resident window is runtime too, by the same mechanism as the height. `T_SIZE`, `T_RADIUS` and
 `CHUNKS_PER_SIDE` are macros over `g_t_size`, `g_window_radius`, `g_chunks_per_side`, set by
-`eden_set_window_radius()` (`Globals.mm`; it also re-derives `g_xz_stride`, `g_t_blocks` and the
+`eden_set_window_radius()` (`Globals.cpp`; it also re-derives `g_xz_stride`, `g_t_blocks` and the
 toroidal offsets `g_offcx/z = T_SIZE*100`). `World::loadWorld` calls it right after
 `eden_set_world_height`, before `Terrain::allocateMemory`, with `eden_window_radius_for_world(height)`
-(`port/src/seam/Settings_web.mm`): the **Render distance** setting (key `render_radius`: 4–10 / 12 / 16 chunks,
+(`port/src/seam/Settings.cpp`): the **Render distance** setting (key `render_radius`: 4–10 / 12 / 16 chunks,
 default 9; iOS stops at 12, which carries a 2 GB warning. X.17 added 4–8 under a new key because the value is stored as an index;
 the old `render_distance` index migrates once), held to 9 when `eden_low_memory()` is set (no native host sets it today);
 `EDEN_WINDOW_RADIUS=N` overrides it (the native harness pins 9 for every scripted mode unless
@@ -67,7 +67,7 @@ hot path was measured first. Nothing on disk depends on it (§1.2 of the plan; `
 2880 since B.5g).
 
 - **Hot-path cost: not measurable.** `GBLOCKIDXCLEAN`'s `%T_SIZE` is now a real divide (`sdiv` in
-  `TerrainChunk.mm.o`), where 288 compiled to a multiply. Native `--stage1 --mesh-bench=15` (Mac,
+  `TerrainChunk.cpp.o`), where 288 compiled to a multiply. Native `--stage1 --mesh-bench=15` (Mac,
   Release, 490 chunks re-meshed synchronously, medians of 15, three runs): 64z 42.3 ms literal vs
   41.8 ms runtime, 256z 42.9 vs 42.4; the raw window read (5.3 M `GBLOCK`s) 0.67 vs 0.67 ms.
 - **Thresholds are fractions now:** the bulk reload's `count>140` / `count>300` became
@@ -109,7 +109,7 @@ Every voxel is two bytes:
   entry 0 is white, then 54 entries = 9 hues × 6 shades via HSV (hue column 8 is the
   grayscale ramp). `NUM_COLORS` is 54.
 
-Per-type static properties live in `Globals.mm`:
+Per-type static properties live in `Globals.cpp`:
 - `blockinfo[NUM_BLOCKS+1]` — bit flags (`IS_FLAMMABLE`, `IS_NOTSOLID`, `IS_RAMP`,
   `IS_ATLAS2` = drawn in transparent pass, `IS_LIQUID`, `IS_WATER/IS_LAVA`,
   `IS_OBJECT` = rendered as a mesh object not a cube, `IS_DOOR`, `IS_PORTAL`,
@@ -138,7 +138,7 @@ these 16 can never get BT shadows. Regression: `eden_native --newblocks-selftest
 ## The toroidal resident window
 
 The world is conceptually huge (chunk coordinates are packed into 15 bits each by
-`twoToOne` (`Util.mm`) — so the addressable world is 32,768 × 32,768 chunks;
+`twoToOne` (`Util.cpp`) — so the addressable world is 32,768 × 32,768 chunks;
 the default world's centre sits at chunk (4096, 4096) ⇒ block ≈ 65,536).
 
 Only a **`T_SIZE`×`T_SIZE`×`T_HEIGHT` window around the player** (288 wide by default, up to 512 at Render distance 16 — B.5b-2; 64 tall normally, 256 for a v5/v6 world) is in memory, in two parallel
@@ -187,7 +187,7 @@ lightarray ≈ 15.9 MB, which is why `LOW_MEM_DEVICE` (< ~300 MB RAM) drops the 
 synchronously; with R.3's brick store the light costs ~12 KB per lit chunk, so that carve-out now
 saves almost nothing (and it turns colored lighting off; do not wire it up on native "for memory").
 
-## Reading and writing blocks (`Terrain.mm`)
+## Reading and writing blocks (`Terrain.cpp`)
 
 Read APIs (world coordinates, `(x, z, y)` order — see
 [conventions-and-pitfalls.md](conventions-and-pitfalls.md)):
@@ -218,7 +218,7 @@ Write path — always go through these, never poke arrays directly:
   (`updateChunks` + `setColor`, lightbox light out/in, liquid sources removed/added — since MP.3b that
   sequence is `Terrain::setCellState`, which a multiplayer session's remote edits share), so their `set
   … air` takes a command block's record too. They never write a non-resident cell (the toroidal
-  arrays would wrap it onto another column: `CmdScript.mm`'s `resident()` checks the chunk's
+  arrays would wrap it onto another column: `CmdScript.cpp`'s `resident()` checks the chunk's
   `pbounds`), bedrock, a door/portal half, the player's cell or (with a solid block) another command
   block.
 - `Terrain::setColor` — writes chunk color, returns whether it changed.
@@ -230,7 +230,7 @@ chunks for VBO upload in `updateAllImportantChunks`.
 
 ## Gameplay operations on blocks
 
-All in `Terrain.mm`:
+All in `Terrain.cpp`:
 
 - **`buildBlock(x,z,y)`** — places `hud->blocktype` with
   `hud->block_paintcolor`. Ramp types auto-orient: `getRampType` inspects which of the
@@ -258,11 +258,11 @@ All in `Terrain.mm`:
   material, or ramps for the side variants). More than 300 simultaneous burns trips
   `endDynamics` which clears all fire/liquids/effects — the anti-meltdown valve.
 - **Fire melts ice / chars vines (H.8, Experiments, both off by default):** `FIRE_MELTS_ICE` /
-  `FIRE_CHARS_VINES` (`Terrain.mm`, set by `eden_set_fire_melts_ice/chars_vines`) add `IS_FLAMMABLE`
+  `FIRE_CHARS_VINES` (`Terrain.cpp`, set by `eden_set_fire_melts_ice/chars_vines`) add `IS_FLAMMABLE`
   to the ice family (block, ramps, sides) / `TYPE_VINE` in `blockinfo` (now a non-const table). On
   burn expiry ice becomes a water source and vines become `TYPE_DARK_STONE`; off, they never burn.
 - **Spread stops at the window edge** (modified from stock by B.5b-1b, 2026-10-12): `burnBlock`, the
-  liquid spread in `Liquids.mm` and `explode`'s block loop first ask `isColumnResident(x,z)`
+  liquid spread in `Liquids.cpp` and `explode`'s block loop first ask `isColumnResident(x,z)`
   (`Terrain.h`: does the slot for that column hold it?). The toroidal arrays alias columns `T_SIZE`
   blocks apart (288 at the default radius), so stock fire or water reaching past the edge wrote into the opposite edge.
 - **`warpToPoint` / `warpToHome`** — save the world with a warp position, then
@@ -271,7 +271,7 @@ All in `Terrain.mm`:
 
 Doors and portals are *stored* as voxels but *rendered and animated* as extracted
 `StaticObject`s (see [rendering.md](rendering.md)); portal linking/teleportation is in
-`Portal.mm` ([lighting-liquids-effects.md](lighting-liquids-effects.md)).
+`Portal.cpp` ([lighting-liquids-effects.md](lighting-liquids-effects.md)).
 
 ## Streaming (ring streaming + the bulk reload)
 
@@ -280,7 +280,7 @@ streaming"); the `count > 140` bulk reload is left for jumps.** The stock descri
 item 3, because the bulk path still runs it for teleports. Plan and gates:
 `WORKING/render-distance-runtime-plan-2026-10-11.md` §3.
 
-`Terrain::prepareAndLoadGeometry` (grep it; `Terrain.mm`), every frame while `loaded`:
+`Terrain::prepareAndLoadGeometry` (grep it; `Terrain.cpp`), every frame while `loaded`:
 
 1. Compute desired window origin `m_chunkOffset* = windowOriginChunk(player.pos)` (`Terrain.h`):
    `floor((pos+8)/16) − T_RADIUS`, centred on the nearest chunk **corner**, so every edge is
@@ -311,7 +311,7 @@ item 3, because the bulk path still runs it for teleports. Plan and gates:
    `g_autosave_seconds` (60) of engine time have passed since the last commit of any kind
    (`g_seconds_since_save`, zeroed by `saveEmodWorld`) and a resident chunk is `modified`; not
    mid-load or mid-bulk-reload. It replaces the periodic save the walk reload used to be. The
-   **Autosave** setting (`Settings_web.mm`, Saves: Off / 1 / 2 / 5 min, default 1 min) sets the
+   **Autosave** setting (`Settings.cpp`, Saves: Off / 1 / 2 / 5 min, default 1 min) sets the
    period; Off leaves the evict-saves, which are not optional. One autosave is an `.emod` append of
    the dirty columns + creature record + header (measured: 1.7 KB for two edited columns), never a
    rewrite of the file. Warp,
@@ -489,7 +489,7 @@ useless, now just iterates through chunk list" (`Terrain::renderTree`).
   silently broke both portal teleportation (`Portal::enterPortal`) and portal proximity
   ambience ([resources-and-audio.md](resources-and-audio.md)) for any portal whose
   chunk wasn't freshly remeshed afterward — `Portal::addPortal` only runs from a mesh
-  rebuild (`TerrainChunk.mm`), which most portals never get again once meshed unless
+  rebuild (`TerrainChunk.cpp`), which most portals never get again once meshed unless
   their chunk is dirtied or streams back in fresh. Fixed by gating the registry wipe on
   the same `exitToMenu` flag as the mesh-cache reset right next to it.
 
@@ -509,7 +509,7 @@ useless, now just iterates through chunk list" (`Terrain::renderTree`).
   supported it.
 
 ## Safe vs. risky to modify
-- **Safe:** block property tables in `Globals.mm`/`Constants.h` (append, don't renumber
+- **Safe:** block property tables in `Globals.cpp`/`Constants.h` (append, don't renumber
   — saved worlds store raw type bytes), explosion radii, burn times, new gameplay ops
   built from `updateChunks`/`setColor`.
 - **Caution:** anything touching `GBLOCKIDX`/`threeToOne` indexing, `T_HEIGHT`

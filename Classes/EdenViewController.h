@@ -8,21 +8,21 @@
 #ifndef Eden_ViewController_h
 #define Eden_ViewController_h
 
-#import <UIKit/UIKit.h>
-#import <Foundation/Foundation.h>
-#import <OpenGLES/EAGL.h>
+#include <UIKit/UIKit.h>
+#include <Foundation/Foundation.h>
+#include <OpenGLES/EAGL.h>
 
-#import <OpenGLES/ES1/gl.h>
-#import <OpenGLES/ES1/glext.h>
+#include <OpenGLES/ES1/gl.h>
+#include <OpenGLES/ES1/glext.h>
 
-#import "World.h"
+#include "World.h"
 
 @interface EdenViewController : UIViewController
 {
     EAGLContext *context;
        
-	    BOOL animating;
-    BOOL displayLinkSupported;
+	    bool animating;
+    bool displayLinkSupported;
     NSInteger animationFrameInterval;
 	World *world; 
 
@@ -38,7 +38,7 @@
     NSTimer *animationTimer;	
 }
 
-@property (readonly, nonatomic, getter=isAnimating) BOOL animating;
+@property (readonly, nonatomic, getter=isAnimating) bool animating;
 @property (nonatomic) NSInteger animationFrameInterval;
 
 - (void)startAnimation;

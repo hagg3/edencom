@@ -8,16 +8,14 @@
 #ifndef Eden_ShareList_h
 #define Eden_ShareList_h
 
-#import <Foundation/Foundation.h>
-
-#import "Texture2D.h"
-#import "Input.h"
-#import "statusbar.h"
+#include "Texture2D.h"
+#include "Input.h"
+#include "statusbar.h"
 
 typedef struct{
 	int value;
-	NSString* name;
-	NSString* file_name;
+	std::string name;        // G.2b-2: was NSString* (the class is a link stub; nothing fills these)
+	std::string file_name;
 	int date;	
 	CGRect namerect;
 	Texture2D* nametex;
@@ -42,9 +40,9 @@ public:
 	int cur_page;
 	int cur_sort;
 	
-	BOOL finished_dl;
-    BOOL finished_preview_dl;
-    BOOL finished_list_dl;
+	bool finished_dl;
+    bool finished_preview_dl;
+    bool finished_list_dl;
 	Button rect_arrow_up;
 	CGRect preview_box;
 	Button rect_arrow_down;
@@ -58,20 +56,20 @@ public:
 	SharedListNode* file_list;
 	int list_selection;
 	int num_files;
-    NSMutableString* search_string;
+    std::string search_string;   // G.2b-2: the two strings and setWorldList were NS*
     
     statusbar* name_bar;
-    NSMutableString* displays;
+    std::string displays;
     Texture2D* previewScreenshot;
     float animation_offset;
     void update(float etime);
-    void setWorldList(NSString* wlist);
+    void setWorldList(const std::string& wlist);
     void render();
     void setSortStatus();
     void activate();
     void deactivate();
     void clearWorldList();
-    void searchAndHide(BOOL nosearch);
+    void searchAndHide(bool nosearch);
     void keyTyped(char c);
     void trimDisplay();
     void alertCallback();

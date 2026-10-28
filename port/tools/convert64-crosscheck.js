@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // convert64-crosscheck.js -- ROADMAP W.2 (e): FileManager::convertWorldTo64 (the engine's "Convert to
-// 64z", Classes/FileManager.mm) against this directory's eden-convert.js `--to-64`, the algorithm it
+// 64z", Classes/FileManager.cpp) against this directory's eden-convert.js `--to-64`, the algorithm it
 // restates by hand. The native port of the retired web suite headless-256z-convert-crosscheck.js.
 //
 //   node port/tools/convert64-crosscheck.js <eden_native> <fresh absolute docs dir>

@@ -21,4 +21,9 @@ bool path_has_suffix(const std::string& s, const std::string& suf); // hasSuffix
 std::string path_strip_ext(const std::string& p);                   // stringByDeletingPathExtension
 std::string path_last(const std::string& p);                        // lastPathComponent
 
+// G.2b-2: would [NSString stringWithUTF8String:] accept these bytes? Strict UTF-8 as measured on Apple
+// (TESTERS/g2b2/probes/utf8.mm): no overlongs, no surrogates, nothing above U+10FFFF, no truncated or
+// stray continuation bytes; noncharacters and a BOM are fine. For call sites that relied on a nil.
+bool utf8_valid(const std::string& s);
+
 #endif

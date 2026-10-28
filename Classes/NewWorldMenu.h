@@ -10,7 +10,7 @@
 //  (Flat · Normal = FileManager::genflat), and the options as TwoLineRows in a row-snapped
 //  variable-height ScrollView — a "World name" TextField and a "Height" choice (New Dawn 256 /
 //  Classic 64). Play creates the list entry with that name, parks the type and height in the
-//  one-shot pending seam (port/src/seam/Menu_web.mm) that showAlertWorldType() and
+//  one-shot pending seam (port/src/seam/Menu.cpp) that showAlertWorldType() and
 //  FileManager::probeWorldHeight() consume, and starts the load; Back creates nothing.
 //
 //  STAGE H / H.4 filled it: a third tile, Classic (the seeded 1.x generator, Classes/
@@ -27,7 +27,7 @@
 #ifndef Eden_NewWorldMenu_h
 #define Eden_NewWorldMenu_h
 
-#import "GLWidgets.h"
+#include "GLWidgets.h"
 
 #define NW_MAX_ROWS 16
 #define NW_MAX_OPTS 5

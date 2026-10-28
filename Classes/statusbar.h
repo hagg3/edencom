@@ -10,7 +10,8 @@
 
 
 
-#import "Graphics.h"
+#include "Graphics.h"
+#include <string>
 
 namespace GLW { class Toast; }
 
@@ -23,21 +24,23 @@ public:
     // stock line was hard to read and printed twice at the screen's opposite ends. Hud's bar
     // opts in; pos and the alignment argument are then ignored. Modified from stock.
     void useToast();
-    void setStatus(NSString* status, float time);
-    void setStatus(NSString* status, float time,UITextAlignment align);
+    void setStatus(const std::string& status, float time);
+    void setStatus(const std::string& status, float time,UITextAlignment align);
     void clear();
     void update(float etime);
     void render();
     void renderPlain();
     // Stage 5.6: the live message (NULL once its time ran out), for a screen that draws the
-    // status line itself in the GL widget kit instead of through render().
-    NSString* current() const { return (message!=NULL&&textlife>0)?message:NULL; }
+    // status line itself in the GL widget kit instead of through render(). G.2b-2: a std::string
+    // (was a retained NSString*); hasMessage stands for the old non-nil pointer.
+    const std::string* current() const { return (hasMessage&&textlife>0)?&message:NULL; }
     CGRect pos;
 private:
     void clearText();
 	
 	Texture2D* text;
-    NSString* message;
+    std::string message;
+    bool hasMessage;
 	float textlife;
 	float font_size;
     GLW::Toast* toast;

@@ -9,14 +9,15 @@
 #define Eden_TerrainChunk_h
 
 
-#import <OpenGLES/ES1/gl.h>
-#import <OpenGLES/ES1/glext.h>
+#include <OpenGLES/ES1/gl.h>
+#include <OpenGLES/ES1/glext.h>
 
-#import "Terrain.h"
-#import "glu.h"
-#import "Resources.h"
-#import "Util.h"
-#import "Globals.h"
+#include "Terrain.h"
+#include "glu.h"
+#include "Resources.h"
+#include "Util.h"
+#include "Globals.h"
+#include "Renderer.h"   // G.5b-6: the chunk buffers are R::Buf
 
 class Terrain;
 typedef struct _static_object{
@@ -24,7 +25,7 @@ typedef struct _static_object{
     int type;
     int ani;
     int dir;
-    BOOL open;
+    bool open;
     color8 color;
     float rot;
 }StaticObject;
@@ -153,7 +154,7 @@ public:
     TreeNode* m_treenode;
 	ListNode* m_listnode;
     
-    BOOL needsVBO;
+    bool needsVBO;
     // Phase N Stage 1 (WORKING/native-migration-plan-2026-09-04.md): a content fingerprint of the
     // vertex data this chunk last PUBLISHED, folded in prepareVBO() just before the CPU-side
     // arrays are freed. It has to live here because that is the only moment the data exists: the
@@ -164,14 +165,14 @@ public:
     // so identical between any two runs over the same world at the same origin, on any platform);
     // `rtFullHash` adds the baked vertex colours, which carry incrementally-propagated lighting
     // and therefore only converge after the same number of settled frames. Read together by
-    // eden_debug_mesh_checksum(); see that export in port/src/seam/DebugState_web.mm for why the
+    // eden_debug_mesh_checksum(); see that export in port/src/seam/DebugState.cpp for why the
     // split is the useful part.
     //
     // OFF BY DEFAULT and off the hot path: computing them costs a pass over every vertex, so
     // prepareVBO() only does it when eden_debug_set_mesh_checksum(1) has been called.
     unsigned long long rtGeomHash;
     unsigned long long rtFullHash;
-    BOOL clearOldVerticesOnly;
+    bool clearOldVerticesOnly;
     // B3 Stage 2. meshJobState is one of the MESH_JOB_* values above and is touched from two
     // threads (atomically, via MeshPool.mm). meshJobStale is main-thread-only: it records that the
     // chunk's voxels changed AFTER the worker took its snapshot, so the mesh about to be published
@@ -179,7 +180,7 @@ public:
     // would leave the chunk with no geometry at all until something else dirtied it, which reads as
     // a hole in the world.
     int meshJobState;
-    BOOL meshJobStale;
+    bool meshJobStale;
     
     // Stage R / R.2: TRUE only if every pblocks byte is known to be 0 (air). Conservative: FALSE
     // means "not known", never "known non-empty". Types only -- paint on air does not mesh, and
@@ -191,14 +192,14 @@ public:
     //   rebuild2()         -- a main-thread scan that finds nothing sets it (that is how a chunk
     //                         dug back to air becomes empty again; a set-to-0 never sets it).
     // Any NEW writer of pblocks owes one of those. eden_debug_chunk_state() audits it.
-    BOOL typesEmpty;
-    BOOL in_view;
-    BOOL has_light;
-    BOOL modified;
+    bool typesEmpty;
+    bool in_view;
+    bool has_light;
+    bool modified;
     int isTesting;
     GLuint query
     ;
-	GLuint    vertexBuffer,vertexBuffer2,elementBuffer;
+	R::Buf    vertexBuffer,vertexBuffer2,elementBuffer;   // G.5b-6: renderer buffers (0 = none)
     // M3(a) (ROADMAP Phase M): byte capacity each GL buffer name is currently sized for, so
     // prepareVBO() can re-upload into a persistent name instead of delete/recreating it every
     // re-mesh. Never shrinks; reset to 0 wherever the name is actually deleted.
@@ -248,7 +249,7 @@ typedef struct bnode{
 // mesh it is building no longer matches the world -- flag it so the publish step re-dirties the
 // chunk. One predictable branch on a field that is permanently IDLE in a single-threaded build.
 static inline void tc_noteChunkWritten(TerrainChunk* chunk){
-    if(chunk&&chunk->meshJobState!=MESH_JOB_IDLE)chunk->meshJobStale=TRUE;
+    if(chunk&&chunk->meshJobState!=MESH_JOB_IDLE)chunk->meshJobStale=true;
 }
 
 void tc_initGeometry();

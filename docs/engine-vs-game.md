@@ -9,14 +9,14 @@ not something to do now**.
 ### Already-generic (engine-grade as-is)
 | Component | Files | Notes |
 |---|---|---|
-| Hashmap | `hashmap.mm/.h` | int→ptr map, no deps |
-| Frustum culling | `Frustum.mm/.h` | plane extraction + AABB test, pure C |
+| Hashmap | `hashmap.cpp/.h` | int→ptr map, no deps |
+| Frustum culling | `Frustum.cpp/.h` | plane extraction + AABB test, pure C |
 | GLU port | `glu.h`, `project.c`, `glue.c`, … | unproject/perspective |
-| Math & SAT collision | `Util.mm` (vector ops, `collidePolyhedra`, `makeBox/Ramp/Side`), `VectorUtil.cpp`, `Vector.h` | needs extraction from the grab-bag `Util.mm`, which also holds game code |
+| Math & SAT collision | `Util.cpp` (vector ops, `collidePolyhedra`, `makeBox/Ramp/Side`), `VectorUtil.cpp`, `Vector.h` | needs extraction from the grab-bag `Util.cpp`, which also holds game code |
 | Texture/string rendering | `Texture2D.mm` | UIKit-dependent but self-contained |
 | Async HTTP | `FileDownload.mm`, `FileUpload.mm` | Foundation-dependent, generic |
 | Audio | CocosDenshion stack | already a library |
-| Model loading/animation | PVRT suite | already a library |
+| Model loading/animation | `CreatureModel.cpp` + `VecMath.h` (LG.7; was the PowerVR SDK) | self-contained plain C++ |
 | Compression/hash | `zpipe`, `md5` | libraries |
 
 ### Engine-shaped but entangled (the real refactoring targets)
@@ -27,13 +27,13 @@ not something to do now**.
 | Chunk mesher | `TerrainChunk::rebuild2/prepareVBO` | hard-codes Eden's block semantics (liquids, ramps, atlas layout, paint rules); the bucketed-faces + directional-culling core is generic and valuable |
 | Column file format + streaming | `FileManager` | static state; UI callouts (statusbar) mid-I/O; Menu supplies display name during save |
 | Particle systems | `SpecialEffects`, `Fire`, `BlockBreak` | pull textures from `Resources` by game-specific ids |
-| Input layer | `Input.mm` | generic 5-touch tracker, but consumers poll it with game rules |
+| Input layer | `Input.cpp` | generic 5-touch tracker, but consumers poll it with game rules |
 | GL immediate-UI kit | `statusbar`, `VKeyboard`, `Alert`, the `Button` type and `inbox` helpers (`Util.h`), `Joystick` (port: `GLWidgets`/`GLDialog` grew out of this) | a decent retained-nothing UI toolkit hiding inside game files |
 
 ### Purely game-specific
-`World` (mode machine), block tables (`Constants.h`, `Globals.mm`), gameplay ops in
+`World` (mode machine), block tables (`Constants.h`, `Globals.cpp`), gameplay ops in
 `Terrain` (build/destroy/burn/explode/paint), `Player`, `Hud`, `Menu`+satellites,
-`Model.mm` creatures & AI, `Liquids`, `Portal`, `Firework`, `Lighting` policy,
+`Model.cpp` creatures & AI, `Liquids`, `Portal`, `Firework`, `Lighting` policy,
 `TerrainGenerator`/`TerrainGen2` recipes, `ShareUtil` endpoints, spawn tables.
 
 ## Seams that make the split feasible
@@ -59,13 +59,13 @@ not something to do now**.
 1. **Documentation & tests first** (done): pin the file format with a round-trip
    test against the bundled `Eden.eden` before touching any I/O code. *(Port: `--emod-selftest`,
    `--bundled-map-selftest` and `--save-roundtrip` run in CI.)*
-2. **Extract pure-C modules**: math/SAT out of `Util.mm`; file-format arithmetic out
+2. **Extract pure-C modules**: math/SAT out of `Util.cpp`; file-format arithmetic out
    of `FileManager` (keep NSFileHandle at the edges).
-3. **Data-drive the block tables**: generate `Constants.h`/`Globals.mm` tables from a
+3. **Data-drive the block tables**: generate `Constants.h`/`Globals.cpp` tables from a
    single declarative source; eliminates the multi-file update trap.
 4. **De-globalize screen metrics** behind a `Display` struct passed to Graphics/UI. *(Port, partly:
    the metrics are still globals, but derived and re-laid-out — `Hud::layoutForScreen`,
-   `port/src/seam/DisplayProfile_web.mm`.)*
+   `port/src/seam/DisplayProfile.cpp`.)*
 5. **Split Terrain** into `VoxelStore` (arrays, paging, dirty lists) and
    `TerrainGameplay` (build/burn/explode/paint) — the current class already has this
    internal boundary.

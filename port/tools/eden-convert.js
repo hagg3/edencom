@@ -12,7 +12,7 @@
 //     @148) is the same,
 //   - intra-chunk addressing is the same: band b at +b*8192, types at +CC(x,z,y), paint at +4096,
 //   - the block-ID space is the same (0..111), so NO block-ID conversion applies here. The
-//     `convertType`/`convertColor` tables in FileManager.mm are for the *other* legacy path,
+//     `convertType`/`convertColor` tables in FileManager.cpp are for the *other* legacy path,
 //     `version` outside 1..1000, which this tool refuses outright.
 //
 // Two hazards from the sister project's postmortem are handled explicitly, because getting either

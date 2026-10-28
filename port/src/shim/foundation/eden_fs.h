@@ -51,5 +51,8 @@ std::vector<std::string> eden_fs_list(const std::string& dir);      // entry nam
 // A flat lookup under eden_platform_bundle_root(): "<root>/<name>", else "<root>/media/<name>" found by
 // basename anywhere below media/ (first hit wins, as NSBundle's index does). "" on a miss.
 std::string eden_bundle_path(const std::string& name);
+// NSString's isAbsolutePath as the shim answers it: "/..." everywhere; on Windows also "C:\..." / "C:/..."
+// and "\\..." (X.11: a Documents root is a drive path there). G.2b-1: Texture2D's path loads.
+bool eden_path_is_absolute(const std::string& path);
 
 #endif

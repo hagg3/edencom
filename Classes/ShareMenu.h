@@ -9,10 +9,9 @@
 #ifndef Eden_ShareMenu_h
 #define Eden_ShareMenu_h
 
-#import <Foundation/Foundation.h>
-#import "World.h"
-#import "Menu.h"
-#import "Util.h"
+#include "World.h"
+#include "Menu.h"
+#include "Util.h"
 
 class ShareMenu{
 public:
@@ -26,14 +25,14 @@ public:
 	statusbar* share_explain_lbl;
 	statusbar* label_bar;
 	statusbar* name_bar;
-      NSMutableString* displays;
-	NSMutableString* name;
+	std::string displays;   // G.2b-2: both were NSMutableString* (the class is a link stub)
+	std::string name;
  
 	//BOOL starto;
     
     void trimDisplay();
     void beginShare(WorldNode* world);
-    void endShare(BOOL cancel);
+    void endShare(bool cancel);
     void activate();
     void deactivate();
     void update(float etime);

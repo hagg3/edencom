@@ -1,3 +1,4 @@
+#pragma once
 /*
  Copyright (c) 2010 Steve Oldmeadow
  
@@ -22,11 +23,11 @@
  $Id$
  */
 
-#import "CocosDenshion.h"
+#include "CocosDenshion.h"
 #if __IPHONE_OS_VERSION_MIN_REQUIRED >= 30000
-    #import <AVFoundation/AVFoundation.h>
+    #include <AVFoundation/AVFoundation.h>
 #else
-    #import "CDXMacOSXSupport.h"
+    #include "CDXMacOSXSupport.h"
 #endif
 
 /** Different modes of the engine */
@@ -95,13 +96,13 @@ typedef enum {
     NSInteger        numberOfLoops;
     float            volume;
     id<CDLongAudioSourceDelegate> delegate; 
-    BOOL            mute;
-    BOOL            enabled_;
-    BOOL            backgroundMusic;
+    bool            mute;
+    bool            enabled_;
+    bool            backgroundMusic;
     // whether background music is paused
-    BOOL            paused;
+    bool            paused;
 @public    
-    BOOL            systemPaused;//Used for auto resign handling
+    bool            systemPaused;//Used for auto resign handling
     NSTimeInterval    systemPauseLocation;//Used for auto resign handling
 @protected
     tLongAudioSourceState state;
@@ -112,8 +113,8 @@ typedef enum {
 @property (readwrite, nonatomic) float volume;
 @property (assign) id<CDLongAudioSourceDelegate> delegate;
 /* This long audio source functions as background music */
-@property (readwrite, nonatomic) BOOL backgroundMusic;
-@property (readonly) BOOL paused;
+@property (readwrite, nonatomic) bool backgroundMusic;
+@property (readonly) bool paused;
 
 /** Loads the file into the audio source */
 -(void) load:(NSString*) filePath;
@@ -128,7 +129,7 @@ typedef enum {
 /** Resumes playing the audio source if it was paused */
 -(void) resume;
 /** Returns whether or not the audio source is playing */
--(BOOL) isPlaying;
+-(bool) isPlaying;
 
 @end
 
@@ -150,25 +151,25 @@ typedef enum {
     CDLongAudioSource    *backgroundMusic;
     NSMutableArray        *audioSourceChannels;
     NSString*            _audioSessionCategory;
-    BOOL                _audioWasPlayingAtStartup;
+    bool                _audioWasPlayingAtStartup;
     tAudioManagerMode    _mode;
     SEL backgroundMusicCompletionSelector;
     id backgroundMusicCompletionListener;
-    BOOL willPlayBackgroundMusic;
-    BOOL _mute;
-    BOOL _resigned;
-    BOOL _interrupted;
-    BOOL _audioSessionActive;
-    BOOL enabled_;
+    bool willPlayBackgroundMusic;
+    bool _mute;
+    bool _resigned;
+    bool _interrupted;
+    bool _audioSessionActive;
+    bool enabled_;
     
     //For handling resign/become active
-    BOOL _isObservingAppEvents;
+    bool _isObservingAppEvents;
     tAudioManagerResignBehavior _resignBehavior;
 }
 
 @property (readonly) CDSoundEngine *soundEngine;
 @property (readonly) CDLongAudioSource *backgroundMusic;
-@property (readonly) BOOL willPlayBackgroundMusic;
+@property (readonly) bool willPlayBackgroundMusic;
 
 /** Returns the shared singleton */
 + (CDAudioManager *) sharedManager;
@@ -181,11 +182,11 @@ typedef enum {
 - (id) init: (tAudioManagerMode) mode;
 -(void) audioSessionInterrupted;
 -(void) audioSessionResumed;
--(void) setResignBehavior:(tAudioManagerResignBehavior) resignBehavior autoHandle:(BOOL) autoHandle;
+-(void) setResignBehavior:(tAudioManagerResignBehavior) resignBehavior autoHandle:(bool) autoHandle;
 /** Returns true is audio is muted at a hardware level e.g user has ringer switch set to off */
--(BOOL) isDeviceMuted;
+-(bool) isDeviceMuted;
 /** Returns true if another app is playing audio such as the iPod music player */
--(BOOL) isOtherAudioPlaying;
+-(bool) isOtherAudioPlaying;
 /** Sets the way the audio manager interacts with the operating system such as whether it shares output with other apps or obeys the mute switch */
 -(void) setMode:(tAudioManagerMode) mode;
 /** Shuts down the shared audio manager instance so that it can be reinitialised */
@@ -206,7 +207,7 @@ typedef enum {
 /** Plays music in background. The music can be looped or not
  It is recommended to use .aac files as background music since they are decoded by the device (hardware).
  */
--(void) playBackgroundMusic:(NSString*) filePath loop:(BOOL) loop;
+-(void) playBackgroundMusic:(NSString*) filePath loop:(bool) loop;
 /** Preloads a background music */
 -(void) preloadBackgroundMusic:(NSString*) filePath;
 /** Stops playing the background music */
@@ -218,7 +219,7 @@ typedef enum {
 /** Resumes playing the background music */
 -(void) resumeBackgroundMusic;
 /** Returns whether or not the background music is playing */
--(BOOL) isBackgroundMusicPlaying;
+-(bool) isBackgroundMusicPlaying;
 
 -(void) setBackgroundMusicCompletionListener:(id) listener selector:(SEL) selector;
 
@@ -239,7 +240,7 @@ static const int kCDNoBuffer = -1;
 }
 
 -(id) initWithEngine:(CDSoundEngine *) theSoundEngine;
--(int) bufferForFile:(NSString*) filePath create:(BOOL) create;
+-(int) bufferForFile:(NSString*) filePath create:(bool) create;
 -(void) releaseBufferForFile:(NSString *) filePath;
 
 @end

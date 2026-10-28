@@ -15,7 +15,7 @@
 
 
 void calculateLighting();
-BOOL calculateLightingSlice();   // budgeted per-frame form for the post-bulk-reload path
+bool calculateLightingSlice();   // budgeted per-frame form for the post-bulk-reload path
 void calculateLightingSliceReset();
 void addlight(int xx,int zz,int yy,float brightness,Vector color);
 
@@ -69,7 +69,7 @@ extern int g_light_test_mutation;
 void light_markLanded(int cx,int cz);              // Terrain::addChunk
 void light_onSetLand(int x,int z,int type);         // Terrain::setLand
 extern int g_light_cols_scanned,g_light_cols_skipped;   // diagnostics: sweepLightingColumn calls
-BOOL light_columnKnownFree(int cx,int cz);          // diagnostics: world chunk column remembered as free
+bool light_columnKnownFree(int cx,int cz);          // diagnostics: world chunk column remembered as free
 
 void light_storeAllocate();   // Terrain::allocateMemory
 void light_storeFree();       // Terrain::deallocateMemory, after mp_drain

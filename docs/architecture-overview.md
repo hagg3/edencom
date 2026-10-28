@@ -13,7 +13,7 @@ Understanding the ownership graph below is 80% of understanding the codebase.
 
 ## Ownership graph
 
-Stock graph. On the port the UIKit subgraph is `native/src/seam/*_native` (an SDL window and loop), and
+Stock graph. On the port the UIKit subgraph is `port/src/seam/*_native` (an SDL window and loop), and
 the `ShareUtil`/`FileDownload`/`FileUpload`/`SharedList`/`ShareMenu` branch is replaced by
 `WorldBrowser`/`WorldShare` over the `eden_net_*` seam ([networking.md](networking.md)). The chunk
 table is `CHUNKS_PER_SIDE²·CHUNKS_PER_COLUMN` slots: 18×18×4 = 1296 at the default radius and 64z.
@@ -62,19 +62,19 @@ plus C-style globals for hot data: `blockarray` (block cache), `lightarray`,
 
 | System | Files | One-line purpose |
 |---|---|---|
-| App shell / main loop | stock: `main.m`, `EdenAppDelegate`, `EdenViewController`, `EAGLView`; port: `native/src/entry/eden_main_native.cpp`, `native/src/seam/` | Frame loop, GL context, input entry (stock: CADisplayLink + UIKit touches; port: SDL) ([execution-flow.md](execution-flow.md)) |
-| World hub | `World.mm` | Game-mode state machine, per-frame update/render dispatch |
-| Terrain | `Terrain.mm`, `TerrainChunk.mm` | Voxel storage, block edit ops, fire/TNT dynamics, chunk meshing, terrain rendering ([world-and-terrain.md](world-and-terrain.md), [rendering.md](rendering.md)) |
-| Terrain generation | `TerrainGenerator.mm`, `TerrainGen2.mm`, `FileManagerHelper.mm` | Flat-world runtime gen; offline generator for the shipped default world `Eden.eden` ([terrain-generation.md](terrain-generation.md)) |
-| Save/load | `FileManager.mm`, `EdenWorldStore`, `EdenWorldSource`, `EdenWorldExport`, `WorldTrailer` | `.emod` world files (the only played format), column streaming, `.eden` import/convert/export ([save-load.md](save-load.md), [emod-file-format.md](emod-file-format.md), [eden-file-format.md](eden-file-format.md)) |
-| Player/physics | `Player.mm`, `Camera.mm`, `Input.mm`, `Util.mm` | Touch processing, SAT polyhedra collision, movement, block pick raycast ([player-input-camera.md](player-input-camera.md)) |
-| Creatures | `Model.mm` | Up to 300 animated creatures (PowerVR POD models), AI, save/restore ([entities-and-creatures.md](entities-and-creatures.md)) |
-| Dynamics | `Liquids.mm`, root `Lighting.mm`, `Portal.mm`, `Firework.mm`, `Fire.mm`, `BlockBreak.mm`, `SpecialEffects.mm` | Water/lava flow, colored point lights, portals, particles ([lighting-liquids-effects.md](lighting-liquids-effects.md)) |
-| UI | `Hud.mm`, `Menu.mm`, `SharedList.mm`, `ShareMenu.mm`, `SettingsMenu.mm`, `Joystick.mm`, `statusbar.mm`, `VKeyboard.mm`, `Alert.mm` | In-game HUD modes and the entire menu system, all custom GL rendering ([ui.md](ui.md)) |
-| Networking | stock: `ShareUtil.mm`, `FileUpload.mm`, `FileDownload.mm`; port: `WorldBrowser.mm`, `WorldShare.mm` | World sharing over HTTP to edengame.net ([networking.md](networking.md)) |
-| Added after the 2.1.1 import | `GLWidgets`, `GLDialog`, `KeybindsMenu`, `NewWorldMenu`, `MeshPool`, `Shadow`, `SignRenderer`, `SignTool`, `CmdScript`, `PassTimers.h`, `UIIcons.h`, `zstd/` (list: `cmake/EngineSources.cmake`) | The GL widget kit and screens, baked shadows, signs and command blocks, per-pass timers, the `.emod` codec ([ui.md](ui.md), [lighting-liquids-effects.md](lighting-liquids-effects.md), [eden-file-format.md](eden-file-format.md)) |
-| Assets/audio | `Resources.mm`, `Texture2D.mm`, CocosDenshion | Texture atlases, sounds, ambient audio ([resources-and-audio.md](resources-and-audio.md)) |
-| Third-party | `PVRT*`, `CC*`/`CD*`, `glu*`, `zpipe`, `md5`, `Appirater`, Flurry | See [third-party.md](third-party.md) |
+| App shell / main loop | stock: `main.m`, `EdenAppDelegate`, `EdenViewController`, `EAGLView`; port: `port/src/harness/`, `port/src/seam/` | Frame loop, GL context, input entry (stock: CADisplayLink + UIKit touches; port: SDL) ([execution-flow.md](execution-flow.md)) |
+| World hub | `World.cpp` | Game-mode state machine, per-frame update/render dispatch |
+| Terrain | `Terrain.cpp`, `TerrainChunk.cpp` | Voxel storage, block edit ops, fire/TNT dynamics, chunk meshing, terrain rendering ([world-and-terrain.md](world-and-terrain.md), [rendering.md](rendering.md)) |
+| Terrain generation | `TerrainGenerator.cpp`, `TerrainGen2.cpp`, `FileManagerHelper.cpp` | Flat-world runtime gen; offline generator for the shipped default world `Eden.eden` ([terrain-generation.md](terrain-generation.md)) |
+| Save/load | `FileManager.cpp`, `EdenWorldStore`, `EdenWorldSource`, `EdenWorldExport`, `WorldTrailer` | `.emod` world files (the only played format), column streaming, `.eden` import/convert/export ([save-load.md](save-load.md), [emod-file-format.md](emod-file-format.md), [eden-file-format.md](eden-file-format.md)) |
+| Player/physics | `Player.cpp`, `Camera.cpp`, `Input.cpp`, `Util.cpp` | Touch processing, SAT polyhedra collision, movement, block pick raycast ([player-input-camera.md](player-input-camera.md)) |
+| Creatures | `Model.cpp` | Up to 300 animated creatures (`CreatureModel`, `.edm` converted from the `.pod` art), AI, save/restore ([entities-and-creatures.md](entities-and-creatures.md)) |
+| Dynamics | `Liquids.cpp`, root `Lighting.cpp`, `Portal.cpp`, `Firework.cpp`, `Fire.cpp`, `BlockBreak.cpp`, `SpecialEffects.cpp` | Water/lava flow, colored point lights, portals, particles ([lighting-liquids-effects.md](lighting-liquids-effects.md)) |
+| UI | `Hud.cpp`, `Menu.cpp`, `SharedList.mm`, `ShareMenu.mm`, `SettingsMenu.cpp`, `Joystick.cpp`, `statusbar.cpp`, `VKeyboard.mm`, `Alert.mm` | In-game HUD modes and the entire menu system, all custom GL rendering ([ui.md](ui.md)) |
+| Networking | stock: `ShareUtil.mm`, `FileUpload.mm`, `FileDownload.mm`; port: `WorldBrowser.cpp`, `WorldShare.cpp` | World sharing over HTTP to edengame.net ([networking.md](networking.md)) |
+| Added after the 2.1.1 import | `GLWidgets`, `GLDialog`, `KeybindsMenu`, `NewWorldMenu`, `MeshPool`, `Shadow`, `SignRenderer`, `SignTool`, `CmdScript`, `PassTimers.h`, `UIIcons.h`, `zstd/` (list: `port/tools/engine-sources.txt`) | The GL widget kit and screens, baked shadows, signs and command blocks, per-pass timers, the `.emod` codec ([ui.md](ui.md), [lighting-liquids-effects.md](lighting-liquids-effects.md), [eden-file-format.md](eden-file-format.md)) |
+| Assets/audio | `Resources.cpp`, `Texture2D.mm`, CocosDenshion | Texture atlases, sounds, ambient audio ([resources-and-audio.md](resources-and-audio.md)) |
+| Third-party | `CC*`/`CD*`, `glu*`, `zpipe`, `md5`, `Appirater`, Flurry | See [third-party.md](third-party.md) |
 
 ## Data flow, one frame (game mode)
 
@@ -119,7 +119,7 @@ sequenceDiagram
    [emod-file-format.md](emod-file-format.md).)*
 
 3. **The shipped default world is itself a giant `.eden` file.**
-   `TerrainGen2.mm` is an *offline* generator (run via the `JUST_TERRAIN_GEN` build
+   `TerrainGen2.cpp` is an *offline* generator (run via the `JUST_TERRAIN_GEN` build
    flag) that produced the 2880×2880-block `Eden.eden` bundled with the app. At
    runtime, "generation" for the default world is mostly *streaming decompression*
    from that bundle. See [terrain-generation.md](terrain-generation.md). *(Port: the shipped bundle is
@@ -127,7 +127,7 @@ sequenceDiagram
 
 ## Engine vs. game code (summary)
 
-Roughly 60% of the lines in `Classes/` are third-party or generic (PowerVR SDK,
+Roughly 60% of the lines in `Classes/` were third-party or generic (the PowerVR SDK until LG.7,
 CocosDenshion, Texture2D, a GLU port, hashmap, math/collision utilities). The
 game-specific core is ~15k lines concentrated in Terrain/TerrainChunk/FileManager/
 Player/Hud/Model/Menu. A concrete separation roadmap is in

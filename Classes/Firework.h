@@ -11,7 +11,7 @@
 
 //#import <Foundation/Foundation.h>
 
-#import "Vector.h"
+#include "Vector.h"
 
 #define MAX_FIREWORK 80
 typedef struct _firework{

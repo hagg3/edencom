@@ -9,9 +9,9 @@ seems to do so little at runtime.
 
 | Path | File | When it runs | Output |
 |---|---|---|---|
-| Offline default-world generator | `TerrainGen2.mm` | Only in `JUST_TERRAIN_GEN` builds, on the developer's machine | The 2880×2880-block `Eden.eden` (RLE, repo root), baked to the shipped `Eden.emod` by `port/tools/emod.py bake-default` (checked by `verify-default`) |
-| Runtime generator | `TerrainGenerator.mm` | Any column missing from both the save file and the bundle: seed 0 → flat, any other seed but 333333 → **Classic** (H.4) | Layered flat columns / the seeded 1.x terrain / air columns |
-| Bundle streaming | `FileManagerHelper.mm` | Seed 333333 (`DEFAULT_LEVEL_SEED`) worlds — i.e. every normal world | columns copied out of the bundled map — `Eden.emod` since S.6 (the zstd bake of `Eden.eden`; the RLE original is the fallback) |
+| Offline default-world generator | `TerrainGen2.cpp` | Only in `JUST_TERRAIN_GEN` builds, on the developer's machine | The 2880×2880-block `Eden.eden` (RLE, repo root), baked to the shipped `Eden.emod` by `port/tools/emod.py bake-default` (checked by `verify-default`) |
+| Runtime generator | `TerrainGenerator.cpp` | Any column missing from both the save file and the bundle: seed 0 → flat, any other seed but 333333 → **Classic** (H.4) | Layered flat columns / the seeded 1.x terrain / air columns |
+| Bundle streaming | `FileManagerHelper.cpp` | Seed 333333 (`DEFAULT_LEVEL_SEED`) worlds — i.e. every normal world | columns copied out of the bundled map — `Eden.emod` since S.6 (the zstd bake of `Eden.eden`; the RLE original is the fallback) |
 
 So at runtime, a normal world's "terrain generation" is *file decompression*: every
 default world starts as a byte-identical copy-on-write view of the same pre-generated
@@ -19,7 +19,7 @@ default world starts as a byte-identical copy-on-write view of the same pre-gene
 file. This is why all default worlds share the same landscape and the same 10
 hand-picked spawn points (the `spx`/`spz`/`spy` tables in `FileManager::loadWorld`).
 
-## Offline generator — `TerrainGen2.mm`
+## Offline generator — `TerrainGen2.cpp`
 
 Activated by setting `JUST_TERRAIN_GEN` to 1 in `World.h` (then run it once and set it back to 0); `World::World()` then
 short-circuits into: `fm->loadGenFromDisk()` (optional biome-map PNG — currently
@@ -38,7 +38,7 @@ simulator only). Access macros `BLOCK(x,z,y)` / `COLOR(x,z,y)` in `TerrainGen2.h
 `makeSkyIsland`, `makeTree`/`makeTree2`/`makePalmTree`, `floodFill` (water filling),
 `genTemperatureMap`, and the `colorCycle*` helpers that paint gradient color schemes.
 Perlin-style noise comes from `noise2`/`noise3` (implementation shared with
-`TerrainGenerator.mm`).
+`TerrainGenerator.cpp`).
 
 `FileManager::writeGenToDisk()` then emits `Eden.eden`: standard header
 (seed 0 in the file — the *loader* keys off the world's own seed, not the bundle's),
@@ -46,13 +46,13 @@ RLE columns via `saveGenColumn` (transposed voxel order for better runs — see
 [eden-file-format.md](eden-file-format.md)), directory at the end. Replace the repo-root `Eden.eden`
 with it, then re-bake the shipped bundle with `emod.py bake-default`.
 
-Region sky colors: the 4×4 `defaultRegionSkyColors` grid (`FileManager.mm`) maps
+Region sky colors: the 4×4 `defaultRegionSkyColors` grid (`FileManager.cpp`) maps
 quadrants of the default world to sky palette entries; `updateSkyColor1/2`
-(`TerrainGen2.mm`) pick the region under the player and drive the sky crossfade.
+(`TerrainGen2.cpp`) pick the region under the player and drive the sky crossfade.
 Painting the sky (paint tool aimed at the sky) calls `paintSky` which edits
 `regionSkyColors` — a per-world-region, persisted-in-header effect.
 
-## Runtime generator — `TerrainGenerator.mm`
+## Runtime generator — `TerrainGenerator.cpp`
 
 - `generateColumn(cx, cz, bgthread)` — three outcomes since H.4 (2026-10-15): **void**
   (`generateEmptyColumn`) when the world's GENERATOR record is from a newer Emod
@@ -119,11 +119,11 @@ window equals the 16 columns it covers. Design and every constant: `generator-pl
 - **Cost** (M2, generation only): legacy 0.08 ms/column, 1× new 0.20, 2× 256z 0.23, 4× 256z 0.27.
   `Terrain::update`'s bulk reload charges generated columns by time (`GEN_FRAME_BUDGET_MS` 4 ms, at least
   one a frame) rather than against the chunk budget.
-- **Legacy cave detection** (`FileManager.mm` `fm_detectLegacyCaves`, at load, once): ≤ 64 saved columns
+- **Legacy cave detection** (`FileManager.cpp` `fm_detectLegacyCaves`, at load, once): ≤ 64 saved columns
   vote with `classic_cave_votes`; ≥ 2,000 cells the 2011 model carves and at least half of them air in the
   save ⇒ caves 2011, `flags` bit 0. The result goes into the GENERATOR record written by the next save.
 
-## Runtime bundle streaming — `FileManagerHelper.mm`
+## Runtime bundle streaming — `FileManagerHelper.cpp`
 Opened once at app start (`fmh_init` from the FileManager constructor): opens the bundled
 `Eden.emod` read-only through `emod::EdenWorldStore` (S.6). Only a bundle without `Eden.emod` falls
 back to an NSFileHandle + directory hashmap over an RLE `Eden.eden` — and the native bundle ships no
@@ -147,7 +147,7 @@ size the hint from the worst record seen — that makes every small column pull 
 one's bytes, and it measured worse than the occasional top-up.
 
 ## Seeds
-- `LEVEL_SEED == 0` — flat world. New World's Flat / Normal tiles (U.5, `NewWorldMenu.mm` `kTypes`)
+- `LEVEL_SEED == 0` — flat world. New World's Flat / Normal tiles (U.5, `NewWorldMenu.cpp` `kTypes`)
   set `FileManager::genflat`, i.e. seed 0 vs 333333. The Classic tile (H.4) is "normal" to that seam plus
   a parked GENERATOR record (`eden_menu_set_pending_generator`); FileManager's new-world branch takes it,
   sets `LEVEL_SEED` to the record's seed (in [1, 2^24), never 333333; `NewWorldMenu::seedFromText`) and
@@ -164,7 +164,7 @@ one's bytes, and it measured worse than the occasional top-up.
   - No world made after 2.0 has a fresh random seed, so "seed ∉ {0, 333333}" means "made by 1.x".
   - H.4 gives their unexplored columns the original terrain again (the legacy profile, always 1×), and
     writes a GENERATOR record at their next save so later builds never have to guess.
-  - Which generator a world uses is decided once per load in `fm_setupGenerator` (`FileManager.mm`):
+  - Which generator a world uses is decided once per load in `fm_setupGenerator` (`FileManager.cpp`):
     seed 0 / 333333 → none; a GENERATOR record → it (unknown revision → void + a toast); else a header
     mirror (an imported `.eden`) → it; else the legacy profile + cave detection. The decision itself is
     `fm_resolveGenerator()` since H.15, which World Properties also calls, so its Terrain tab shows
@@ -179,7 +179,7 @@ one's bytes, and it measured worse than the occasional top-up.
     new surface (save-load.md).
 
 ## Common pitfalls
-- Don't call anything in `TerrainGen2.mm` at runtime on device — the buffers are
+- Don't call anything in `TerrainGen2.cpp` at runtime on device — the buffers are
   sized for desktops.
 - `GSIZE` and the `BLOCK/COLOR` macros silently truncate/alias if you pass world
   coordinates instead of gen-buffer coordinates (gen space is 0..2879; world space is
@@ -190,7 +190,7 @@ one's bytes, and it measured worse than the occasional top-up.
   comes from them.
 
 ## Safe vs. risky to modify
-- **Safe:** biome recipes and feature placers in `TerrainGen2.mm` (then regenerate the
+- **Safe:** biome recipes and feature placers in `TerrainGen2.cpp` (then regenerate the
   bundle in a `JUST_TERRAIN_GEN` build and re-bake `Eden.emod`), the flat-world layer heights.
 - **Caution:** `DEFAULT_LEVEL_SEED` handling, spawn-point tables, anything about how
   missing columns resolve (the three-way fallback in `readColumn` is subtle and
@@ -199,8 +199,8 @@ one's bytes, and it measured worse than the occasional top-up.
 ## 2.0 in-app world types, and 1.x seed worlds
 The 2.0 New-World menu named "Normal", "Mountains", "Red planet", "River Trees", "Desert" and "Ponies"; each
 set `g_terrain_type`, and `FileManager::loadWorld` ran the matching `TerrainGen2` recipe over a
-`T_SIZE` (288²) region with a random `LEVEL_SEED`. The code is still in `FileManager.mm` but is dead: the
+`T_SIZE` (288²) region with a random `LEVEL_SEED`. The code is still in `FileManager.cpp` but is dead: the
 RLE default world commit (2014-05-22) forces `g_terrain_type=9` on the line after the switch is read.
 Whether a released build ever exposed the menu is unverified. Separately, 1.x seed worlds (the per-column
-`generateColumn` path in `TerrainGenerator.mm`) now fill flat: the `TRUE||LEVEL_SEED==0` flat branch
+`generateColumn` path in `TerrainGenerator.cpp`) now fill flat: the `TRUE||LEVEL_SEED==0` flat branch
 returns first. The Classic generator (H.4) is what brings the 1.x terrain back.

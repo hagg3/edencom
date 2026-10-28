@@ -11,10 +11,10 @@
 #ifndef Eden_TouchLook_h
 #define Eden_TouchLook_h
 
-#import "Input.h"
+#include "Input.h"
 
 // Parameters, written by the seam (the CAMERA_VIEW pattern). Window points are what the OS calls
-// a point (an iOS pt); the engine's point space is derived (DisplayProfile_web.mm) and moves with
+// a point (an iOS pt); the engine's point space is derived (DisplayProfile.mm) and moves with
 // the window aspect and UI scale, which is why speed and slop are in window points.
 extern float TOUCH_PT_SCALE;          // window points per engine point (1 when no box is known)
 extern float TOUCH_LOOK_DEG_PER_PT;   // degrees per window point (0.5 tablet, 0.65 phone)
@@ -24,7 +24,7 @@ extern float TOUCH_LOOK_SMOOTH;       // 0 = raw exactly, 1 = heavy (One-Euro mi
 extern float TOUCH_LOOK_GLIDE;      // glide half-life in seconds; 0 = off (keep turning after release, decaying)
 extern float TOUCH_SLOP_PT;           // tap-vs-drag threshold, window points, latched once crossed
 
-// --look-selftest's mutation legs: each puts one fixed bug back (eden_main_native.cpp).
+// --look-selftest's mutation legs: each puts one fixed bug back (port/src/harness/).
 enum {
     TL_MUT_LASTONLY  = 1<<0,   // D1: keep only the last event's delta
     TL_MUT_INT       = 1<<1,   // D2: truncate positions to int engine points

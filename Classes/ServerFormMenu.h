@@ -17,7 +17,7 @@
 #ifndef Eden_ServerFormMenu_h
 #define Eden_ServerFormMenu_h
 
-#import "GLWidgets.h"
+#include "GLWidgets.h"
 #include <string>
 
 class ServerListMenu;

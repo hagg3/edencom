@@ -4,24 +4,24 @@
 > `web-port-final` ([web-port-archive](../../docs/web-port-archive.md)). Where this page says "CSS
 > pixels", read SDL window points on native; the arithmetic is the same.
 
-Read [`../../docs/ui.md`](../../docs/ui.md) first — the custom-GL HUD/menu system (`Hud.mm`/`Menu.mm`) is authoritative for state and side effects; this page covers the port's settings tables, the derived point space and the seam accessors. Visual language: [design-system.md](design-system.md).
+Read [`../../docs/ui.md`](../../docs/ui.md) first — the custom-GL HUD/menu system (`Hud.cpp`/`Menu.cpp`) is authoritative for state and side effects; this page covers the port's settings tables, the derived point space and the seam accessors. Visual language: [design-system.md](design-system.md).
 
-## Settings (`src/seam/Settings_web.mm`)
+## Settings (`src/seam/Settings.cpp`)
 `SettingsMenu`'s data model (`properties[]`, `load()`, `save()`, `getNewWorldName`) stays authoritative; the GL screen (`Classes/SettingsMenu`) renders the C tables. (The web build `--wrap`ped its `update()`/`render()` to no-ops under a DOM panel — retired.)
 
-One C table, `kSettings[]` (`src/seam/Settings_web.mm`), is the single source of
+One C table, `kSettings[]` (`src/seam/Settings.cpp`), is the single source of
 truth for what the settings screen shows — `eden_settings_count()`/`_label()`… expose it and
 `Classes/SettingsMenu` renders it generically. **Add a setting in C.** About 40 rows (a few keys appear
 twice under `#if` for per-platform defaults) in the groups `Gameplay`, `Audio`, `Controls`, `Video`,
 `Interface` (shown on the Video tab), `Experiments` (opt-in, non-stock: fly, `fps_normalize`,
-`advanced_movement`, `crouch` — see [player-input-camera.md](player-input-camera.md) — fire rules,
+`crouch` — see [player-input-camera.md](player-input-camera.md) — fire rules,
 creature walking sounds, the double-size brush, `camera_view` (H.12)) and `Saves` (`save_backup`, `autosave`, `upgrade_256z`). The GL screen's seven
 tabs and the hidden web-only rows are in [../../docs/ui.md](../../docs/ui.md) (`SettingsMenu`). Rows that
-are visible but inert on native: `crosshair`, `advanced_movement`, and `save_backup` since S.8
+are visible but inert on native: `crosshair` and `save_backup` since S.8
 (docs/save-load.md).
 
 **Trap**: `SettingsMenu::load()` hard-codes `player->invertcam = FALSE` and
-`hud->use_joystick = TRUE` on **every** load (`Classes/SettingsMenu.mm`) — this is
+`hud->use_joystick = TRUE` on **every** load (`Classes/SettingsMenu.cpp`) — this is
 engine behavior, not a bug to fix. The port's own `eden_apply_port_settings()` must
 re-run after every `save()`/`load()` or these two values silently revert.
 
@@ -30,9 +30,9 @@ See [conventions-and-pitfalls.md](conventions-and-pitfalls.md) #6.
 
 `eden_settings_reset_all()` loops `kSettings[]` and also calls `eden_keybind_reset_all()` — one reset for both tables.
 
-`NSUserDefaults` is Apple's on macOS/iOS and a file-backed replacement on Linux/Windows (`native/src/shim/foundation/NSUserDefaults_native.mm`; the web version wrote `localStorage`).
+Since G.2b-1 every target keeps preferences in one flat file through `eden_prefs` (`port/src/shim/foundation/eden_prefs.h`, store `port/src/seam/Prefs_native.cpp`); before it, `NSUserDefaults` was Apple's on macOS/iOS and that file-backed store on Linux/Windows (the web version wrote `localStorage`). Mac/iPad settings reset once on the switch (accepted, de-ObjC plan D7).
 
-## The menu key over the main menu (`src/seam/Menu_web.mm`)
+## The menu key over the main menu (`src/seam/Menu.cpp`)
 `Input_native.cpp` sends the `menu` keybind (Escape) down a chain of `eden_*_back()` calls, each 1 when it
 consumed the key: Console → Settings → New World → World Properties → **`eden_menu_home_back()`** (I.7:
 the world list returns to the home screen; 0 on home, mid-load, under a `GLDialog`, or with any screen
@@ -57,7 +57,7 @@ the JS/wasm boundary conventions, the Load/New World menu, the `public/*.js` dep
 `EdenViewController.mm` answered it by flipping `IS_IPAD`/`IS_RETINA`/`SCALE_WIDTH`/
 `SCALE_HEIGHT` and recreating the framebuffer at the new density. **This port
 deliberately does neither**, and `EdenViewController::drawFrame()`
-(`native/src/seam/EdenViewController_native.cpp`) carries the reasoning. The short version, because it is the thing to understand before touching any
+(`port/src/seam/EdenViewController_native.cpp`) carries the reasoning. The short version, because it is the thing to understand before touching any
 UI layout here:
 
 > **`IS_IPAD`/`IS_RETINA`/`SCALE_*` are this port's layout coordinate system, not its
@@ -78,7 +78,7 @@ space this port can derive) forces `bestGraphics` back on regardless.
 Until 2026-07-31 that point space was pinned at 568×320 (the web shell's `establishScreenMetrics`), which is what made the HUD *enormous* on a desktop monitor: a 45-point
 button drawn into a 2560-wide window came out 4.5× its design size. The point space is now derived,
 and the whole of that derivation — plus the two-profile concept it hangs off — lives in
-[`src/seam/DisplayProfile_web.mm`](../src/seam/DisplayProfile_web.mm). **Read that file's header
+[`src/seam/DisplayProfile.cpp`](../src/seam/DisplayProfile.cpp). **Read that file's header
 before changing anything about layout, sizing or the settings rows below.** The summary:
 
 ```
@@ -94,7 +94,7 @@ P_ASPECT_RATIO = SCREEN_WIDTH / SCREEN_HEIGHT        # ALWAYS derived — see be
   them through the letterbox (a bar already covering an edge cancels that inset) into engine points,
   y up, rounded outward, live (never cached); a change re-runs the Hud/Menu layout. The engine reads
   it as `GLW::safeRect()` (`docs/ui.md`). `eden_display_debug_ignore_safe_area()` is the selftest's
-  "would it fail without insets" switch; `eden_debug_safe_area_violations()` (DebugState_web.mm) is the check.
+  "would it fail without insets" switch; `eden_debug_safe_area_violations()` (DebugState.cpp) is the check.
 - **Window points per engine point (I.3).** `eden_display_window_pt_per_point()` is the letterboxed
   box's height in window points over `SCREEN_HEIGHT` (the snapped case uses px-per-point), 1 when no
   box is known (headless). `GLW::touchFloor()` divides 44 by it, so the touch floor is 44 OS points.
@@ -126,7 +126,7 @@ P_ASPECT_RATIO = SCREEN_WIDTH / SCREEN_HEIGHT        # ALWAYS derived — see be
   monitor and 1.25 on a 2x one, and every engine image is @2x art (1 texel per ortho unit) sampled
   `GL_NEAREST`, so texels were dropped or doubled unevenly and text (then rasterised at ≥ 1 texel per
   unit) was minified — the Mac "blurry UI" report. The native host now passes the box in pixels too
-  (`eden_display_set_viewport_px`, `native/src/seam/DisplayMode_native.cpp`); `eden_display_snap`
+  (`eden_display_set_viewport_px`, `port/src/seam/DisplayMode_native.cpp`); `eden_display_snap`
   picks the whole `p` px/point whose height `box_px / p` is log-nearest the `ui_scale` target, preferring
   p = 1 or even (art exact: 2:1 down at 1, 1:1 at 2, 2× at 4) — an odd p ≥ 3 must be 25% closer; the
   host then letterboxes to exactly point space × p (bars < p px), and `eden_ui_raster_density()` is
@@ -158,7 +158,7 @@ P_ASPECT_RATIO = SCREEN_WIDTH / SCREEN_HEIGHT        # ALWAYS derived — see be
   `main()`, N.4.10).** `eden_active_profile()` never returns it — the web page called
   `eden_set_low_memory(1)` (before `eden_settings_init`) when `navigator.deviceMemory ≤ 4`, when a
   prior threaded-build load-failure downgrade is remembered, or on `?lowmem=1`. While set,
-  Settings_web.mm's profile-default seeder takes `dpr_cap` / `render_scale` (and `fps_cap` if the
+  Settings.cpp's profile-default seeder takes `dpr_cap` / `render_scale` (and `fps_cap` if the
   row sets it) from `kProfiles[EDEN_PROFILE_LOWMEM]` — 1× pixel ratio, 75% render scale, 45 fps (30 on iOS, which dropped the 45 entry in P.14: its `fps_cap` list is `Uncapped,30,60`, profile indices are remapped in the seeder and stored ones migrate once via the `fps_cap_v2` pref) —
   instead of the desktop/touch row underneath; `ui_scale` / layout / control chrome are unaffected.
   Still a *default*: a row the player has touched wins. It also makes `World::loadWorld` refuse a
@@ -173,25 +173,26 @@ Engine-side, this needed `Hud::layoutForScreen()` / `Menu::layoutForScreen()` (r
 of the constructors so it can run more than once, and kept idempotent) and
 `Input::screenMetricsChanged()` — see root [ui.md](../../docs/ui.md) and
 [conventions-and-pitfalls.md](../../docs/conventions-and-pitfalls.md) for those. Host-side,
-`native/src/seam/DisplayMode_native.cpp` hands the window's point size (`SDL_GetWindowSize`) to
+`port/src/seam/DisplayMode_native.cpp` hands the window's point size (`SDL_GetWindowSize`) to
 `eden_display_set_viewport()` *first*, then letterboxes the drawable to whatever aspect the engine
 chose (`eden_native_gl_set_letterbox`) — the box's own aspect in Adaptive mode, so the letterbox is
 normally a no-op.
 
 **Three invariants that will bite silently if broken:**
-0. **Vertically-coupled UI must share an anchor edge.** Two pairs in `Classes/Hud.mm` were anchored
+0. **Vertically-coupled UI must share an anchor edge.** Two pairs in `Classes/Hud.cpp` were anchored
    to *opposite* edges and only agreed at 320 points — the picker card vs. its own swatch grid, and
    the mode-button column's proportional spread. Both shipped broken in the first cut of D1 and were
    caught by looking at the game, not by the suite. Root `docs/ui.md` has the detail; the lesson for
    anything added here is that "it lines up at 568×320" is now evidence of nothing.
 1. **`GL_VIEWPORT` must report the point space × `SCALE_*`, never the real drawable.**
-   `Util.mm`'s `findWorldCoords` scales a point-space tap by `SCALE_*` and unprojects it against
+   `Util.cpp`'s `findWorldCoords` scales a point-space tap by `SCALE_*` and unprojects it against
    whatever `GL_VIEWPORT` says, so the two have to agree. The GL shim's `kPickViewport` is that
-   answer and `eden_gl_set_pick_viewport()` keeps it in step; answering the real drawable there is
+   answer (`R::pickViewport()` since G.5b-3: picking reads it and the renderer's matrix stacks, no `glGet*`)
+   and `eden_gl_set_pick_viewport()` keeps it in step; answering the real drawable there is
    what once made mobile taps land left of the finger (perf-audit item #6). Wrong by a constant
    factor = invisible at the screen centre, worse toward the edges — a centre-of-screen smoke test
    cannot see it.
-2. **Re-layout must be idempotent.** `Hud.mm`'s margins are file-static and *mutated* by the layout
+2. **Re-layout must be idempotent.** `Hud.cpp`'s margins are file-static and *mutated* by the layout
    body; they are reset at the top of `layoutForScreen()` for exactly this reason.
 
 Native `--display-selftest` (W.2; it replaced the web `headless-display-profile-test.js`) pins both
@@ -213,11 +214,11 @@ NSString under the row's key (`eden_settings_text` / `eden_settings_set_text`), 
 
 ## Console seam (C.3/C.4)
 
-Moved from `port/CLAUDE.md` (2026-10-20). The Console (C.3) is a screen over a running world, so its seam is small and shared: `Menu_web.mm`
+Moved from `port/CLAUDE.md` (2026-10-20). The Console (C.3) is a screen over a running world, so its seam is small and shared: `Menu.cpp`
   has `eden_console_menu_{open,toggle,back,active}` and `eden_ui_captures_keys()`; `Input_native.cpp` lets
   only the `menu` and `console` keybinds through while the Console is open (typing can never walk) and
-  drops the one backquote the opening key may deliver; `Input_web.mm`'s `eden_ui_wants_cursor()` is 1
-  while it is open. `console` is a `KB_NATIVE` row in `Settings_web.mm`. C.4: `Input_native.cpp` adds
+  drops the one backquote the opening key may deliver; `Input.cpp`'s `eden_ui_wants_cursor()` is 1
+  while it is open. `console` is a `KB_NATIVE` row in `Settings.cpp`. C.4: `Input_native.cpp` adds
   `eden_text_input_keyboard_top()` (iOS reads `IOSKeyboard_native.mm`, its own real-UIKit ARC object
   library like `eden_apple_net`; -1 for up to 600 ms after text input starts until the first frame
   notification), `eden_text_input_start_code()` (`SDL_StartTextInputWithProperties`, autocorrect and

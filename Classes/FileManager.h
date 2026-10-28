@@ -9,8 +9,10 @@
 #define Eden_FileManager_h
 
 
-#import "Terrain.h"
+#include "Terrain.h"
 #include "WorldTrailer.h"
+#include "eden_fs.h"   // G.2b-2: EdenFile, the column-read handle (was NSFileHandle)
+#include <string>
 
 
 
@@ -55,7 +57,7 @@ typedef struct{
 // two collided in every engine translation unit on the native target. This is a portability fix,
 // not a platform #ifdef: the name changes on every target, the struct layout does not, and the
 // type is not written to disk by any live code path (its only uses are inside the commented-out
-// mesh-caching block in FileManager.mm around line 1359 — archaeology, kept per CLAUDE.md #6 and
+// mesh-caching block in FileManager.cpp around line 1359 — archaeology, kept per CLAUDE.md #6 and
 // renamed alongside so it stays coherent if anyone revives it).
 }EdenChunkHeader;
 
@@ -64,7 +66,7 @@ typedef struct{
 // C++ port of (see FileManager::convertWorldTo64's own header comment for what's shared and what
 // isn't). `ok`==FALSE means nothing was written; `error` explains why.
 typedef struct{
-    BOOL ok;
+    bool ok;
     char error[160];
     int columns;
     int blocksDiscarded;
@@ -73,8 +75,8 @@ typedef struct{
     int creaturesDropped;
     int creaturesRelocated;
     int creaturesOverflow;
-    BOOL posClamped;
-    BOOL homeClamped;
+    bool posClamped;
+    bool homeClamped;
 }ConvertTo64Report;
 
 // H.15: the Properties screen's record of a world (Classes/WorldProps.h; its own header because it
@@ -111,25 +113,28 @@ public:
     int chunkOffsetX;
     int chunkOffsetZ;
     
-    NSString* documents;
-    BOOL convertingWorld;
-    BOOL genflat;
-    BOOL worldUnbounded;   // X.6: world holds data outside the bundled 2880 square -> Player::update skips the edge clamp
+    std::string documents;   // G.2b-2: the saves directory (was a retained NSString*)
+    bool convertingWorld;
+    bool genflat;
+    bool worldUnbounded;   // X.6: world holds data outside the bundled 2880 square -> Player::update skips the edge clamp
     // MP.3a: the open world is a multiplayer session (Classes/MpWorld.h): no file; loadWorld synthesises it
     // from MpWorld's header, readColumn is the flat recipe + overlay, and the three saves commit to RAM.
-    BOOL sessionWorld;
+    bool sessionWorld;
     FileManager();
-    BOOL worldExists(std::string name,BOOL appendArchive);
+    bool worldExists(std::string name,bool appendArchive);
     void saveGenColumn(int cx,int cz,int origin);
-    void readColumn(int cx,int cz,NSFileHandle* nsfh);
+    // G.2b-2: `file` is the open `.eden`'s read handle (null for an `.emod`, a session or a world with
+    // no file yet: a column that would be read from it then keeps its slot's old bytes, as a nil
+    // NSFileHandle did).
+    void readColumn(int cx,int cz,EdenFile* file);
     // B3 Stage 3. What Terrain's bulk reload calls instead of readColumn(). Identical, except that
     // a column coming from the BUNDLED default map -- the only path with an RLE decode in it, and
     // B1's ~75% of the burst's column-read cost -- may be handed to a worker instead. Returns TRUE
     // if the column has landed synchronously (the caller marks it loaded), FALSE if a decode job
     // was dispatched and the column will land in a later frame. readColumn() itself is unchanged
     // and still synchronous for every other caller, world load included.
-    BOOL readColumnDeferred(int cx,int cz,NSFileHandle* nsfh);
-    BOOL columnWillGenerate(int cx,int cz);   // H.4: readColumn would run the Classic generator
+    bool readColumnDeferred(int cx,int cz,EdenFile* file);
+    bool columnWillGenerate(int cx,int cz);   // H.4: readColumn would run the Classic generator
     void saveWorld();
     void saveWorld(Vector warp);
     // B.5b-1b: saveWorld() WITHOUT its opening endDynamics -- fire keeps burning and water keeps
@@ -143,79 +148,82 @@ public:
     void readDirectory();
     void clearDirectory();
     void compressLastPlayed();
-    NSString* getName(NSString* file_name);
+    // G.2b-2: every name/path parameter is a std::string, and a std::string return of "" means what
+    // nil meant (getName: unreadable as UTF-8 text; pairedEmodFor/originalOf/conversionError/
+    // pendingOriginal: none). getName still answers "error~"/"error" for a missing/blank header.
+    std::string getName(const std::string& file_name);
     // N.4.5: the world list's rename. Rewrites WorldFileHeader::name in place and nothing else;
     // a world with no file yet (created, never played) needs no write — its first save takes the
     // name from Menu::selected_world. Returns FALSE only if a file exists and the write failed.
-    BOOL renameWorld(NSString* file_name, NSString* display_name);
+    bool renameWorld(const std::string& file_name, const std::string& display_name);
     // H.15: the Properties screen's pair. read: FALSE if the file cannot be read. apply: writes
     // only what differs from the file -- for an `.emod`, ONE committed batch of WORLD_HEADER (the
     // name; pos/home lifted to the new surface where their column is not saved land) and, for a
     // Classic world, a newer GENERATOR (same seed and profile; the detected flag cleared when caves
     // changed). A legacy/mirror world gets its record on any save. `.eden`: the name only.
     // Returns WP_WROTE_* / WP_LIFTED_* bits, 0 when nothing differed, -1 when the write failed.
-    BOOL readWorldProperties(NSString* file_name, WorldProps* out);
-    int  applyWorldProperties(NSString* file_name, const WorldProps& edited);
+    bool readWorldProperties(const std::string& file_name, WorldProps* out);
+    int  applyWorldProperties(const std::string& file_name, const WorldProps& edited);
     void setName(std::string fn,std::string dn);
-    void setImageHash(NSString* hash);
-    void loadWorld(NSString* name,BOOL fromArchive);
-    BOOL deleteWorld(NSString* name);
+    void setImageHash(const std::string& hash);
+    void loadWorld(const std::string& name,bool fromArchive);
+    bool deleteWorld(const std::string& name);
     // Reads ONLY the header of an existing save and answers 64 or 256, so World::loadWorld can call
     // eden_set_world_height() before Terrain::allocateMemory() sizes the per-world arrays. A world
     // that does not exist yet (or any file we can't read a header from) answers 64: new worlds are
     // 64z, which is the decision recorded in the 256z plan.
-    int probeWorldHeight(NSString* name,BOOL fromArchive);
+    int probeWorldHeight(const std::string& name,bool fromArchive);
     // 256z Stage 3 item 5: convert an existing 256z ("New Dawn") save to 64z in place (space
     // reclaim). Destructive -- see the function body for exactly what it discards -- so it writes
     // to a scratch file and only replaces the original on full success, same temp+rename pattern
     // saveWorld() uses. Refuses if `name` is the world currently open in this session.
-    ConvertTo64Report convertWorldTo64(NSString* name);
+    ConvertTo64Report convertWorldTo64(const std::string& name);
 
     // ---- Stage S: `.emod` worlds (docs/emod-file-format.md; Classes/EdenWorldStore.h) ----
     // A world is an `.emod` iff its file name ends in ".emod"; every method above routes on that.
-    static BOOL isEmodName(NSString* name);
+    static bool isEmodName(const std::string& name);
     // A dropped-in `.gz` / `.zip` (a compressed `.eden`): only ever a source for convertStep().
-    static BOOL isArchiveName(NSString* name);
+    static bool isArchiveName(const std::string& name);
     // The file name for a brand-new world: genhash() + ".emod".
-    static NSString* newWorldFileName();
+    static std::string newWorldFileName();
     // The world list's two questions about a `.eden`: is it already converted (a `<stem>.emod`
     // whose PROVENANCE names a source of the same size -> the list hides the `.eden`), and does it
     // still need converting.
-    BOOL edenHasPairedEmod(NSString* edenName);
-    BOOL worldNeedsConversion(NSString* name);
-    // S.5: the `.emod` a source is paired with (nil if none), the reverse (the kept original `.eden`
-    // or archive of an `.emod`, nil if none), and the world list's "Remove original" (deletes only
+    bool edenHasPairedEmod(const std::string& edenName);
+    bool worldNeedsConversion(const std::string& name);
+    // S.5: the `.emod` a source is paired with ("" if none), the reverse (the kept original `.eden`
+    // or archive of an `.emod`, "" if none), and the world list's "Remove original" (deletes only
     // that file; the `.emod` is untouched).
-    NSString* pairedEmodFor(NSString* srcName);
-    NSString* originalOf(NSString* emodName);
-    BOOL removeOriginal(NSString* emodName);
+    std::string pairedEmodFor(const std::string& srcName);
+    std::string originalOf(const std::string& emodName);
+    bool removeOriginal(const std::string& emodName);
     // Deletes stale `*.emod.converting` / `.spill` / `.creating` / `.compact` left by a killed run.
     void cleanConversionTemps();
     // Convert `name` (a `.eden`) to a new `.emod`, a time slice per call so the loading screen keeps
     // drawing. Returns 0 while running (`*percent` set), 1 when done (`*outName` = the `.emod`),
     // -1 when it could not (too little free space, an unsupported header, a write error): the caller
     // then plays the `.eden` in place exactly as before. Nothing is ever written to the `.eden`.
-    int  convertStep(NSString* name, int* percent, NSString** outName);
+    int  convertStep(const std::string& name, int* percent, std::string* outName);
     // S.5e: the height that conversion writes. upgradeOnConvert() is Settings' "Upgrade 64z worlds to
     // 256z when converting" (EDEN_UPGRADE_256Z overrides it). convertHeightGate(name) runs before the
     // first convertStep(): 1 = go, 0 = the "Keep 64z?" prompt is up (call again next frame), -1 = the
     // player cancelled. It asks only when the toggle is on and the source is not already 256z, and
     // never under EDEN_CONVERT_PROMPT=0. answerConvertHeight() is the prompt's callback: 1 upgrade,
     // 0 keep the source's height, -1 cancel.
-    static BOOL upgradeOnConvert();
-    int  convertHeightGate(NSString* name);
+    static bool upgradeOnConvert();
+    int  convertHeightGate(const std::string& name);
     void answerConvertHeight(int choice);
-    BOOL conversionActive();
-    // Why the last convertStep() returned -1 (nil if it did not).
-    NSString* conversionError();
+    bool conversionActive();
+    // Why the last convertStep() returned -1 ("" if it did not).
+    std::string conversionError();
     // The `.eden` that a finished conversion left behind and the player has not been asked about
-    // yet (nil if none). resolveOriginal(TRUE) deletes it, (FALSE) keeps it (it stays hidden: paired).
-    NSString* pendingOriginal();
-    void resolveOriginal(BOOL deleteIt);
+    // yet ("" if none). resolveOriginal(TRUE) deletes it, (FALSE) keeps it (it stays hidden: paired).
+    std::string pendingOriginal();
+    void resolveOriginal(bool deleteIt);
     // Closes the open `.emod` store (exit to menu, delete, a re-load). A no-op for `.eden` worlds.
     void closeWorld();
     // TRUE while the open world is an `.emod` (the store is open). For diagnostics.
-    BOOL emodOpen();
+    bool emodOpen();
 
     // ---- Stage D / D.3a: the open world's signs and command blocks (Classes/WorldTrailer.h) ----
     // Loaded with the world on both containers (and from the 2026 game's `signs_`/`cmd_<world>.dat`
@@ -228,8 +236,8 @@ public:
     int reportTrailerRefusal(int result);
 
 private:
-    void loadTrailer(NSString* name,const unsigned char* bytes,unsigned long long len);
-    BOOL loadEmodWorld(NSString* name);
+    void loadTrailer(const std::string& name,const unsigned char* bytes,unsigned long long len);
+    bool loadEmodWorld(const std::string& name);
     void saveEmodWorld(Vector warp);
     void loadSessionWorld();   // MP.3a
     void commitSession(Vector warp);

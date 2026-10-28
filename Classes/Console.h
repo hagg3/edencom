@@ -94,7 +94,7 @@ enum { MAX_HISTORY = 50 };
 size_t historyCount();
 const std::string& historyGet(size_t i);        // 0 = oldest
 void historyAdd(const std::string& line);       // skips an empty line and a repeat of the last
-void historySave();                             // NSUserDefaults "console.history", 0x1F-joined
+void historySave();                             // eden_prefs "console.history", 0x1F-joined
 void historyLoad();
 void historyClear();
 

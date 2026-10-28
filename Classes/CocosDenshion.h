@@ -1,3 +1,4 @@
+#pragma once
 /*
  Copyright (c) 2010 Steve Oldmeadow
  
@@ -67,11 +68,11 @@ Requirements:
  
 */ 
 
-#import <OpenAL/al.h>
-#import <OpenAL/alc.h>
-#import <AudioToolbox/AudioToolbox.h>
-#import <Foundation/Foundation.h>
-#import "CDConfig.h"
+#include <OpenAL/al.h>
+#include <OpenAL/alc.h>
+#include <AudioToolbox/AudioToolbox.h>
+#include <Foundation/Foundation.h>
+#include "CDConfig.h"
 
 
 #if !defined(CD_DEBUG) || CD_DEBUG == 0
@@ -79,16 +80,16 @@ Requirements:
 #define CDLOGINFO(...) do {} while (0)
 
 #elif CD_DEBUG == 1
-#define CDLOG(...) NSLog(__VA_ARGS__)
+#define CDLOG(...) printg(__VA_ARGS__)
 #define CDLOGINFO(...) do {} while (0)
 
 #elif CD_DEBUG > 1
-#define CDLOG(...) NSLog(__VA_ARGS__)
-#define CDLOGINFO(...) NSLog(__VA_ARGS__)
+#define CDLOG(...) printg(__VA_ARGS__)
+#define CDLOGINFO(...) printg(__VA_ARGS__)
 #endif // CD_DEBUG
 
 
-#import "CDOpenALSupport.h"
+#include "CDOpenALSupport.h"
 
 //Tested source limit on 2.2.1 and 3.1.2 with up to 128 sources and appears to work. Older OS versions e.g 2.2 may support only 32
 #define CD_SOURCE_LIMIT 32 //Total number of sources we will ever want, may actually get less
@@ -148,26 +149,26 @@ typedef struct _sourceInfo {
 
 @protocol CDAudioTransportProtocol <NSObject>
 /** Play the audio */
--(BOOL) play;
+-(bool) play;
 /** Pause the audio, retain resources */
--(BOOL) pause;
+-(bool) pause;
 /** Stop the audio, release resources */
--(BOOL) stop;
+-(bool) stop;
 /** Return playback to beginning */
--(BOOL) rewind;
+-(bool) rewind;
 @end
 
 #pragma mark CDAudioInterruptProtocol
 
 @protocol CDAudioInterruptProtocol <NSObject>
 /** Is audio mute */
--(BOOL) mute;
+-(bool) mute;
 /** If YES then audio is silenced but not stopped, calls to start new audio will proceed but silently */
--(void) setMute:(BOOL) muteValue;
+-(void) setMute:(bool) muteValue;
 /** Is audio enabled */
--(BOOL) enabled;
+-(bool) enabled;
 /** If NO then all audio is stopped and any calls to start new audio will be ignored */
--(void) setEnabled:(BOOL) enabledValue;
+-(void) setEnabled:(bool) enabledValue;
 @end
 
 #pragma mark CDUtilities
@@ -209,16 +210,16 @@ typedef struct _sourceInfo {
     ALCcontext        *context;
     NSUInteger        _sourceGroupTotal;
     UInt32            _audioSessionCategory;
-    BOOL            _handleAudioSession;
+    bool            _handleAudioSession;
     ALfloat            _preMuteGain;
     NSObject        *_mutexBufferLoad;
-    BOOL            mute_;
-    BOOL            enabled_;
+    bool            mute_;
+    bool            enabled_;
 
     ALenum            lastErrorCode_;
-    BOOL            functioning_;
+    bool            functioning_;
     float            asynchLoadProgress_;
-    BOOL            getGainWorks_;
+    bool            getGainWorks_;
     
     //For managing dynamic allocation of sources and buffers
     int sourceTotal_;
@@ -228,9 +229,9 @@ typedef struct _sourceInfo {
 
 @property (readwrite, nonatomic) ALfloat masterGain;
 @property (readonly)  ALenum lastErrorCode;//Last OpenAL error code that was generated
-@property (readonly)  BOOL functioning;//Is the sound engine functioning
+@property (readonly)  bool functioning;//Is the sound engine functioning
 @property (readwrite) float asynchLoadProgress;
-@property (readonly)  BOOL getGainWorks;//Does getting the gain for a source work
+@property (readonly)  bool getGainWorks;//Does getting the gain for a source work
 /** Total number of sources available */
 @property (readonly) int sourceTotal;
 /** Total number of source groups that have been defined */
@@ -243,7 +244,7 @@ typedef struct _sourceInfo {
 -(id)init;
 
 /** Plays a sound in a channel group with a pitch, pan and gain. The sound could played looped or not */
--(ALuint) playSound:(int) soundId sourceGroupId:(int)sourceGroupId pitch:(float) pitch pan:(float) pan gain:(float) gain loop:(BOOL) loop;
+-(ALuint) playSound:(int) soundId sourceGroupId:(int)sourceGroupId pitch:(float) pitch pan:(float) pan gain:(float) gain loop:(bool) loop;
 
 /** Creates and returns a sound source object for the specified sound within the specified source group.
  */
@@ -265,13 +266,13 @@ typedef struct _sourceInfo {
 -(void) resumeAllSounds;
 -(void) defineSourceGroups:(NSArray*) sourceGroupDefinitions;
 -(void) defineSourceGroups:(int[]) sourceGroupDefinitions total:(NSUInteger) total;
--(void) setSourceGroupNonInterruptible:(int) sourceGroupId isNonInterruptible:(BOOL) isNonInterruptible;
--(void) setSourceGroupEnabled:(int) sourceGroupId enabled:(BOOL) enabled;
--(BOOL) sourceGroupEnabled:(int) sourceGroupId;
--(BOOL) loadBufferFromData:(int) soundId soundData:(ALvoid*) soundData format:(ALenum) format size:(ALsizei) size freq:(ALsizei) freq;
--(BOOL) loadBuffer:(int) soundId filePath:(NSString*) filePath;
+-(void) setSourceGroupNonInterruptible:(int) sourceGroupId isNonInterruptible:(bool) isNonInterruptible;
+-(void) setSourceGroupEnabled:(int) sourceGroupId enabled:(bool) enabled;
+-(bool) sourceGroupEnabled:(int) sourceGroupId;
+-(bool) loadBufferFromData:(int) soundId soundData:(ALvoid*) soundData format:(ALenum) format size:(ALsizei) size freq:(ALsizei) freq;
+-(bool) loadBuffer:(int) soundId filePath:(NSString*) filePath;
 -(void) loadBuffersAsynchronously:(NSArray *) loadRequests;
--(BOOL) unloadBuffer:(int) soundId;
+-(bool) unloadBuffer:(int) soundId;
 -(ALCcontext *) openALContext;
 
 /** Returns the duration of the buffer in seconds or a negative value if the buffer id is invalid */
@@ -302,14 +303,14 @@ typedef struct _sourceInfo {
     CDSoundEngine* _engine;
     int _soundId;
     float _preMuteGain;
-    BOOL enabled_;
-    BOOL mute_;
+    bool enabled_;
+    bool mute_;
 }
 @property (readwrite, nonatomic) float pitch;
 @property (readwrite, nonatomic) float gain;
 @property (readwrite, nonatomic) float pan;
-@property (readwrite, nonatomic) BOOL looping;
-@property (readonly)  BOOL isPlaying;
+@property (readwrite, nonatomic) bool looping;
+@property (readonly)  bool isPlaying;
 @property (readwrite, nonatomic) int soundId;
 /** Returns the duration of the attached buffer in seconds or a negative value if the buffer is invalid */
 @property (readonly) float durationInSeconds;
@@ -328,8 +329,8 @@ typedef struct _sourceInfo {
  Designed to be used with your CDSoundSource objects to get them to comply with global enabled and mute settings
  if that is what you want to do.*/
 @interface CDAudioInterruptTargetGroup : NSObject <CDAudioInterruptProtocol> {
-    BOOL mute_;
-    BOOL enabled_;
+    bool mute_;
+    bool enabled_;
     NSMutableArray *children_;
 }
 -(void) addAudioInterruptTarget:(NSObject<CDAudioInterruptProtocol>*) interruptibleTarget;
@@ -400,10 +401,10 @@ typedef enum {
     float startValue;
     float endValue;
     id target;
-    BOOL stopTargetWhenComplete;
+    bool stopTargetWhenComplete;
     
 }
-@property (readwrite, nonatomic) BOOL stopTargetWhenComplete;
+@property (readwrite, nonatomic) bool stopTargetWhenComplete;
 @property (readwrite, nonatomic) float startValue;
 @property (readwrite, nonatomic) float endValue;
 @property (readwrite, nonatomic) tCDInterpolationType interpolationType;

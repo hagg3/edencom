@@ -31,8 +31,8 @@
 #ifndef Eden_ConsoleMenu_h
 #define Eden_ConsoleMenu_h
 
-#import "GLWidgets.h"
-#import "Console.h"
+#include "GLWidgets.h"
+#include "Console.h"
 #include <map>
 #include <string>
 #include <vector>

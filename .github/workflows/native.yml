@@ -21,7 +21,7 @@ on:
     branches: ["**"]
     paths:
       - "Classes/**"
-      - "Lighting.mm"
+      - "Lighting.cpp"
       - "cmake/**"
       - "native/**"
       - "port/**"
@@ -65,10 +65,9 @@ env:
 
 jobs:
   # =============================================================================================
-  # Linux — the ELF control. First leg, deliberately: it reuses the port's own ObjC runtime and
-  # Foundation shim (port/src/shim/) UNMODIFIED, so it changes exactly one variable against the
-  # proven web build of the time (pointer width) before Windows changes three (object format, CRT,
-  # `long` width).
+  # Linux — the ELF control. First leg, deliberately: it changes one variable against the macOS
+  # build (the libc and ELF) before Windows changes three (object format, CRT, `long` width).
+  # (Until G.3 it was also the leg that ran the port's own GNU-ABI ObjC runtime and Foundation shim.)
   # =============================================================================================
   linux:
     runs-on: ubuntu-latest
@@ -115,7 +114,7 @@ jobs:
         working-directory: native
         run: cmake --build build --parallel
 
-      - name: Gates — boot, ObjC runtime, geometry, selftests, save round-trip
+      - name: Gates — boot, geometry, selftests, save round-trip
         working-directory: native
         # One step, one helper, a backtrace on any crash. See .github/scripts/run-gate.sh for why
         # the obvious `binary | tee log` shape cannot report a segfault.
@@ -127,13 +126,14 @@ jobs:
 
           # G.2b-0 (plan D14): the ObjC surface may only shrink; a converted file may not regain any.
           python3 -I ../port/tools/objc-surface.py --check
+          # LG.7: the shipped .edm creature models are exactly pod2edm.py's conversion of the .pod art.
+          python3 -I ../port/tools/pod2edm.py --check
+          # G.5b-7: no live GL call outside the renderer (port/src/render/); the engine and host draw through R::.
+          python3 -I ../port/tools/gl-call-gate.py
+          # FT.4: no non-ASCII bytes in UI string literals (the fonts have no glyph for them).
+          python3 -I ../port/tools/ui-string-gate.py
 
           run_gate "boot (--p1-gate)" $B --p1-gate
-
-          # The stage's single most load-bearing check, and the reason this mode exists: this
-          # port's own hand-written GNU-ABI Objective-C runtime, at 64-bit widths, on ELF. macOS
-          # never runs it (Apple's libobjc), and every way it can be wrong is silent.
-          run_gate "ObjC runtime self-test" $B --objc-selftest
 
           # A FRESH --docs PER RUN, and this is not hygiene. --stage1 creates-or-LOADS a world by
           # name, so a 64z save left by the previous command is silently reused by the 256z one and
@@ -173,12 +173,10 @@ jobs:
             echo "::error::--fly-selftest --fly-mutate=move PASSED: the gate cannot see noclip calling move()"; exit 1
           fi
           run_gate "audio selftest"   $B --audio-selftest
-          # W.2: the retired web checks' native gates (docs/web-port-archive.md) -- the GL shim's
-          # no-context bookkeeping, the paint/door/skin recolour, the stock 568x320 HUD rects and the
+          # W.2: the retired web checks' native gates (docs/web-port-archive.md) -- the paint/door/skin recolour, the stock 568x320 HUD rects and the
           # derived point space, and FileManager::convertWorldTo64 against eden-convert.js --to-64.
           # Plus --ui-selftest (GL settings widgets, New World), Mac-only until W.2.
           rm -rf w2-docs && mkdir -p w2-docs/recolor w2-docs/display w2-docs/ui
-          run_gate "gl selftest"      $B --gl-selftest
           run_gate "recolor selftest" $B --recolor-selftest --docs="$PWD/w2-docs/recolor"
           run_gate "display selftest" $B --display-selftest --docs="$PWD/w2-docs/display"
           run_gate "ui selftest"      $B --ui-selftest --docs="$PWD/w2-docs/ui"
@@ -244,10 +242,14 @@ jobs:
           rm -rf shadow-docs shadow16-docs && mkdir -p shadow-docs shadow16-docs
           run_gate "shadow selftest" $B --shadow-selftest --docs="$PWD/shadow-docs"
           run_gate "shadow selftest r16" $B --shadow-selftest --radius=16 --docs="$PWD/shadow16-docs"
+          # G.5b-0: the engine-owned renderer's invariants over the null backend (menu, a world, its
+          # menus; negative self-checks; the signs pass contract). The GL leg (--render-selftest-gl) needs
+          # a window and runs on the Mac.
+          run_gate "render selftest" $B --render-selftest --docs="$PWD/render-docs"
           # H.4: the seeded Classic generator. 1.x columns byte-equal to the checked-in fixture, and
           # four pinned per-profile hashes -- THE CROSS-TARGET PIN: the hashes in the binary are the
           # macOS arm64 ones, so this leg failing on one target alone is float drift (fp contraction
-          # first: TerrainGenerator.mm is built -ffp-contract=off). Each mutation must FAIL it.
+          # first: TerrainGenerator.cpp is built -ffp-contract=off). Each mutation must FAIL it.
           rm -rf classic-docs && mkdir -p classic-docs
           run_gate "classic selftest" $B --classic-selftest --docs="$PWD/classic-docs"
           for m in tables trunc noborder; do
@@ -283,6 +285,11 @@ jobs:
           # F5 through the camera_view setting, the body slot never picked or counted).
           rm -rf camera-docs && mkdir -p camera-docs
           run_gate "camera selftest" $B --camera-selftest --docs="$PWD/camera-docs"
+
+          # LG.7: the seven .edm creature models load, pose and skin for every quarter frame. The
+          # hashes are pinned for macOS arm64 only (libm + FMA move the last bit); here structural.
+          rm -rf creature-docs && mkdir -p creature-docs
+          run_gate "creature selftest" $B --creature-selftest --docs="$PWD/creature-docs"
 
           # THE WORLD FILE IS NOT NAMED AFTER THE WORLD. This engine gives every world a random
           # 40-character filename and keeps the display name inside the header — so the artifact
@@ -342,7 +349,7 @@ jobs:
           rm -rf dist && mkdir -p dist/Emod
           cp build/eden_native dist/Emod/emod-bin
           find build -maxdepth 1 \( -type f -o -type l \) \
-            \( -name '*.png' -o -name '*.pod' -o -name '*.caf' -o -name '*.wav' \
+            \( -name '*.png' -o -name '*.edm' -o -name '*.caf' -o -name '*.wav' \
                -o -name '*.aif' -o -name '*.mp3' -o -name '*.eden' -o -name '*.emod' -o -name '*.ttf' \) -exec cp -L {} dist/Emod/ \;
           cp -a "$HOME"/sdl3-prefix/lib/libSDL3.so* dist/Emod/
           printf '%s\n' '#!/bin/sh' \
@@ -352,6 +359,7 @@ jobs:
           test -f dist/Emod/Eden.emod || { echo "::error::Eden.emod is not in the package"; exit 1; }
           n=$(find dist/Emod -type f | wc -l)
           [ "$n" -gt 800 ] || { echo "::error::only $n files in the package"; exit 1; }
+          cp ../LICENSE ../NOTICE dist/Emod/   # zstd (BSD-3) requires its notice in binary distributions
           tar -C dist -czf Emod-linux-x64.tar.gz Emod
           ls -l Emod-linux-x64.tar.gz
 
@@ -370,10 +378,82 @@ jobs:
           if-no-files-found: error
 
   # =============================================================================================
+  # Sanitizers (G.2s) — the Linux build again with -fsanitize=address,undefined (EDEN_SANITIZE),
+  # (until G.3 that covered the hand-written ObjC runtime and the shim Foundation too). Ahead of G.2b's string/ownership moves, where use-after-free and overflow
+  # appear. Any report aborts the run (UBSan is -fno-sanitize-recover), so it fails the gate.
+  # Leak detection is OFF: --leak-probe in the linux job owns leaks, and LSan would report every
+  # process-lifetime singleton at exit. --leak-probe is not run here: ASan's quarantine keeps
+  # freed blocks live, so its flat-heap fit fails by construction.
+  # =============================================================================================
+  sanitize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang lld ninja-build cmake gdb zlib1g-dev libcurl4-openssl-dev libgl1-mesa-dev \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
+            libxfixes-dev libxss-dev libxtst-dev libwayland-dev libxkbcommon-dev \
+            libasound2-dev libpulse-dev libudev-dev
+
+      - name: Cache SDL3
+        id: sdl-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/sdl3-prefix
+          key: sdl3-${{ env.SDL_VERSION }}-ubuntu-latest
+
+      - name: Build SDL3 from source
+        if: steps.sdl-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "release-${SDL_VERSION}" https://github.com/libsdl-org/SDL.git /tmp/SDL
+          cmake -S /tmp/SDL -B /tmp/SDL/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/sdl3-prefix" \
+            -DSDL_STATIC=OFF -DSDL_TEST_LIBRARY=OFF
+          cmake --build /tmp/SDL/build --parallel
+          cmake --install /tmp/SDL/build
+
+      - name: Configure and build (ASan + UBSan)
+        working-directory: native
+        env:
+          CC: clang
+          CXX: clang++
+        run: |
+          cmake -B build -G Ninja $EDEN_CMAKE_FLAGS -DEDEN_SANITIZE=ON -DCMAKE_PREFIX_PATH="$HOME/sdl3-prefix"
+          cmake --build build --parallel
+
+      - name: Gates under ASan + UBSan — geometry, save/format, console, base
+        working-directory: native
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+          UBSAN_OPTIONS: print_stacktrace=1
+        run: |
+          set -e
+          . ../.github/scripts/run-gate.sh
+          export LD_LIBRARY_PATH=$HOME/sdl3-prefix/lib
+          B=./build/eden_native
+          # A fresh --docs per run, as in the linux job (--stage1 creates-or-LOADS by name).
+          rm -rf docs64 docs256 && mkdir -p docs64 docs256
+          run_gate "geometry 64z"  $B --headless --stage1 --shadows=off --docs="$PWD/docs64"
+          run_gate "geometry 256z" $B --headless --stage1 --shadows=off --height=256 --docs="$PWD/docs256"
+          python3 ../.github/scripts/check-stage1.py gate-geometry-64z.log gate-geometry-256z.log
+          run_gate "base selftest" $B --base-selftest --docs="$PWD/base-docs"
+          run_gate "emod selftest" $B --emod-selftest --emod-fixtures=../port/tools/fixtures/emod --emod-work="$PWD/emod-work"
+          run_gate "bundled map" $B --bundled-map-selftest --bundled-eden=../Eden.eden --bundled-emod=../Eden.emod
+          rm -rf ci-docs evict-docs console-docs && mkdir -p ci-docs evict-docs console-docs
+          run_gate "save round-trip" $B --headless --save-roundtrip --world=ci --docs="$PWD/ci-docs"
+          run_gate "evict selftest" $B --evict-selftest --docs="$PWD/evict-docs"
+          run_gate "console selftest" $B --console-selftest --docs="$PWD/console-docs"
+          run_gate "render selftest" $B --render-selftest --docs="$PWD/render-docs"   # G.5b-0
+
+  # =============================================================================================
   # Windows — the point of the stage. MSYS2's CLANG64 environment IS an LLVM-mingw toolchain
-  # (target x86_64-w64-windows-gnu), which is the plan's measured choice: `cl.exe` has no
-  # Objective-C at all, and the MSVC ABI segfaults clang on `@finally` in ObjC++, needs a ~150-LOC
-  # pthread shim and has no <dirent.h>. MSYS2 rather than the bare llvm-mingw tarball because zlib
+  # (target x86_64-w64-windows-gnu), which was the plan's measured choice while the port compiled
+  # ObjC off Apple: `cl.exe` has no Objective-C at all, and the MSVC ABI segfaulted clang on
+  # `@finally` in ObjC++. Since G.3 there is no ObjC here; windows-msvc below tries the MSVC ABI. MSYS2 rather than the bare llvm-mingw tarball because zlib
   # is a hard requirement here (Classes/zpipe.c) and MSYS2 packages it.
   # =============================================================================================
   windows:
@@ -428,7 +508,7 @@ jobs:
         # ninja's status.
         run: cmake --build build --parallel -- -k 0
 
-      - name: Gates — boot, ObjC runtime, geometry, selftests, leak probe
+      - name: Gates — boot, geometry, selftests, leak probe
         working-directory: native
         # THE SAME HELPER THE LINUX JOB USES, and for a stronger reason than symmetry: this runner
         # is the only place Windows ever runs, so a crash has to be diagnosable from the log alone.
@@ -443,10 +523,6 @@ jobs:
           B=./build/eden_native.exe
 
           run_gate "boot (--p1-gate)" $B --p1-gate
-
-          # The whole Windows risk in one command: this port's own GNU-ABI Objective-C runtime,
-          # lowered to COFF, dispatching real message sends with LLP64 struct layouts.
-          run_gate "ObjC runtime self-test" $B --objc-selftest
 
           # H.2: --shadows=off pins the pair to Off whatever the setting's default becomes; the
           # shadows leg asserts geom is unchanged (shadows only move colours) and a pinned `full`.
@@ -482,12 +558,10 @@ jobs:
             echo "::error::--fly-selftest --fly-mutate=move PASSED: the gate cannot see noclip calling move()"; exit 1
           fi
           run_gate "audio selftest"   $B --audio-selftest
-          # W.2: the retired web checks' native gates (docs/web-port-archive.md) -- the GL shim's
-          # no-context bookkeeping, the paint/door/skin recolour, the stock 568x320 HUD rects and the
+          # W.2: the retired web checks' native gates (docs/web-port-archive.md) -- the paint/door/skin recolour, the stock 568x320 HUD rects and the
           # derived point space, and FileManager::convertWorldTo64 against eden-convert.js --to-64.
           # Plus --ui-selftest (GL settings widgets, New World), Mac-only until W.2.
           rm -rf w2-docs && mkdir -p w2-docs/recolor w2-docs/display w2-docs/ui
-          run_gate "gl selftest"      $B --gl-selftest
           run_gate "recolor selftest" $B --recolor-selftest --docs="$PWD/w2-docs/recolor"
           run_gate "display selftest" $B --display-selftest --docs="$PWD/w2-docs/display"
           run_gate "ui selftest"      $B --ui-selftest --docs="$PWD/w2-docs/ui"
@@ -533,10 +607,14 @@ jobs:
           rm -rf shadow-docs shadow16-docs && mkdir -p shadow-docs shadow16-docs
           run_gate "shadow selftest" $B --shadow-selftest --docs="$PWD/shadow-docs"
           run_gate "shadow selftest r16" $B --shadow-selftest --radius=16 --docs="$PWD/shadow16-docs"
+          # G.5b-0: the engine-owned renderer's invariants over the null backend (menu, a world, its
+          # menus; negative self-checks; the signs pass contract). The GL leg (--render-selftest-gl) needs
+          # a window and runs on the Mac.
+          run_gate "render selftest" $B --render-selftest --docs="$PWD/render-docs"
           # H.4: the seeded Classic generator. 1.x columns byte-equal to the checked-in fixture, and
           # four pinned per-profile hashes -- THE CROSS-TARGET PIN: the hashes in the binary are the
           # macOS arm64 ones, so this leg failing on one target alone is float drift (fp contraction
-          # first: TerrainGenerator.mm is built -ffp-contract=off). Each mutation must FAIL it.
+          # first: TerrainGenerator.cpp is built -ffp-contract=off). Each mutation must FAIL it.
           rm -rf classic-docs && mkdir -p classic-docs
           run_gate "classic selftest" $B --classic-selftest --docs="$PWD/classic-docs"
           for m in tables trunc noborder; do
@@ -572,6 +650,11 @@ jobs:
           # F5 through the camera_view setting, the body slot never picked or counted).
           rm -rf camera-docs && mkdir -p camera-docs
           run_gate "camera selftest" $B --camera-selftest --docs="$PWD/camera-docs"
+
+          # LG.7: the seven .edm creature models load, pose and skin for every quarter frame. The
+          # hashes are pinned for macOS arm64 only (libm + FMA move the last bit); here structural.
+          rm -rf creature-docs && mkdir -p creature-docs
+          run_gate "creature selftest" $B --creature-selftest --docs="$PWD/creature-docs"
 
           # See the Linux job for why the leak probe is a stage obligation. Windows has the one
           # honest gap in the statistic — the mingw CRT publishes no live-bytes figure, so
@@ -641,7 +724,7 @@ jobs:
       #
       # Layout is the one native/README.md documents and the one the ENGINE assumes: a flat
       # directory of assets beside the executable, because the shipped iOS app's bundle was flat
-      # (Xcode's Copy-Bundle-Resources phase flattens media/) and Classes/World.mm's LoadModels()
+      # (Xcode's Copy-Bundle-Resources phase flattens media/) and Classes/World.cpp's LoadModels()
       # still fopen()s bare basenames against the bundle root.
       # -----------------------------------------------------------------------------------------
       - name: Package a portable zip
@@ -658,7 +741,7 @@ jobs:
           # executable is a LINK, `find -type f` matched none of them, and the zip shipped with
           # four files in it and no error. `cp -L` then copies what each one points at.
           find build -maxdepth 1 \( -type f -o -type l \) \
-            \( -name '*.png' -o -name '*.pod' -o -name '*.caf' -o -name '*.wav' \
+            \( -name '*.png' -o -name '*.edm' -o -name '*.caf' -o -name '*.wav' \
                -o -name '*.aif' -o -name '*.mp3' -o -name '*.eden' -o -name '*.emod' -o -name '*.ttf' \) -exec cp -L {} dist/ \;
 
           # SDL3, plus the runtime this toolchain links against. `ldd` on the built exe is the
@@ -681,6 +764,8 @@ jobs:
           # ...and ASSERT the two things a silent miss above would leave behind. Both of these
           # failures shipped a zip that looked fine in the log and could not start.
           test -f dist/SDL3.dll || { echo "::error::SDL3.dll is not in the package"; exit 1; }
+          cp ../LICENSE ../NOTICE dist/   # zstd (BSD-3) requires its notice in binary distributions
+          test -f dist/NOTICE || { echo "::error::NOTICE is not in the package"; exit 1; }
           test -f dist/Eden.emod || { echo "::error::Eden.emod is not in the package"; exit 1; }
           n=$(find dist -type f | wc -l)
           [ "$n" -gt 800 ] || { echo "::error::only $n files in the package; expected ~880"; exit 1; }
@@ -705,6 +790,84 @@ jobs:
           retention-days: 7
           path: native/dist
           if-no-files-found: error
+
+  # =============================================================================================
+  # Windows, MSVC ABI (G.3) — EXPERIMENTAL and non-blocking (continue-on-error). With no ObjC left
+  # off Apple, the reasons the windows job above is MSYS2 CLANG64 are gone. This leg builds the same
+  # tree with clang-cl (the MSVC ABI and the UCRT; plain cl.exe cannot read the engine's 400 C++
+  # `#import`s) and vcpkg's static zlib/pthreads4w/dirent, then runs the core gates and prints the
+  # numbers the user's Stage G condition asks for (WORKING/graphics-api-modernisation-report-
+  # 2026-10-23.md §5 Q3): binary size within 5 % of the MSYS2 build, --stage1/--emod-selftest
+  # identical, selftests green, --bench within noise, the ARM64 VM boot, no extra runtime DLLs.
+  # The MSYS2 build stays the shipped one until every gate passes and the user approves a switch.
+  # =============================================================================================
+  windows-msvc:
+    runs-on: windows-latest
+    needs: linux
+    continue-on-error: true
+    defaults:
+      run:
+        shell: bash
+    env:
+      VCPKG_DEFAULT_TRIPLET: x64-windows-static
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: vcpkg packages (static, /MT)
+        run: |
+          "$VCPKG_INSTALLATION_ROOT/vcpkg" install zlib pthreads dirent --triplet x64-windows-static
+
+      - name: Cache SDL3
+        id: sdl-cache
+        uses: actions/cache@v4
+        with:
+          path: C:\sdl3-msvc
+          key: sdl3-${{ env.SDL_VERSION }}-windows-clang-cl-mt
+
+      - name: Build SDL3 from source (clang-cl, /MT)
+        if: steps.sdl-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "release-${SDL_VERSION}" https://github.com/libsdl-org/SDL.git /tmp/SDL
+          cmake -S /tmp/SDL -B /tmp/SDL/build -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX='C:\sdl3-msvc' \
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DCMAKE_POLICY_DEFAULT_CMP0091=NEW \
+            -DSDL_STATIC=OFF -DSDL_TEST_LIBRARY=OFF
+          cmake --build /tmp/SDL/build --parallel
+          cmake --install /tmp/SDL/build
+
+      - name: Configure and build (-k 0 lists every error)
+        working-directory: native
+        run: |
+          cmake -B build -G Ninja $EDEN_CMAKE_FLAGS -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl \
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DCMAKE_POLICY_DEFAULT_CMP0091=NEW \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static -DCMAKE_PREFIX_PATH='C:\sdl3-msvc'
+          cmake --build build --parallel -- -k 0
+
+      - name: Gates and the adoption numbers
+        working-directory: native
+        run: |
+          set -e
+          . ../.github/scripts/run-gate.sh
+          export PATH="/c/sdl3-msvc/bin:$PATH"
+          B=./build/eden_native.exe
+          echo "binary size: $(stat -c %s $B) bytes (compare with the windows job's eden_native.exe)"
+          echo "imports:"; dumpbin //dependents $B | grep -i '\.dll' || true
+          run_gate "boot (--p1-gate)" $B --p1-gate
+          rm -rf docs64 docs256 && mkdir -p docs64 docs256
+          run_gate "geometry 64z"  $B --headless --stage1 --shadows=off --docs="$PWD/docs64"
+          run_gate "geometry 256z" $B --headless --stage1 --shadows=off --height=256 --docs="$PWD/docs256"
+          python ../.github/scripts/check-stage1.py gate-geometry-64z.log gate-geometry-256z.log
+          run_gate "base selftest" $B --base-selftest --docs="$PWD/base-docs"
+          run_gate "emod selftest" $B --emod-selftest --emod-fixtures=../port/tools/fixtures/emod --emod-work="$PWD/emod-work"
+          run_gate "classic selftest" $B --classic-selftest --docs="$PWD/classic-docs"
+          rm -rf ci-docs && mkdir -p ci-docs
+          run_gate "save round-trip" $B --headless --save-roundtrip --world=ci --docs="$PWD/ci-docs"
+          run_gate "console selftest" $B --console-selftest --docs="$PWD/console-docs"
+          run_gate "ui selftest" $B --ui-selftest --docs="$PWD/ui-docs"
 
   # =============================================================================================
   # macOS — NOT a new platform, and that is the job's purpose. It reproduces the checksums this
@@ -750,7 +913,7 @@ jobs:
           # W.2 (see the linux job). The convert64 cross-check matters most here: Apple's Foundation is
           # where convertWorldTo64's `.eden` leg failed (fileHandleForWritingAtPath: on a missing file).
           rm -rf w2-docs && mkdir -p w2-docs/recolor w2-docs/display w2-docs/ui
-          ./build/eden_native --gl-selftest
+          ./build/eden_native --render-selftest --docs="$PWD/render-docs"   # G.5b-7: absorbed --gl-selftest
           ./build/eden_native --recolor-selftest --docs="$PWD/w2-docs/recolor"
           ./build/eden_native --display-selftest --docs="$PWD/w2-docs/display"
           ./build/eden_native --ui-selftest --docs="$PWD/w2-docs/ui"
@@ -840,6 +1003,16 @@ jobs:
           [ -n "$got" ] && [ "$want" = "$got" ] || {
             echo "::error::macos read Linux's world as '$got', linux reads it as '$want'"; exit 1; }
 
+      - name: Gate — creature models, pinned to the PowerVR SDK's output (LG.7)
+        working-directory: native
+        # macos-latest is arm64, the target the hashes were measured on (the SDK's own skinned
+        # vertices, byte-identical to CreatureModel's before Classes/PVRT* was deleted).
+        run: |
+          set -e
+          . ../.github/scripts/run-gate.sh
+          rm -rf creature-docs && mkdir -p creature-docs
+          run_gate "creature selftest" ./build/eden_native --creature-selftest --docs="$PWD/creature-docs"
+
       - name: Gate — save round-trip, and publish this platform's world
         working-directory: native
         run: |
@@ -869,7 +1042,7 @@ jobs:
           rm -rf dist && mkdir -p dist/Emod
           cp build/eden_native dist/Emod/emod
           find build -maxdepth 1 \( -type f -o -type l \) \
-            \( -name '*.png' -o -name '*.pod' -o -name '*.caf' -o -name '*.wav' \
+            \( -name '*.png' -o -name '*.edm' -o -name '*.caf' -o -name '*.wav' \
                -o -name '*.aif' -o -name '*.mp3' -o -name '*.eden' -o -name '*.emod' -o -name '*.ttf' \) -exec cp -L {} dist/Emod/ \;
           lib=$(otool -L build/eden_native | awk '/libSDL3/{print $1}')
           cp -L "$lib" dist/Emod/libSDL3.0.dylib
@@ -883,6 +1056,7 @@ jobs:
           test -f dist/Emod/Eden.emod || { echo "::error::Eden.emod is not in the package"; exit 1; }
           n=$(find dist/Emod -type f | wc -l)
           [ "$n" -gt 800 ] || { echo "::error::only $n files in the package"; exit 1; }
+          cp ../LICENSE ../NOTICE dist/Emod/   # zstd (BSD-3) requires its notice in binary distributions
           tar -C dist -czf Emod-macos-arm64.tar.gz Emod
           ls -l Emod-macos-arm64.tar.gz
 
@@ -902,15 +1076,15 @@ jobs:
   # =============================================================================================
   # iOS — THE PLATFORM PHASE N EXISTS FOR (Stage 4.1).
   #
-  # iOS 12 cannot run the web build at all: that build needs WebGL 2, i.e. Safari 15, i.e. iOS 15.
-  # Natively the same devices (A7 and up) are in range, and this job is where that claim stops
+  # The web build needed WebGL 2, i.e. Safari 15, i.e. iOS 15; the iOS floor is now 15.0 (SM.1).
+  # Natively the devices from iOS 15 up (A8 and later) are in range, and this job is where that claim stops
   # being an argument. It does three things a laptop cannot do on its own — build the DEVICE slice
   # (this machine has Command Line Tools and no iOS SDK), build the SIMULATOR slice, and RUN the
   # simulator one — and it asserts values rather than exit codes, because `simctl launch` reports
   # its own status and not the app's.
   #
   # WHAT IT CANNOT CLAIM, and this is the same boundary the Linux and Windows jobs have: no
-  # runner has a GPU-backed iOS device. Criterion 1 (a real iOS 12 device), criterion 3 (64z under
+  # runner has a GPU-backed iOS device. Criterion 1 (a real iOS 15 device), criterion 3 (64z under
   # 300 MB on an iPad Air 2) and criterion 5 (touch play) are owed to a human with hardware. What
   # is machine-checked here is criterion 2 (geometry byte-identical to the other four targets),
   # criterion 4 (save-on-background, on the platform whose UIKit delivery rule is the reason
@@ -925,12 +1099,11 @@ jobs:
     # of it building SDL3 twice.
     timeout-minutes: 45
     env:
-      # 12.0 is the stage's whole point, not a compatibility gesture — see native/CMakeLists.txt's
-      # iOS block. It is asserted below out of the built binary's own load command, because a
+      # 15.0 is the iOS floor (SM.1), see native/CMakeLists.txt's iOS block. It is asserted below out of the built binary's own load command, because a
       # deployment target that silently got raised is exactly the kind of regression that only
       # shows up as "it will not install on my iPad".
-      EDEN_IOS_MIN: "12.0"
-      EDEN_BUNDLE_ID: "io.github.hagg3.emod"   # Emod, not Eden — native/src/eden_app_identity.h
+      EDEN_IOS_MIN: "15.0"
+      EDEN_BUNDLE_ID: "io.github.hagg3.emod"   # Emod, not Eden — port/src/eden_app_identity.h
     steps:
       - uses: actions/checkout@v4
 
@@ -995,7 +1168,7 @@ jobs:
         # outside the .app because the asset step symlinked instead of copying (which is what it
         # does on every other platform — see the CMake comment). S.6: every target bundles
         # Eden.emod (11.8 MB, read in place) -- no Eden.eden.gz, no inflated cache; see
-        # native/CMakeLists.txt and FileManagerHelper.mm's fmh_init().
+        # native/CMakeLists.txt and FileManagerHelper.cpp's fmh_init().
         run: |
           set -e
           APP=build-ios-device/Emod.app
@@ -1042,6 +1215,7 @@ jobs:
           set -e
           rm -rf ipa && mkdir -p ipa/Payload
           cp -R build-ios-device/Emod.app ipa/Payload/
+          cp ../LICENSE ../NOTICE ipa/Payload/Emod.app/   # zstd (BSD-3) requires its notice in binary distributions
           (cd ipa && zip -qry ../Emod-unsigned.ipa Payload)
           # Assert the shape rather than trust the copy: a Payload/ with the executable in it, and
           # a plausible size. An .ipa that unzips to nothing is indistinguishable from a good one
@@ -1325,7 +1499,7 @@ jobs:
   # =============================================================================================
   release:
     if: github.event_name == 'workflow_dispatch' && inputs.release
-    needs: [linux, windows, macos, ios, interchange]
+    needs: [linux, sanitize, windows, macos, ios, interchange]
     runs-on: ubuntu-latest
     permissions:
       contents: write

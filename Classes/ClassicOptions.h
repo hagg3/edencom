@@ -10,7 +10,7 @@
 #ifndef Eden_ClassicOptions_h
 #define Eden_ClassicOptions_h
 
-#import "TerrainGenerator.h"
+#include "TerrainGenerator.h"
 
 struct NWOption { const char* label; int value; };
 static const NWOption kScales[]={ { "Classic 1x", 4 }, { "Big 1.5x", 6 }, { "Large 2x", 8 }, { "Huge 3x", 12 }, { "Extreme 4x", 16 } };

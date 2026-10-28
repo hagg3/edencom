@@ -24,7 +24,7 @@
 //  the three stock modes (stock called them Featured / Recent / Search), not the code.
 //
 //  PLATFORM SPLIT. The engine only ever asks for a URL and polls (the eden_net_* seam below); the
-//  HTTP stack is the host's — native/src/seam/Net_native.cpp over NSURLSession / libcurl /
+//  HTTP stack is the host's — port/src/seam/Net_native.cpp over NSURLSession / libcurl /
 //  WinHTTP. Unpacking (gzip, zip, the archive's zip-in-a-zip) is engine code over zlib, done a few
 //  MB per frame so a 500 MB world never stalls the menu. Web's seam reports no network, so the GL
 //  menu never offers this screen there; the DOM screen stays the web's browser until 5.10.
@@ -32,7 +32,7 @@
 #ifndef Eden_WorldBrowser_h
 #define Eden_WorldBrowser_h
 
-#import "GLWidgets.h"
+#include "GLWidgets.h"
 
 class WorldBrowser {
 public:
@@ -78,7 +78,7 @@ private:
     struct BrowserImpl* d;
 };
 
-// The network seam (ROADMAP 5.9). Native: native/src/seam/Net_native.cpp. Web: stubs in
+// The network seam (ROADMAP 5.9). Native: port/src/seam/Net_native.cpp. Web: stubs in
 // web-port-final:web/src/seam/seam_link_stubs.mm reporting no network. A fetch never blocks: it starts a job and
 // the caller polls it every frame.
 extern "C" {

@@ -9,7 +9,7 @@
 #ifndef Eden_FileDownload_h
 #define Eden_FileDownload_h
 
-#import <Foundation/Foundation.h>
+#include <Foundation/Foundation.h>
 
 
 @interface FileDownload : NSObject {
@@ -19,7 +19,7 @@
     SEL doneSelector;
     SEL errorSelector;
 	SEL progressSelector;
-    BOOL downloadDidSucceed;
+    bool downloadDidSucceed;
     NSURLConnection* connection;
     NSData* result;
     NSOutputStream* fileStream;

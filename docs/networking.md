@@ -25,7 +25,7 @@ sequenceDiagram
 None of the files below is compiled by the live port targets (they are NSURLConnection + UIKit and
 seam-excluded). The port's browser is `Classes/WorldBrowser.{h,mm}` (docs/ui.md) over a tiny
 non-blocking seam, `eden_net_fetch/poll/body/error/release` — implemented natively in
-`native/src/seam/Net_native.cpp` over a backend chosen at build time: `AppleNet_native.mm`
+`port/src/seam/Net_native.cpp` over a backend chosen at build time: `AppleNet_native.mm`
 (NSURLSession, macOS/iOS), `NetWinHttp_native.cpp` (Windows), `NetCurl_native.cpp` (libcurl, Linux),
 or `NetNone_native.cpp` ("no network" — a Linux build without libcurl; Get Worlds is then not offered). A body kept in
 memory (no `destPath`: the list and preview fetches) is capped at 32 MB (Q.6, `kMaxMemoryBody`); a world download goes
@@ -107,12 +107,12 @@ Plain C++ in `port/src/net/` (no `Classes/` includes; compiled into `eden_native
   every pump). So the cap spans drains, including while the load pthread runs and `MpWorld` cannot drain. Past it:
   `TooMuchData`.
 - **Stopping (Q.6, F20).** `stop()` joins the thread. `detach()` (a session owned by a `std::shared_ptr`, as
-  `MpLink_native.mm`'s is) signals and lets go: the thread holds its own reference, finishes a connect or DNS lookup
+  `MpLink_native.cpp`'s is) signals and lets go: the thread holds its own reference, finishes a connect or DNS lookup
   alone (`getaddrinfo` has no timeout), closes the socket and frees the session. So the Connecting window's Cancel never
   blocks the UI. A connect that completes after the stop does not send its `JOIN`. A stack session's `detach()` joins.
 - Gates: `--net-selftest`, `--mp-selftest` (offline against an in-process mock, every CI leg) and `port/tools/mp-live-gate.sh`
   (both with `--server=` against a local `edenserver`). `feedLine()` runs one recorded line through the same parser with no
-  socket (`--mp-replay`). The join flow that starts one is `native/src/seam/MpLink_native.mm` (MP.3b, below); it runs
+  socket (`--mp-replay`). The join flow that starts one is `port/src/seam/MpLink_native.cpp` (MP.3b, below); it runs
   `MpSession` with `joinBurst` off, so `SIGNQ` and `REGION` go out after `SPAWN`, at its lattice point.
 
 ## The session world (Stage MP, MP.3a)
@@ -159,7 +159,7 @@ Plain C++ in `port/src/net/` (no `Classes/` includes; compiled into `eden_native
   and "nothing written to the save directory".
 
 ## The live world (Stage MP, MP.3b)
-Plan §5-§7; code `Classes/MpWorld.mm` (second half), `Terrain::setCellState`, `native/src/seam/MpLink_native.mm`.
+Plan §5-§7; code `Classes/MpWorld.cpp` (second half), `Terrain::setCellState`, `port/src/seam/MpLink_native.cpp`.
 - **The link.** `MpWorld::Link` (`pump`, `sendLine`, `release`) is the host's half; MpWorld owns it from `setLink` and calls
   `pump()` once a frame from `MpWorld::tick()`, which `World::update` calls first in **every** mode (menu, play, under a
   `GLDialog` or Settings): so no host loop needs a hook. `release()` comes from `dropLink()`/`endSession()` (deferred to the
@@ -189,7 +189,7 @@ Plan §5-§7; code `Classes/MpWorld.mm` (second half), `Terrain::setCellState`, 
   Q.6: a session that never completes a reconcile would grow the stamps forever, so past 65,536 `noteLocalEdit` also drops
   stamps older than 60 s (the next sweep waits for twice what survived, so a big fill stays linear).
   `--mp-reconcile=0` turns it off; an unsolicited burst (legacy push, a late reply) merges without reconcile.
-- **The join** (`MpLink_native.mm`, §7): Connecting → welcome → `CAPS:region` then ≤ 500 ms for `SPAWN` (no CAPS in 1 s =
+- **The join** (`MpLink_native.cpp`, §7): Connecting → welcome → `CAPS:region` then ≤ 500 ms for `SPAWN` (no CAPS in 1 s =
   the legacy push: no `REGION`) → `beginSession`, `setSpawn`, `SIGNQ`, `startRegions` → Syncing until `joinReady()` (the
   first reply applied, or its point unanswered 3 times) → `openSession` (Loading) → Play (`setPlaying`; an `[mp] mp.join`
   line with the phase times). A failure before Loading puts "Couldn't join: ..." on the menu status bar; in play (or once a
@@ -206,7 +206,7 @@ Plan §5-§7; code `Classes/MpWorld.mm` (second half), `Terrain::setCellState`, 
 **Noclip in a session (FM.2).** Allowed: noclip is purely client-side (`Player::noclipUpdate`, `docs/player-input-camera.md`), and a vanilla server only sees the positions we send, including ones inside blocks, with no way to object. Golden cubes are scenery in a session anyway, and noclip fires no portals.
 
 ## Edits out and in (Stage MP, MP.4)
-Plan §8-§10; code `MpWorld::intent*` (end of `Classes/MpWorld.mm`), `applyActionLive`, `Terrain::update`'s burn list,
+Plan §8-§10; code `MpWorld::intent*` (end of `Classes/MpWorld.cpp`), `applyActionLive`, `Terrain::update`'s burn list,
 `SignTool::answer`.
 - **Out, at the intent sites.** `Player::processInput`'s build (tap, jump-and-build, every sub-cell of the H.7 double brush),
   mine, burn and paint, and the portal exit's two clearing mines, call `MpWorld::intentBuild/Mine/Burn/Paint(x, z, y)` (Terrain
@@ -241,14 +241,14 @@ Plan §8-§10; code `MpWorld::intent*` (end of `Classes/MpWorld.mm`), `applyActi
 
 Other players arrive as `POS` / `VEL` / `POSVEL:name:type:…` lines (the server never echoes a sender's own), become side events
 (`MpSideEvent::Peer`), and `MpLink_native` hands them to `MpWorld::peerSeen` (skipping our own name). Engine order (y up), blocks/second.
-- **Peers** (`MpWorld.mm`, up to `MAX_REMOTE_BODIES` = 16, the rest not drawn): last report (`target`, `vel`) and a shown `pos`.
+- **Peers** (`MpWorld.cpp`, up to `MAX_REMOTE_BODIES` = 16, the rest not drawn): last report (`target`, `vel`) and a shown `pos`.
   Each frame (`update()`, play only) `pos` glides (rate 10/s) to `target + vel × age` (age capped at 0.6 s); farther than 12 blocks = snap.
   Yaw follows the horizontal velocity heading (the player's yaw convention), motion = jump if |vy| > 2, walk if h-speed² > 0.25.
   A peer is dropped by the server's `<name> has left.` (a `[Server]` chat line → `peerLeft`) or after 30 s without any line.
-- **Avatars**: `Model.mm` `REMOTE_BODY(i)` slots after the H.12 `PLAYER_BODY`, same rules (outside every `i<nguys` loop, never saved, never
+- **Avatars**: `Model.cpp` `REMOTE_BODY(i)` slots after the H.12 `PLAYER_BODY`, same rules (outside every `i<nguys` loop, never saved, never
   picked, `PoseBody` shared with `UpdatePlayerBody`). `characterType` 0..10 → one of the 7 shipped models (`MpWorld::avatarModel`:
   Green, Moof, Batty, Nergle, Stumpy, Charger, Stalker, then Green, Moof, Batty, Nergle; the meaning of vanilla's types is unsettled).
-  **A session now loads the creature models** (`World.mm`: `CREATURES_ON || MpWorld::active()` at load, unload and `RenderModels`) although
+  **A session now loads the creature models** (`World.cpp`: `CREATURES_ON || MpWorld::active()` at load, unload and `RenderModels`) although
   creatures stay off (E11); `PlayerBodyAvailable` accepts the same.
 - **Name tags**: `MpWorld::renderPeerTags` from `Hud::render` (before the status toast; not in camera mode or with the UI hidden): the head
   point is projected by hand from `Camera::viewPoints`, `eden_fov_degrees` and `P_ASPECT_RATIO` into the HUD point space; a `GLW::Label` in a
@@ -262,8 +262,8 @@ Other players arrive as `POS` / `VEL` / `POSVEL:name:type:…` lines (the server
 
 The home **Multiplayer** tile opens `Classes/ServerListMenu` (list, detail pane, Connecting window, error dialogs) and
 `Classes/ServerFormMenu` (Add/Edit server, Profile). They reach the network side only through the C seam
-`Classes/MpServers.h` (implemented by `native/src/seam/MpServers_native.mm` over `port/src/net/ServerList`, and by
-`MpLink_native.mm` for the join's progress), so `Classes/` still never includes `port/src/net`.
+`Classes/MpServers.h` (implemented by `port/src/seam/MpServers_native.cpp` over `port/src/net/ServerList`, and by
+`MpLink_native.cpp` for the join's progress), so `Classes/` still never includes `port/src/net`.
 - **`servers.txt`** sits in the documents root (`eden_platform_documents_root()`, so `--docs` isolates harness runs):
   header `emod-servers 1`, then `label<TAB>host<TAB>port<TAB>password<TAB>cache`; `cache` is `k=v;…` (keys `name`, `motd`,
   `flags`, `players`, `max`, `locked`, `seen`), values percent-escaped (`% ; = TAB CR LF`). Unknown keys and unparsable lines
@@ -275,7 +275,7 @@ The home **Multiplayer** tile opens `Classes/ServerListMenu` (list, detail pane,
   lazily started worker threads that only turn sockets into plain results (drained on the main thread by
   `eden_mp_servers_poll`); a generation counter drops results after a cancel. Probes run on open and on Refresh only, no
   polling. A good INFO overwrites the row's cache (`seen` = now); a blank label takes the INFO name.
-- **Profile**: `mp_name` / `mp_character` (0..6) in NSUserDefaults; the first join asks for a name first.
+- **Profile**: `mp_name` / `mp_character` (0..6) in the prefs store (`eden_prefs`, G.2b-1; NSUserDefaults before); the first join asks for a name first.
 - **Join**: `eden_mp_join` → `MpLink_native`, whose stages (`EDEN_MP_JOIN_*`: Connecting, Joining, Receiving world,
   Loading world + %, Playing, Failed + `EDEN_MP_ERR_*` + sentence) drive the Connecting window. A locked row without a
   remembered password prompts first (secure field, "Join and remember"); a wrong password marks the row locked and prompts
@@ -289,7 +289,7 @@ The home **Multiplayer** tile opens `Classes/ServerListMenu` (list, detail pane,
 
 ## Matchmakers (Stage MP, MP.8)
 
-- **Setting**: Experiments › Matchmakers, `mp_matchmakers`, the port's first **`KIND_TEXT`** row (`Settings_web.mm`: value in
+- **Setting**: Experiments › Matchmakers, `mp_matchmakers`, the port's first **`KIND_TEXT`** row (`Settings.cpp`: value in
   `g_text[]`, persisted as an NSString under the key, `eden_settings_text` / `eden_settings_set_text`; not a Console cvar, and
   `eden_settings_set` ignores it). Comma-separated `host[:port]`, default port **27020**, ≤ 8 addresses, ≤ 512 bytes, empty = off.
   `SettingsMenu` shows a button ("None, Add" / "2 addresses, Edit") that opens `GLDialog::prompt`; Save validates the whole list
@@ -311,7 +311,7 @@ The home **Multiplayer** tile opens `Classes/ServerListMenu` (list, detail pane,
 ## Chat (Stage MP, MP.7)
 
 - **`Classes/ChatFeed`** owns the chat: a 200-line scrollback (`Console::Line` kinds `K_CHAT` / `K_SERVER` / `K_SELF` / `K_CMD` / `K_NOTICE`),
-  the HUD feed, sending and the touch button. `MpLink_native.mm` feeds it (`addWire`: relayed chat as `name: text`, `[Server]` lines
+  the HUD feed, sending and the touch button. `MpLink_native.cpp` feeds it (`addWire`: relayed chat as `name: text`, `[Server]` lines
   with the welcome and MOTD kept in the scrollback); `MpWorld::beginSession` resets it.
 - **Sending**: `send()` strips control bytes, trims, cuts at 256 bytes (UTF-8-safe), and sends `MSG:text` through `MpWorld::link()`. Plain
   text is echoed at once as `You: text` and passes a client bucket (0.5/s, burst 5, the server's defaults); a refused line (`TOO_FAST`)
@@ -321,7 +321,7 @@ The home **Multiplayer** tile opens `Classes/ServerListMenu` (list, detail pane,
   pause gear, ≤ 45% of the safe width / 420 pt, the newest 5 lines (3 on a screen under 360 pt high), each on a dark 85% backing, fading
   after 10 s; `[Server]` amber, own lines lime. It claims no touches. It is not drawn while the Console screen is open.
 - **Panel**: the Console screen. In a session the rail has five tiles, **Chat · Players · Console · Variables · Help**, and `T`
-  (keybind `chat`), `/` (`chatCommand`; opens with `/` typed) and the touch chat button (right of the pause gear, lime dot for unseen
+  (keybind `chat`), `/` (`chatCommand`; opens with `/` typed) and the touch chat button (right of the pause gear; `ART_CHAT` art since 2026-10-27, dimmed while held; lime dot for unseen
   lines) open it on Chat via `eden_chat_open`; the `` ` `` key and the pause menu's Console button still open it on the Console tile. The
   Chat tab is the Console tab's scrollback + field with `ChatFeed`'s lines; Chat and Console keep separate drafts in the one field.
   Desktop closes the panel after a send (and on Enter in an empty field); touch keeps it open. On touch the field is prose (autocorrect
@@ -343,13 +343,13 @@ Moved from `port/CLAUDE.md` (2026-10-20). `port/src/net/`: `NetSock` (TCP, POSIX
   world/overlay is engine code (`Classes/MpWorld.*`); `MpSession::feedLine` drives the parser socket-free for
   `--mp-replay`, whose fixture `tools/fixtures/mp/replay-1.{lines,expect}` is recorded and independently
   checked by `tools/mp-replay.py` (`record` against a local edenserver, `expect --check` in Linux CI). MP.3b: the
-  join flow is `../native/src/seam/MpLink_native.mm` (an `MpWorld::Link`: MpWorld pumps it each frame from
+  join flow is `../port/src/seam/MpLink_native.cpp` (an `MpWorld::Link`: MpWorld pumps it each frame from
   `World::update`, so no host-loop hook; `--mp-join=HOST[:PORT]`, `eden_mp_join()`); `tools/mp-replay.py live` joins a
   local edenserver headless and checks the window hash; MP.4's `tools/mp-replay.py edits` runs two Emods (`--mp-edits`
   builder, `--mp-hold=FILE` watcher) and a recorder socket against one (converge, relayed once, no echo, the sign round-trips).
   MP.6: `ServerList` (servers.txt format, address/name rules, `INFO` probe, `ServerProber` worker pool), reached from
-  the screens via the C seam `Classes/MpServers.h` = `../native/src/seam/MpServers_native.mm`; Escape on the list is
-  `eden_server_list_back()` (Menu_web.mm); `--mp-mock` is the canned fixture. MP.8: `fetchMatchList`/`MatchFetcher`/`parseMatchmakers` in the same file, `eden_mp_matchmaker*` in the seam, and `Settings_web.mm`'s first `KIND_TEXT` row (`mp_matchmakers`; not a cvar). MP.7: `Classes/ChatFeed` + the Console screen's Chat/Players tiles; keybinds `chat` (T) and `chatCommand` (/) dispatch `eden_chat_open` (Menu_web.mm); the UI atlas grew to 512x512 (`ui-icons.py`).
+  the screens via the C seam `Classes/MpServers.h` = `../port/src/seam/MpServers_native.cpp`; Escape on the list is
+  `eden_server_list_back()` (Menu.cpp); `--mp-mock` is the canned fixture. MP.8: `fetchMatchList`/`MatchFetcher`/`parseMatchmakers` in the same file, `eden_mp_matchmaker*` in the seam, and `Settings.cpp`'s first `KIND_TEXT` row (`mp_matchmakers`; not a cvar). MP.7: `Classes/ChatFeed` + the Console screen's Chat/Players tiles; keybinds `chat` (T) and `chatCommand` (/) dispatch `eden_chat_open` (Menu.cpp); the UI atlas grew to 512x512 (`ui-icons.py`).
 
 ## Client files (stock; seam-excluded on the port)
 - `Classes/ShareUtil.mm` — endpoint knowledge and orchestration. Current endpoints
@@ -370,7 +370,7 @@ Moved from `port/CLAUDE.md` (2026-10-20). `port/src/net/`: `NetSock` (TCP, POSIX
 - `Classes/FileUpload.mm` — multipart/form-data POST of the world file **and** its
   `.png` preview in one request; same delegate pattern.
 - `Classes/md5.c` — hashes the preview screenshot; the hash is stored in the world
-  header so the server can pair/verify world↔preview. (Seam-excluded on the port; `port/src/shim/foundation/md5_web.mm` replaces it.)
+  header so the server can pair/verify world↔preview. (Seam-excluded on the port; `port/src/shim/foundation/md5.cpp` replaces it.)
 - `Classes/FileArchive.mm` — zlib world compression; **fully commented out** in this
   version. Uploads are still gzipped: `FileUpload.mm` calls `compressFile` itself (S.5c).
 
@@ -382,7 +382,7 @@ Moved from `port/CLAUDE.md` (2026-10-20). `port/src/net/`: `NetSock` (TCP, POSIX
   normal local worlds (stock 2.1.1 reads only 64z, so later 256z worlds were height-truncated;
   the port reads 256z).
   Previews download to `Documents/temp`.
-- **Port (`Classes/WorldBrowser.mm`):** converts while inflating to `<id>.emod` (above);
+- **Port (`Classes/WorldBrowser.cpp`):** converts while inflating to `<id>.emod` (above);
   the plan was `WORKING/emod-format-implementation-plan-2026-10-03.md` §4 *Downloads and imports*.
 
 ## Server side (not in this repo)

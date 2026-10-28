@@ -10,8 +10,8 @@
 #define Eden_Geometry_h
 
 
-#import <OpenGLES/ES1/gl.h>
-#import <OpenGLES/ES1/glext.h>
+#include <OpenGLES/ES1/gl.h>
+#include <OpenGLES/ES1/glext.h>
 #define INDICES_MAX 32768
 
 

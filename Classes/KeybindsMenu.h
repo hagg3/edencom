@@ -4,7 +4,7 @@
 //
 //  The GL keybinds list (Phase N Stage 5.3, WORKING/phase-n-stage3plus-plan-2026-09-05.md): every
 //  rebindable action with its current key, drawn with the widget kit (Classes/GLWidgets.h) and
-//  reading the Stage 5.2 keybind model (the KEYBINDS section of port/src/seam/Settings_web.mm, a
+//  reading the Stage 5.2 keybind model (the KEYBINDS section of port/src/seam/Settings.cpp, a
 //  SHARED seam file — so this list and the web build's Keys tab are two front-ends over one table).
 //
 //  U.4 (WORKING/ui-rework-plan-2026-10-11.md): it is no longer a screen. It is the CONTENT of
@@ -23,7 +23,7 @@
 #ifndef Eden_KeybindsMenu_h
 #define Eden_KeybindsMenu_h
 
-#import "GLWidgets.h"
+#include "GLWidgets.h"
 #include <string>
 #include <vector>
 

@@ -10,7 +10,7 @@
 > + `recoverInterruptedSave`, and `--save-inplace`. **Sections below that describe the `.eden` load flow, the
 > two save strategies, the journal and `convertFile` are historical** -- they document stock/early-fork
 > behaviour that no longer exists in `Classes/` (`git show 35ecf78:Classes/FileManager.mm` has it). What stays
-> in `FileManager.mm` for `.eden` is read-only: `getName`/header peeks for the world list, `probeWorldHeight`,
+> in `FileManager.cpp` for `.eden` is read-only: `getName`/header peeks for the world list, `probeWorldHeight`,
 > the converter's source side, and the directory/`readColumn` machinery that `writeGenToDisk` (offline worldgen)
 > and the bundled-map reader still use. `convertWorldTo64` routes an `.emod` to
 > `convertEmodTo64` (X.9, 2026-10-12): Legacy64z export to a scratch `.eden`, `ImportJob` with upgrade off, one atomic replace.
@@ -22,12 +22,31 @@ How world files are opened, streamed, saved and migrated at runtime. The on-disk
 format itself is specified in [eden-file-format.md](eden-file-format.md).
 
 ## Important files & types
-- `Classes/FileManager.mm/.h` — everything: `loadWorld` (routes to `loadEmodWorld`), `saveWorld` /
+- `Classes/FileManager.cpp/.h` — everything: `loadWorld` (routes to `loadEmodWorld`), `saveWorld` /
   `saveWorldKeepDynamics` (both end in `saveEmodWorld`), `readColumn` / `readColumnDeferred`,
   `convertStep` (convert-on-play), `renameWorld`/`deleteWorld`, the read-only `.eden` directory
   machinery, plus the offline `saveGenColumn`/`writeGenToDisk` used by the world generator.
   (`saveColumn` and `convertFile` were deleted with S.8.)
-- `Classes/FileManagerHelper.mm` — read-only access to the **bundled** default world (its own
+  **Since G.2b-2 (2026-10-24) `FileManager.h` is plain C++:** every name/path parameter is a
+  `const std::string&`, `documents` is a `std::string`, and a `std::string` return of `""` means what
+  `nil` meant (`pairedEmodFor`, `originalOf`, `conversionError`, `pendingOriginal`; `getName` for a
+  name that isn't valid UTF-8). The column readers take an `EdenFile*` (`port/src/shim/foundation/eden_fs.h`)
+  instead of an `NSFileHandle*`; null still means "no `.eden` to read from".
+  **Since G.2b-4 (2026-10-24) both files are plain C++ (`.cpp`), Foundation-free:** paths are
+  `std::string`, directory work is `eden_fs_*` (`eden_fs_list` is sorted, where Foundation's order was
+  unspecified), the bundle lookup is `eden_bundle_path` (`""` on a miss) and every `.eden` read/write is
+  an `EdenFile` (null on a missing file, no backups: D5). Rules the port kept, so the bytes did not move:
+  the header's `name`/`hash` are written with `eden_cstr_copy(…, 49/33, …)` (`getCString:maxLength:`'s
+  empty-on-overflow, D4); a display name or hash with no UTF-8 form is treated as the old `nil` (`fm_ns`:
+  a nil display name leaves the header's name alone, a nil hash writes an empty one); the static
+  `.eden` handle's calls go through `fh_*` wrappers that are no-ops on null, as messages to a nil
+  handle were; a converted world's `.png` is moved only if the target name is free (Apple's
+  `moveItemAtPath:` never replaced). `loadGenFromDisk` (dead, `JUST_TERRAIN_GEN` 0) keeps its stock
+  UIImage/CoreGraphics body under `#if 0`. Proof: the save/format gates plus a byte A/B against the
+  pre-change binary (`.eden` → `.emod` conversion both answers, `.emod` → `.eden` export own and
+  Legacy64z: identical; engine saves identical up to the creature records, which vary between two
+  runs of one binary).
+- `Classes/FileManagerHelper.cpp` — read-only access to the **bundled** default world (its own
   state; the comment at the top warns the identically-named statics refer to the *default*
   world, not the active one). **Since S.6 (2026-10-10) the bundled map is `Eden.emod`**
   (repo root; 11.8 MB, 32,400 columns, 4 bands, zstd-19, baked from `Eden.eden` by
@@ -40,10 +59,10 @@ format itself is specified in [eden-file-format.md](eden-file-format.md).
   `Eden.eden.gz` and the 52.5 MiB `<documents>/Eden.eden.cache` it inflated are gone; `fmh_init()`
   deletes a leftover cache once. Gate: `eden_native --bundled-map-selftest` decodes all columns both
   ways through the engine (`fmh_selftestCompare`).
-- `Classes/hashmap.mm` — int-keyed hashmap holding `ColumnIndex*` records.
-- File-scope statics in `FileManager.mm`: `saveFile` (NSFileHandle), `sfh` (in-memory
+- `Classes/hashmap.cpp` — int-keyed hashmap holding `ColumnIndex*` records.
+- File-scope statics in `FileManager.cpp`: `saveFile` (an `EdenFile*` since G.2b-4), `sfh` (in-memory
   header), `indexes` (directory hashmap), `cur_dir_offset`, `file_version`,
-  `imgHash`, and since Stage S/D `emodStore` (the open `EdenWorldStore`), `emodHeader`, `worldTrailer`.
+  `imgHash` (a `std::string`, `""` = none), and since Stage S/D `emodStore` (the open `EdenWorldStore`), `emodHeader`, `worldTrailer`.
   **The FileManager is effectively a singleton with global mutable state**
   — two worlds can never be open at once.
 
@@ -87,7 +106,7 @@ Notes:
   same helper the streamer uses). Since B.5b-1a the streamer moves it on every window shift, not
   only on a bulk reload (docs/world-and-terrain.md "Streaming").
 
-## Column streaming — `readColumn(cx, cz, fileHandle)`
+## Column streaming — `readColumn(cx, cz, file)`
 
 Resolution order for a requested column:
 1. **Directory hit** → seek `chunk_offset`, read 4 chunks of raw type+color bytes
@@ -102,7 +121,7 @@ Resolution order for a requested column:
 
 Called from two places: initial load (the window loop in `loadWorld`) and the per-frame
 streaming check in `Terrain::prepareAndLoadGeometry` (which opens a fresh read-only
-NSFileHandle each streaming event). An `.emod` world reads from the store instead of a
+`EdenFile` each streaming event; an `NSFileHandle` before G.2b-2). An `.emod` world reads from the store instead of a
 directory hit ("`.emod` worlds" below); the fall-through to bundle/generator is the same.
 
 ## Save flow — `FileManager::saveWorld(warpPos)`
@@ -244,7 +263,7 @@ from the directory alone, with no extra I/O:
   with no further callback.
 
 #### Save-on-background — the ports' addition (Phase N Stage 4.2, 2026-09-06)
-`eden_app_will_background()` (`port/src/seam/AppLifecycle_web.mm`, a portable seam file the native
+`eden_app_will_background()` (`port/src/seam/AppLifecycle.cpp`, a portable seam file the native
 build compiles unchanged) is the one entry point every host calls when the app is going away. It
 owns the "is it safe?" policy, so no host re-implements it:
 
@@ -262,7 +281,7 @@ Two things about this that are easy to get wrong:
   before `game_mode == GAME_MODE_PLAY` has already been established.
 - **A background save clears dynamics.** `saveWorld()` opens with `terrain->endDynamics(TRUE)`
   (liquids, burn list, all particle effects), so backgrounding stops flowing water and puts fires
-  out — exactly as the in-game Save button already does (the HUD Save handler in `Hud.mm`). Accepted, not overlooked.
+  out — exactly as the in-game Save button already does (the HUD Save handler in `Hud.cpp`). Accepted, not overlooked.
 
 Host wiring (native): `EdenAppDelegate::onPageHide()`, driven both by `SDL_EVENT_QUIT` from the poll loop (which until
 Stage 4.2 meant closing the window threw away everything since the last streaming boundary) and by
@@ -458,16 +477,16 @@ more; convert-on-play reports progress through `convertStep`'s percent. A 1.x fi
 ## Where "Documents" is, and the two port hooks (Phase N Stage 2, 2026-09-05)
 `FileManager`'s constructor and `saveWorld` each grew one NULL-by-default hook, declared in
 `Classes/FileManager.h`. With both NULL — the stock path — behaviour is byte-for-byte what it was.
-The native entry point installs both (`eden_main_native.cpp`).
+The native entry point installs both (`port/src/harness/`).
 
-- **`eden_documents_root_hook`** returns the save directory. NULL keeps the original
-  `NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)` +
-  `objectAtIndex:0` lookup (the retired web build used that branch: its Foundation shim answered the
-  call with the port's own root). The native build installs it and points it at `~/Library/Application Support/Emod` on macOS, `%APPDATA%\Emod\
+- **`eden_documents_root_hook`** returns the save directory. NULL falls back to
+  `eden_platform_documents_root()` (G.2b-4; before that, the stock
+  `NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)` + `objectAtIndex:0`
+  lookup, which the retired web build's Foundation shim answered with that same root). The native build installs it and points it at `~/Library/Application Support/Emod` on macOS, `%APPDATA%\Emod\
   Documents` on Windows, `$XDG_DATA_HOME/emod/Documents` on Linux (**Emod, not Eden** — this is a
   community fork and must not share a directory with the shipped game; it did until 2026-09-06,
   and on the development machine another application was writing in the same folder. The rule and
-  the one-time migration are in `native/src/eden_app_identity.h`) — and, since Phase N Stage 4.1
+  the one-time migration are in `port/src/eden_app_identity.h`) — and, since Phase N Stage 4.1
   (2026-09-06), **`<app container>/Documents` on iOS**. That last one is the opposite of the macOS
   choice on purpose: the argument for Application Support is that `~/Documents` is the *user's*
   folder and a world file is the app's own store, and inside an iOS sandbox `Documents` IS the
@@ -475,8 +494,8 @@ The native entry point installs both (`eden_main_native.cpp`).
   reach (`UIFileSharingEnabled` + `LSSupportsOpeningDocumentsInPlace` in `native/ios/
   Info.plist.in`), i.e. the only way a `.eden` world gets off the device — and unlike
   `Library/Caches` it is backed up and never purged.
-  The else branch is kept as the stock path; why it was once load-bearing for the web build's
-  Foundation shim is in the comment above it in `FileManager.mm`.
+  Why the else branch was once load-bearing for the web build's Foundation shim is in the comment
+  above it in `FileManager.cpp`; since G.2b-4 it asks the seam directly.
 - **`eden_save_backup_hook`** — *dormant since S.8 (2026-10-11):* native still installs it, but its
   only call site was the deleted `.eden` branch of `saveWorld(Vector)`, so nothing calls it and an
   `.emod` save makes no `.bak` (the append-only commit is the protection). As built: it ran at the top
@@ -488,8 +507,8 @@ The native entry point installs both (`eden_main_native.cpp`).
   implementation, `port/src/shim/foundation/save_backup.cpp`, which is where the rules live
   (skip a missing/zero-length source, skip at or above `g_save_inplace_threshold`, delete a
   partial `.bak`, skip if Settings › Saves › "Keep a save backup" (`save_backup` in `kSettings[]`,
-  `Settings_web.mm`) is off). The Linux/Windows Foundation shim's `NSFileHandle` writer still calls
-  those rules, but the `.emod` store writes through `FILE*`, not `NSFileHandle`, so the toggle has no
+  `Settings.cpp`) is off). (The Linux/Windows Foundation shim's `NSFileHandle` writer also called
+  them until G.2b-4/G.3 removed it.) The `.emod` store writes through `FILE*`, not `NSFileHandle`, so the toggle has no
   effect on a world save today. The `.bak` was what `eden_load_restore_backup()` (web recovery
   dialog) restored.
 
@@ -497,7 +516,7 @@ Why the native default is not `~/Documents`: macOS will not let an unsigned comm
 write there and **redirects the writes into `~/Library/Containers/<UUID>/Data/Documents` with no
 error at any layer** — so every pre-Stage-2 native save landed in an opaque directory the OS may
 discard, while the process cheerfully printed `~/Documents` as its destination. The native entry
-point migrates those in once (`migrate_legacy_saves`, `native/src/entry/eden_main_native.cpp`).
+point migrates those in once (`migrate_legacy_saves`, `port/src/harness/`).
 
 ## Common pitfalls
 - **Global statics**: stock `sfh` sometimes pointed into an autoreleased NSData and sometimes into a
@@ -522,10 +541,10 @@ point migrates those in once (`migrate_legacy_saves`, `native/src/entry/eden_mai
   strategies" above.)
 - **`FileManager::loadWorld()` bailing out early (a corrupt/truncated header) does
   NOT, by itself, stop `World::loadWorld()`'s caller from proceeding as if the load
-  had succeeded.** `loadWorldThread`/`World::loadWorld` (`World.mm`) unconditionally
+  had succeeded.** `loadWorldThread`/`World::loadWorld` (`World.cpp`) unconditionally
   advance `doneLoading` 1→2 and flip `game_mode` to `GAME_MODE_PLAY` once the loader
   thread returns, whether or not it actually populated `Terrain`. The port's fix: `FileManager`
-  reports a refused load through `eden_report_load_failure` (`port/src/seam/LoadFailure_web.mm`),
+  reports a refused load through `eden_report_load_failure` (`port/src/seam/LoadFailure.cpp`),
   and `World::update` checks `eden_load_failed()` at the `doneLoading==2` transition and stays on
   the menu, or the engine would render a `Terrain` that was cleared-but-never-repopulated
   (reproducibly crashed within a frame or two). On native the refusal is silent: the recovery

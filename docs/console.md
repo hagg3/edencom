@@ -113,7 +113,7 @@ A feature registers from its own init path with a plain call. **Settings and key
 themselves** (`Console::init()` walks `eden_settings_*` and `eden_keybind_*`): every `kSettings[]` row is
 `lower(group).key` (`video.fov`, `saves.autosave`), the rows `eden_settings_native_hidden` hides are
 `CF_DIAG`, every non-hidden keybind is `keys.<action>` (value = the key's label: `Space`, `F9`, `` ` ``,
-`none`). A new Settings row is a cvar with no console code. `eden_settings_apply(i)` (Settings_web.mm)
+`none`). A new Settings row is a cvar with no console code. `eden_settings_apply(i)` (Settings.cpp)
 answers "when does it apply": by key, 1 for `render_radius`, 2 for `upgrade_256z`, else 0.
 `world.name` (live: updates the node the next save reads **and**, with an `.emod` open, appends the
 header through the open store), `world.gold` (0..999) are writable; `world.file/seed/height/type/signs/
@@ -128,13 +128,13 @@ runs as `reset all yes`: there is no dialog from a typed line), `clear`, `histor
 registry until a `--live-cmds` session registers them (C.5, below); `cmdprobe` and `bench.save` stay legacy
 `--live-cmds` verbs (`stats` covers the first).
 
-**Harness (`--live-cmds`, C.5).** `native/src/seam/LiveCommands_native.mm` keeps its legacy verbs byte for byte
+**Harness (`--live-cmds`, C.5).** `port/src/seam/LiveCommands_native.cpp` keeps its legacy verbs byte for byte
 (`set` absolute and refusal-free, `tp`, `look`, `wait`, `rate`, `open`, `save`, `say`, `press`, `cells`,
 `cmdprobe`, `cmdtrace`, `quit`; Q.5 added `photo`, the F2 screenshot) and adds `/<line>`: a console line run through `Console::run` with the anchor
 fixed at `=0 =0 =0` (relative = absolute). Output is mirrored to stdout as `[live] <text>` (errors
 `[live] ! <text>`). On the first `/` line it registers two harness-only `CF_DIAG` verbs, `cells X Y Z X2 Y2 Z2`
 and `quit`. Gate 6: `port/tools/live-cmds-gate.sh` replays `port/tools/fixtures/live-cmds/gate.txt` under the
-dummy video driver and diffs `expected.txt` (Linux, Windows, macOS legs). `DevConsole_web.mm` is harness
+dummy video driver and diffs `expected.txt` (Linux, Windows, macOS legs). `DevConsole.cpp` is harness
 plumbing only: `eden_console_spawn`, `eden_console_world_stats` and the `eden_debug_bench_column_*` set are gone.
 
 `Console::run(line)` records history, picks the anchor (`anchorIsFixed()`: the cell set by `anchor`, else
@@ -163,7 +163,7 @@ mode leaves PLAY. State lives on `Menu` (`menu->console`, `menu->showconsole`), 
 `console->update(etime)` first in the play step (a submitted line executes there, in the input phase,
 like a build tap), then runs the whole play step. The screen claims every touch (`usage_id` 17), so
 the HUD, joystick and player see none and every `hud->` flag re-derives to false. `eden_ui_wants_cursor`
-is 1 while it is open (the mouse is released), and `eden_ui_captures_keys()` (Menu_web.mm) makes
+is 1 while it is open (the mouse is released), and `eden_ui_captures_keys()` (Menu.cpp) makes
 `Input_native.cpp` drop every action key except `menu` and `console`, so a blurred field can never walk
 the player. A creature can still hurt a player who is typing (no auto-pause; revisit at the T look).
 
@@ -205,7 +205,7 @@ reach under the keyboard; it is not the player's collapse and ends with the keyb
 **code field** (`TextField::setCodeMode`): text input starts through `eden_text_input_start_code()`
 (no autocorrect, no autocapitalisation), and a hardware keyboard's **Tab / Up / Down** arrive as the
 bytes `EDEN_TEXT_KEY_TAB/UP/DOWN` and do what the buttons do (`TextField::takeKey()`; a field not in code
-mode drops them). Only the iOS observer reports a keyboard (`native/src/seam/IOSKeyboard_native.mm`; a
+mode drops them). Only the iOS observer reports a keyboard (`port/src/seam/IOSKeyboard_native.mm`; a
 floating/split iPad keyboard reads 0); desktops and the harness answer 0 unless
 `eden_native_debug_set_keyboard_top()` fakes one (`--ui-selftest`, the `console-keyboard[-tall]` shots).
 
@@ -216,7 +216,7 @@ registry is a `std::deque` (a `std::vector` of them dangled every short name aft
 
 ## Player-facing text (C.9, C.10)
 
-`native/src/seam/PlayerReadme_native.{h,cpp}` holds the player's `README.txt` (written into the documents directory
+`port/src/seam/PlayerReadme_native.{h,cpp}` holds the player's `README.txt` (written into the documents directory
 at startup by `eden_main_after_args`, never in a harness mode). Its first line is a version (`Emod README v1`): bump it
 whenever the text changes; the file is rewritten only when that line differs, so a player's edits to a current file
 stay. [console-reference.md](console-reference.md) is the commands reference; its verb and variable tables come from

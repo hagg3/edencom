@@ -80,7 +80,7 @@ extern int CAMERA_VIEW;
 #define CHUNKS_PER_COLUMN_MAX (T_HEIGHT_MAX/CHUNK_SIZE)
 
 // Stage S: the fork's own world container. Named "Emod", not "Eden", by the identity rule in
-// native/src/eden_app_identity.h -- the shipped game lists every `*.eden` and would read an `.emod`
+// port/src/eden_app_identity.h -- the shipped game lists every `*.eden` and would read an `.emod`
 // header as a garbage version and rewrite it in place, so it must never carry that extension.
 #define EMOD_WORLD_EXTENSION ".emod"
 #define MAX_CREATURES_SAVED_MAX 400

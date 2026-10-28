@@ -31,12 +31,18 @@
 #ifndef Eden_GLWidgets_h
 #define Eden_GLWidgets_h
 
-#import "Texture2D.h"
+#include "Texture2D.h"
 #include "UIIcons.h"
 #include <string>
 #include <vector>
 
 namespace GLW {
+
+// --- screen bracket (G.5b-1) ---------------------------------------------------------------
+// What every full-screen kit screen opened with (six copies before): the point-space ortho over an
+// identity modelview, no depth test, alpha blend. end2D restores depth and blend.
+void begin2D();
+void end2D();
 
 // --- scale ---------------------------------------------------------------------------------
 // The kit's answer to the CSS `--u` unit: every dimension is authored in mockup pixels against
@@ -113,6 +119,8 @@ public:
     // (eden_text_raster_measure), or the kAvgGlyph estimate where it has no font (headless web).
     float width()  const { return m_width; }
     float lineHeight() const;
+    // FT.10: line pitch in ems (default 1.28). Set before set(); a text field's Rubik is tighter.
+    void setLead(float em) { m_lead = em; }
 
     // Anchors, all point space: `x,yTop` is the top-left of the text block (lines run downward);
     // drawCentered centres the block horizontally on cx with its top at yTop.
@@ -134,6 +142,7 @@ private:
     float m_boxW;                             // width the alignment was resolved against
     Face  m_face;
     float m_width;
+    float m_lead;
 };
 
 // --- Toast (N.5.11) ------------------------------------------------------------------------
@@ -189,6 +198,8 @@ public:
     // is that width, for a caller that right-aligns before it calls setRect().
     void sizeToFit(float padX = 9.0f);
     float fitWidth() const;
+    // FT.9: cap a shrink-wrapped button's width; the label steps its size down (to 70%) to fit. 0 = none.
+    void setMaxWidth(float w);
     // U.1: an optional leading icon (UIIcons.h; -1 = none), 16u, gap 5u, tinted with the label.
     // With no label the icon is centred and sized to the button (a tile).
     void setIcon(int id)     { m_icon = id; }
@@ -222,6 +233,7 @@ private:
     Tone        m_tone;
     int         m_icon;
     float       m_fitPad;                     // < 0: fixed width (the default); else sizeToFit's padX
+    float       m_maxW;                       // sizeToFit's width cap (0 = none)
 };
 
 // The design system's 44pt touch floor (`pointer: coarse` in the CSS). It raises the HIT BOX,
@@ -646,6 +658,9 @@ public:
     // Bytes, not characters: the limit that matters is the storage it lands in
     // (WorldFileHeader::name is char[50]). A multi-byte character is never split.
     void setMaxBytes(int n)  { m_maxBytes = n; }
+    // FT.3: stock's world-name rule -- typed/pasted input keeps only A-Z a-z 0-9 space '. setText() is
+    // not filtered, so an existing name with other characters still shows and can be kept.
+    void setWorldNameOnly(bool b) { m_nameOnly = b; }
     // C.4: a code field (the Console) starts text input through eden_text_input_start_code() --
     // no autocorrect, no autocapitalisation -- and keeps the Tab / Up / Down key bytes for the
     // screen (takeKey()). Other fields keep the defaults and drop those bytes.
@@ -686,6 +701,7 @@ private:
     CGRect      m_rect, m_keep;
     float       m_pt;
     int         m_maxBytes;
+    bool        m_nameOnly = false;
     int         m_lines;
     std::string m_text, m_placeholder;
     Label       m_label;
@@ -705,7 +721,7 @@ void drawVersionTag();
 
 }  // namespace GLW
 
-// The platform text-input seam (N.4.5). Native: native/src/seam/Input_native.cpp (SDL text input,
+// The platform text-input seam (N.4.5). Native: port/src/seam/Input_native.cpp (SDL text input,
 // the system keyboard on iOS). Web: stubs in web-port-final:web/src/seam/seam_link_stubs.mm returning 0 — the
 // DOM owns text entry there until Stage 5.10, so a GL screen must check available() before
 // offering an editable field. The rect is POINT space, y up, and only positions the IME / keyboard.
@@ -723,10 +739,10 @@ void drawVersionTag();
 extern "C" {
 // The raster seam's face switch (2026-10-05): 0 = body, 1 = display (Jersey 10). Sticky; Label
 // sets it around its own rasters and puts it back to 0. Native: TextRaster_native.cpp (bundled
-// Jersey10-Regular.ttf via stb_truetype, falling back to the body face); web: Texture2D_web.mm.
+// Jersey10-Regular.ttf via stb_truetype, falling back to the body face); web: Texture2D.cpp.
 void eden_text_raster_set_face(int face);
 // N.5.11: the advance width of `utf8` in pixels at `fontPx`, in the face set above; 0 = can't
-// measure (no font / no canvas). Native: TextRaster_native.cpp; web: Texture2D_web.mm.
+// measure (no font / no canvas). Native: TextRaster_native.cpp; web: Texture2D.cpp.
 float eden_text_raster_measure(const char* utf8, float fontPx);
 int  eden_text_input_available(void);
 void eden_text_input_start(float x, float y, float w, float h);
@@ -737,6 +753,7 @@ int  eden_text_input_take(char* buf, int cap);
 // eden_text_input_start(); zero-size = only the field. iOS folds it into the text-input area SDL
 // lifts the view above the keyboard by; desktops ignore it so the IME still anchors on the field.
 void eden_text_input_keep_visible(float x, float y, float w, float h);
+void eden_text_input_clamp_keep(float fy, float fh, float* ky, float* kh);   // FT.6
 // C.4: eden_text_input_start() for code -- the system keyboard comes up with autocorrect and
 // autocapitalisation off (SDL_StartTextInputWithProperties). Desktops: the same as start().
 void eden_text_input_start_code(float x, float y, float w, float h);

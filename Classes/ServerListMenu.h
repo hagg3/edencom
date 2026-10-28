@@ -15,8 +15,8 @@
 #ifndef Eden_ServerListMenu_h
 #define Eden_ServerListMenu_h
 
-#import "GLWidgets.h"
-#import "MpServers.h"
+#include "GLWidgets.h"
+#include "MpServers.h"
 #include <string>
 #include <vector>
 
