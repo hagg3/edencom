@@ -14,6 +14,9 @@
 // release path is unchanged. <stdlib.h> comes first so its own declaration is not renamed.
 #include <stdlib.h>
 #include <stdint.h>
+// memcpy/memset/strlen...: engine files got <string.h> transitively from the deleted ES 1.1 shim and PVRT
+// headers (G.5b-7, LG.7). Apple's libc++ still drags it in, Linux libstdc++ does not (CI run 40735042491).
+#include <string.h>
 #ifdef __cplusplus
 extern "C"
 #endif
