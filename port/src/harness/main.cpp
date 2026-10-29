@@ -643,6 +643,8 @@ static int parse_one_arg(const char* a) {
         else if (starts_with(a, "--bundle="))         g_opt.bundle = a + 9;
         else if (starts_with(a, "--live-cmds="))      g_opt.liveCmds = a + 12;
         else if (starts_with(a, "--render-scale="))   g_opt.renderScalePct = atoi(a + 15);
+        else if (starts_with(a, "--power-log="))      power_log_set(atof(a + 12));
+        else if (starts_with(a, "--power-exp="))      power_parse_exp(a + 12);
         else if (!std::strcmp(a, "--diag-clear"))     eden_native_gl_set_diag_clear(1);
         else if (!std::strcmp(a, "--scale-probe"))    g_opt.mode = "scale-probe";
         else if (!std::strcmp(a, "--preset-probe"))   g_opt.mode = "preset-probe";
@@ -991,8 +993,22 @@ static int eden_main_after_args(int argc, char** argv) {
         double nextFrameMs = 0.0;
         if (!g_opt.liveCmds.empty()) eden_live_commands_init(g_opt.liveCmds.c_str());
         if (!g_opt.mpJoin.empty()) mp_join_from_args();   // MP.3b: straight from the main menu to a server
+        // FT.15a --power-exp levers (all off by default): audio=off, menu30, swap2, pace=vsync/sleep.
+        if (eden_power_exp(EDEN_PEXP_AUDIO_OFF)) eden_native_audio_set_enabled(0);
+        float dispHz = 60.0f;
+        if (const SDL_DisplayMode* dm = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(eden_native_gl_window())))
+            if (dm->refresh_rate > 1.0f) dispHz = dm->refresh_rate;
+        int swapNow = 1;
         while (g_running) {
-            const int capFps = eden_get_fps_cap();
+            power_frame();
+            int capFps = eden_get_fps_cap();
+            if (eden_power_exp(EDEN_PEXP_MENU30) && power_game_mode() != GAME_MODE_PLAY && (capFps == 0 || capFps > 30))
+                capFps = 30;
+            // swap2: a 30 cap is held by the swap interval (vsync/2) instead of a sleep.
+            const int wantSwap = (eden_power_exp(EDEN_PEXP_SWAP2) && capFps == 30 && dispHz > 55.0f) ? 2 : 1;
+            if (wantSwap != swapNow) { SDL_GL_SetSwapInterval(wantSwap); swapNow = wantSwap; }
+            const bool skipSleep = swapNow == 2 ||
+                (eden_power_exp(EDEN_PEXP_PACE_VSYNC) && (float)capFps >= dispHz - 0.5f);
             if (capFps > 0) {
                 const double interval = 1000.0 / (double)capFps;
                 const double now = eden_platform_now_ms();
@@ -1001,7 +1017,10 @@ static int eden_main_after_args(int argc, char** argv) {
                 if (nextFrameMs == 0.0 || now - nextFrameMs > interval || nextFrameMs - now > interval)
                     nextFrameMs = now;
                 const double wait = nextFrameMs - now - kPaceSlackMs;
-                if (wait > 0.0) SDL_DelayPrecise((Uint64)(wait * 1e6));
+                if (wait > 0.0 && !skipSleep) {
+                    if (eden_power_exp(EDEN_PEXP_PACE_SLEEP)) SDL_DelayNS((Uint64)(wait * 1e6));
+                    else SDL_DelayPrecise((Uint64)(wait * 1e6));
+                }
                 nextFrameMs += interval;
             } else {
                 nextFrameMs = 0.0;

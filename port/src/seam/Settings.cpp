@@ -170,7 +170,7 @@ static const Setting kSettings[] = {
   // after going back to 100%, and bought nothing (the device is not fill-bound). max 2 makes
   // eden_settings_set() clamp to 100%; eden_get_render_scale_pct() reads a stored 3 as 100%.
   // Hidden and read as 100% from N.4.12 until FT.16 (2026-10-28) replaced the blit with a quad.
-  // The default is per device: 50% on Air 2-class hardware (eden_ios_air2_class), 100% elsewhere.
+  // The default is per device: 75% on Air 2-class hardware (eden_ios_air2_class), 100% elsewhere.
   { "render_scale",      "Render scale",      "Video",     KIND_ENUM,   -1,             0,   2,   1,   2,  NULL, "50%,75%,100%" },
 #else
   { "render_scale",      "Render scale",      "Video",     KIND_ENUM,   -1,             0,   3,   1,   2,  NULL, "50%,75%,100%,125%" },
@@ -364,9 +364,9 @@ void eden_play_switch_toggle_sound(int on) {
 extern "C" void eden_settings_set(int i, float v);   // defined further down in this file
 
 #if defined(EDEN_PLATFORM_IOS)
-// FT.16 (plan: WORKING/thermal-power-plan-2026-10-28.md §6, user decision "match 2.1 by default"):
-// A8/A8X/A9-era devices draw the 3D pass at 50%, about stock 2.1's 1024x768 on an iPad (Emod drew
-// 4.0x those pixels at 100%). By hw.machine: iPad5,x (Air 2, mini 4), iPad6,11/12 (iPad 5th gen),
+// FT.16 (plan: WORKING/thermal-power-plan-2026-10-28.md §6): A8/A8X/A9-era devices draw the 3D pass
+// at 75% (2.25x stock 2.1's 1024x768 pixels on an iPad; 100% is 4.0x). The plan's "match 2.1" seeded
+// 50%; after Round 0 on the Air 2 (2026-10-28) the user found 50% too soft and chose 75%. By hw.machine: iPad5,x (Air 2, mini 4), iPad6,11/12 (iPad 5th gen),
 // iPhone7,x (6/6 Plus), iPhone8,x (6s/6s Plus/SE). The A9X iPad Pros (iPad6,3-8) are not on the list.
 #include <sys/sysctl.h>
 static int eden_ios_air2_class(void) {
@@ -381,14 +381,14 @@ static int eden_ios_air2_class(void) {
         std::strncmp(m, "iPhone8,", 8) == 0)
         cached = 1;
     std::fprintf(stderr, "[eden-settings] device %s: %s render scale default\n", m,
-                 cached ? "Air 2-class, 50%" : "100%");
+                 cached ? "Air 2-class, 75%" : "100%");
     return cached;
 }
 #endif
-// The device's render_scale default, as an option index (0 = 50%, 2 = 100%).
+// The device's render_scale default, as an option index (0 = 50%, 1 = 75%, 2 = 100%).
 static int eden_device_render_scale_default(int profileIndex) {
 #if defined(EDEN_PLATFORM_IOS)
-    if (eden_ios_air2_class()) return 0;
+    if (eden_ios_air2_class()) return 1;
 #endif
     return profileIndex;
 }

@@ -443,6 +443,7 @@ static bool   g_scene_diag_present = false;   // log the binding at the next pre
 
 void eden_native_gl_set_diag_clear(int on) { g_diag_clear = (on != 0); }
 
+extern "C" int eden_power_exp(int bit);   // power.cpp (FT.15a)
 extern "C" int eden_get_render_scale_pct(void);   // Settings.cpp (both targets compile it)
 
 static void eden_scene_fbo_release(void) {
@@ -482,6 +483,7 @@ void eden_scene_pass_begin(void) {
         // Back at 100%: give the memory back rather than keep an idle second framebuffer.
         if (g_scene_fbo) eden_scene_fbo_release();
         if (g_diag_clear) rgl::clear(true, false, kDiagMagenta);
+        else if (eden_power_exp(1)) rgl::clear(true, false, R::Rgba{0.0f, 0.0f, 0.0f, 1.0f});   // FT.15a --power-exp=clear (L2)
         return;
     }
     int w, h;

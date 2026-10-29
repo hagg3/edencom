@@ -208,7 +208,7 @@ set(EDEN_SHARED_OTHER
 # ---------------------------------------------------------------------------------------------
 # G.4: the --*-selftest harness, one file per mode group (port/src/harness/harness.h)
 set(EDEN_HARNESS_SOURCES main core mode_boot mode_shots mode_world mode_props mode_cmds mode_light mode_mp
-  mode_look mode_display mode_input mode_ui mode_browser mode_session mode_render)
+  mode_look power mode_display mode_input mode_ui mode_browser mode_session mode_render)
 list(TRANSFORM EDEN_HARNESS_SOURCES PREPEND "${EDEN_PORT_DIR}/src/harness/")
 list(TRANSFORM EDEN_HARNESS_SOURCES APPEND ".cpp")
 set(EDEN_NATIVE_SOURCES

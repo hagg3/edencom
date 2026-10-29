@@ -95,8 +95,8 @@ before. **Draw-culling only**: meshing and streaming are unchanged. Changing the
 immediately.
 **Graphics preset** (B.8; `graphics_preset` row, `kPresets[]` in `Settings.cpp`): Custom / Low / Default / High is a
 shortcut that writes `view_distance` and `render_scale` — Low = 4 chunks + 75% (50% on iOS since FT.16),
-Default = Auto + 100% (the pre-B.8 look; shots match within animation noise; on iOS the device default, 50% on
-Air 2-class hardware). High = Default plus `render_radius`
+Default = Auto + 100% (the pre-B.8 look; shots match within animation noise; on iOS the device default, 75% on
+Air 2-class hardware). High = Default plus `render_radius` (and 100% render scale)
 (B.5b-2): radius 16 on desktop, 10 on iOS (P.4 decision 6; T.B16 measured R10/R12 on the Air 2). Moving any of
 the three knobs by hand sets the preset to Custom. It does not touch `LOW_MEM_DEVICE`/`LOW_GRAPHICS`: those pick resources at
 load time and are not switchable mid-session.
@@ -315,7 +315,9 @@ textured quad (the UI program) into the letterbox box, so the 2D UI still draws 
 **FT.16 (2026-10-28) replaced N.4.11's `glBlitFramebuffer` with the quad:** on the Air 2 at 50% the blit
 never landed (10-09: HUD over a frozen menu frame; no scissor or other FBO user exists in the port), so the
 setting was hidden on iOS from N.4.12 until FT.16 re-showed it (50/75/100%; Air 2-class iPads/iPhones
-default to 50%, about stock 2.1's 1024×768). The window clear means a failed composite shows black, never
+default to 75%: the plan's "match 2.1" 50% looked too soft to the user in Round 0, 2026-10-28; 75% is
+2.25× stock 2.1's 1024×768, 100% is 4.0×). Round 0 on the Air 2 (ipa `2c4efd3`): 50/75/100% all present, the
+`scene-diag` lines show the view's FBO 1 / renderbuffer 1 throughout and no GL errors. The window clear means a failed composite shows black, never
 a stale frame. `--diag-clear` also logs `[eden-gl] scene-diag` lines once per scene size (framebuffer ids
 at begin, composite and present; GL errors; the iOS view's colour format). Point-sprite sizes are compensated for the scale; picking
 is unaffected (it unprojects against the fixed point-space viewport). Anything new that belongs to
