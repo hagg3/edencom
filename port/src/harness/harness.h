@@ -185,6 +185,9 @@ void  eden_live_commands_tick(void);
 }
 void power_parse_exp(const char* list);   // power.cpp (FT.15a)
 void power_log_set(double secs);
+void power_phases_set(bool on);   // PW.0a
+void power_note_pace(double ms);
+void power_frame_end();
 void power_frame();
 int  power_game_mode();
 

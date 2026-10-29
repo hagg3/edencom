@@ -51,6 +51,7 @@
 #include "../../../Classes/Globals.h"
 #include "../../../Classes/World.h"
 #include "../../../Classes/Renderer.h"   // G.5b-3: uploads and draws are R::
+#include "../../../Classes/PassTimers.h"   // PW.0b: pexp()
 #include "../../../Classes/Graphics.h"   // G.5b-7: the pen (Texture2D's quads draw with its state)
 #include "../shim/foundation/eden_base.h"
 #include "../shim/foundation/eden_image.h"
@@ -970,6 +971,7 @@ void Texture2D::drawButton2(Button button) {
 }
 
 void Texture2D::drawSky(CGRect rect, CGFloat depth, float r, float g, float b, float a) {
+    if (pexp(EDEN_PEXP_NOSKY)) return;   // PW.0b bisection switch (Classes/PassTimers.h)
     float pitch = World::getWorld->cam->pitch;
     float sinPitch = sin(D2R(pitch));
     float sty = 0;

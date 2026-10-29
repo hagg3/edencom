@@ -3391,7 +3391,7 @@ void Terrain::render(){
   //  glDisable(GL_TEXTURE_2D);
     int chunksr=chunks_rendered;
     pass_begin(P_R_CHUNKS);
-    for(int i=0;i<chunks_rendered;i++){
+    for(int i=0;i<chunks_rendered&&!pexp(EDEN_PEXP_NOCHUNKS);i++){
       
         vertices_rendered+=renderList[i]->render();
         /*if(vertices_rendered>=max_vertices&&World::getWorld->hud.fps<40){
@@ -4082,7 +4082,7 @@ void Terrain::render2(){
     pass_end(P_R_CULL);
     
     pass_begin(P_R_TCHUNKS);
-    for(int i=0;i<chunks_rendered2;i++){
+    for(int i=0;i<chunks_rendered2&&!pexp(EDEN_PEXP_NOCHUNKS);i++){
         renderList2[i]->render2();
     }
     pass_end(P_R_TCHUNKS);

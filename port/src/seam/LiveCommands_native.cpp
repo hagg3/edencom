@@ -47,6 +47,8 @@
 #include <deque>
 #include <string>
 
+void power_parse_exp(const char* list);   // harness/power.cpp (PW.0b)
+
 extern "C" {
 int   eden_menu_world_count(void);
 const char* eden_menu_world_name(int index);
@@ -93,6 +95,7 @@ void read_new_lines() {
         while ((nl = g_partial.find('\n')) != std::string::npos) {
             std::string line = g_partial.substr(0, nl);
             g_partial.erase(0, nl + 1);
+            if (line.compare(0, 5, "pexp ") == 0) { power_parse_exp(line.c_str() + 5); continue; }   // PW.0b: at once, past any `wait`
             if (!line.empty() && line[0] != '#') g_queue.push_back(line);
         }
     }

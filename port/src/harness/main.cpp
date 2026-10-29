@@ -648,6 +648,7 @@ static int parse_one_arg(const char* a) {
         else if (starts_with(a, "--render-scale="))   g_opt.renderScalePct = atoi(a + 15);
         else if (starts_with(a, "--power-log="))      power_log_set(atof(a + 12));
         else if (starts_with(a, "--power-exp="))      power_parse_exp(a + 12);
+        else if (!std::strcmp(a, "--power-phases"))   power_phases_set(true);
         else if (!std::strcmp(a, "--diag-clear"))     eden_native_gl_set_diag_clear(1);
         else if (!std::strcmp(a, "--scale-probe"))    g_opt.mode = "scale-probe";
         else if (!std::strcmp(a, "--preset-probe"))   g_opt.mode = "preset-probe";
@@ -1015,7 +1016,12 @@ static int eden_main_after_args(int argc, char** argv) {
                     nextFrameMs - now > interval + kPaceSlackMs)
                     nextFrameMs = now;
                 const double wait = nextFrameMs - now - kPaceSlackMs;
-                if (wait > 0.0) SDL_DelayPrecise((Uint64)(wait * 1e6));
+                if (wait > 0.0) {
+                    const double p0 = eden_platform_now_ms();
+                    if (eden_power_exp(EDEN_PEXP_NOSPIN)) SDL_Delay((Uint32)wait);   // PW.0b: true sleep, no busy tail
+                    else SDL_DelayPrecise((Uint64)(wait * 1e6));
+                    power_note_pace(eden_platform_now_ms() - p0);
+                }
                 nextFrameMs += interval;
             } else {
                 nextFrameMs = 0.0;
@@ -1030,6 +1036,7 @@ static int eden_main_after_args(int argc, char** argv) {
             eden_live_commands_tick();
             eden_look_trace_frame();   // L.0: after the pump, before World::update reads the touches
             if (g_app->isAnimating()) g_app->drawFrame(true);
+            power_frame_end();
             // AFTER the tick that queued this frame's sounds, so a sound fired now is bound to
             // the device in the same frame rather than the next one.
             eden_native_audio_tick();

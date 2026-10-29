@@ -3,7 +3,7 @@
 #   power-leg.sh <leg> <secs> [emod args...]        e.g. power-leg.sh Eclear 480 --power-exp=menu30
 #   FT15_WORLD=FT15 FT15_POSE="65537.5 36 65524.5 180 8" FT15_OUT=TESTERS/ft15/r1 FT15_DOCS=<container>/Documents
 # Launches with --live-cmds (+ --power-log=5), opens the world, parks at a fixed pose, starts the on-device
-# sampler (power-sampler.sh), waits, then fetches <leg>.csv and the run log into $FT15_OUT.
+# sampler (power-sampler.sh); FT15_LATE_EXP / extra `--power-phases` args: see PW.0b in WORKING/power-parity-plan-2026-10-29.md, waits, then fetches <leg>.csv and the run log into $FT15_OUT.
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
 leg=$1; secs=$2; shift 2
@@ -21,6 +21,9 @@ else
   printf 'open %s\ntp %s\nwait %d\nquit\n' "$world" "$pose" $(( (secs + settle + 60) * 1000 )) | $SSH "cat >> $D/live.txt"
 fi
 sleep "$settle"
+# PW.0b: FT15_LATE_EXP=<list> applies --power-exp switches only after the settle (live `pexp`), so the world has
+# streamed and meshed first; a switch like noupdate would otherwise freeze the load.
+if [ -n "${FT15_LATE_EXP:-}" ]; then echo "pexp $FT15_LATE_EXP" | $SSH "cat >> $D/live.txt"; fi
 FT15_DIR=$(dirname "$D")/ft15 "$here/power-sampler.sh" "$leg" "$secs"
 sleep $((secs + 10))
 scp -q ipad:"$(dirname "$D")/ft15/$leg.csv" "$out/$leg.csv"; scp -q ipad:"$D/emod-last-run.log" "$out/$leg.log"

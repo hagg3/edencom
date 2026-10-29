@@ -814,14 +814,14 @@ void World::renderFrame(bool draw){
         pass_end(P_R_OPAQUE);
        // glEnable(GL_TEXTURE_2D);
         pass_begin(P_R_MODELS);
-        if(CREATURES_ON||MpWorld::active())   // MP.5
+        if((CREATURES_ON||MpWorld::active())&&!pexp(EDEN_PEXP_NOMODELS))   // MP.5
             RenderModels();
         pass_end(P_R_MODELS);
         pass_begin(P_R_SIGNS);
-        SignRenderer::render(); //D.3b: signs, after the opaque pass, before the sorted transparent one
+        if(!pexp(EDEN_PEXP_NOSIGNS)) SignRenderer::render(); //D.3b: signs, after the opaque pass, before the sorted transparent one
         pass_end(P_R_SIGNS);
         pass_begin(P_R_TRANSPARENT);
-        terrain->render2();
+        if(!pexp(EDEN_PEXP_NOTRANSPARENT)) terrain->render2();
         pass_end(P_R_TRANSPARENT);
       //  glShadeModel(GL_FLAT);
        
@@ -829,9 +829,11 @@ void World::renderFrame(bool draw){
         pass_begin(P_R_EFFECTS);
         R::mv().push();   // G.5b-4: every effects draw is R:: (SpecialEffects, Firework, Player)
         R::mv().translate(-fm->chunkOffsetX*CHUNK_SIZE,0,-fm->chunkOffsetZ*CHUNK_SIZE);
+		if(!pexp(EDEN_PEXP_NOEFFECTS)){
 		effects->render();
         terrain->fireworks->render();
         player->render();
+        }
 				
          R::mv().pop();
         pass_end(P_R_EFFECTS);
@@ -839,7 +841,7 @@ void World::renderFrame(bool draw){
         R::endScene(); //composite the 3D pass into the window; the hud draws at full resolution
         pass_end(P_R_UPSCALE);
         pass_begin(P_R_HUD);
-		hud->render(); //render hud last
+		if(!pexp(EDEN_PEXP_NOHUD)) hud->render(); //render hud last
 		if(menu->showsettings) menu->settings->render();   // Stage 5.5, see update()
 		if(menu->showconsole) menu->console->render();      // C.3, over the HUD
         pass_end(P_R_HUD);

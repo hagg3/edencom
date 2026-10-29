@@ -89,7 +89,7 @@ bool App::drawFrame(bool renderThisFrame) {
         std::fprintf(stderr, "[eden-p1] tick %d: World::update(%.4f s) entered\n", tickCount, etime);
     }
 
-    bool retinaSwapRequested = world && world->update(etime);
+    bool retinaSwapRequested = world && !pexp(EDEN_PEXP_NOUPDATE) && world->update(etime);
 
     if (tickCount < 3) {
         std::fprintf(stderr, "[eden-p1] tick %d: World::update returned (retinaSwap=%d)\n",
@@ -97,6 +97,7 @@ bool App::drawFrame(bool renderThisFrame) {
         ++tickCount;
     }
 
+    if (pexp(EDEN_PEXP_NORENDER)) renderThisFrame = false;   // PW.0b: update only, no draw, no present
     if (renderThisFrame) eden_gl_stats_frame_boundary();
 
     // renderFrame() is called even when the frame does not draw: it owns the GAME_MODE_WAIT ->

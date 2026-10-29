@@ -400,6 +400,10 @@ issued-setup counters (`eden_gl_stat_live()`, differenced) to `g_pass`. The hook
 diagnostics builds (every build, since G.1) and do nothing until a harness sets `g_pass.on`, so a normal frame pays one
 bool test per hook. With `g_pass.finish` set, every boundary first calls `glFinish`, so a pass's
 time becomes an upper bound that includes its own GPU work.
+- **In an interactive session** `--power-phases` (with `--power-log=N`, PW.0a) turns the timers on and prints each
+  window's per-frame means as `[eden-power-ph]`; `--power-exp` switches (PW.0b, `PassTimers.h` `pexp()`) skip one
+  pass at a time for the Air 2 bisection legs. Mac numbers rank CPU cost only: macOS GL is Apple's GL-on-Metal
+  translator, so most Mac CPU time is in the driver, not the engine.
 - **Passes nest.** `r_opaque` (all of `Terrain::render`) contains `r_cull`, `r_chunks`,
   `r_objects` and `r_sky`; `r_transparent` contains `r_tchunks` and the flower part of
   `r_objects`; `r_cull` covers the single `renderTree` walk (P.7; was two) and the back-to-front `qsort`. Sum only the

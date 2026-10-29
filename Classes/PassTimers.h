@@ -47,6 +47,21 @@ extern "C" void eden_gl_finish(void);
 // harness has set g_pass.track.
 extern "C" void eden_render_pass_mark(int pass, int begin);
 
+// PW.0b: --power-exp bisection switches (port/src/harness/power.cpp). Each removes one cost at a fixed
+// pose so an Air 2 leg shows what it costs; all off by default (off = byte-identical frames).
+extern "C" int eden_power_exp(int bit);
+#define EDEN_PEXP_NOUPDATE      32      // World::update skipped (sim frozen, render only)
+#define EDEN_PEXP_NORENDER      64      // no draw, no present (update only)
+#define EDEN_PEXP_NOCHUNKS      128     // opaque + transparent chunk draw loops skipped (culling still runs)
+#define EDEN_PEXP_NOSKY         256
+#define EDEN_PEXP_NOTRANSPARENT 512     // Terrain::render2 skipped whole
+#define EDEN_PEXP_NOMODELS      1024    // creatures
+#define EDEN_PEXP_NOSIGNS       2048
+#define EDEN_PEXP_NOEFFECTS     4096    // effects + fireworks + player->render
+#define EDEN_PEXP_NOHUD         8192
+#define EDEN_PEXP_NOSPIN        16384   // pacer sleeps (SDL_Delay) instead of SDL_DelayPrecise's busy tail
+static inline bool pexp(int bit) { return eden_power_exp(bit) != 0; }
+
 static const char* const kEdenPassNames[P_COUNT] = {
     "update", "u_terrain", "u_hud", "u_creatures", "u_player", "u_effects", "u_mesh", "u_upload",
     "render", "r_setup", "r_opaque", "r_cull", "r_chunks", "r_objects", "r_sky", "r_models",
