@@ -444,6 +444,7 @@ WindowState windowState() {
 bool testNoReconcile = false;
 bool reconcileOn = true;
 bool testEcho = false;
+const char* testTagOnly = nullptr;
 
 namespace {
 
@@ -1046,43 +1047,67 @@ static void peersUpdate(float etime) {
     }
 }
 
+// FT.11: where a peer's tag point (a block above its head) lands in normalised device coords (-1..1, y up),
+// from the same (eye, target) and vertical FOV the scene's gluLookAt + perspective use. The basis is
+// gluLookAt's: side = forward x up, up' = side x forward. MP.12 had side = up x forward, which flipped
+// both axes and mirrored every tag through the screen centre (right at the centre, so it hid there).
+static bool tagNdc(const Peer& p, float* nx, float* ny, float* depth) {
+    World* w = World::getWorld;
+    Vector eye, at;
+    w->cam->viewPoints(&eye, &at);
+    Vector f = MakeVector(at.x - eye.x, at.y - eye.y, at.z - eye.z);
+    const float fl = std::sqrt(f.x * f.x + f.y * f.y + f.z * f.z);
+    if (fl < 1e-4f) return false;
+    f.x /= fl; f.y /= fl; f.z /= fl;
+    Vector r = MakeVector(-f.z, 0, f.x);   // f x up(0,1,0)
+    const float rl = std::sqrt(r.x * r.x + r.z * r.z);
+    if (rl < 1e-4f) return false;   // looking straight up or down
+    r.x /= rl; r.z /= rl;
+    const Vector u = MakeVector(r.y * f.z - r.z * f.y, r.z * f.x - r.x * f.z, r.x * f.y - r.y * f.x);   // r x f
+    const float th = std::tan((eden_fov_degrees > 0.0f ? eden_fov_degrees : 80.0f) * (float)M_PI / 360.0f);
+    const float bh = w->player ? w->player->boxheight : 6.0f;
+    const Vector d = MakeVector(p.pos.x - eye.x, p.pos.y + bh * 0.5f + 1.0f - eye.y, p.pos.z - eye.z);
+    const float zc = d.x * f.x + d.y * f.y + d.z * f.z;
+    if (zc < 0.5f || zc > kTagRange) return false;
+    *nx = (d.x * r.x + d.y * r.y + d.z * r.z) / (zc * th * P_ASPECT_RATIO);
+    *ny = (d.x * u.x + d.y * u.y + d.z * u.z) / (zc * th);
+    *depth = zc;
+    return std::fabs(*nx) <= 1.1f && std::fabs(*ny) <= 1.1f;
+}
+
+// FT.11: the tag's centre in GLW's coordinates. The kit (GLW::fill, Label, Texture2D::drawText) takes the
+// engine's POINT space and multiplies by its own 2x-UI factor itself, so this must not: MP.12 passed
+// SCREEN * us here, which drew every tag at twice its distance from the bottom-left corner (IS_IPAD is
+// true on every port target, desktop included).
+static bool tagPoint(const Peer& p, float* sx, float* sy, float* zc) {
+    float nx, ny;
+    if (!tagNdc(p, &nx, &ny, zc)) return false;
+    *sx = (nx * 0.5f + 0.5f) * SCREEN_WIDTH;
+    *sy = (ny * 0.5f + 0.5f) * SCREEN_HEIGHT;
+    return true;
+}
+
+// The kit's point -> ortho factor (GLWidgets.cpp's uiScale) and the ortho renderPeerTags binds, which
+// is ChatFeed's: SCREEN * the same factor, so a point lands at the same fraction of the screen.
+static float tagKitScale() { return IS_IPAD ? SCALE_WIDTH : 1.0f; }
+
 void renderPeerTags() {
     World* w = World::getWorld;
     if (!active() || !w->cam) return;
     bool any = false;
     for (auto& p : g_peers) any = any || p.used;
     if (!any) return;
-    Vector eye, at;
-    w->cam->viewPoints(&eye, &at);
-    Vector f = MakeVector(at.x - eye.x, at.y - eye.y, at.z - eye.z);
-    const float fl = std::sqrt(f.x * f.x + f.y * f.y + f.z * f.z);
-    if (fl < 1e-4f) return;
-    f.x /= fl; f.y /= fl; f.z /= fl;
-    Vector r = MakeVector(f.z, 0, -f.x);   // f x up(0,1,0)
-    const float rl = std::sqrt(r.x * r.x + r.z * r.z);
-    if (rl < 1e-4f) return;   // looking straight up or down
-    r.x /= rl; r.z /= rl;
-    const Vector u = MakeVector(r.y * f.z - r.z * f.y, r.z * f.x - r.x * f.z, r.x * f.y - r.y * f.x);   // r x f
-    const float th = std::tan((eden_fov_degrees > 0.0f ? eden_fov_degrees : 80.0f) * (float)M_PI / 360.0f);
-    const float bh = w->player ? w->player->boxheight : 6.0f;
-    // MP.12: the HUD's ortho is not SCREEN-sized on 2x-UI devices (ChatFeed sets its own), so project into
-    // an ortho of our own: normalised device coords map onto SCREEN * s whatever the caller left bound.
-    const float us = IS_IPAD ? SCALE_WIDTH : 1.0f;
-    // G.5b-4: R::begin2D is that ortho (-1..1) with an identity modelview. The tags draw through GLW::fill
+    const float us = tagKitScale();
+    // G.5b-4: R::begin2D is that ortho with an identity modelview. The tags draw through GLW::fill
     // and Texture2D (both R::), whose quads take blend and colour from the pen (G.5b-7).
     R::begin2D(SCREEN_WIDTH * us, SCREEN_HEIGHT * us, 1.0f);
     Pen::blend(true);
     Pen::blendFunc(R::B_ALPHA);
     for (auto& p : g_peers) {
-        if (!p.used) continue;
-        const Vector d = MakeVector(p.pos.x - eye.x, p.pos.y + bh * 0.5f + 1.0f - eye.y, p.pos.z - eye.z);
-        const float zc = d.x * f.x + d.y * f.y + d.z * f.z;
-        if (zc < 0.5f || zc > kTagRange) continue;
-        const float nx = (d.x * r.x + d.y * r.y + d.z * r.z) / (zc * th * P_ASPECT_RATIO);
-        const float ny = (d.x * u.x + d.y * u.y + d.z * u.z) / (zc * th);
-        if (std::fabs(nx) > 1.1f || std::fabs(ny) > 1.1f) continue;
+        float sx, sy, zc;
+        if (!p.used || !tagPoint(p, &sx, &sy, &zc)) continue;
+        if (testTagOnly && p.name != testTagOnly) continue;
         if (!p.haveTag) { p.tag.set(p.name.c_str(), GLW::du(18), UITextAlignmentCenter, 0, GLW::FACE_DISPLAY); p.haveTag = true; }
-        const float sx = (nx * 0.5f + 0.5f) * SCREEN_WIDTH * us, sy = (ny * 0.5f + 0.5f) * SCREEN_HEIGHT * us;
         const float tw = p.tag.width(), lh = p.tag.lineHeight(), pad = GLW::du(5);
         const float a = zc > kTagRange * 0.7f ? 0.55f : 0.85f;
         GLW::fill(sx - tw * 0.5f - pad, sy - lh * 0.5f - pad * 0.5f, tw + 2 * pad, lh + pad, GLW::Color{0.17f, 0.17f, 0.17f, a});
@@ -1090,6 +1115,22 @@ void renderPeerTags() {
     }
     Pen::color(1.0f, 1.0f, 1.0f, 1.0f);
     R::end2D();
+}
+
+bool peerTagNdc(int i, float* nx, float* ny) {
+    if (!World::getWorld->cam) return false;
+    int k = 0;
+    float sx, sy, zc;
+    const float us = tagKitScale();
+    for (auto& p : g_peers) {
+        if (!p.used || k++ != i) continue;
+        if (!tagPoint(p, &sx, &sy, &zc)) return false;
+        // Where the pill's centre is drawn: kit point * kit factor, over renderPeerTags' ortho, as NDC.
+        *nx = sx * us / (SCREEN_WIDTH * us) * 2.0f - 1.0f;
+        *ny = sy * us / (SCREEN_HEIGHT * us) * 2.0f - 1.0f;
+        return true;
+    }
+    return false;
 }
 
 int peerCount() {

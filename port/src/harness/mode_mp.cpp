@@ -1,5 +1,11 @@
 // G.4: split out of the old eden_main_native.cpp (see harness.h). Mode group "mp".
 #include "harness.h"
+#include "../../../Classes/Renderer.h"   // FT.11: leg 7 projects through R::mv/proj
+// FT.11: project.c's GLU (C linkage; the GL types are double/int), building onto R::'s stacks.
+extern "C" void gluLookAt(double, double, double, double, double, double, double, double, double);
+extern "C" void gluPerspective(double, double, double, double);
+extern "C" int gluProject(double, double, double, const double*, const double*, const int*, double*, double*, double*);
+extern float eden_fov_degrees;
 
 using namespace harness;
 
@@ -554,6 +560,103 @@ int run_mp_replay() {
         check(MpWorld::avatarModel(0) == M_GREEN && MpWorld::avatarModel(10) >= 0 && MpWorld::avatarModel(99) == MpWorld::avatarModel(10) &&
                   MpWorld::avatarModel(-1) == M_GREEN,
               "leg 7: characterType 0..10 maps to a shipped model, out-of-range clamps", "");
+        // FT.11: a tag lands where the scene's own matrices (project.c's gluLookAt + gluPerspective, as
+        // Camera::render and Graphics::prepareScene build them) put its point, in first and third person.
+        // MP.12 mirrored tags through the centre, so a peer up-right of the view must tag up-right.
+        {
+            Camera* cam = World::getWorld->cam;
+            const int mode0 = cam->mode;
+            const float bh = pl->boxheight;
+            bool sides = true, agree = true, shot = false, drawn = true;
+            float worst = 0, tx = 0, ty = 0, gx = 0, gy = 0, px = 0, py = 0;
+            for (int m = 0; m < 2; ++m) {
+                cam->mode = m;
+                Vector eye, at;
+                cam->viewPoints(&eye, &at);
+                float f[3] = {at.x - eye.x, at.y - eye.y, at.z - eye.z};
+                const float fl = std::sqrt(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
+                for (float& c : f) c /= fl;
+                const float rl = std::sqrt(f[0] * f[0] + f[2] * f[2]);
+                const float r[3] = {-f[2] / rl, 0, f[0] / rl};   // the viewer's right
+                // 12 ahead, 3 right, 1.5 up: the tag point (bh/2 + 1 above pos) lands there.
+                const double q[3] = {eye.x + 12 * f[0] + 3 * r[0], eye.y + 12 * f[1] + 1.5, eye.z + 12 * f[2] + 3 * r[2]};
+                const double pv[6] = {q[0], q[1] - bh * 0.5 - 1.0, q[2], 0, 0, 0};
+                MpWorld::peerSeen("Tag", 0, 2, pv);
+                MpWorld::peerSeen("Tag", 0, 2, pv);
+                tick(1);
+                cam->viewPoints(&eye, &at);   // the tick may have moved the player
+                int ti = -1;
+                for (int k = 0; k < MpWorld::peerCount(); ++k)
+                    if (MpWorld::peerView(k, &v) && !std::strcmp(v.name, "Tag")) ti = k;
+                const bool on = ti >= 0 && MpWorld::peerTagNdc(ti, &tx, &ty);
+                R::proj().push(); R::proj().loadIdentity();
+                gluPerspective(eden_fov_degrees > 0.0f ? eden_fov_degrees : 80, P_ASPECT_RATIO, P_ZNEAR, P_ZFAR - 25);
+                R::mv().push(); R::mv().loadIdentity();
+                gluLookAt(eye.x, eye.y, eye.z, at.x, at.y, at.z, 0, 1, 0);
+                double mvd[16], pjd[16], wx = 0, wy = 0, wz = 0;
+                for (int k = 0; k < 16; ++k) { mvd[k] = R::mv().top().m[k]; pjd[k] = R::proj().top().m[k]; }
+                R::mv().pop();
+                R::proj().pop();
+                const int vp[4] = {-1, -1, 2, 2};   // window coords = NDC
+                gluProject(v.x, v.y + bh * 0.5 + 1.0, v.z, mvd, pjd, vp, &wx, &wy, &wz);
+                gx = (float)wx; gy = (float)wy;
+                sides = sides && on && tx > 0.05f && ty > 0.02f;
+                worst = std::max(worst, std::max(std::fabs(tx - gx), std::fabs(ty - gy)));
+                agree = agree && on;
+                // The pixels: a frame with no tags, then one with only Tag's. The pill (grey/white) is
+                // where they differ; its centre must be gluProject's point. Skipped headless.
+                int w = 0, h = 0;
+                eden_gl_context_get_drawable_size(&w, &h);
+                if (w > 0 && h > 0) {
+                    std::vector<unsigned char> a((size_t)w * h * 4), b(a.size());
+                    eden_native_gl_set_present(0);
+                    MpWorld::testTagOnly = "";
+                    tick(1);
+                    const bool got = R::readPixels(0, 0, w, h, a.data());
+                    MpWorld::testTagOnly = "Tag";
+                    tick(1);
+                    R::readPixels(0, 0, w, h, b.data());
+                    MpWorld::testTagOnly = nullptr;
+                    eden_native_gl_set_present(1);
+                    // Median, not a bounding box: the other peers animate between the two frames.
+                    std::vector<int> xs, ys;
+                    for (int y = 0; y < h && got; ++y)
+                        for (int x = 0; x < w; ++x) {
+                            const unsigned char* q = &b[((size_t)y * w + x) * 4];
+                            const unsigned char* o = &a[((size_t)y * w + x) * 4];
+                            const int dd = std::abs(q[0] - o[0]) + std::abs(q[1] - o[1]) + std::abs(q[2] - o[2]);
+                            const bool grey = std::abs(q[0] - q[1]) < 12 && std::abs(q[1] - q[2]) < 12;
+                            if (dd < 60 || !grey) continue;
+                            xs.push_back(x); ys.push_back(y);
+                        }
+                    shot = got;
+                    if (const char* dir = std::getenv("EDEN_FT11_DUMP")) {   // the two frames, for a look
+                        g_shots::write_bmp((std::string(dir) + "/tags-off-" + std::to_string(m) + ".bmp").c_str(), w, h, a);
+                        g_shots::write_bmp((std::string(dir) + "/tags-on-" + std::to_string(m) + ".bmp").c_str(), w, h, b);
+                    }
+                    if (got) {
+                        float mx = -1, my = -1;
+                        if (!xs.empty()) {
+                            std::nth_element(xs.begin(), xs.begin() + xs.size() / 2, xs.end());
+                            std::nth_element(ys.begin(), ys.begin() + ys.size() / 2, ys.end());
+                            mx = xs[xs.size() / 2] + 0.5f; my = ys[ys.size() / 2] + 0.5f;
+                        }
+                        px = mx / w * 2.0f - 1.0f;   // rows are bottom-up, like NDC
+                        py = my / h * 2.0f - 1.0f;
+                        std::printf("[eden-mp-replay] ft11 mode %d: drawable %dx%d, %zu pill pixels, median %.0f %.0f, want %.0f %.0f\n",
+                                    m, w, h, xs.size(), mx, my, (gx + 1) * 0.5f * w, (gy + 1) * 0.5f * h);
+                        drawn = drawn && xs.size() > 50 && std::fabs(px - gx) < 0.04f && std::fabs(py - gy) < 0.04f;
+                    }
+                }
+            }
+            cam->mode = mode0;
+            MpWorld::peerLeft("Tag");
+            std::snprintf(d, sizeof d, "last tag ndc %.3f %.3f, gluProject %.3f %.3f, worst diff %.4f", tx, ty, gx, gy, worst);
+            check(sides, "leg 7 (FT.11): a peer up-right of the view gets its tag up-right (1st + 3rd person)", d);
+            check(agree && worst < 0.01f, "leg 7 (FT.11): the tag sits where the scene's matrices project its point", d);
+            std::snprintf(d, sizeof d, "pill centre ndc %.3f %.3f, gluProject %.3f %.3f%s", px, py, gx, gy, shot ? "" : " (headless: skipped)");
+            check(!shot || drawn, "leg 7 (FT.11): the drawn pill is centred on the point (pixels, 1st + 3rd person)", d);
+        }
         // A far jump snaps.
         const double far_[6] = {a[0] + 200.0, a[1], a[2], 0, 0, 0};
         MpWorld::peerSeen("Amy", 9, 0, far_);

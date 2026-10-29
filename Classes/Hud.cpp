@@ -2360,11 +2360,15 @@ void Hud::render(){
         const int st=fly_get_state();
         if(flyLbl[st].empty())flyLbl[st].set(kFlyText[st],14,UITextAlignmentCenter);
         const CGRect r=CGRectMake(rflyrender.origin.x,rflyrender.origin.y,rflyrender.size.width,rflyrender.size.height);
-        GLW::begin2D();
+        // X.31: no GLW::begin2D/end2D here. The HUD (Graphics::beginHud) is already the 2D bracket in
+        // GLW's space, and a nested kitEnd() turned blending OFF and depth ON for the rest of the HUD:
+        // every toast, the version tag and the joystick nub then drew their texture rects opaque. Same
+        // set-up as renderMenuScreen instead.
+        Pen::blend(true);
+        Pen::blendFunc(R::B_ALPHA);
         GLW::fill(r,GLW::rgb(0x000000,rflyrender.pressed?0.8f:0.55f));
         flyLbl[st].drawCentered(r.origin.x+r.size.width/2,r.origin.y+r.size.height/2+flyLbl[st].height()/2,st?GLW::rgb(0xc6f175):GLW::kText);
         Pen::color(1,1,1,1);
-        GLW::end2D();
     }
 
 

@@ -156,6 +156,17 @@ void update(float etime) {
 int feedLines() { return g_feedLines; }
 CGRect feedRect() { return g_feedRect; }
 
+// X.31: both draws run inside the HUD's bracket (Graphics::beginHud), so they must not use
+// GLW::begin2D/end2D: its kitEnd() leaves blend OFF and depth ON for the rest of the HUD (the toasts
+// then draw their label rects opaque). Push GLW's ortho, set the pen, and pop only the matrices.
+static void hudBegin() {
+    const float s = IS_IPAD ? SCALE_WIDTH : 1.0f;
+    R::begin2D(SCREEN_WIDTH * s, SCREEN_HEIGHT * s, 1.0f);
+    Pen::depthTest(false);
+    Graphics::kitState();
+}
+static void hudEnd() { R::end2D(); }
+
 static GLW::Color kindColor(int kind) {
     switch (kind) {
         case K_SERVER: return GLW::rgb(0xffb74d);               // amber
@@ -182,7 +193,7 @@ void renderHud(bool panelOpen) {
         if (g_ages[i] <= kLifeSec) pick.insert(pick.begin(), i);
     if (pick.empty()) return;
 
-    begin2D();
+    hudBegin();
 
     float y = safe.origin.y + safe.size.height - du(45) - du(6);   // under the pause gear
     const float x = safe.origin.x + du(6);
@@ -212,12 +223,12 @@ void renderHud(bool panelOpen) {
     }
     g_feedRect = CGRectMake(x, bottom, maxW, top - bottom);
     Pen::color(1.0f, 1.0f, 1.0f, 1.0f);
-    end2D();
+    hudEnd();
 }
 
 void renderButton(CGRect r, bool pressed) {
     using namespace GLW;
-    begin2D();
+    hudBegin();
     const float pad = r.size.width * 0.16f;
     // The Maysunbo chat_button art (2026-10-27; was a dark plate + UIICON_MESSAGE_SQUARE), dimmed
     // while held.
@@ -230,7 +241,7 @@ void renderButton(CGRect r, bool pressed) {
         fill(r.origin.x + r.size.width - d - pad * 0.3f, r.origin.y + r.size.height - d - pad * 0.3f, d, d, rgb(0x89c31f));
     }
     Pen::color(1.0f, 1.0f, 1.0f, 1.0f);
-    end2D();
+    hudEnd();
 }
 
 }  // namespace ChatFeed

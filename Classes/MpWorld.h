@@ -177,6 +177,8 @@ void burnFuseOut(int x, int y, int z);
 void intentSign(int fx, int fy, int fz, int a, int b, int c, const char* text);
 // --mp-mutate=echo: the apply path re-sends every peer edit it applies (the no-echo gate must fail).
 extern bool testEcho;
+// --mp-replay leg 7 (FT.11): when set, renderPeerTags draws only the peer of that name ("" = none).
+extern const char* testTagOnly;
 
 
 // ==== MP.5: remote players (WORKING/multiplayer-client-plan-2026-10-17.md) ======================
@@ -203,6 +205,9 @@ int peerCount();
 bool peerView(int i, PeerView* out);
 // Test hook (--mp-replay leg 7): how many POSVEL lines update() has sent.
 int posVelSent();
+// Test hook (--mp-replay leg 7, FT.11): where renderPeerTags draws peer i's tag centre, in normalised device
+// coords of its ortho (y up), through the kit's point scaling; false when it would skip it (behind, far, off screen).
+bool peerTagNdc(int i, float* nx, float* ny);
 
 struct Stats {
     int actionsSent, signsSent, peerApplied;   // MP.4

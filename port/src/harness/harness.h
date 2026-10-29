@@ -106,12 +106,7 @@ int   eden_get_render_scale_pct(void);
 int   eden_power_exp(int bit);   // power.cpp (FT.15a): is this --power-exp switch on
 void  eden_native_gl_set_diag_clear(int on);   // --diag-clear (FT.16a): magenta window clear in play
 SDL_Window* eden_native_gl_window(void);
-#define EDEN_PEXP_CLEAR      1
-#define EDEN_PEXP_PACE_VSYNC 2
-#define EDEN_PEXP_PACE_SLEEP 4
-#define EDEN_PEXP_SWAP2      8
 #define EDEN_PEXP_MENU30     16
-#define EDEN_PEXP_AUDIO_OFF  32
 
 void  eden_ui_force_legacy(int on);
 int   eden_get_fly_mode(void);

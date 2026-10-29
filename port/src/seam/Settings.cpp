@@ -415,6 +415,7 @@ static void eden_apply_profile_defaults(void) {
     eden_seed_profile_default("dpr_cap",      dpr);
 #if defined(EDEN_PLATFORM_IOS)
     if (fps >= 2) fps -= 1;   // profile indices are into {Uncapped,30,45,60}; iOS dropped 45 (P.14): 45 -> 30, 60 -> 60
+    if (eden_ios_air2_class()) fps = 1;   // FT.15d: Air 2-class seeds 30 fps (-0.9 W, FT.15c); index 1 in {Uncapped,30,60}
 #endif
     eden_seed_profile_default("fps_cap",      fps);
     eden_seed_profile_default("render_scale", eden_device_render_scale_default(rs));

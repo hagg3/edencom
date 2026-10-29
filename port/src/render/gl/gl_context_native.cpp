@@ -483,7 +483,7 @@ void eden_scene_pass_begin(void) {
         // Back at 100%: give the memory back rather than keep an idle second framebuffer.
         if (g_scene_fbo) eden_scene_fbo_release();
         if (g_diag_clear) rgl::clear(true, false, kDiagMagenta);
-        else if (eden_power_exp(1)) rgl::clear(true, false, R::Rgba{0.0f, 0.0f, 0.0f, 1.0f});   // FT.15a --power-exp=clear (L2)
+        else rgl::clear(true, false, R::Rgba{0.0f, 0.0f, 0.0f, 1.0f});   // FT.15d: frame-start clear always on (-0.27 W, FT.15c)
         return;
     }
     int w, h;

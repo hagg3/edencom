@@ -239,6 +239,7 @@
 //                        mock. --server=host:port adds a live leg on a local `edenserver`.
 //   --mp-selftest        MP.2: the protocol session (join sequence, PING/PONG, chat, early-close strings -> errors)
 //                        against the same mock; --server=host:port adds a live leg (port/tools/mp-live-gate.sh).
+//   --windowed           FT.11: undo a mode's implied --headless (--mp-replay: leg 7 then checks the tag pixels)
 //   --mp-replay=FILE     MP.3a: a recorded server line stream (port/tools/fixtures/mp/*.lines) played into a session
 //                        world with no socket; legs 1 (join burst hash vs FILE's .expect, from mp-replay.py), 2 (walk
 //                        out and back, same hash), 5 (teleport = fresh join at the destination) + the E11 gates.
@@ -433,6 +434,7 @@ int main(int argc, char** argv) {
 // from an argv: without them an EDEN_ARGS / eden-args.txt launch (the only way to drive the iPad)
 // reached `eden_world_tool_main` with no arguments and "nothing to do".
 static std::vector<std::string> g_string_args;
+static bool g_windowed = false;   // --windowed: a mode that defaults to headless opens a window after all
 static int parse_arg_string(const char* text) {
     std::string acc;
     bool have = false;    // an empty quoted value ("") is still an argument
@@ -515,6 +517,7 @@ static int parse_one_arg(const char* a) {
         else if (!std::strcmp(a, "--mp-selftest"))   { g_opt.mode = "mp-selftest"; g_opt.headless = true; }
         else if (starts_with(a, "--server="))        g_opt.netServer = a + 9;
         else if (starts_with(a, "--mp-replay="))     { g_opt.mode = "mp-replay"; g_opt.headless = true; g_opt.mpReplay = a + 12; }
+        else if (!std::strcmp(a, "--windowed"))       g_windowed = true;   // FT.11: --mp-replay leg 7's pixel check
         else if (starts_with(a, "--mp-mutate="))     g_opt.mpMutate = a + 12;
         else if (starts_with(a, "--mp-overlay-mb=")) g_opt.mpOverlayMb = atoi(a + 16);
         else if (starts_with(a, "--mp-join="))       g_opt.mpJoin = a + 10;
@@ -684,6 +687,7 @@ static int parse_one_arg(const char* a) {
 }
 
 static int eden_main_after_args(int argc, char** argv) {
+    if (g_windowed) g_opt.headless = false;
     // S.5e: harness modes pin the height a conversion writes: the source's, unless --upgrade-256z=1
     // (or EDEN_UPGRADE_256Z) says otherwise -- never the Settings toggle, which a --docs directory
     // starts at its default (on) and which would silently change what every convert gate measures.
@@ -993,34 +997,25 @@ static int eden_main_after_args(int argc, char** argv) {
         double nextFrameMs = 0.0;
         if (!g_opt.liveCmds.empty()) eden_live_commands_init(g_opt.liveCmds.c_str());
         if (!g_opt.mpJoin.empty()) mp_join_from_args();   // MP.3b: straight from the main menu to a server
-        // FT.15a --power-exp levers (all off by default): audio=off, menu30, swap2, pace=vsync/sleep.
-        if (eden_power_exp(EDEN_PEXP_AUDIO_OFF)) eden_native_audio_set_enabled(0);
-        float dispHz = 60.0f;
-        if (const SDL_DisplayMode* dm = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(eden_native_gl_window())))
-            if (dm->refresh_rate > 1.0f) dispHz = dm->refresh_rate;
-        int swapNow = 1;
+        // FT.15a --power-exp lever (off by default): menu30.
         while (g_running) {
             power_frame();
             int capFps = eden_get_fps_cap();
             if (eden_power_exp(EDEN_PEXP_MENU30) && power_game_mode() != GAME_MODE_PLAY && (capFps == 0 || capFps > 30))
                 capFps = 30;
-            // swap2: a 30 cap is held by the swap interval (vsync/2) instead of a sleep.
-            const int wantSwap = (eden_power_exp(EDEN_PEXP_SWAP2) && capFps == 30 && dispHz > 55.0f) ? 2 : 1;
-            if (wantSwap != swapNow) { SDL_GL_SetSwapInterval(wantSwap); swapNow = wantSwap; }
-            const bool skipSleep = swapNow == 2 ||
-                (eden_power_exp(EDEN_PEXP_PACE_VSYNC) && (float)capFps >= dispHz - 0.5f);
             if (capFps > 0) {
                 const double interval = 1000.0 / (double)capFps;
                 const double now = eden_platform_now_ms();
                 // First frame, a cap change, or a stall (a slow load, a backgrounded app): restart
-                // the schedule rather than rushing frames out to catch up.
-                if (nextFrameMs == 0.0 || now - nextFrameMs > interval || nextFrameMs - now > interval)
+                // the schedule rather than rushing frames out to catch up. The early side allows the
+                // slack: a frame that wakes kPaceSlackMs early and finishes in under that (a cheap menu
+                // frame) is on schedule, and restarting there skipped every other sleep (FT.15c:
+                // menu30 ran ~58 fps on the Air 2).
+                if (nextFrameMs == 0.0 || now - nextFrameMs > interval ||
+                    nextFrameMs - now > interval + kPaceSlackMs)
                     nextFrameMs = now;
                 const double wait = nextFrameMs - now - kPaceSlackMs;
-                if (wait > 0.0 && !skipSleep) {
-                    if (eden_power_exp(EDEN_PEXP_PACE_SLEEP)) SDL_DelayNS((Uint64)(wait * 1e6));
-                    else SDL_DelayPrecise((Uint64)(wait * 1e6));
-                }
+                if (wait > 0.0) SDL_DelayPrecise((Uint64)(wait * 1e6));
                 nextFrameMs += interval;
             } else {
                 nextFrameMs = 0.0;

@@ -1,7 +1,7 @@
 // FT.15a: heat/battery instruments for interactive sessions (WORKING/thermal-power-plan-2026-10-28.md §4.1).
 //   --power-log=N   one `[eden-power]` line to stderr every N s (fps, frame p50/p90, CPU, thermal, battery).
 //   --power-exp=a,b lever switches, each off by default (off = today's behaviour, byte-identical):
-//                   clear, pace=vsync, pace=sleep, swap2, menu30, audio=off.
+//                   menu30 (the others were shipped or dropped in FT.15d).
 // Zero cost when neither flag is given: power_frame() returns on its first test.
 #include "harness.h"
 #if !defined(_WIN32)
@@ -40,12 +40,7 @@ void power_parse_exp(const char* list) {
         const char* e = std::strchr(p, ',');
         const size_t n = e ? (size_t)(e - p) : std::strlen(p);
         auto is = [&](const char* s) { return n == std::strlen(s) && !std::strncmp(p, s, n); };
-        if (is("clear"))           g_exp |= EDEN_PEXP_CLEAR;
-        else if (is("pace=vsync")) g_exp |= EDEN_PEXP_PACE_VSYNC;
-        else if (is("pace=sleep")) g_exp |= EDEN_PEXP_PACE_SLEEP;
-        else if (is("swap2"))      g_exp |= EDEN_PEXP_SWAP2;
-        else if (is("menu30"))     g_exp |= EDEN_PEXP_MENU30;
-        else if (is("audio=off"))  g_exp |= EDEN_PEXP_AUDIO_OFF;
+        if (is("menu30")) g_exp |= EDEN_PEXP_MENU30;
         else std::fprintf(stderr, "[eden-power] unknown --power-exp item '%.*s'\n", (int)n, p);
         if (!e) break;
         p = e + 1;

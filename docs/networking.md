@@ -252,7 +252,13 @@ Other players arrive as `POS` / `VEL` / `POSVEL:name:type:…` lines (the server
   creatures stay off (E11); `PlayerBodyAvailable` accepts the same.
 - **Name tags**: `MpWorld::renderPeerTags` from `Hud::render` (before the status toast; not in camera mode or with the UI hidden): the head
   point is projected by hand from `Camera::viewPoints`, `eden_fov_degrees` and `P_ASPECT_RATIO` into the HUD point space; a `GLW::Label` in a
-  dark pill, 64 blocks range. **Tags are not occluded** by terrain.
+  dark pill, 64 blocks range. **Tags are not occluded** by terrain. The hand projection must use `gluLookAt`'s basis (side = forward × up,
+  up' = side × forward): MP.12 used up × forward, which negated both axes and mirrored every tag through the screen centre, so a tag
+  looked right only on a peer dead ahead (FT.11). The tag's centre is then passed to the GLW kit in **point space**: `GLW::fill`, `Label`
+  and `Texture2D::drawText` multiply by the 2×-UI factor themselves (`IS_IPAD` is true on every port target), and MP.12 pre-multiplied, which
+  drew tags at twice their distance from the bottom-left corner, usually off screen (FT.11's second bug). `--mp-replay` leg 7 checks the
+  projection against `gluProject` through project.c's matrices, and with `--windowed` also the drawn pill's pixels (median of the pixels
+  a tags-on frame adds over a tags-off one), in first and third person.
 - **POSVEL out**: `update()` sends the player's `pos` + `vel` at ≤ 4 Hz while either moved (> 0.01), else 1 Hz (which keeps the server's saved
   position fresh and peers' 30 s timer from firing). `--mp-replay` leg 7 pins the rates, the format, the glide, the snap and leaving.
 - **Left for later:** no avatar for the vanilla-only models; peers show no hit/burn/edit animation; tags ignore terrain; who is online is

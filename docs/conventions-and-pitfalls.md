@@ -58,6 +58,9 @@ Read this before writing any code. These are the implicit rules the codebase fol
 
 ## Technical debt register (the honest list)
 
+- **Commented-out code** is archaeology (CLAUDE.md rule 9, relaxed in SM.11, 2026-10-29): leave it in unrelated
+  changes, but `pristine-engine` keeps the original, so a function you are already editing may lose the
+  commented-out code inside it in the same commit. No sweeps.
 - **Threading scars**: a background chunk-mesher and streaming thread were removed
   after race conditions (the author's `//issue #1/#2/#3` comments in `Terrain.cpp`
   mark the exact hazards; `archive/crashes/` holds the resulting App Store crash logs). The
