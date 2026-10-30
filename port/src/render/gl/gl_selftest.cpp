@@ -359,7 +359,7 @@ int selftest(std::string* log) {
     g_fails = 0;
     std::string clog;
     const int linked = rgl::compileAll(&clog);
-    note(linked == rgl::P_PROG_COUNT, "the programs compile and link (%d/6: the five + lit-flat)%s%s", linked,
+    note(linked == rgl::P_PROG_COUNT, "the programs compile and link (%d/9: the five + lit-flat + three discard-free twins)%s%s", linked,
          clog.empty() ? "" : ": ", clog.c_str());
     GLint prevFbo = 0, prevRb = 0, vp[4];
     GLfloat cc[4];

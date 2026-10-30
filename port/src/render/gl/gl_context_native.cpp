@@ -168,6 +168,9 @@ extern "C" void eden_native_gl_get_letterbox(int* x, int* y, int* w, int* h) {
     if (h) *h = g_drawable_h;
 }
 
+static int g_drawable_1x = 0;   // PW.4: --drawable=1x
+void eden_gl_context_set_drawable_1x(int on) { g_drawable_1x = on; }
+
 int eden_gl_context_create(int drawable_width, int drawable_height) {
     if (g_gl) return 1;
     if (g_headless) {
@@ -214,7 +217,8 @@ int eden_gl_context_create(int drawable_width, int drawable_height) {
     // device bounds, and HIGH_PIXEL_DENSITY is what makes that a RETINA drawable rather than a
     // point-sized one — the same distinction EAGLView.mm's contentScaleFactor made in 2010 and
     // the same one IS_IPAD encodes (CLAUDE.md convention 3). RESIZABLE is meaningless there.
-    const SDL_WindowFlags kFlags = SDL_WINDOW_OPENGL | SDL_WINDOW_HIGH_PIXEL_DENSITY |
+    const SDL_WindowFlags kFlags = SDL_WINDOW_OPENGL |
+                                   (g_drawable_1x ? (SDL_WindowFlags)0 : SDL_WINDOW_HIGH_PIXEL_DENSITY) |
 #if defined(EDEN_PLATFORM_IOS)
                                    SDL_WINDOW_FULLSCREEN | SDL_WINDOW_BORDERLESS;
 #else

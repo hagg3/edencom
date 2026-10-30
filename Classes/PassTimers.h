@@ -59,7 +59,7 @@ extern "C" int eden_power_exp(int bit);
 #define EDEN_PEXP_NOSIGNS       2048
 #define EDEN_PEXP_NOEFFECTS     4096    // effects + fireworks + player->render
 #define EDEN_PEXP_NOHUD         8192
-#define EDEN_PEXP_NOSPIN        16384   // pacer sleeps (SDL_Delay) instead of SDL_DelayPrecise's busy tail
+#define EDEN_PEXP_SPIN          16384   // PW.5: restore the pacer's SDL_DelayPrecise busy tail (default: plain SDL_Delay sleep)
 static inline bool pexp(int bit) { return eden_power_exp(bit) != 0; }
 
 static const char* const kEdenPassNames[P_COUNT] = {

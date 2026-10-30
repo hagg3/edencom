@@ -203,7 +203,7 @@ void endFrame() {}
 
 // ---- draws ---------------------------------------------------------------------------------------
 void drawWorld(const R::Geometry& g, R::Tex t, const R::Rgba& tint, float alphaRef) {
-    Program* p = begin(P_WORLD, t);
+    Program* p = begin(alphaVariant(P_WORLD, alphaRef), t);
     if (!p) return;
     setMat4(*p, U_MVP, mvp());
     setMat4(*p, U_MV, R::mv().top().m);
@@ -253,7 +253,7 @@ void drawSkinned(const R::Geometry& g, R::Tex t, const R::Rgba& tint, const floa
 }
 
 void drawLit(const R::Geometry& g, R::Tex t, const R::Rgba& tint) {
-    Program* p = begin(rcore::ds().lights.flat ? P_LIT_FLAT : P_LIT, t);
+    Program* p = begin(alphaVariant(rcore::ds().lights.flat ? P_LIT_FLAT : P_LIT, -1.0f), t);
     if (!p) return;
     setMat4(*p, U_MVP, mvp());
     setMat4(*p, U_MV, R::mv().top().m);

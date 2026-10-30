@@ -646,6 +646,7 @@ static int parse_one_arg(const char* a) {
         else if (starts_with(a, "--bundle="))         g_opt.bundle = a + 9;
         else if (starts_with(a, "--live-cmds="))      g_opt.liveCmds = a + 12;
         else if (starts_with(a, "--render-scale="))   g_opt.renderScalePct = atoi(a + 15);
+        else if (!std::strcmp(a, "--drawable=1x"))    { g_opt.drawable1x = true; if (!g_opt.renderScalePct) g_opt.renderScalePct = 100; }
         else if (starts_with(a, "--power-log="))      power_log_set(atof(a + 12));
         else if (starts_with(a, "--power-exp="))      power_parse_exp(a + 12);
         else if (!std::strcmp(a, "--power-phases"))   power_phases_set(true);
@@ -824,6 +825,7 @@ static int eden_main_after_args(int argc, char** argv) {
     // engine running headless, which is exactly what the scripted modes want.
     eden_mem_trace_install();
     eden_mem_trace("boot");
+    eden_gl_context_set_drawable_1x(g_opt.drawable1x);
     eden_gl_context_create(g_opt.winW, g_opt.winH);
 
     // N.4.10 (2026-10-04): native never calls eden_set_low_memory(), on purpose — the decision,
@@ -1018,8 +1020,10 @@ static int eden_main_after_args(int argc, char** argv) {
                 const double wait = nextFrameMs - now - kPaceSlackMs;
                 if (wait > 0.0) {
                     const double p0 = eden_platform_now_ms();
-                    if (eden_power_exp(EDEN_PEXP_NOSPIN)) SDL_Delay((Uint32)wait);   // PW.0b: true sleep, no busy tail
-                    else SDL_DelayPrecise((Uint64)(wait * 1e6));
+                    // PW.5 (G5): a true sleep to the slack, no busy tail. SDL_DelayPrecise spun the last
+                    // stretch (~7 CPU points, 0 W measured). `spin` restores it for A/B.
+                    if (eden_power_exp(EDEN_PEXP_SPIN)) SDL_DelayPrecise((Uint64)(wait * 1e6));
+                    else SDL_Delay((Uint32)wait);
                     power_note_pace(eden_platform_now_ms() - p0);
                 }
                 nextFrameMs += interval;

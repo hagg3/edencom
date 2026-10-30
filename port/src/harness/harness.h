@@ -107,6 +107,7 @@ int   eden_power_exp(int bit);   // power.cpp (FT.15a): is this --power-exp swit
 void  eden_native_gl_set_diag_clear(int on);   // --diag-clear (FT.16a): magenta window clear in play
 SDL_Window* eden_native_gl_window(void);
 #define EDEN_PEXP_MENU30     16
+#define EDEN_PEXP_DISCARD    32768   // PW.3: keep the alpha-test `discard` in every world/lit program (old path, for the A/B)
 
 void  eden_ui_force_legacy(int on);
 int   eden_get_fly_mode(void);
@@ -316,6 +317,7 @@ struct Options {
     float walk[8] = {0};                 // --walk=DX,DZ[,...]: --stage1's scripted walk legs (B.5b-1a)
     int  walkLegs = 0;
     int  lightLattice = 0;               // --light-lattice=STEP: --stage1 prepares the ring-light gate's world (B.5b-1c)
+    bool drawable1x = false;             // --drawable=1x (PW.4): no HIGH_PIXEL_DENSITY, point-sized drawable, render scale 100
     int  renderScalePct = 0;             // --render-scale=50|75|100|125: 0 leaves the setting alone
     std::vector<std::pair<std::string,float>> sets;   // --set=KEY=VALUE (repeatable): a settings write once loaded (P.2a)
     int  passFrames = 600;               // --pass-probe=N: timed frames per pose (P.1b)

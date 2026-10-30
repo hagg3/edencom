@@ -65,6 +65,17 @@ after the preamble): ES 1.1 `GL_FLAT`, the triangle's last vertex colours it; `d
 `LightSet::flat`. Attribute locations are bound identically in every program (the shim's two too, until G.5b-7):
 position 0, colour 1, texcoord 2, normal 3, pointsize 4, matrixindex 5, weight 6.
 
+**Power note (PW.1, 2026-10-30).** `world`, `lit` and `lit-flat` share a fragment stage that contains
+`discard` (the alpha test by data). The branch never fires at `alphaRef` −1, and only the sign text passes
+anything else (0.02). But the shader still contains a discard, and on Apple's PowerVR GPUs (the Air 2's A8X)
+that costs hidden-surface removal for every draw using it. Stock 2.1 never enabled `GL_ALPHA_TEST`. Suspected
+large GPU cost, not yet measured: `WORKING/pw1-parity-audit-2026-10-30.md` G1.
+**PW.3 fix:** each of the three programs is compiled twice (`world-opaque`, `lit-opaque`, `lit-flat-opaque`:
+`#define EDEN_NO_DISCARD` removes the test; nine programs, `--render-selftest` checks 9/9).
+`rgl::alphaVariant` picks the twin when `alphaRef < 0`, so only sign text (`alphaRef` 0.02) runs the testing
+program. Pixel output is identical (−1 never discarded). `--power-exp=discard` (live `pexp discard`) restores
+the old path for the Air 2 A/B. Air 2 saving not yet measured (PW.2b leg 3).
+
 ## Frame structure and invariants
 `EdenViewController::drawFrame` brackets `World::renderFrame` with `R::beginFrame/endFrame`; the scene
 bracket is `R::beginScene/endScene` since FT.16 (forwarding to `eden_scene_pass_begin/end`, which report to

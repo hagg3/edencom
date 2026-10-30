@@ -21,6 +21,9 @@ int  eden_gl_context_is_lost(void);   // always 0 natively (no context loss on S
 // Context ownership. The context exists before the engine is built: Graphics::initGraphics runs during
 // World::World(). Returns 1 on success, 0 headless (not an error).
 int  eden_gl_context_create(int drawable_width, int drawable_height);
+// PW.4 probe: --drawable=1x. Call before eden_gl_context_create: the window is made without
+// HIGH_PIXEL_DENSITY, so the drawable is point-sized (1024x768 on an Air 2), not Retina.
+void eden_gl_context_set_drawable_1x(int on);
 void eden_gl_context_destroy(void);
 // Drawable size in PIXELS. Not the pick viewport (below).
 void eden_gl_context_get_drawable_size(int* width, int* height);

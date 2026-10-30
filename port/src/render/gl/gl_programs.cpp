@@ -115,7 +115,9 @@ static const char* kWorldFS =
     "out vec4 fragColor;\n"
     "void main() {\n"
     "  vec4 c = v_color * texture(u_tex, EDEN_UV(v_texcoord));\n"
+    "#ifndef EDEN_NO_DISCARD\n"   // PW.3: the opaque variants never discard, so the GPU keeps early-Z/HSR
     "  if (c.a <= u_alphaRef) discard;\n"
+    "#endif\n"
     "  float f = clamp((u_fogEnd - v_eyedist) / u_fogRange, 0.0, 1.0);\n"
     "  c.rgb = mix(u_fogColor.rgb, c.rgb, f);\n"
     "  fragColor = c;\n"
@@ -307,6 +309,10 @@ static const ProgSrc kProgSrc[P_PROG_COUNT] = {
     {"skinned", kSkinnedVS, kSkinnedFS, kSmooth},
     {"lit", kLitVS, kWorldFS, kSmooth},   // lit shares the world fragment stage (texture, alpha, fog)
     {"lit-flat", kLitVS, kWorldFS, "#define EDEN_COLOR_QUAL flat\n"},
+    // PW.3 (G1): the same fragment stage with the alpha test compiled out, for draws with alphaRef < 0.
+    {"world-opaque", kWorldVS, kWorldFS, "#define EDEN_COLOR_QUAL\n#define EDEN_NO_DISCARD\n"},
+    {"lit-opaque", kLitVS, kWorldFS, "#define EDEN_COLOR_QUAL\n#define EDEN_NO_DISCARD\n"},
+    {"lit-flat-opaque", kLitVS, kWorldFS, "#define EDEN_COLOR_QUAL flat\n#define EDEN_NO_DISCARD\n"},
 };
 
 static const char* const kUniName[U_COUNT] = {
@@ -338,6 +344,17 @@ static bool build(ProgId id, std::string* log) {
     if (!p.id) return false;
     for (int u = 0; u < U_COUNT; ++u) { p.loc[u] = glGetUniformLocation(p.id, kUniName[u]); p.valid[u] = false; }
     return true;
+}
+
+extern "C" int eden_power_exp(int bit);   // power.cpp
+ProgId alphaVariant(ProgId id, float alphaRef) {
+    if (alphaRef >= 0.0f || eden_power_exp(32768 /* EDEN_PEXP_DISCARD, harness.h */)) return id;
+    switch (id) {
+        case P_WORLD: return P_WORLD_OPAQUE;
+        case P_LIT: return P_LIT_OPAQUE;
+        case P_LIT_FLAT: return P_LIT_FLAT_OPAQUE;
+        default: return id;
+    }
 }
 
 Program* program(ProgId id) {

@@ -1,7 +1,7 @@
 // gl_programs.h — shader compilation (shared with the shim's two programs) and the renderer's five
 // programs (plan §6, R5/R6): 1 world, 2 ui, 3 sprite, 4 skinned, 5 lit. Branchless: no uniform flags.
 // Untextured binds a 1x1 white texture; a format without colour gets the tint as a constant attribute;
-// fog off is fog whose end is far past any eye distance; alphaRef -1 never discards.
+// fog off is fog whose end is far past any eye distance; alphaRef -1 never discards (and picks a program without the test, PW.3).
 #ifndef EDEN_RENDER_GL_PROGRAMS_H
 #define EDEN_RENDER_GL_PROGRAMS_H
 
@@ -18,7 +18,9 @@ GLuint linkProgram(GLuint vs, GLuint fs, const char* name, std::string* log = nu
 
 // P_LIT_FLAT is program 5 compiled with a `flat` colour (ES 1.1 GL_FLAT: the triangle's last vertex
 // colours it), for the lit draws 2.1.1 made under glShadeModel(GL_FLAT) (block-break debris; G.5b-4).
-enum ProgId { P_WORLD = 0, P_UI, P_SPRITE, P_SKINNED, P_LIT, P_LIT_FLAT, P_PROG_COUNT };
+enum ProgId { P_WORLD = 0, P_UI, P_SPRITE, P_SKINNED, P_LIT, P_LIT_FLAT,
+              P_WORLD_OPAQUE, P_LIT_OPAQUE, P_LIT_FLAT_OPAQUE,   // PW.3: no `discard` (alphaRef < 0 draws)
+              P_PROG_COUNT };
 
 enum Uni {
     U_MVP = 0, U_MV, U_PROJ, U_UVSO, U_TEX,
@@ -38,6 +40,9 @@ struct Program {
     float  paletteCache[16 * 16];
     int    paletteN = 0;
 };
+
+// PW.3: world/lit/lit-flat become their discard-free twin when alphaRef < 0 (unless --power-exp=discard).
+ProgId alphaVariant(ProgId id, float alphaRef);
 
 // The program, compiled on first use (a context is live). nullptr if it failed to link.
 Program* program(ProgId p);

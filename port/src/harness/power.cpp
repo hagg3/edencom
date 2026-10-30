@@ -2,7 +2,7 @@
 //   --power-log=N   one `[eden-power]` line to stderr every N s (fps, frame p50/p90, CPU, thermal, battery).
 //   --power-exp=a,b lever switches, each off by default (off = today's behaviour, byte-identical):
 //                   menu30 (the others were shipped or dropped in FT.15d), and the PW.0b bisection switches:
-//                   noupdate norender nochunks nosky notransparent nomodels nosigns noeffects nohud nospin
+//                   noupdate norender nochunks nosky notransparent nomodels nosigns noeffects nohud spin discard (PW.3: keep the old alpha-test path)
 //                   nodraw (= nochunks,nosky,notransparent,nomodels,nosigns,noeffects). Switchable mid-run with
 //                   the live command `pexp <list|none>` so a leg can settle with the world intact first.
 //   --power-phases  (PW.0a, with --power-log) a second `[eden-power-ph]` line per window: mean ms per frame of every
@@ -58,7 +58,8 @@ void power_parse_exp(const char* list) {
         else if (is("nosigns")) g_exp |= EDEN_PEXP_NOSIGNS;
         else if (is("noeffects")) g_exp |= EDEN_PEXP_NOEFFECTS;
         else if (is("nohud")) g_exp |= EDEN_PEXP_NOHUD;
-        else if (is("nospin")) g_exp |= EDEN_PEXP_NOSPIN;
+        else if (is("discard")) g_exp |= EDEN_PEXP_DISCARD;
+        else if (is("spin")) g_exp |= EDEN_PEXP_SPIN;
         else if (is("nodraw")) g_exp |= EDEN_PEXP_NOCHUNKS | EDEN_PEXP_NOSKY | EDEN_PEXP_NOTRANSPARENT |
                                          EDEN_PEXP_NOMODELS | EDEN_PEXP_NOSIGNS | EDEN_PEXP_NOEFFECTS;
         else std::fprintf(stderr, "[eden-power] unknown --power-exp item '%.*s'\n", (int)n, p);
