@@ -117,7 +117,7 @@ reusing the ambient spawner's slot-scavenging condition and `ResetModel`, skippi
 `addMoreCreaturesIfNeeded`'s randomized ground search and biome-based type selection since the
 caller already knows the position is valid. Callers: command-block scripts (`CmdScript.cpp`, D.4c),
 the diagnostics dev console (`port/src/seam/DevConsole.cpp`, always built since G.1) and the
-`--cmds-selftest` harness. `CountActiveCreatures()` is a read-only count for the console's `stats`
+`--cmds-selftest` harness. `CountActiveCreatures()` is a read-only count (model present, updating **and alive**: `SpawnCreatureAt` may reuse a dead creature's slot, so counting dead ones made a spawn read +0) for the console's `stats`
 command and `--cmds-selftest`. Both are genuine engine additions (`Classes/Model.{h,mm}`), not seam
 workarounds — the file-static `guys[]`/`nguys` meant a seam file could not read or write creature
 state directly, so a small exported entry point was the only option once a runtime spawn command

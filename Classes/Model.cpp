@@ -583,7 +583,7 @@ bool SpawnCreatureAt(int type,Vector pos){
 int CountActiveCreatures(){
     int n=0;
     for(int i=0;i<nguys;i++){
-        if(guys[i].model_type!=-1&&guys[i].update)n++;
+        if(guys[i].model_type!=-1&&guys[i].update&&guys[i].alive)n++;   // alive: SpawnCreatureAt reuses a dead-but-updating slot, which made a spawn count 0 (Linux CI flake)
     }
     return n;
 }
