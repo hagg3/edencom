@@ -11,6 +11,7 @@
 #include "Util.h"
 #include "TerrainGen2.h"
 #include "ClassicNoiseTables.h"
+#include "port/src/shim/foundation/platform_shims.h"   // random() on Windows (EDEN_PROVIDE_RANDOM)
 #include "MpWorld.h"   // MP.3a: the session overlay's landing hook
 #include <vector>
 

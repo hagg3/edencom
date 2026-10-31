@@ -38,7 +38,7 @@ static std::vector<std::string> x_list(const std::string& dir) {
     std::vector<std::string> out;
     std::error_code ec;
     for (fs::directory_iterator it(P(dir), ec), end; !ec && it != end; it.increment(ec))
-        out.push_back(it->path().filename().u8string());
+        { auto u = it->path().filename().u8string(); out.emplace_back(u.begin(), u.end()); }   // C++20: u8string() is std::u8string
     return out;
 }
 #else

@@ -653,7 +653,7 @@ if(MSVC)
   find_path(EDEN_DIRENT_DIR dirent.h REQUIRED)
   target_include_directories(eden_native PRIVATE ${EDEN_PORT_DIR}/src/compat/msvc "${EDEN_DIRENT_DIR}")
   target_compile_definitions(eden_native PRIVATE _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS
-                             NOMINMAX PTW32_STATIC_LIB)
+                             NOMINMAX _USE_MATH_DEFINES PTW32_STATIC_LIB)
 endif()
 if(WIN32)
   target_link_libraries(eden_native PRIVATE ws2_32)   # port/src/net/NetSock.cpp (Winsock)

@@ -42,7 +42,9 @@ const char* (*eden_documents_root_hook)(void) = NULL;
 #ifndef _WIN32
 #include <sys/statvfs.h>
 #else
+#define BOOL WINDOWS_BOOL   // mingw's minwindef.h typedefs int BOOL; the engine's is signed char (eden_base.h)
 #include <windows.h>
+#undef BOOL
 #endif
 
 //#import "TestFlight.h"
