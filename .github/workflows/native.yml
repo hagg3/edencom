@@ -305,7 +305,7 @@ jobs:
           # has to be found, not assumed. (Assuming `ci.emod` is how the first version of this
           # workflow uploaded a path that does not exist.)
           mkdir -p publish
-          cp "$(ls -S ci-docs/*.emod | head -1)" publish/world-linux.emod
+          cp "$(ls -S ci-docs/Worlds/*/*.emod | head -1)" publish/world-linux.emod
           # S.8: the byte comparison below runs on the `.eden` EXPORT of each platform's world -- the
           # logical, deterministic form (an `.emod` carries record headers/CRCs that are not comparable).
           ./build/eden_native --export=publish/world-linux.emod --export-out=publish/world-linux.eden

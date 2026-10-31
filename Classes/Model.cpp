@@ -1180,7 +1180,7 @@ bool CheckCollision(Entity* e){
         float n=e->vel.dot(normal);
         
         //  NSLog(@"before-vel:(%f,%f,%f)  normal:(%f,%f,%f) dotp: %f",vel.x,vel.y,vel.z,normal.x,normal.y,normal.z,n);
-        if(blockinfo[collided]&IS_LAVA){
+        if(collided<256&&blockinfo[collided]&IS_LAVA){   // 999999 = the box-collision sentinel (UBSan: blockinfo[999999])
             n*=1.8;
             if(e->state!=DEFAULT_DAMAGE){
                 e->state=0;
