@@ -20,9 +20,13 @@ bundles libzstd 1.5.7 -- the version S.0(c) measured and S.2 vendors); zlib is s
                                                           un-transposed to CC(x,z,y), zstd-19, file-offset order)
   python3 emod.py verify-default Eden.eden Eden.emod      S.6: every column of the .emod == an independent RLE decode
   python3 emod.py digest    WORLD.emod                    SHA-256 of the live state (what EdenWorldStore checks)
-  python3 emod.py export    WORLD.emod [-o OUT.eden] [--force]
+  python3 emod.py export    WORLD.emod [-o OUT.eden] [--force]   own format; a block palette goes in a BPL1 section
   python3 emod.py verify    WORLD.emod [--no-crc]          exit 0 clean, 3 clean + uncommitted tail, 1 damaged/invalid
   python3 emod.py dump      WORLD.emod [--records]
+  python3 emod.py compact   WORLD.emod [--set-palette-flag] [--palette-entry ID:TYPE:PAINT:NAME ...]
+                                                          the engine's compaction (EdenWorldStore::compact), byte for
+                                                          byte; --set-palette-flag is K.1's flag compaction (FileHeader
+                                                          flags bit 0 + a BLOCK_PALETTE; latent bytes >= 128 reserved)
   python3 emod.py trailer   WORLD.eden|WORLD.emod [--records] [--check] [--diff OTHER]
                                                           D.3a: the trailer's sections; --check = parse ->
                                                           serialise byte-identical; --diff = per-record and
@@ -39,7 +43,7 @@ bundles libzstd 1.5.7 -- the version S.0(c) measured and S.2 vendors); zlib is s
 --name      the source file name PROVENANCE records for --stream (default: the input's basename minus .gz;
             'stdin.eden' for '-'). `convert X.eden --epoch N` == `convert --stream X.eden.gz --epoch N`.
 """
-import argparse, hashlib, mmap, os, random, struct, sys, time, types, zlib
+import argparse, hashlib, mmap, os, random, re, struct, sys, time, types, zlib
 
 try:
     import zstandard
@@ -65,9 +69,21 @@ REC_HEADER = 32
 MAX_PAYLOAD = 16 << 20
 T_COLUMN, T_WORLD_HEADER, T_CREATURES, T_SIGN_TRAILER, T_PROVENANCE, T_SUMMARY, T_COMMIT, T_INDEX = range(1, 9)
 T_GENERATOR = 9                  # H.4: Classic generator settings (docs/emod-file-format.md "GENERATOR")
+T_BLOCK_PALETTE = 10             # K.1-2: the world's block palette (docs/emod-file-format.md "BLOCK_PALETTE")
+T_SKY_CLOCK = 11                 # DN.2: the day/night clock (docs/emod-file-format.md "SKY_CLOCK")
 TYPE_NAMES = {1: 'COLUMN', 2: 'WORLD_HEADER', 3: 'CREATURES', 4: 'SIGN_TRAILER', 5: 'PROVENANCE',
-              6: 'SUMMARY', 7: 'COMMIT', 8: 'INDEX', 9: 'GENERATOR'}
+              6: 'SUMMARY', 7: 'COMMIT', 8: 'INDEX', 9: 'GENERATOR', 10: 'BLOCK_PALETTE', 11: 'SKY_CLOCK'}
 GENERATOR_LEN = 28
+SKY_CLOCK_LEN = 16
+RAW_TYPES = (2, 9, 10, 11)       # WORLD_HEADER, GENERATOR, BLOCK_PALETTE, SKY_CLOCK: codec 0 by spec
+# K.1-2: FileHeader.flags bit 0 -- type bytes 128-255 are defined by the live BLOCK_PALETTE. Any other bit
+# is still "written by a newer build".
+FH_FLAG_BLOCK_PALETTE = 1
+PALETTE_VERSION = 1
+PALETTE_ENTRY = 68               # u8 id, u8 fallback_type, u8 fallback_paint, u8 flags, char name[64]
+PALETTE_MAX = 128
+PALETTE_UNKNOWN_FALLBACK = 2     # TYPE_STONE: the fallback of an `emod:unknown_<id>` reservation (D13)
+PALETTE_PAINT_MAX = 54
 GEN_MIRROR_MAGIC = b'EMG1'       # the .eden mirror in WorldFileHeader.reserved[] (@152, 36 of its 40 B)
 GEN_MIRROR_OFF = 152
 C_NONE, C_ZSTD, C_ZLIB = 0, 1, 2
@@ -357,13 +373,182 @@ class Writer:
         return off
 
 
-def file_header(bands, created):
-    body = struct.pack('<8sHHIQ36s', MAGIC, FMT_VERSION, bands, 0, created, bytes(36))
+def file_header(bands, created, flags=0):
+    body = struct.pack('<8sHHIQ36s', MAGIC, FMT_VERSION, bands, flags, created, bytes(36))
     return body + struct.pack('<I', crc32(body))
 
 
 def summary_payload(live_cols, next_ord, band_or):
     return struct.pack(SUMMARY_FMT, live_cols, next_ord, band_or, 0, 0)
+
+
+# ================================================================== BLOCK_PALETTE (K.1-2)
+# docs/emod-file-format.md "BLOCK_PALETTE"; plan WORKING/block-registry-plan-2026-10-31.md §3 (D8, D13-D16).
+PALETTE_NAME_RE = re.compile(rb'[a-z0-9_]{1,24}:[a-z0-9_/]{1,48}')
+PALETTE_BAD_FALLBACKS = set(range(66, 71)) | set(range(75, 80)) | {80}   # door/portal halves, TYPE_CUSTOM
+
+
+def palette_name_ok(name):
+    """D15: `namespace:path`, ASCII lowercase, <= 63 bytes; `eden:` names the stock ids, never a palette entry."""
+    return len(name) <= 63 and PALETTE_NAME_RE.fullmatch(name) is not None and not name.startswith(b'eden:')
+
+
+def palette_entry(pid, ftype, fpaint, name, flags=0):
+    if isinstance(name, str):
+        name = name.encode('ascii')
+    return struct.pack('<BBBB64s', pid, ftype, fpaint, flags, name)
+
+
+def palette_payload(entries):
+    """[(id, fallback_type, fallback_paint, name)] in any order -> the record's bytes, ascending id."""
+    es = sorted(entries, key=lambda e: e[0])
+    return struct.pack('<II', PALETTE_VERSION, len(es)) + b''.join(palette_entry(*e) for e in es)
+
+
+def parse_palette(p):
+    """-> ({id: (fallback_type, fallback_paint, name, raw 68 B)}, [errors]). Entries that break a rule are
+    reported and left out of the dict; the rest are still returned."""
+    out, errs = {}, []
+    if len(p) < 8:
+        return out, ['BLOCK_PALETTE is %d B, shorter than its 8-byte head' % len(p)]
+    ver, n = struct.unpack_from('<II', p, 0)
+    if ver != PALETTE_VERSION:
+        return out, ['BLOCK_PALETTE version %d (this reader knows %d)' % (ver, PALETTE_VERSION)]
+    if n > PALETTE_MAX:
+        errs.append('BLOCK_PALETTE count %d > %d' % (n, PALETTE_MAX))
+    if len(p) != 8 + n * PALETTE_ENTRY:
+        return out, errs + ['BLOCK_PALETTE is %d B; count %d needs %d' % (len(p), n, 8 + n * PALETTE_ENTRY)]
+    names, last = set(), -1
+    for i in range(n):
+        raw = p[8 + i * PALETTE_ENTRY:8 + (i + 1) * PALETTE_ENTRY]
+        pid, ft, fp, fl, nm = struct.unpack('<BBBB64s', raw)
+        name = nm.split(b'\0', 1)[0]
+        bad = []
+        if pid < 128:
+            bad.append('id %d < 128' % pid)
+        if pid <= last:
+            bad.append('id %d not ascending' % pid)
+        if not 1 <= ft <= 127 or ft in PALETTE_BAD_FALLBACKS:
+            bad.append('fallback type %d' % ft)
+        if fp > PALETTE_PAINT_MAX:
+            bad.append('fallback paint %d' % fp)
+        if fl:
+            bad.append('flags %#x' % fl)
+        if b'\0' not in nm or nm[len(name):].count(0) != 64 - len(name):
+            bad.append('name not NUL-padded')
+        elif not palette_name_ok(name):
+            bad.append('name %r breaks namespace:path' % name)
+        if name in names:
+            bad.append('name %r repeated' % name)
+        names.add(name)
+        last = max(last, pid)
+        if bad:
+            errs.append('BLOCK_PALETTE entry %d: %s' % (i, '; '.join(bad)))
+        else:
+            out[pid] = (ft, fp, name, raw)
+    return out, errs
+
+
+def palette_superset_errors(old, new):
+    """D8/D16: a newer version keeps every entry of the older one, byte for byte."""
+    o, _ = parse_palette(old)
+    n, _ = parse_palette(new)
+    return ['id %d %s' % (pid, 'dropped' if pid not in n else 'changed') for pid in sorted(o)
+            if pid not in n or n[pid][3] != o[pid][3]]
+
+
+def high_type_bytes(data, mask):
+    """The type bytes >= 128 in a decoded COLUMN payload (each stored band: 4,096 types, then paint)."""
+    ids = set()
+    for i in range(popcount(mask)):
+        t = data[i * BAND:i * BAND + 4096]
+        if t and max(t) >= 128:
+            ids.update(b for b in t if b >= 128)
+    return ids
+
+
+# ================================================================== BPL1 (K.1-4)
+# docs/eden-file-format.md "BPL1": a trailer section like SGN1/CMB1, `BPL1 | u32 inner_len | u32 w3`, then
+# `BPL1` + a BLOCK_PALETTE record's bytes. EdenWorldStore.cpp trailer_find_palette / trailer_put_palette /
+# converted_palette restate these three functions.
+def _walk_trailer(t):
+    """The trailer model's walk without SGN1/CMB1's own checks -> (payload, [(start, end)], tail start), or None."""
+    if len(t) % DIR_ROW:
+        return None
+    p = bytearray()
+    for i in range(0, len(t), DIR_ROW):
+        if t[i:i + 4] != b'\xff\xff\xff\xff':
+            return None
+        p += t[i + 4:i + DIR_ROW]
+    secs, i = [], 0
+    while i + 12 <= len(p):
+        if p[i:i + 4] == b'\0\0\0\0':
+            break
+        end = i + 12 + struct.unpack_from('<I', p, i + 4)[0]
+        if end > len(p):
+            return None
+        secs.append((i, end))
+        i = end
+    if any(p[i:]):
+        return None
+    return bytes(p), secs, i
+
+
+def trailer_find_palette(t):
+    """The record bytes of the trailer's one well-formed BPL1, else None (unwalkable, none, two, malformed)."""
+    w = _walk_trailer(t) if t else None
+    if w is None:
+        return None
+    p, secs, _ = w
+    b = [(a, e) for a, e in secs if p[a:a + 4] == b'BPL1']
+    if len(b) != 1 or b[0][1] - b[0][0] < 16 or p[b[0][0] + 12:b[0][0] + 16] != b'BPL1':
+        return None
+    return p[b[0][0] + 16:b[0][1]]
+
+
+def trailer_put_palette(t, record):
+    """`t` with its BPL1 replaced by one holding `record` (first BPL1's slot and w3, else appended after the
+    last section) or removed (record None); every other section as it was. The zero tail is kept only when the
+    sections' total size is unchanged; otherwise the payload is re-padded to a whole row. None: the trailer
+    cannot be walked."""
+    p, secs, tail = b'', [], 0
+    if t:
+        w = _walk_trailer(t)
+        if w is None:
+            return None
+        p, secs, tail = w
+    sec = None if record is None else b'BPL1' + struct.pack('<II', 4 + len(record), 0) + b'BPL1' + record
+    out, placed = b'', False
+    for a, e in secs:
+        if p[a:a + 4] != b'BPL1':
+            out += p[a:e]
+        elif sec is not None and not placed:
+            out += sec[:8] + p[a + 8:a + 12] + sec[12:]
+            placed = True
+    if sec is not None and not placed:
+        out += sec
+    if not out:
+        return b''
+    if len(out) == tail:                              # same section sizes: the tail as it was (byte-identical)
+        out += p[tail:]
+    out += bytes((-len(out)) % 12)
+    return b''.join(TRAILER_TAG + out[i:i + 12] for i in range(0, len(out), 12))
+
+
+def converted_palette(bpl1, seen=()):
+    """The BLOCK_PALETTE a .eden conversion writes, or None: `bpl1` must parse clean and name no
+    `emod:unknown_*` but its own id's; every type byte >= 128 in `seen` without an entry is reserved (D13)."""
+    if bpl1 is None:
+        return None
+    es, errs = parse_palette(bpl1)
+    if errs:
+        return None
+    for pid, e in es.items():
+        if e[2].startswith(b'emod:unknown_') and e[2] != b'emod:unknown_%d' % pid:
+            return None
+    entries = [(pid, e[0], e[1], e[2]) for pid, e in es.items()]
+    entries += [(pid, PALETTE_UNKNOWN_FALLBACK, 0, 'emod:unknown_%d' % pid) for pid in sorted(seen) if pid not in es]
+    return palette_payload(entries)
 
 
 def provenance_payload(e, mtime):
@@ -399,8 +584,12 @@ def write_converted(out, L, creatures, created, codec, column, quiet_label=None,
     tmp = out + '.converting'
     digests = {}
     band_or = 0
+    # K.1-4: a clean BPL1 in the trailer -> BLOCK_PALETTE after the COLUMNs + flags bit 0 (latent bytes reserved)
+    bpl1 = trailer_find_palette(L.trailer)
+    palette = converted_palette(bpl1) is not None
+    seen = set()
     with open(tmp, 'wb') as f:
-        f.write(file_header(L.bands, created))
+        f.write(file_header(L.bands, created, FH_FLAG_BLOCK_PALETTE if palette else 0))
         w = Writer(f, 1, 0, codec, level)
         w.rec(T_WORLD_HEADER, L.header, compress=False)
         w.rec(T_CREATURES, creatures)
@@ -413,8 +602,14 @@ def write_converted(out, L, creatures, created, codec, column, quiet_label=None,
             band_or |= mask
             if isinstance(payload, tuple):                 # (codec, stored bytes), already encoded
                 w.rec_encoded(T_COLUMN, payload[0], payload[1], mask=mask, x=c[0], z=c[1], aux=ordn)
+                if palette:
+                    seen |= high_type_bytes(Store.decode_payload(payload[0], payload[1], popcount(mask) * BAND), mask)
             else:
                 w.rec(T_COLUMN, payload, mask=mask, x=c[0], z=c[1], aux=ordn)
+                if palette:
+                    seen |= high_type_bytes(payload, mask)
+        if palette:
+            w.rec(T_BLOCK_PALETTE, converted_palette(bpl1, seen), compress=False)
         w.rec(T_SUMMARY, summary_payload(len(L.cols), len(L.cols), band_or), compress=False)
         w.commit()
         f.flush()
@@ -682,6 +877,7 @@ class Store:
         self.truncate_at = FILE_HEADER
         self.last_commit = None
         self.last_seq = 0
+        self.flags = 0
         self.fh_ok = self._file_header()
         if self.fh_ok:
             self._scan()
@@ -698,7 +894,7 @@ class Store:
             self.errors.append('file shorter than the 64-byte file header')
             return False
         magic, ver, bands, flags, created, res, c = struct.unpack_from(FH_FMT, self.buf, 0)
-        self.bands, self.created, self.fmt_version = bands, created, ver
+        self.bands, self.created, self.fmt_version, self.flags = bands, created, ver, flags
         if magic != MAGIC:
             self.errors.append('bad magic %r' % magic)
             return False
@@ -711,7 +907,7 @@ class Store:
         if bands not in (4, 16):
             self.errors.append('bands %d is neither 4 nor 16' % bands)
             return False
-        if flags or res.count(0) != len(res):
+        if (flags & ~FH_FLAG_BLOCK_PALETTE) or res.count(0) != len(res):   # K.1-2: bit 0 is known
             self.errors.append('non-zero flags/reserved in the file header (written by a newer build)')
             return False
         return True
@@ -901,7 +1097,35 @@ class Store:
         gr = self.live(T_GENERATOR)
         if gr and gr.aux != GENERATOR_LEN:
             errs.append('GENERATOR raw length %d is not %d' % (gr.aux, GENERATOR_LEN))
-        for t in (T_CREATURES, T_SIGN_TRAILER, T_PROVENANCE, T_SUMMARY, T_GENERATOR):
+        sk = self.live(T_SKY_CLOCK)
+        if sk and sk.aux != SKY_CLOCK_LEN:
+            errs.append('SKY_CLOCK raw length %d is not %d' % (sk.aux, SKY_CLOCK_LEN))
+        if sk and sk.codec != C_NONE:
+            errs.append('SKY_CLOCK must be codec 0')
+        bp = self.live(T_BLOCK_PALETTE)
+        flagged = bool(self.flags & FH_FLAG_BLOCK_PALETTE)
+        palette = None
+        if flagged and not bp:
+            errs.append('FileHeader flags bit 0 is set but there is no BLOCK_PALETTE')
+        if bp and not flagged:
+            errs.append('BLOCK_PALETTE @%d in a file without FileHeader flags bit 0' % bp.off)
+        if bp:
+            if bp.codec != C_NONE:
+                errs.append('BLOCK_PALETTE must be codec 0')
+            try:
+                palette, perrs = parse_palette(self.decode(bp))
+                errs.extend(perrs)
+            except Exception:
+                pass                                  # reported by the decode loop below
+            vs = self.history.get(('T', T_BLOCK_PALETTE), [])
+            for a, b in zip(vs, vs[1:]):              # D8/D16: every version a superset of the one before
+                try:
+                    lost = palette_superset_errors(self.decode(a), self.decode(b))
+                except Exception:
+                    continue
+                if lost:
+                    errs.append('BLOCK_PALETTE @%d is not a superset of @%d: %s' % (b.off, a.off, ', '.join(lost)))
+        for t in (T_CREATURES, T_SIGN_TRAILER, T_PROVENANCE, T_SUMMARY, T_GENERATOR, T_BLOCK_PALETTE, T_SKY_CLOCK):
             r = self.live(t)
             if r:
                 if r.mask or r.x or r.z:
@@ -920,6 +1144,7 @@ class Store:
         cols = self.columns()
         ords = {}
         band_or = 0
+        high = set()
         for (x, z), r in cols.items():
             if not (0 <= x < 32768 and 0 <= z < 32768) or ((x << 15) + z) == 0:
                 errs.append('COLUMN @%d has an unaddressable key (%d,%d)' % (r.off, x, z))
@@ -940,6 +1165,13 @@ class Store:
                 for i, b in enumerate(b for b in range(self.bands) if r.mask >> b & 1):
                     if data[i * BAND:(i + 1) * BAND].count(0) == BAND:
                         self.warnings.append('COLUMN (%d,%d): band %d stored but all zero (non-canonical)' % (x, z, b))
+                high |= high_type_bytes(data, r.mask)
+        # K.1-2: placeholders are legal (a mod that is not installed), so these are warnings, not damage
+        if high and not flagged:
+            self.warnings.append('type byte(s) >= 128 in a file without the palette flag: %s' % sorted(high))
+        elif high and palette is not None and high - set(palette):
+            self.warnings.append('type byte(s) with no BLOCK_PALETTE entry (drawn as the missing block): %s'
+                                 % sorted(high - set(palette)))
         sm = self.live(T_SUMMARY)
         if cols and not sm:
             errs.append('no SUMMARY')
@@ -975,6 +1207,15 @@ def export(src, out, force=False, quiet=False):
         order = parse_provenance(pv)['dir_order']
     if hdr is None or creatures is None:
         die('%s: WORLD_HEADER/CREATURES unreadable' % src)
+    if st.flags & FH_FLAG_BLOCK_PALETTE:
+        # K.1-4: the raw bytes plus a BPL1 trailer section from the live BLOCK_PALETTE (EdenExporter's OWN target)
+        bp = st.live(T_BLOCK_PALETTE)
+        rec = st.decode(bp) if bp else None
+        if rec is None or parse_palette(rec)[1]:
+            die('%s: the block palette does not decode, so an own-format export cannot carry it' % src)
+        trailer = trailer_put_palette(trailer, rec)
+        if trailer is None:
+            die('%s: the sign trailer cannot be read, so the block palette cannot go in it' % src)
     cols = sorted(st.columns().items(), key=lambda kv: kv[1].aux)
     col = st.bands * BAND
     n = len(cols)
@@ -1129,6 +1370,17 @@ def generator_text(g):
         'legacy' if pf else 'new'))
 
 
+def sky_clock_text(k):
+    """The SKY_CLOCK record (Classes/SkyCycle.cpp SkyCycle::decode), for `dump`."""
+    if len(k) != SKY_CLOCK_LEN:
+        return '%d B (not %d): unreadable (the engine starts at t 0.30)' % (len(k), SKY_CLOCK_LEN)
+    t = struct.unpack_from('<f', k, 0)[0]
+    if not (0.0 <= t < 1.0):
+        return 't=%r out of [0,1): ignored (the engine starts at t 0.30)' % t
+    hm = int(round(t * 24 * 60)) % (24 * 60)
+    return 't=%.4f (%02d:%02d)%s' % (t, hm // 60, hm % 60, ' locked' if k[4] & 1 else '')
+
+
 def generator_mirror(g):
     """The 36 B `.eden` mirror of a GENERATOR record: "EMG1" + record + CRC-32 of those 32 B."""
     b = GEN_MIRROR_MAGIC + bytes(g)
@@ -1139,7 +1391,8 @@ def dump(path, records=False):
     st = open_emod(path)
     print('%s: %d B' % (path, st.size))
     if st.size >= FILE_HEADER:
-        print('file header: fmt_version=%d bands=%d created_unix=%d' % (st.fmt_version, st.bands, st.created))
+        print('file header: fmt_version=%d bands=%d created_unix=%d flags=%#x%s' % (
+            st.fmt_version, st.bands, st.created, st.flags, ' (block palette)' if st.flags & FH_FLAG_BLOCK_PALETTE else ''))
     if records:
         for r in st.recs:
             print('  @%-10d %-12s codec=%-4s mask=%#06x x=%-5d z=%-5d aux=%-7d len=%-7d seq=%d' % (
@@ -1171,6 +1424,19 @@ def dump(path, records=False):
     gr = st.live(T_GENERATOR)
     if gr:
         print('generator: ' + generator_text(st.decode(gr)))
+    sk = st.live(T_SKY_CLOCK)
+    if sk:
+        print('sky clock: ' + sky_clock_text(st.decode(sk)))
+    bp = st.live(T_BLOCK_PALETTE)
+    if bp:
+        pal, perrs = parse_palette(st.decode(bp))
+        print('block palette: %d entr%s (%d committed version%s)' % (
+            len(pal), 'y' if len(pal) == 1 else 'ies', len(st.history[('T', T_BLOCK_PALETTE)]),
+            '' if len(st.history[('T', T_BLOCK_PALETTE)]) == 1 else 's'))
+        for pid, (ft, fp, name, _) in sorted(pal.items()):
+            print('  %3d %-40s fallback type %d paint %d' % (pid, name.decode('ascii'), ft, fp))
+        for e in perrs:
+            print('  ERROR: ' + e)
     sm = st.live(T_SUMMARY)
     if sm:
         lc, no, bo, _, _ = struct.unpack(SUMMARY_FMT, st.decode(sm))
@@ -1344,8 +1610,9 @@ def verify_cmd(path, check_crc=True):
 
 
 # ================================================================== append (used by the corrupt gate)
-def append_batch(path, columns=None, creatures=None, header=None, codec=C_ZSTD):
-    """Append one committed batch: truncate any torn tail, then COLUMN.../CREATURES/WORLD_HEADER, SUMMARY, COMMIT."""
+def append_batch(path, columns=None, creatures=None, header=None, codec=C_ZSTD, palette=None):
+    """Append one committed batch: truncate any torn tail, then COLUMN.../CREATURES/WORLD_HEADER/BLOCK_PALETTE,
+    SUMMARY, COMMIT. `palette` is the record's bytes, written as given (fixtures may break the rules on purpose)."""
     st = open_emod(path)
     if st.errors:
         die('append: %s' % '; '.join(st.errors))
@@ -1371,6 +1638,8 @@ def append_batch(path, columns=None, creatures=None, header=None, codec=C_ZSTD):
             w.rec(T_CREATURES, creatures)
         if header is not None:
             w.rec(T_WORLD_HEADER, header, compress=False)
+        if palette is not None:
+            w.rec(T_BLOCK_PALETTE, palette, compress=False)
         bo = 0
         for m in masks.values():
             bo |= m
@@ -1378,6 +1647,90 @@ def append_batch(path, columns=None, creatures=None, header=None, codec=C_ZSTD):
         w.commit()
         f.flush()
         os.fsync(f.fileno())
+
+
+# ================================================================== compaction (the engine's, byte for byte)
+def compact(path, set_palette_flag=False, palette=None, quiet=False):
+    """EdenWorldStore::compact(setPaletteFlag, palette): the live state as one batch (seq 1) in `path`.compact,
+    fsync, rename over `path`. Order: WORLD_HEADER, CREATURES, a non-empty SIGN_TRAILER, PROVENANCE, GENERATOR,
+    SKY_CLOCK, COLUMNs by (ord, x, z), BLOCK_PALETTE, SUMMARY, COMMIT. zstd payloads are copied verbatim after they
+    decode; codec 0 is kept for the raw types and empty payloads; anything else is re-encoded at zstd-3.
+    K.1-2 flag compaction (`set_palette_flag` on an unflagged file): FileHeader flags bit 0, and a BLOCK_PALETTE of
+    `palette` (record bytes; None = no entries) plus an `emod:unknown_<id>` entry for every type byte >= 128 found in
+    a live column with no entry (D13). A supplied entry whose id is such a latent byte is refused (it would give old
+    garbage a meaning). On a flagged file the flag is kept and the live palette copied; `palette` must be None.
+    Returns the latent ids found (flag compaction) or []."""
+    st = open_emod(path)
+    if st.errors or st.damage:
+        die('compact: %s is damaged or invalid: %s' % (path, '; '.join(st.problems())))
+    flagged = bool(st.flags & FH_FLAG_BLOCK_PALETTE)
+    if palette is not None and (flagged or not set_palette_flag):
+        die('compact: a palette is only given to the flag compaction of an unflagged file')
+    flag_now = set_palette_flag and not flagged
+    supplied = {}
+    if flag_now:
+        supplied, perrs = parse_palette(palette if palette is not None else palette_payload([]))
+        if perrs:
+            die('compact: the supplied palette breaks the rules: %s' % '; '.join(perrs))
+    elif flagged and not st.live(T_BLOCK_PALETTE):
+        die('compact: %s is flagged but has no BLOCK_PALETTE' % path)
+    tmp = path + '.compact'
+    latent = set()
+    with open(tmp, 'wb') as f:
+        f.write(file_header(st.bands, st.created, FH_FLAG_BLOCK_PALETTE if (flagged or flag_now) else 0))
+        w = Writer(f, 1, 0)
+
+        def copy(r):
+            raw = r.type in RAW_TYPES
+            try:
+                data = st.decode(r)
+            except Exception as ex:
+                die('compact: live record @%d does not decode (%s); nothing was replaced' % (r.off, ex))
+            if r.codec == C_ZSTD or (r.codec == C_NONE and (raw or not data)):
+                w.rec_encoded(r.type, r.codec, bytes(st.buf[r.poff:r.poff + r.plen]), r.mask, r.x, r.z, r.aux)
+            else:
+                codec, enc = w.encode(data, not raw)
+                w.rec_encoded(r.type, codec, enc, r.mask, r.x, r.z, r.aux)
+            return data
+        for t in (T_WORLD_HEADER, T_CREATURES, T_SIGN_TRAILER, T_PROVENANCE, T_GENERATOR, T_SKY_CLOCK):
+            r = st.live(t)
+            if r and not (t == T_SIGN_TRAILER and r.aux == 0):
+                copy(r)
+        cols = sorted(st.columns().items(), key=lambda kv: (kv[1].aux, kv[0][0], kv[0][1]))
+        for _, r in cols:
+            data = copy(r)
+            if flag_now:
+                latent |= high_type_bytes(data, r.mask)
+        if flag_now:
+            clash = sorted(latent & set(supplied))
+            if clash:
+                f.close()
+                os.remove(tmp)
+                die('compact: palette id(s) %s are latent type bytes in this world (D13); nothing was replaced' % clash)
+            entries = [(pid, e[0], e[1], e[2]) for pid, e in supplied.items()]
+            entries += [(pid, PALETTE_UNKNOWN_FALLBACK, 0, 'emod:unknown_%d' % pid) for pid in sorted(latent)]
+            w.rec(T_BLOCK_PALETTE, palette_payload(entries), compress=False)
+        elif flagged:
+            copy(st.live(T_BLOCK_PALETTE))
+        bo, mx = 0, None
+        for _, r in cols:
+            bo |= r.mask
+            mx = r.aux if mx is None else max(mx, r.aux)
+        w.rec(T_SUMMARY, summary_payload(len(cols), 0 if mx is None else mx + 1, bo), compress=False)
+        w.commit()
+        f.flush()
+        os.fsync(f.fileno())
+    st.close()
+    os.replace(tmp, path)
+    if not quiet:
+        print('%s: compacted%s (%d columns%s)' % (path, ', palette flag set' if flag_now else '', len(cols),
+                                                  ', latent ids %s' % sorted(latent) if latent else ''))
+    return sorted(latent)
+
+
+def parse_entry_arg(a):
+    pid, ft, fp, name = a.split(':', 3)
+    return (int(pid), int(ft), int(fp), name)
 
 
 # ================================================================== synthetic fixtures
@@ -1493,6 +1846,15 @@ def make_fixtures(d):
     # creature-gap test (0 at 131,072) decides
     cols = [((610, 710), _column(rnd, 16, 10))]
     p = os.path.join(d, 'f256-v2-single.eden'); write_eden(p, 2, cols, 0, bands=16); out.append((p, True))
+    # K.1-4: what an own-format export of a world with mod blocks looks like -- a well-formed SGN1, then a BPL1
+    # naming 128/129, both used. Converting gives BLOCK_PALETTE + flags bit 0; exporting rebuilds the BPL1 from
+    # the record in its slot, so the round trip must be byte-identical.
+    cols = [((800 + i % 2, 900 + i // 2), _column(rnd, 16, 3)) for i in range(4)]
+    c = bytearray(cols[1][1]); c[20] = 128; c[21] = 129; c[4096 + 21] = 9; c[BAND + 5] = 128
+    cols[1] = (cols[1][0], bytes(c))
+    sign = struct.pack('<6i', 12801, 14417, 30, 3, 9, 1) + b'MOD BLOCKS'.ljust(96, b'\0')
+    t = trailer_put_palette(trailer_build([(b'SGN1', 0, 1, [sign])], b''), palette_payload(PALETTE_FIXTURE_V1))
+    p = os.path.join(d, 'f256-bpl1.eden'); write_eden(p, 5, cols, 400, [2, 0, 3, 1], trailer=t); out.append((p, True))
     return out
 
 
@@ -1506,12 +1868,14 @@ def corrupt_gate(work, check_crc=True):
     src = [p for p, _ in fx if p.endswith('f256-trailer.eden')][0]
     base = os.path.join(work, 'gate-base.emod')
     convert(src, base, epoch=0, quiet=True)
+    compact(base, True, palette_payload(PALETTE_FIXTURE_V1), quiet=True)     # K.1-2: the flag and the record too
     s1 = state_digest(base)
     e = Eden(src)
     c0 = e.column(e.cols[0])
-    changed = bytearray(c0); changed[123] ^= 0x5a
+    changed = bytearray(c0); changed[123] ^= 0x5a; changed[124] = 130
     append_batch(base, columns={(e.cols[0][0], e.cols[0][1]): bytes(changed), (5000, 5000): _column(random.Random(9), 16, 2)},
-                 creatures=e.creatures[:ENT * 3] + bytes(ENT * 397), header=e.header)
+                 creatures=e.creatures[:ENT * 3] + bytes(ENT * 397), header=e.header,
+                 palette=palette_payload(PALETTE_FIXTURE_V2))
     s2 = state_digest(base)
     st = open_emod(base)
     recs = list(st.recs)
@@ -1532,6 +1896,7 @@ def corrupt_gate(work, check_crc=True):
                 cases.append(('flip %s %s payload byte' % (which, TYPE_NAMES[q.type]), 'flip', q.poff + q.plen // 2))
     cases.append(('flip file header byte (bands)', 'flip', 10))
     cases.append(('flip file header byte (created_unix)', 'flip', 20))
+    cases.append(('flip file header byte (flags)', 'flip', 12))
     last_col = [q for q in recs if q.type == T_COLUMN][-1]
     cases.append(('truncate mid-COLUMN in the last batch', 'trunc', last_col.poff + last_col.plen // 2))
     cases.append(('truncate mid-COMMIT of the last batch', 'trunc', recs[-1].off + 20))
@@ -1581,6 +1946,9 @@ def state_digest_store(st):
         h.update(st.decode(r) if r else b'-')
     for k, r in sorted(st.columns().items()):
         h.update(struct.pack('<iiH', k[0], k[1], r.mask) + st.decode(r))
+    bp = st.live(T_BLOCK_PALETTE)                     # K.1-2: what bytes >= 128 mean; absent -> nothing (older digests hold)
+    if bp:
+        h.update(b'BPL' + st.decode(bp))
     return h.hexdigest()
 
 
@@ -1626,6 +1994,10 @@ def stream_matches(src, work, chunks=(1, 7, 4096, 1 << 20), gz=True):
     return ok
 
 
+PALETTE_FIXTURE_V1 = [(128, 1, 7, 'emod:test_glow'), (129, 2, 0, 'stairs:oak')]
+PALETTE_FIXTURE_V2 = PALETTE_FIXTURE_V1 + [(130, 4, 12, 'stairs:oak/r')]
+
+
 def fixtures_pack(d):
     """S.3's checked-in pack (port/tools/fixtures/emod/): every S.1 fixture as a deterministic .eden.gz,
     plus three .emod files only emod.py wrote (two batches; zlib; raw), and expected.txt with the
@@ -1643,8 +2015,10 @@ def fixtures_pack(d):
         with gzip.GzipFile(filename='', mode='wb', fileobj=buf, mtime=0, compresslevel=9) as g:
             g.write(data)
         open(path, 'wb').write(buf.getvalue())
+    srcs = {}
     for src, _ in make_fixtures(os.path.join(tmp, 'fx')):
         name = os.path.basename(src)
+        srcs[name] = src
         gz(os.path.join(d, name + '.gz'), open(src, 'rb').read())
         m = os.path.join(tmp, name + '.emod')
         convert(src, m, epoch=0, quiet=True)
@@ -1665,6 +2039,60 @@ def fixtures_pack(d):
             append_batch(g2, columns={(e.cols[0][0], e.cols[0][1]): bytes(c0), (5000, 5000): _column(random.Random(9), 16, 2)},
                          creatures=e.creatures[:ENT * 3] + bytes(ENT * 397), header=e.header)
             lines.append('read %s %s %s' % (os.path.basename(g2), sha256_file(g2), state_digest(g2)))
+    # K.1-2 (block palette). `flagcompact F` = copy F, EdenWorldStore::compact(setPaletteFlag = true), and the
+    # result must be emod.py's `compact --set-palette-flag` byte for byte (the cross-target gate for the record).
+    def flagcompact(f):
+        t = os.path.join(tmp, 'fc.emod')
+        shutil.copyfile(f, t)
+        compact(t, True, quiet=True)
+        lines.append('flagcompact %s %s %s' % (os.path.basename(f), sha256_file(t), state_digest(t)))
+        os.remove(t)
+    # unflagged with latent garbage >= 128 (what a pre-K.1 bug could leave): the flag compaction reserves 131, 250
+    hb = os.path.join(d, 'f64-highbytes.emod')
+    e = Eden(srcs['f64-basic.eden'])
+    convert(srcs['f64-basic.eden'], hb, epoch=0, quiet=True)
+    c0 = bytearray(e.column(e.cols[0])); c0[5] = 131; c0[4000] = 250; c0[BAND + 6] = 131
+    append_batch(hb, columns={(e.cols[0][0], e.cols[0][1]): bytes(c0)})
+    lines.append('read %s %s %s' % (os.path.basename(hb), sha256_file(hb), state_digest(hb)))
+    flagcompact(hb)
+    # flagged, the palette growing over two batches; byte 200 has no entry (a placeholder: legal, warned)
+    pp = os.path.join(d, 'f256-palette.2batch.emod')
+    e = Eden(srcs['f256-trailer.eden'])
+    convert(srcs['f256-trailer.eden'], pp, epoch=0, quiet=True)
+    compact(pp, True, palette_payload(PALETTE_FIXTURE_V1), quiet=True)
+    c1 = bytearray(e.column(e.cols[1])); c1[10] = 128; c1[11] = 129; c1[12] = 130; c1[13] = 200; c1[4096 + 12] = 7
+    append_batch(pp, columns={(e.cols[1][0], e.cols[1][1]): bytes(c1)}, palette=palette_payload(PALETTE_FIXTURE_V2))
+    lines.append('read %s %s %s' % (os.path.basename(pp), sha256_file(pp), state_digest(pp)))
+    flagcompact(pp)
+    # K.1-4: BPL1 sources with latent bytes (131, 250: no entry), which the converter reserves as
+    # emod:unknown_<id> (D13). 256z exercises the engine converter's spill fast path, 64z its rebuild path.
+    for name, bands, ver in (('f256-bpl1-latent.eden', 16, 5), ('f64-bpl1-latent.eden', 4, 4)):
+        r = random.Random(1031)
+        cols = [((1200 + i, 1300), _column(r, bands, 2)) for i in range(3)]
+        c = bytearray(cols[0][1]); c[7] = 128; c[8] = 131; c[3000] = 250
+        cols[0] = (cols[0][0], bytes(c))
+        src = os.path.join(tmp, name)
+        write_eden(src, ver, cols, 400 if bands == 16 else 200, trailer=trailer_put_palette(b'', palette_payload(PALETTE_FIXTURE_V1)))
+        srcs[name] = src
+        gz(os.path.join(d, name + '.gz'), open(src, 'rb').read())
+        m = os.path.join(tmp, name + '.emod')
+        convert(src, m, epoch=0, quiet=True)
+        lines.append('convert %s.gz %s %s' % (name, sha256_file(m), state_digest(m)))
+    # K.1-4: `export F` = the engine's own-format export (EdenExporter, target own) of F -- a .emod, or a .eden
+    # converted first -- must be emod.py's `export` byte for byte (the last field is unused). f256-bpl1's
+    # export IS its source.
+    def export_line(f):
+        m = os.path.join(tmp, 'x.emod')
+        if f.endswith('.emod'):
+            shutil.copyfile(os.path.join(d, f), m)
+        else:
+            convert(srcs[f[:-3]], m, epoch=0, quiet=True)
+        x = os.path.join(tmp, 'x.eden')
+        export(m, x, quiet=True)
+        lines.append('export %s %s -' % (f, sha256_file(x)))
+        os.remove(m); os.remove(x)
+    for f in ('f256-bpl1.eden.gz', 'f256-bpl1-latent.eden.gz', 'f64-bpl1-latent.eden.gz', 'f256-palette.2batch.emod'):
+        export_line(f)
     open(os.path.join(d, 'expected.txt'), 'w').write('\n'.join(lines) + '\n')
     shutil.rmtree(tmp)
     print('\n'.join(lines))
@@ -1797,6 +2225,136 @@ def verify_default(src, emod_path):
     return not bad and not extra
 
 
+def palette_selftest(work):
+    """K.1-2: the flag, the BLOCK_PALETTE rules verify enforces, the flag compaction (D13/D14)."""
+    import shutil
+    os.makedirs(work, exist_ok=True)
+    src = [p for p, _ in make_fixtures(os.path.join(work, 'fx')) if p.endswith('f64-basic.eden')][0]
+    e = Eden(src)
+    key = (e.cols[0][0], e.cols[0][1])
+    ok = True
+
+    def check(cond, what):
+        nonlocal ok
+        print('  %-80s %s' % (what, 'ok' if cond else 'FAILED'))
+        ok &= bool(cond)
+
+    def fresh(name):
+        p = os.path.join(work, name)
+        convert(src, p, epoch=0, quiet=True)
+        return p
+
+    def probs(p):
+        st = open_emod(p)
+        v, w = st.verify(), list(st.warnings)
+        st.close()
+        return v, w
+
+    def has(msgs, text):
+        return any(text in m for m in msgs)
+
+    def dies(fn):
+        try:
+            fn()
+        except SystemExit:
+            return True
+        return False
+    a = fresh('a.emod')
+    before = open(a, 'rb').read()
+    d0 = state_digest(a)
+    check(compact(a, True, quiet=True) == [], 'flag compaction of a clean world finds no latent bytes')
+    st = open_emod(a)
+    check(st.flags == FH_FLAG_BLOCK_PALETTE and st.live(T_BLOCK_PALETTE) and st.decode(st.live(T_BLOCK_PALETTE)) ==
+          palette_payload([]) and not st.verify(), 'flags bit 0 set, an empty BLOCK_PALETTE, verify clean')
+    st.close()
+    check(state_digest(a) != d0, 'the palette is part of the state digest once it exists')
+    once = open(a, 'rb').read()
+    compact(a, quiet=True)
+    check(open(a, 'rb').read() == once, 'compacting a flag compaction reproduces it byte for byte')
+    # K.1-4: the own-format export carries the palette as BPL1; converting it back gives the record and the flag
+    x, a2 = os.path.join(work, 'x.eden'), os.path.join(work, 'x.emod')
+    export(a, x, quiet=True)
+    xe = Eden(x)
+    check(trailer_find_palette(xe.trailer) == palette_payload([]), 'own-format export of a flagged world writes BPL1 = the record')
+    convert(x, a2, epoch=0, quiet=True)
+    st = open_emod(a2)
+    check(st.flags == FH_FLAG_BLOCK_PALETTE and st.decode(st.live(T_BLOCK_PALETTE)) == palette_payload([]) and not st.verify(),
+          'converting that export back: flagged, the same palette, verify clean')
+    st.close()
+    sig = trailer_build([(b'SGN1', 0, 1, [bytes(120)])], b'')
+    v1 = palette_payload(PALETTE_FIXTURE_V1)
+    with1 = trailer_put_palette(sig, v1)
+    check(trailer_find_palette(with1) == v1 and trailer_put_palette(with1, None) == sig and trailer_put_palette(with1, v1) == with1,
+          'BPL1 put/find/remove: appended after SGN1, removed back to the original bytes, replaced in place identically')
+    check(trailer_put_palette(b'', None) == b'' and trailer_find_palette(trailer_put_palette(b'', v1)) == v1,
+          'BPL1 alone: no trailer stays none; a BPL1-only trailer reads back')
+    two = trailer_build([(b'SGN1', 0, 1, [bytes(120)])], b'')
+    p2 = b''.join(with1[i + 4:i + 16] for i in range(0, len(with1), 16)).rstrip(b'\0')
+    b1 = p2[p2.index(b'BPL1'):]
+    dbl = b''.join(TRAILER_TAG + (b1 + b1 + bytes((-2 * len(b1)) % 12))[i:i + 12] for i in range(0, len(b1 * 2) + (-2 * len(b1)) % 12, 12))
+    check(trailer_find_palette(dbl) is None and trailer_find_palette(b'\0' * 16) is None,
+          'BPL1 twice, or a trailer that cannot be walked: no palette')
+    check(converted_palette(palette_payload([(128, 2, 0, 'emod:unknown_129')])) is None and
+          converted_palette(palette_payload([(129, 2, 0, 'emod:unknown_129')]), {129, 140}) ==
+          palette_payload([(129, 2, 0, 'emod:unknown_129'), (140, 2, 0, 'emod:unknown_140')]),
+          'converted_palette: another id\'s emod:unknown_* name refuses the BPL1; latent bytes are reserved')
+    b = fresh('b.emod')
+    open(b, 'r+b').write(file_header(e.bands, 0, 2)[:64])
+    check(has(probs(b)[0], 'newer build'), 'any other FileHeader flag bit is still refused')
+    open(b, 'r+b').write(file_header(e.bands, 0, FH_FLAG_BLOCK_PALETTE)[:64])
+    check(has(probs(b)[0], 'no BLOCK_PALETTE'), 'flag without a record: invalid')
+    b = fresh('b.emod')
+    append_batch(b, palette=palette_payload(PALETTE_FIXTURE_V1))
+    check(has(probs(b)[0], 'without FileHeader flags bit 0'), 'record without the flag: invalid')
+    c = fresh('c.emod')
+    compact(c, True, palette_payload(PALETTE_FIXTURE_V2), quiet=True)
+    append_batch(c, palette=palette_payload(PALETTE_FIXTURE_V1))
+    check(has(probs(c)[0], 'not a superset') and has(probs(c)[0], 'id 130 dropped'), 'a version that drops an entry: invalid (D8)')
+    c = fresh('c.emod')
+    compact(c, True, palette_payload(PALETTE_FIXTURE_V1), quiet=True)
+    append_batch(c, palette=palette_payload([(128, 1, 8, 'emod:test_glow'), (129, 2, 0, 'stairs:oak')]))
+    check(has(probs(c)[0], 'id 128 changed'), 'a version that changes an entry: invalid (D8)')
+    unsorted = struct.pack('<II', PALETTE_VERSION, 2) + palette_entry(130, 2, 0, 'a:b') + palette_entry(129, 2, 0, 'a:c')
+    for ents, why in (([(127, 2, 0, 'a:b')], '127 < 128'), (unsorted, 'not ascending'),
+                      ([(128, 66, 0, 'a:b')], 'fallback type 66'), ([(128, 0, 0, 'a:b')], 'fallback type 0'),
+                      ([(128, 2, 55, 'a:b')], 'fallback paint 55'), ([(128, 2, 0, 'eden:stone')], 'namespace:path'),
+                      ([(128, 2, 0, 'Mod:x')], 'namespace:path'), ([(128, 2, 0, 'nocolon')], 'namespace:path'),
+                      ([(128, 2, 0, 'a:b'), (129, 2, 0, 'a:b')], 'repeated'),
+                      ([(128, 2, 0, 'a' * 25 + ':b')], 'namespace:path')):
+        c = fresh('c.emod')
+        pb = ents if isinstance(ents, bytes) else palette_payload(ents)
+        check(dies(lambda: compact(c, True, pb, quiet=True)), 'compaction refuses a palette with %s' % why)
+        c = fresh('c.emod')
+        compact(c, True, quiet=True)
+        append_batch(c, palette=pb)
+        check(has(probs(c)[0], why), 'verify reports %s' % why)
+    c = fresh('c.emod')
+    compact(c, True, quiet=True)
+    raw = bytearray(palette_payload([(128, 2, 0, 'a:b')])); raw[8 + 4 + 5] = ord('x')   # bytes after the NUL
+    append_batch(c, palette=bytes(raw))
+    check(has(probs(c)[0], 'NUL-padded'), 'verify reports a name with bytes after its NUL')
+    h = fresh('h.emod')
+    col = bytearray(e.column(e.cols[0])); col[5] = 131; col[4000] = 250
+    append_batch(h, columns={key: bytes(col)})
+    v, w = probs(h)
+    check(not v and has(w, 'without the palette flag: [131, 250]'), 'unflagged bytes >= 128: a warning, not an error')
+    hb = open(h, 'rb').read()
+    check(dies(lambda: compact(h, True, palette_payload([(131, 2, 0, 'a:b')]), quiet=True)) and open(h, 'rb').read() == hb
+          and not os.path.exists(h + '.compact'), 'a supplied id that is a latent byte is refused, file untouched (D13)')
+    check(compact(h, True, palette_payload([(128, 2, 0, 'a:b')]), quiet=True) == [131, 250], 'the flag compaction finds 131, 250')
+    st = open_emod(h)
+    pal, _ = parse_palette(st.decode(st.live(T_BLOCK_PALETTE)))
+    st.close()
+    check(sorted(pal) == [128, 131, 250] and pal[131][2] == b'emod:unknown_131' and pal[250][:2] == (PALETTE_UNKNOWN_FALLBACK, 0),
+          'they are reserved as emod:unknown_<id> (fallback stone) beside the supplied entry')
+    col[6] = 200
+    append_batch(h, columns={key: bytes(col)})
+    v, w = probs(h)
+    check(not v and has(w, 'no BLOCK_PALETTE entry (drawn as the missing block): [200]'), 'a flagged byte with no entry: a warning')
+    shutil.rmtree(work)
+    return ok
+
+
 def selftest(work):
     ok = True
     for p, ident in make_fixtures(os.path.join(work, 'fixtures')):
@@ -1816,6 +2374,8 @@ def selftest(work):
             if not same:
                 print('  codec %s round trip FAILED' % CODEC_NAMES[codec]); ok = False
             os.remove(m); os.remove(b)
+    print('== block palette (K.1-2)')
+    ok &= palette_selftest(os.path.join(work, 'palette'))
     print('== corrupt gate')
     ok &= corrupt_gate(os.path.join(work, 'gate'))
     print('SELFTEST %s' % ('PASSED' if ok else 'FAILED'))
@@ -1835,6 +2395,8 @@ def main():
     x = sub.add_parser('export'); x.add_argument('world'); x.add_argument('-o'); x.add_argument('--force', action='store_true')
     v = sub.add_parser('verify'); v.add_argument('world'); v.add_argument('--no-crc', action='store_true')
     d = sub.add_parser('dump'); d.add_argument('world'); d.add_argument('--records', action='store_true')
+    cp = sub.add_parser('compact'); cp.add_argument('world'); cp.add_argument('--set-palette-flag', action='store_true')
+    cp.add_argument('--palette-entry', action='append', default=[], metavar='ID:TYPE:PAINT:NAME')
     tr = sub.add_parser('trailer'); tr.add_argument('world'); tr.add_argument('--check', action='store_true')
     tr.add_argument('--records', action='store_true'); tr.add_argument('--diff')
     r = sub.add_parser('roundtrip'); r.add_argument('world'); r.add_argument('--work', default='emod-work')
@@ -1873,6 +2435,10 @@ def main():
         sys.exit(verify_cmd(a.world, not a.no_crc))
     elif a.cmd == 'dump':
         dump(a.world, a.records)
+    elif a.cmd == 'compact':
+        need_zstd()
+        ents = [parse_entry_arg(e) for e in a.palette_entry]
+        compact(a.world, a.set_palette_flag, palette_payload(ents) if ents else None)
     elif a.cmd == 'trailer':
         sys.exit(0 if trailer_cmd(a.world, a.check, a.records, a.diff) else 1)
     elif a.cmd == 'roundtrip':

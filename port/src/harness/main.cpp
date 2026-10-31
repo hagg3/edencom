@@ -131,8 +131,16 @@
 //                        empty bit follows both transitions and the block really meshes.
 //   --newblocks-selftest D.2a: builds each of ids 112-127 (the 2026 blocks) through buildBlock,
 //                        asserts each meshes, then saves, reloads and reads every id back.
+//   --registry-selftest  K.1-3: the block registry at run time: canonical names, a latent byte >= 128 kept, mod
+//                        blocks via the console (flag compaction, save, reload), the pack unregistered
+//                        (placeholders, bytes unchanged) and back, refusals (session, full), K.1-4 export
+//                        (own = BPL1, NewFormat256z = fallbacks), Convert to 64z (--height=256), reset.
 //   --photo-selftest     H.16: the in-game photo's PNG encoder (Util.mm photoEncodePNG): signature, IHDR
 //                        size/type, IDAT inflates to the exact filtered rows, chunk CRCs. Headless.
+//   --folders-selftest   K.0w-2: world-folder adoption (plan §4) on a fixture in --docs: layout, bytes unchanged,
+//                        recovery of every .migrating state, idempotence, delete/rename/photo, the rule-4 guard.
+//                        --folders-phase=fixture|adopt|verify are port/tools/folders-crash-gate.sh's steps
+//                        (with EDEN_TEST_ADOPT_KILL_AFTER=<n>).
 //   --trailer-selftest   D.3a: the sign/command-block trailer model (Classes/WorldTrailer.h). Always
 //                        the synthetic legs (ordering, opaque, the 1 MiB refusal, sidecars, the index);
 //                        each --trailer-file=W.eden|W.emod must parse and re-serialise byte-identical;
@@ -175,6 +183,10 @@
 //                        pass alone (chunks objects sky models signs transparent flowers effects hud
 //                        other). PREFIX-<day|night>-p<N>-<pass>.bmp; compare two builds with
 //                        port/tools/shot-diff.py. Legs: --render-scale=75, --window=WxH.
+//   --sky-shot[=PREFIX]  DN.3, a REAL WINDOW: the scene-shot scratch world with the day/night cycle on and
+//                        locked, one full frame per clock time and camera pose (level at the sunrise
+//                        horizon, and looking up): PREFIX-t<time>-<level|up>.bmp. --sky-times=T,T,...
+//                        (default 0,0.2,0.26,0.3,0.5,0.7,0.74,0.8; 0 midnight, 0.25 sunrise, 0.5 noon).
 //   --state-trace=FILE   with --scene-shot: one line per draw for the day / pose 0 frame (pass, call
 //                        site, program, texture, colour, fog, blend, depth, cull, alpha, lights,
 //                        sprite, texture matrix, stack depths, arrays).
@@ -474,7 +486,10 @@ static int parse_one_arg(const char* a) {
         else if (starts_with(a, "--look-mutate="))    g_opt.lookMutate = a + 14;
         else if (!std::strcmp(a, "--empty-bit-selftest")) { g_opt.mode = "empty-bit-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--newblocks-selftest")) { g_opt.mode = "newblocks-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--registry-selftest")) { g_opt.mode = "registry-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--photo-selftest")) { g_opt.mode = "photo-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--folders-selftest")) { g_opt.mode = "folders-selftest"; g_opt.headless = true; }
+        else if (!std::strncmp(a, "--folders-phase=", 16)) g_opt.foldersPhase = a + 16;
         else if (!std::strcmp(a, "--trailer-selftest")) { g_opt.mode = "trailer-selftest"; g_opt.headless = true; }
         else if (starts_with(a, "--trailer-file="))  g_opt.trailerFiles.push_back(a + 15);
         else if (!std::strcmp(a, "--trailer-no-dirty-mark")) g_opt.trailerNoDirty = true;
@@ -493,6 +508,9 @@ static int parse_one_arg(const char* a) {
         else if (starts_with(a, "--signs="))         SignRenderer::enabled = atoi(a + 8) != 0;
         else if (!std::strcmp(a, "--scene-shot"))     g_opt.mode = "scene-shot";
         else if (starts_with(a, "--scene-shot="))     { g_opt.mode = "scene-shot"; g_opt.shot = a + 13; }
+        else if (!std::strcmp(a, "--sky-shot"))       g_opt.mode = "sky-shot";
+        else if (starts_with(a, "--sky-shot="))       { g_opt.mode = "sky-shot"; g_opt.shot = a + 11; }
+        else if (starts_with(a, "--sky-times="))      g_opt.skyTimes = a + 12;
         else if (starts_with(a, "--state-trace="))    g_opt.stateTrace = a + 14;
         else if (!std::strcmp(a, "--render-selftest")) { g_opt.mode = "render-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--render-selftest-gl")) g_opt.mode = "render-selftest";
@@ -939,6 +957,7 @@ static int eden_main_after_args(int argc, char** argv) {
         else if (!std::strcmp(g_opt.mode, "fly-selftest")) rc = run_fly_selftest();
         else if (!std::strcmp(g_opt.mode, "empty-bit-selftest")) rc = run_empty_bit_selftest();
         else if (!std::strcmp(g_opt.mode, "newblocks-selftest")) rc = run_newblocks_selftest();
+        else if (!std::strcmp(g_opt.mode, "registry-selftest")) rc = run_registry_selftest();
         else if (!std::strcmp(g_opt.mode, "base-selftest")) rc = eden_base_selftest_run(g_opt.docs.c_str());
         else if (!std::strcmp(g_opt.mode, "net-selftest"))  rc = eden_net_selftest_run(g_opt.netServer.c_str());
         else if (!std::strcmp(g_opt.mode, "mp-selftest"))   rc = eden_mp_selftest_run(g_opt.netServer.c_str());
@@ -946,10 +965,12 @@ static int eden_main_after_args(int argc, char** argv) {
         else if (!std::strcmp(g_opt.mode, "mp-join"))       rc = run_mp_join();
         else if (!std::strcmp(g_opt.mode, "photo-selftest")) rc = run_photo_selftest();
         else if (!std::strcmp(g_opt.mode, "trailer-selftest")) rc = run_trailer_selftest();
+        else if (!std::strcmp(g_opt.mode, "folders-selftest")) rc = run_folders_selftest();
         else if (!std::strcmp(g_opt.mode, "signs-selftest")) rc = run_signs_selftest();
         else if (!std::strcmp(g_opt.mode, "camera-selftest")) rc = run_camera_selftest();
         else if (!std::strcmp(g_opt.mode, "sign-shot"))     rc = run_sign_shot();
         else if (!std::strcmp(g_opt.mode, "scene-shot"))    rc = run_scene_shot();
+        else if (!std::strcmp(g_opt.mode, "sky-shot"))      rc = run_sky_shot();
         else if (!std::strcmp(g_opt.mode, "render-selftest")) rc = run_render_selftest();
         else if (!std::strcmp(g_opt.mode, "lit-oracle")) rc = run_lit_oracle();
         else if (!std::strcmp(g_opt.mode, "cmds-selftest")) rc = run_cmds_selftest();

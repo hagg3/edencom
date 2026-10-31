@@ -210,6 +210,7 @@ void drawWorld(const R::Geometry& g, R::Tex t, const R::Rgba& tint, float alphaR
     uvUniform(*p);
     fogUniforms(*p);
     set1f(*p, U_ALPHAREF, alphaRef);
+    set3f(*p, U_WORLDLIGHT, rcore::ds().worldLight);
     submit(g, tint, 1.0f);
 }
 

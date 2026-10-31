@@ -303,9 +303,9 @@ static int getPVBI2(){
 	return pvbi_counter2;
 }
 extern Vector colorTable[256];
-extern const uint8_t blockColor[NUM_BLOCKS+1][3];
+extern uint8_t blockColor[BLOCK_IDS][3];
 extern const uint8_t creatureColor[NUM_CREATURES][3];
-extern const int blockTypeFaces[NUM_BLOCKS+1][6];
+extern int blockTypeFaces[BLOCK_IDS][6];
 
 void BlockBreak::addBlockExplode(int x,int z,int y,int type, int color) {
     if(type<=0)return;

@@ -119,6 +119,7 @@ void confirm() {
     emod::ExportOptions o;
     o.target = s.upload && s.server == emod::UPLOAD_LEGACY ? emod::X_LEGACY64Z : s.target;
     o.signs = s.signs;
+    o.paletteFallbacks = s.upload;         // K.1-4: what begin_upload_body will write (D9), so the report says so
     emod::EdenExporter ex;                 // the pre-flight: exact size + every loss, before a byte is written
     if (!ex.begin(s.src, o)) { finish(std::string(s.upload ? "Upload: " : "Export: ") + ex.error(), false); return; }
     const emod::ExportReport& r = ex.report();
@@ -232,7 +233,7 @@ static void prime(WorldNode* node) {
     ShareState& s = st();
     s.src = docs() + "/" + node->file_name;
     s.display = node->display_name;
-    s.png = s.src + ".png";
+    s.png = docs() + "/" + FileManager::photoPathOf(node->file_name);
     s.result.clear();
 }
 

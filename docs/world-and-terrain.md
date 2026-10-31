@@ -15,7 +15,8 @@ top of the voxel grid.
 | `T_RADIUS` | **9 by default, runtime (4–16)** | Half the window, in chunks — the *Render distance* setting (B.5b-2) |
 | `CHUNKS_PER_SIDE` | **18 by default, runtime** | Window edge in chunks (`2·T_RADIUS`) |
 | `CHUNKS_PER_COLUMN` | **4 or 16, runtime** | Vertical chunks |
-| `NUM_BLOCKS` | 127 | Highest block type id (111 until Stage D.2a; the signed-byte id space is now full) |
+| `STOCK_BLOCK_MAX` | 127 | Highest stock block type id (111 until Stage D.2a; the stock id space is full). Was `NUM_BLOCKS` until K.1-1 |
+| `BLOCK_IDS` | 256 | Rows in every per-type table, one per value of the unsigned type byte (K.1-1) |
 | `BLOCK_SIZE` | 1.0f | World units per block |
 
 ## Runtime world height (2026-08-06)
@@ -110,7 +111,7 @@ Every voxel is two bytes:
   grayscale ramp). `NUM_COLORS` is 54.
 
 Per-type static properties live in `Globals.cpp`:
-- `blockinfo[NUM_BLOCKS+1]` — bit flags (`IS_FLAMMABLE`, `IS_NOTSOLID`, `IS_RAMP`,
+- `blockinfo[BLOCK_IDS]` — bit flags (`IS_FLAMMABLE`, `IS_NOTSOLID`, `IS_RAMP`,
   `IS_ATLAS2` = drawn in transparent pass, `IS_LIQUID`, `IS_WATER/IS_LAVA`,
   `IS_OBJECT` = rendered as a mesh object not a cube, `IS_DOOR`, `IS_PORTAL`,
   `IS_HARD`, `IS_BLOCKTNT`, …). **This table is the single source of truth for block
@@ -131,9 +132,52 @@ keeps VuencEdit's `BLOCK_RGB` for every place one flat colour stands in. (D.2a d
 (`IS_HARD`, like stone; nothing flammable), `hudBlocksMap` = −1 (no BT variants exist, so the TNT
 second-block pick veils them), `blockTntMap` = 0 (only read for `IS_BLOCKTNT` types). Before D.2a,
 `rebuild2()`'s `type>NUM_BLOCKS` repair turned every one of them into stone in the world and the
-next save kept it (D.2c); it now fires only for bytes 128–255 (negative as `block8`).
-`block8` is a signed char, so **127 is the last id**: no further block type can be appended, and
-these 16 can never get BT shadows. Regression: `eden_native --newblocks-selftest` (manual; not a CI gate).
+next save kept it (D.2c). K.1-3 removed the repair altogether: no byte is ever rewritten by the mesher.
+**127 is the last stock id**: no further stock type can be appended, and these 16 can never get BT
+shadows. **Since K.1-1 (2026-10-31) `block8` is an unsigned char** (it was signed) and every per-type
+table (`blockinfo`, `blockColor`, `blockTypeFaces`, `hudBlocksMap`, `blockTntMap`, `g_shadow_caster`)
+has `BLOCK_IDS` = 256 rows. Before K.1-1 a byte ≥ 128 was negative and indexed the tables out of bounds;
+`getLand()` callers that treated it as "invalid" (`< 0`) now see a solid type. The non-type byte arrays
+that used to borrow `block8` (`TerrainGen2` `elevation`/`biomez`, `TerrainGenerator` `tcolors`) are `sbyte`.
+
+### The block registry and the world palette (K.1-3, 2026-10-31)
+`Classes/BlockRegistry.{h,cpp}`; plan `WORKING/block-registry-plan-2026-10-31.md` §4. Type bytes 0–127 are
+the stock ids, fixed forever; each has a canonical name, the enum minus `TYPE_`, lowercased, under
+`eden:` (`TYPE_STONE_RAMP1` → `eden:stone_ramp1`, `TYPE_BTGRASS` → `eden:btgrass`). The console's short
+names (`stone`, `lamp`, `oresand`, …: `kAliases`, moved there from `CmdScript`) are aliases; an
+unqualified name resolves to aliases only. Bytes **128–255 are world-local**: the world's `BLOCK_PALETTE`
+record ([emod-file-format.md](emod-file-format.md)) maps each to a `namespace:path` name, at most 128 a
+world, never freed (D8).
+- **Load never rewrites a voxel (D11).** `FileManager::loadWorld` calls `BlockRegistry::resetWorld()` first
+  (new worlds and multiplayer sessions have no palette); `loadEmodWorld` reads the record and calls
+  `loadPalette`, which runs `resolve()` before the first column is read: rows 128–255 of `blockinfo`,
+  `blockColor`, `blockTypeFaces`, `hudBlocksMap`, `blockTntMap` come from the definition registered under
+  each name, and `g_shadow_caster` is rebuilt (`shadow_buildCasterTable`).
+- **The missing block (D4/D10/D12).** A byte with no entry, or whose definition is not loaded, gets the
+  placeholder rows (`eden_set_missing_block_row`, `Globals.cpp`; static init fills all 128 with them):
+  `blockinfo` = `IS_HARD | IS_MISSING` (solid, breakable like stone, not flammable), every face
+  `TEX_MISSING` (atlas tile 65, a magenta/black checker), `blockColor` magenta (particles), `hudBlocksMap`
+  −1, `blockTntMap` 0. `IS_MISSING` (bit 17, runtime only) makes the fill pass draw it unpainted; its
+  paint byte is kept. Toggling a mod off and on loses nothing.
+- **Definitions** (`BlockDef`: name, fallback stock type + paint, the five table rows) are keyed by name.
+  K.1 registers none in the game; `--registry-selftest` registers `emod:test_0…128` (D18). K.2 loads them
+  from data.
+- **Allocation** happens only when the console or a command block first places a name whose definition is
+  loaded (`BlockRegistry::acquire`; `CmdScript` parses it as `TYPE_BY_NAME` so parsing never uses a slot).
+  On an unflagged world it first runs `FileManager::preparePaletteAllocation`: the **flag compaction**
+  (`EdenWorldStore::compact(true)`), which reserves every latent byte ≥ 128 in the file as
+  `emod:unknown_<id>` (D13), then reloads that palette, so the new id is never one old garbage holds. The
+  lowest free id wins; the 129th name is refused (D17). A dirty palette is written by the next save's batch.
+  Refused in a multiplayer session (D7), and while the palette is locked (a flagged file whose record does
+  not decode, or decoded only from an older version).
+- **Interchange (K.1-4):** an own-format `.eden` export keeps the bytes and carries the palette as a `BPL1`
+  trailer section, which import/download turns back into the record and flag; every other export target and
+  every upload write each byte's fallback (`fallback_type`, plus `fallback_paint` when non-zero; no entry →
+  stone), counted per name in the export report. Convert to 64z keeps the palette. Details:
+  `save-load.md` "Export", `emod-file-format.md` "Target formats".
+
+Gates: `--registry-selftest` (CI, every leg) and `--newblocks-selftest` (manual; it also checks the
+missing-block rows with no world open).
 
 ## The toroidal resident window
 

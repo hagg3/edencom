@@ -1,5 +1,6 @@
 // G.4: split out of the old eden_main_native.cpp (see harness.h). Mode group "cmds".
 #include "harness.h"
+#include "SkyCycle.h"
 
 using namespace harness;
 
@@ -410,11 +411,11 @@ int run_cmds_selftest() {
         tr()->setCmdScript((size_t)tr()->findCmd(A), "night");
         CmdScript::press(A);
         tick(2);
-        const bool night = v_equals(ter()->final_skycolor, colorTable[54]);
+        const bool night = sky_isNight();
         tr()->setCmdScript((size_t)tr()->findCmd(A), "time 0.5");
         CmdScript::press(A);
         tick(2);
-        const bool day = !v_equals(ter()->final_skycolor, colorTable[54]);
+        const bool day = !sky_isNight();
         check(night && day, "night paints the sky night, time 0.5 gives the day back",
               night && day ? "" : night ? "day failed" : "night failed");
         tr()->setCmdScript((size_t)tr()->findCmd(A), "spawn moof; spawn stumpy 0 1 3");
@@ -707,6 +708,7 @@ const char* sample(int kind) {
     case CmdScript::ARG_COLOR: return "7";
     case CmdScript::ARG_CREATURE: return "moof";
     case CmdScript::ARG_NUMBER: return "1";   // sound takes whole numbers only
+    case CmdScript::ARG_ONOFF: return "on";
     default: return "hi";
     }
 }
@@ -792,7 +794,7 @@ int run_console_selftest() {
             }
         }
         std::snprintf(d, sizeof(d), "%zu verbs %s", n, why.c_str());
-        check(n == 22 && why.empty(), "kVerbs: every verb parses; its errors are its usage", d);
+        check(n == 23 && why.empty(), "kVerbs: every verb parses; its errors are its usage", d);
         check(CS::findVerb("FILL") && CS::findVerb("Unless") && !CS::findVerb("video.fov") && !CS::findVerb("echo"),
               "findVerb: case-insensitive, built-ins only", "");
     }
@@ -960,7 +962,7 @@ int run_console_selftest() {
         s->gold = hud->goldencubes;
         s->life = pl->life;
         (void)creatures0;
-        s->night = v_equals(ter()->final_skycolor, colorTable[54]);
+        s->night = sky_isNight();
     };
     auto diff = [&](const Snap& a, const Snap& b) {
         std::string r;
@@ -1402,6 +1404,181 @@ int run_console_selftest() {
             con("reset video.fov", &o);
         }
         setup("");
+    }
+
+    // ---- DN.2: the day/night clock -- timefreeze, the time hook's two paths, world.time, the save
+    {
+        Console::init();
+        Console::clear();
+        CS::Program p;
+        CS::parse("timefreeze", &p);
+        const std::string e1 = p.firstError;
+        CS::parse("timefreeze maybe", &p);
+        const std::string e2 = p.firstError;
+        CS::parse("timefreeze ON; timefreeze off", &p);
+        std::snprintf(d, sizeof(d), "'%s' / '%s' / %zu stmts '%s'", e1.c_str(), e2.c_str(), p.stmts.size(), p.firstError.c_str());
+        check(e1 == "timefreeze needs on or off" && e2 == e1 && p.firstError.empty() && p.stmts.size() == 2 &&
+              p.stmts[0].op == CS::OP_TIMEFREEZE && p.stmts[0].f == 1.0f && p.stmts[1].f == 0.0f,
+              "timefreeze parses on/off (any case) and refuses anything else", d);
+
+        // cycle off: the time verbs still repaint the region's sky; the clock does not move
+        SkyCycle::setEnabled(false);
+        SkyCycle::reset();
+        const bool night0 = sky_isNight();
+        Console::run("time 0.8");
+        tick(2);
+        const bool nightOff = sky_isNight();
+        const std::string wt0 = Console::cvarValue(Console::cvarIndex("world.time"));
+        Console::run("day");
+        tick(2);
+        std::snprintf(d, sizeof(d), "night before %d after 'time 0.8' %d, world.time '%s', after day %d, clock %.3f", night0,
+                      nightOff, wt0.c_str(), sky_isNight(), SkyCycle::time());
+        check(!night0 && nightOff && !sky_isNight() && std::atof(wt0.c_str()) == 0.0 &&
+              std::fabs(SkyCycle::time() - SkyCycle::DEFAULT_TIME) < 1e-9 && !SkyCycle::needsSave(),
+              "cycle off: time verbs paint the sky (setSky), world.time reads the night bit, the clock stays put", d);
+
+        // cycle on: the same verbs set the clock and paint nothing; it runs, locks and stops under the pause menu
+        SkyCycle::setEnabled(true);
+        SkyCycle::setDayLengthMinutes(20);
+        Console::run("time 0.6");
+        const double tA = SkyCycle::time();
+        Console::run("world.time 0.9");
+        const double tB = SkyCycle::time();
+        SkyCycle::update(1.0f / 20, false);
+        for (int i = 0; i < 1199; i++) SkyCycle::update(1.0f / 20, false);   // 60 s of a 20 min day: +0.05
+        const double tC = SkyCycle::time();
+        SkyCycle::update(1.0f, true);
+        const double tP = SkyCycle::time();
+        Console::run("timefreeze on");
+        SkyCycle::update(1.0f, false);
+        const double tL = SkyCycle::time();
+        Console::run("time 0.4");
+        std::snprintf(d, sizeof(d), "time %.3f world.time %.3f +60s %.4f paused %.4f locked %.4f set-while-locked %.3f night %d",
+                      tA, tB, tC, tP, tL, SkyCycle::time(), sky_isNight());
+        check(std::fabs(tA - 0.6) < 1e-6 && std::fabs(tB - 0.9) < 1e-6 && std::fabs(tC - 0.95) < 1e-4 && tP == tC && tL == tC &&
+              SkyCycle::locked() && std::fabs(SkyCycle::time() - 0.4) < 1e-6 && !sky_isNight() && SkyCycle::needsSave(),
+              "cycle on: time/world.time set the clock, it advances etime/dayLength, pause and timefreeze stop it, time T still sets it", d);
+        Console::run("experiments.day_length 0");
+        const double len10 = SkyCycle::dayLengthSeconds();
+        Console::run("reset experiments.day_length");
+        std::snprintf(d, sizeof(d), "day_length 0 -> %.0f s, reset -> %.0f s", len10, SkyCycle::dayLengthSeconds());
+        check(len10 == 600 && SkyCycle::dayLengthSeconds() == 1200, "experiments.day_length maps 10/20/40/60 min (default 20)", d);
+
+        // the save carries it: a reload restores t and the lock (a world with no record would read 0.30, unlocked)
+        Console::run("save");
+        const bool clean = !SkyCycle::needsSave();   // locked: the exit save below writes no newer clock
+        const bool reopened = quit_to_menu() && open_world(name, g_opt.height);
+        std::snprintf(d, sizeof(d), "saved-clean %d reopened %d t %.4f locked %d", clean, reopened, SkyCycle::time(), SkyCycle::locked());
+        check(clean && reopened && std::fabs(SkyCycle::time() - 0.4) < 1e-6 && SkyCycle::locked() && !SkyCycle::needsSave(),
+              "SKY_CLOCK round-trips t and the lock through a save and a reload", d);
+        Console::run("timefreeze off");
+        Console::run("time 0.3");
+        Console::run("save");
+        SkyCycle::setEnabled(false);
+        Console::init();
+        Console::clear();
+    }
+
+    // ---- DN.5: the night flip and the light curves (plan section 4)
+    {
+        Console::init();
+        Console::clear();
+        // cycle off: nothing moves -- (1,1,1), L 1, the stock day/night pick
+        SkyCycle::setEnabled(false);
+        float w0[3], w1[3], bl[3];
+        const float dayV[3] = {0.7f, 0.7f, 0.7f}, nightV[3] = {0.35f, 0.35f, 0.35f};
+        SkyCycle::worldLight(false, w0);
+        SkyCycle::worldLight(true, w1);
+        SkyCycle::blendLight(dayV, nightV, bl);
+        std::snprintf(d, sizeof(d), "wl %.3f/%.3f L %.3f blend %.3f night %d", w0[0], w1[0], SkyCycle::skyLight(), bl[0], sky_isNight());
+        check(w0[0] == 1 && w0[1] == 1 && w0[2] == 1 && w1[0] == 1 && w1[1] == 1 && w1[2] == 1 && SkyCycle::skyLight() == 1.0f &&
+              bl[0] == (sky_isNight() ? 0.35f : 0.7f), "DN.5 cycle off: world light (1,1,1), L 1, stock light pick", d);
+
+        // cycle on: a day-baked and a night-baked mesh match at every hour (the no-patchwork rule)
+        SkyCycle::setEnabled(true);
+        SkyCycle::setLocked(true);
+        float worst = 0, Lnoon = 0, Lmid = 0;
+        bool noonWhite = false;
+        for (int i = 0; i < 100; i++) {
+            SkyCycle::setTime(i / 100.0);
+            SkyCycle::worldLight(false, w0);
+            SkyCycle::worldLight(true, w1);
+            for (int c = 0; c < 3; c++) worst = std::fmax(worst, std::fabs(w0[c] - w1[c] * SkyCycle::NIGHT_SKYLIGHT));
+            if (i == 50) { Lnoon = SkyCycle::skyLight(); noonWhite = w0[0] == 1 && w0[1] == 1 && w0[2] == 1; }
+            if (i == 0) Lmid = SkyCycle::skyLight();
+        }
+        // L at the -4 degree flip point, by bisection on the dusk side (t 0.75..0.80)
+        double lo = 0.75, hi = 0.80;
+        for (int k = 0; k < 40; k++) {
+            const double mid = 0.5 * (lo + hi);
+            SkyCycle::setTime(mid);
+            if (SkyCycle::sunElevationDeg() > -4.0f) lo = mid; else hi = mid;
+        }
+        SkyCycle::setTime(lo);
+        const float Lflip = SkyCycle::skyLight();
+        std::snprintf(d, sizeof(d), "worst day/night mismatch %.6f, L noon %.3f (white %d) flip %.4f (t %.4f) midnight %.4f",
+                      worst, Lnoon, noonWhite, Lflip, lo, Lmid);
+        check(worst < 1e-5f && Lnoon == 1.0f && noonWhite && std::fabs(Lflip - SkyCycle::NIGHT_SKYLIGHT) < 1e-3f &&
+                  std::fabs(Lmid - SkyCycle::NIGHT_SKYLIGHT * 0.75f) < 1e-4f,
+              "DN.5 cycle on: day- and night-baked world lights match at every hour; L 1 at noon, 0.35 at -4 deg, 0.26 at midnight", d);
+
+        // one full day of the running clock: exactly 2 flips, at the hysteresis edges (-4.5 at dusk, -3.5 at dawn)
+        SkyCycle::setLocked(false);
+        SkyCycle::setDayLengthMinutes(20);
+        SkyCycle::setTime(0.5);
+        SkyCycle::update(0.0f, true);   // the watcher records noon
+        const int f0 = SkyCycle::nightFlips();
+        const int steps = 24000;
+        const float dt = (float)(SkyCycle::dayLengthSeconds() / steps);
+        bool was = sky_isNight();
+        float duskE = 99, dawnE = 99;
+        for (int i = 0; i < steps; i++) {
+            SkyCycle::update(dt, false);
+            const bool n = sky_isNight();
+            if (n != was) { if (n) duskE = SkyCycle::sunElevationDeg(); else dawnE = SkyCycle::sunElevationDeg(); was = n; }
+        }
+        const int flips = SkyCycle::nightFlips() - f0;
+        std::snprintf(d, sizeof(d), "flips %d, night on at %.3f deg, off at %.3f deg, t back to %.4f", flips, duskE, dawnE, SkyCycle::time());
+        check(flips == 2 && duskE < -4.5f && duskE > -4.7f && dawnE > -3.5f && dawnE < -3.3f,
+              "DN.5 a full day flips night twice, with hysteresis around -4 deg", d);
+
+        // the flip re-meshes the window: after it settles, every chunk with geometry is baked with the new bit
+        SkyCycle::setLocked(true);
+        SkyCycle::setTime(0.5);
+        tick(600);
+        int dDay = 0, dNight = 0, nDay = 0, nNight = 0;
+        eden_debug_baked_night(&dDay, &dNight);
+        const int fA = SkyCycle::nightFlips();
+        SkyCycle::setTime(0.0);
+        tick(600);
+        eden_debug_baked_night(&nDay, &nNight);
+        const int fB = SkyCycle::nightFlips();
+        SkyCycle::setTime(0.5);
+        tick(600);
+        int bDay = 0, bNight = 0;
+        eden_debug_baked_night(&bDay, &bNight);
+        std::snprintf(d, sizeof(d), "noon %d day/%d night; midnight %d/%d (flips +%d); noon again %d/%d (flips +%d)",
+                      dDay, dNight, nDay, nNight, fB - fA, bDay, bNight, SkyCycle::nightFlips() - fB);
+        check(dDay > 0 && dNight == 0 && nDay == 0 && nNight > 0 && bDay > 0 && bNight == 0 && fB - fA == 1 &&
+                  SkyCycle::nightFlips() - fB == 1,
+              "DN.5 a flip re-meshes the whole window with the new night bit (one request per flip)", d);
+
+        // turning the cycle off at night goes back to the painted (day) sky: one re-mesh, back to day-baked
+        SkyCycle::setTime(0.0);
+        tick(600);
+        const int fC = SkyCycle::nightFlips();
+        SkyCycle::setEnabled(false);
+        tick(600);
+        int oDay = 0, oNight = 0;
+        eden_debug_baked_night(&oDay, &oNight);
+        std::snprintf(d, sizeof(d), "painted night %d, after off %d day/%d night (watcher flips +%d)", sky_paintedNight(), oDay, oNight,
+                      SkyCycle::nightFlips() - fC);
+        check(!sky_paintedNight() && oDay > 0 && oNight == 0 && SkyCycle::nightFlips() - fC == 1,
+              "DN.5 the cycle off at night re-meshes back to the painted day", d);
+        SkyCycle::setLocked(false);
+        SkyCycle::setTime(SkyCycle::DEFAULT_TIME);
+        Console::init();
+        Console::clear();
     }
 
     // ---- world.name is live: it round-trips through a save and a reload (last: it closes the world)

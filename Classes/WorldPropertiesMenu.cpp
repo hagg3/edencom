@@ -180,6 +180,8 @@ void WorldPropertiesMenu::buildRows(){
         std::snprintf(buf,sizeof(buf),"%s (v%d)",wp_clip(p.convertedFrom,28).c_str(),p.convertedVersion);
         addRow(TAB_WORLD,WPK_VALUE,"converted","Converted from","",buf);
     }
+    if(p.kind==WP_KIND_EMOD)
+        addRow(TAB_WORLD,WPK_TOGGLE,"locktime","Lock time of day","Keeps this world's clock still when the Day/night cycle is on (Settings > Experiments).");
     if(p.originalBytes>0)
         addRow(TAB_WORLD,WPK_VALUE,"original","Original kept","The file it was converted from. Share > Remove original deletes it.",
                wp_bytes(p.originalBytes).c_str());
@@ -249,6 +251,7 @@ bool WorldPropertiesMenu::open(WorldNode* node){
         if(!std::strcmp(R.key,"size"))  m_choice[r]=classic_option_index(kSizes,2,g.size);
         if(!std::strcmp(R.key,"flowers")) m_toggle[r].setOn(g.flowers!=0);
         if(!std::strcmp(R.key,"clouds"))  m_toggle[r].setOn(g.clouds!=0);
+        if(!std::strcmp(R.key,"locktime")) m_toggle[r].setOn(p.skyLocked);
         if(R.kind==WPK_SLIDER){
             m_slider[r].setRange(0,(float)(R.nOpts-1),1);
             m_slider[r].setValue((float)classic_option_index(kScales,5,g.scale4));
@@ -276,7 +279,7 @@ void WorldPropertiesMenu::loadPhoto(){
     delete m_photo;
     m_photo=NULL;
     m_photoAspect=1.5f;
-    const std::string path=World::getWorld->fm->documents+"/"+m_fileName+".png";
+    const std::string path=World::getWorld->fm->documents+"/"+FileManager::photoPathOf(m_fileName);
     FILE* f=fopen(path.c_str(),"rb");
     if(!f) return;
     unsigned char b[24];
@@ -356,7 +359,12 @@ bool WorldPropertiesMenu::terrainChanged() const{
     return std::memcmp(a,b,sizeof(a))!=0;
 }
 
-bool WorldPropertiesMenu::saveEnabled() const{ return m_open&&(nameChanged()||terrainChanged()); }
+bool WorldPropertiesMenu::skyLockChanged() const{
+    const int r=rowOf("locktime");
+    return r>=0&&m_toggle[r].on()!=m_props.skyLocked;
+}
+
+bool WorldPropertiesMenu::saveEnabled() const{ return m_open&&(nameChanged()||terrainChanged()||skyLockChanged()); }
 
 // ---------------------------------------------------------------------------------------------
 // saving (plan §3)
@@ -386,6 +394,7 @@ void WorldPropertiesMenu::commit(){
     const std::string n=trimmedName();
     if(!n.empty()) e.name=n;
     editedGenerator(&e.gen);
+    {const int lr=rowOf("locktime"); if(lr>=0) e.skyLocked=m_toggle[lr].on();}
     const int r=fm->applyWorldProperties(m_fileName,e);
     m_lastResult=r;
     if(r<0){

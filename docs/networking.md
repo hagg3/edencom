@@ -80,9 +80,9 @@ beside it as `<path>.posted`, which is how `--browser-selftest` and the `--uploa
 (native/README.md) check the bytes offline. **No live upload has been made by a harness**: one per
 host is the user's to do. `--net-live-selftest` exercises the real servers' read side.
 
-**Get Worlds converts (S.5).** A finished download is never unpacked to a `.eden`: `WorldBrowser`'s `DL_CONVERT` runs `emod::ImportJob` on it (layers unpacked still
-compressed, the innermost stream converted), lands `<id>.emod` (or `<id>-N.emod`), and deletes the
-download (`<saves>/.emod-download`; previews go to `.emod-preview.png`). The S.5 pre-flight free-space
+**Get Worlds converts (S.5).** A download is staged in `Worlds/.<id>.partial/` and committed by one no-replace rename to `Worlds/<id>/` (K.0w-3; a repeat gets `-xxxx`, a cancel leaves no `.partial`; downloads keep the server id). A finished download is never unpacked to a `.eden`: `WorldBrowser`'s `DL_CONVERT` runs `emod::ImportJob` on it (layers unpacked still
+compressed, the innermost stream converted), lands `world.emod` in the staged folder, and deletes the
+download (`Worlds/.<id>.partial/download-N`; previews go to `.emod-preview.png`). The S.5 pre-flight free-space
 check applies (docs/save-load.md "Converting, importing, pairing").
 
 ## Multiplayer transport and session (Stage MP, MP.1/MP.2)
@@ -147,7 +147,7 @@ Plain C++ in `port/src/net/` (no `Classes/` includes; compiled into `eden_native
   kept across warps (`loadWorld` only clears it outside a session).
 - **Off in a session (E11)**: creatures (`MpWorld::gateCreatures` under `SettingsMenu`'s write; the player's choice comes back
   on exit), command-block triggers and presses, console lines with a world verb (`tp set fill paint explode fire spawn time gold
-  run if unless`: refused whole) and `world.*` writes, sky paint, Warp Home / Save Game (which sets home) / Take Photo (hidden in
+  run if unless`: refused whole; `time` / `timefreeze` are allowed while the Day/night cycle is on, because the clock is session-local and never saved) and `world.*` writes, sky paint, Warp Home / Save Game (which sets home) / Take Photo (hidden in
   the pause menu; death still respawns at the session's home = `SPAWN`), golden-cube pick-up (a streamed one is walked through)
   and placement (purse 0), the H.8 fire rules (`eden_reapply_fire_flags`).
 - **Gate**: `--mp-replay=port/tools/fixtures/mp/replay-1.lines` (every CI leg, iOS-sim included). The fixture is a real
@@ -215,6 +215,12 @@ Plan §8-§10; code `MpWorld::intent*` (end of `Classes/MpWorld.cpp`), `applyAct
   then `…:3:<colour>` if painted; same type, another colour → `…:3:<colour>`. Paint left on air (`destroyBlock` keeps it for
   TNT colour) is not an edit. So a door or portal goes out as both halves (U1: retail unknown), a ramp as its oriented id.
   Each sent cell is stamped `noteLocalEdit` (reconcile's exemption).
+- **Block ids stay 0–127 on the wire (K.1-3, plan D7).** Type bytes 128–255 are a local world's palette ids
+  (`docs/world-and-terrain.md`) and mean nothing to a server (whose 254/255 are cell sentinels). A session has
+  no palette (`loadWorld` calls `BlockRegistry::resetWorld()` before a join); `intentBuild` refuses a HUD block
+  above `STOCK_BLOCK_MAX` before the edit, the send loop skips (and logs) any changed cell above it, and region
+  decode and incoming `ACTION` keep rejecting ids above it (`MpWorld.cpp`). The console and command blocks
+  refuse mod block names in a session. Mod blocks in multiplayer wait for K.3.
 - **Burns (E10).** `intentBurn` sends `…:2` only for an `IS_FLAMMABLE` target (the server deletes whatever it is told to
   burn) and sets the cell's `BurnNode::mpLit`. In `Terrain::update`, a node with `mpLit` whose fuse runs out on time
   (`time <= 0` with the cell still solid) calls `MpWorld::burnFuseOut` → `…:1`, before the blast. A node ended by its cell
@@ -424,4 +430,4 @@ implemented on the port.
   manager after cancel is an easy crash).
 
 ### Q.1a notes (2026-10-21)
-- **Q.1a:** F22 `MpWorld::enforceCap` keeps a running byte count instead of rescanning the overlay per erase. F23 (Get Worlds) the download temp is per job (`.emod-download-N`); the browser sweeps leftover `.emod-download*` files when it opens idle.
+- **Q.1a:** F22 `MpWorld::enforceCap` keeps a running byte count instead of rescanning the overlay per erase. F23 (Get Worlds) the download temp is per job (K.0w-3a: `Worlds/.<id>.partial/download-N`, N a serial, because a cancelled job's staging dir id is reused); the browser sweeps leftover pre-K.0w `.emod-download*` files when it opens idle.

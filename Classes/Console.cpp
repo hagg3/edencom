@@ -16,6 +16,7 @@
 #include "Resources.h"
 #include "Util.h"
 #include "WorldTrailer.h"
+#include "SkyCycle.h"   // DN.2: world.time
 #include "MpWorld.h"   // MP.3a: world.* writes are refused in a session
 #include "eden_prefs.h"   // G.2b-1: console.history
 
@@ -399,6 +400,19 @@ void wSetGold(int, float v) {
     w->hud->goldencubes = (int)std::lround(std::max(0.0f, std::min(999.0f, v)));
 }
 
+// DN.2 (plan D8): the day/night clock. With the cycle off it reads the painted sky's night bit
+// (0 midnight, 0.5 noon) and writes through the time verbs' setSky repaint.
+float wTime(int) {
+    World* w = world();
+    if (!w || !w->terrain) return 0.0f;
+    if (SkyCycle::enabled()) return (float)SkyCycle::time();
+    return sky_isNight() ? 0.0f : 0.5f;
+}
+void wSetTime(int, float v) {
+    if (!world()) return;
+    CmdScript::timeHook(std::max(0.0f, std::min(1.0f, v)));
+}
+
 const char* genText(int tag) {
     World* w = world();
     if (!w || !w->terrain->tgen || w->fm->genflat ||
@@ -437,6 +451,12 @@ void bridgeWorld() {
     g.kind = KIND_RANGE; g.min = 0; g.max = 999; g.step = 1; g.def = 0; g.apply = APPLY_LIVE;
     g.get = wGold; g.set = wSetGold;
     addCvar(g);
+    Cvar tm = {};
+    tm.name = "world.time"; tm.label = "Time of day";
+    tm.help = "0 midnight, 0.25 sunrise, 0.5 noon, 0.75 sunset. The clock runs with Experiments > Day/night cycle.";
+    tm.kind = KIND_RANGE; tm.min = 0; tm.max = 1; tm.step = 0.01f; tm.def = 0.3f; tm.apply = APPLY_LIVE;
+    tm.get = wTime; tm.set = wSetTime;
+    addCvar(tm);
     static const char* const gen[] = {"gen.hills", "gen.caves", "gen.trees", "gen.flowers", "gen.clouds", "gen.size", "gen.scale"};
     static const char* const genLabel[] = {"Hills", "Caves", "Trees", "Flowers", "Clouds", "World size", "Scale"};
     for (int i = 0; i < 7; ++i) {

@@ -25,6 +25,12 @@
 //    NEWDAWN256Z    16 bands (a 64z source pads with air), version 5, trailer dropped, 112-127 -> painted stone
 //    NEWFORMAT256Z  16 bands, ids kept, trailer kept (or pruned), version: the source's if it is
 //                   256z, else 5
+//  K.1-4, a world with mod blocks (type bytes 128-255; the BLOCK_PALETTE record of a flagged `.emod`, or the
+//  BPL1 trailer section of a `.eden` source): OWN keeps the raw bytes and writes the palette as BPL1 (an
+//  `.emod` source's section is rebuilt from the record); every other target writes each byte's palette
+//  fallback (unassigned -> stone; the voxel's paint is kept unless the entry names a fallback paint) and no
+//  BPL1. ExportOptions::paletteFallbacks gives OWN the fallbacks too (every upload: D9); keepPalette gives
+//  any target the raw bytes + BPL1 (Convert to 64z, whose scratch `.eden` converts straight back).
 //  Signs: KEEP (what the game does) or PRUNE — drop sign / command-block records whose (x, y)
 //  block position is in a column the world does not contain (a world captured from a hosted
 //  server carries the whole server's).
@@ -51,7 +57,9 @@ struct ExportOptions {
     int signs;                 // SignPolicy
     bool overrideHash;         // S.5c: the preview's MD5 goes in WorldFileHeader::hash
     char hash[36];
-    ExportOptions() : target(X_OWN), signs(SIGNS_KEEP), overrideHash(false) { hash[0] = 0; }
+    bool paletteFallbacks;     // K.1-4: OWN writes fallbacks too (uploads: begin_upload_body sets it)
+    bool keepPalette;          // K.1-4: raw bytes >= 128 + BPL1 on any target (convertEmodTo64); loses to paletteFallbacks
+    ExportOptions() : target(X_OWN), signs(SIGNS_KEEP), overrideHash(false), paletteFallbacks(false), keepPalette(false) { hash[0] = 0; }
 };
 
 struct ExportReport {
@@ -69,8 +77,19 @@ struct ExportReport {
     uint32_t signsIn, signsOut, cmdsIn, cmdsOut, otherIn, otherOut;
     uint32_t creaturesDropped, creaturesRelocated, creaturesOverflow;
     bool posClamped, homeClamped;
+    // K.1-4: type bytes >= 128 written as their palette fallback. Counted whenever the pre-flight scans: always
+    // for Legacy64z / NewDawn256z, for NewFormat256z and fallback OWN only when the source has a palette (a stray
+    // byte in an unflagged world still becomes stone there, uncounted)
+    uint32_t paletteEntries;                // the source palette's entries (0: none)
+    bool paletteWritten;                    // the output carries it (BPL1)
+    uint64_t paletteReplaced;               // bytes replaced, unassigned ones included
+    uint64_t paletteUnassigned;             // bytes with no entry (-> stone)
+    uint32_t paletteColumns;
+    uint64_t paletteById[128];              // per id 128..255
+    char paletteNames[128][64];             // "" = unassigned
     bool lossy() const;
     std::string json() const;
+    std::string paletteJson() const;
     std::string summary() const;            // one or two plain sentences for a dialog body
 };
 
@@ -106,6 +125,8 @@ private:
     std::vector<std::pair<int32_t, int32_t> > keys_;   // ord order
     std::vector<uint8_t> header_, creatures_, trailer_, dir_;
     std::vector<uint8_t> inCol_, outCol_;
+    bool subPal_;                          // K.1-4: bytes >= 128 -> their fallback
+    uint8_t subType_[128], subPaint_[128]; // per id 128..255 (paint 0 = keep the voxel's)
     Phase phase_;
     size_t ord_;
     const uint8_t* cur_;

@@ -33,12 +33,10 @@ static bool g_shadow_stale[CHUNKS_PER_SIDE_MAX*CHUNKS_PER_SIDE_MAX];
 // move the top on every tick, and a seabed under shallow water should stay lit), glass, weave and
 // the IS_OBJECT blocks (doors, portals, flowers, golden cube). A new block type gets its status
 // from its flags; the change-impact table in docs/conventions-and-pitfalls.md says so.
-static void shadow_buildCasterTable(){
-    static bool built=false;
-    if(built)return;
-    built=true;
+// K.1-3: rebuilt by BlockRegistry::resolve at every world load (rows 128..255 follow the palette).
+void shadow_buildCasterTable(){
     memset(g_shadow_caster,0,sizeof(g_shadow_caster));
-    for(int t=1;t<=NUM_BLOCKS;t++){
+    for(int t=1;t<BLOCK_IDS;t++){   // rows 128..255: the palette's defs, or the missing block (IS_HARD: it casts)
         if(t==TYPE_CLOUD||t==TYPE_GLASS||t==TYPE_WEAVE)continue;
         if(blockinfo[t]&(IS_LIQUID|IS_OBJECT))continue;
         g_shadow_caster[t]=1;

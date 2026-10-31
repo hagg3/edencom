@@ -62,7 +62,7 @@ passes, special objects, sky, and the per-vertex data formats.
   UV shorts are normalized by a **texture matrix** trick: `glMatrixMode(GL_TEXTURE);
   glScalef(1, 1/ATLAS_TILES, 1)` around the terrain passes and `BlockBreak::render` (each atlas
   is a 1×`ATLAS_TILES` strip). **Modified from stock (D.2t, 2026-10-10):** stock was 1/32 with
-  32-tile atlases; both grew to 64 (`Constants.h` `ATLAS_TILES`) to carry blocks 112–127, then to **128 (H.14, 2026-10-16; the PNG loader's size cap in `Texture2D.cpp` had to go 2048→4096 with it, or every tile loads half-res)** for tile 64 `TEX_GRASS_FLOWER` (block 12's top, `grass3o.png`, full colour so the mesher leaves its paint white; `port/tools/atlas-h14.py`) — atlas2's
+  32-tile atlases; both grew to 64 (`Constants.h` `ATLAS_TILES`) to carry blocks 112–127, then to **128 (H.14, 2026-10-16; the PNG loader's size cap in `Texture2D.cpp` had to go 2048→4096 with it, or every tile loads half-res)** for tile 64 `TEX_GRASS_FLOWER` (block 12's top, `grass3o.png`, full colour so the mesher leaves its paint white; `port/tools/atlas-h14.py`); tile 65 `TEX_MISSING` (K.1-3, 2026-10-31) is the "missing" block's magenta/black checker, every face of a palette byte 128–255 with no loaded definition (`port/tools/atlas-k13.py`, atlas.png only; `IS_MISSING` makes the fill pass skip its paint, `docs/world-and-terrain.md`) — atlas2's
   extra 32 tiles are transparent padding so one constant serves both passes. Every consumer reads
   it: the two passes, `BlockBreak`, `Resources::getBlockTex`/`getBlockTexShort` (normalized
   `type/ATLAS_TILES` for the HUD icons, picker and `Graphics::drawCube`). The door, portal-frame and portal-swirl immediate batches (`Terrain::render`) used to hardcode `*32` to cancel the 1/32 matrix for their own non-atlas textures; they now multiply by `ATLAS_TILES` (X.7 — at `*32` only the top half of the door texture was sampled, stretched over both blocks). The image loader's cap is
@@ -299,6 +299,13 @@ to `drawSky(rect, depth, r, g, b, a)`; fog stays off from the sky to the end of 
 after it draw unfogged, as stock. The crossfading B&W layer is always `B_ALPHA`: stock blended it with
 whatever blend func the previous frame's HUD left, which is `SA,1-SA` except with the HUD hidden
 (`hideui`), where `beginHud`'s `ONE,ONE` leaked through and a sky transition brightened additively.)*
+
+*(Stage DN: with Experiments › *Day/night cycle* on, one `SkyCycle::enabled()` branch at the top of the sky
+pass replaces the stock layers with `SkyLook`'s vertex-colour gradient, glow band and star points, then
+`SkyCycle::drawSunMoon` (alpha-blended sprites from `sky_sprites.png`), all before pass 1's terrain so terrain
+covers them; cycle off, no extra draw. Chunk, transparent, flower and door draws also set `R::setWorldLight`
+(`u_worldLight` on program 1, multiplied into the vertex colour; reset per frame). Detail:
+`docs/lighting-liquids-effects.md` › Day/night cycle.)*
 
 ### Scene-pass bracket (modified from stock, 2026-10-04, ROADMAP N.4.11)
 

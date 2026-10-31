@@ -42,6 +42,13 @@ bool eden_fs_exists(const std::string& path);
 bool eden_fs_is_dir(const std::string& path);
 bool eden_fs_remove(const std::string& path);                       // file or empty directory
 bool eden_fs_move(const std::string& from, const std::string& to);  // replaces an existing target
+// K.0w-1 (world-folders-plan §5.1). Moves a file or directory and NEVER replaces: false if `to` exists,
+// and no copy fallback (a world moves by one rename on one volume or not at all).
+bool eden_fs_move_new(const std::string& from, const std::string& to);
+bool eden_fs_make_dirs(const std::string& path);                    // mkdir -p; true if it now is a directory
+bool eden_fs_remove_tree(const std::string& path);                  // rm -rf (callers guard the path: FileManager::removeWorldDir)
+long long eden_fs_mtime(const std::string& path);                   // seconds since the epoch, -1 if missing
+bool eden_fs_sync_dir(const std::string& dir);                      // fsync the directory entry (no-op true on Windows)
 bool eden_fs_copy(const std::string& from, const std::string& to);
 bool eden_fs_create_empty(const std::string& path);                 // truncates an existing file
 bool eden_fs_make_dir(const std::string& path);                     // one level; true if it now exists

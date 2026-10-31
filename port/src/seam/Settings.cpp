@@ -41,6 +41,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cmath>
+#include "../../../Classes/SkyCycle.h"    // DN.2: day_night_cycle / day_length
 #include "../../../Classes/TouchLook.h"   // Stage L: TOUCH_LOOK_* globals the touch_look_* rows write
 
 // Mirrors the anonymous enum at the top of Classes/SettingsMenu.mm. Those constants are file-local
@@ -212,6 +213,10 @@ static const Setting kSettings[] = {
   { "creature_walk_voices", "Creature walking sounds", "Experiments", KIND_TOGGLE, -1,  0,   1,   1,   0,  "Creatures call out as they start walking.", NULL },
   { "double_brush",      "Double-size build brush", "Experiments", KIND_TOGGLE, -1,      0,   1,   1,   0,  "A key builds 2x2x2 blocks at a time.", NULL },
   { "camera_view",       "Camera view",       "Experiments", KIND_ENUM,   -1,           0,   2,   1,   0,  "Third person shows your body. F5 cycles.", "First person,Third person,Third person (front)" },
+  // DN.2 (WORKING/day-night-cycle-plan-2026-10-31.md U1): the clock runs and is saved per world, but
+  // DN.6: both rows are in the panel; the Console reaches them as experiments.day_night_cycle.
+  { "day_night_cycle",   "Day/night cycle",   "Experiments", KIND_TOGGLE, -1,           0,   1,   1,   0,  "The sky and light follow a clock. Overrides sky painting.", NULL },
+  { "day_length",        "Day length",        "Experiments", KIND_ENUM,   -1,           0,   3,   1,   1,  "Real minutes per full day.", "10 min,20 min,40 min,60 min", "day_night_cycle" },
   // MP.8: comma-separated matchmaker addresses (host[:port], default 27020); empty = no Matchmakers tab.
   { "mp_matchmakers",    "Matchmakers",       "Experiments", KIND_TEXT,   -1,           0,   0,   0,   0,  "Lists other servers. Off when empty.", NULL },
 
@@ -525,6 +530,12 @@ static void eden_apply_setting(int i, bool commitEngine) {
         eden_set_fire_chars_vines(v != 0.0f ? 1 : 0);
     } else if (std::strcmp(s.key, "creature_walk_voices") == 0) {
         CREATURE_WALK_VOICES = v != 0.0f;
+    } else if (std::strcmp(s.key, "day_night_cycle") == 0) {
+        SkyCycle::setEnabled(v != 0.0f);
+    } else if (std::strcmp(s.key, "day_length") == 0) {
+        static const int kMinutes[] = {10, 20, 40, 60};
+        const int d = (int)lroundf(v);
+        SkyCycle::setDayLengthMinutes(d >= 0 && d < 4 ? kMinutes[d] : 20);
     } else if (std::strcmp(s.key, "camera_view") == 0) {
         eden_set_camera_view((int)lroundf(v));
     } else if (std::strcmp(s.key, "double_brush") == 0) {

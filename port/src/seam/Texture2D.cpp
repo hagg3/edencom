@@ -1009,6 +1009,27 @@ void Texture2D::drawSky(CGRect rect, CGFloat depth, float r, float g, float b, f
     drawSkyQuad(name, vertices, coordinates, tint);
 }
 
+void Texture2D::drawSkySprite(CGRect rect, CGFloat depth, float u0, float u1, float r, float g, float b, float a) {
+    if (pexp(EDEN_PEXP_NOSKY)) return;
+    if (IS_IPAD) {
+        rect.origin.x *= SCALE_WIDTH;
+        rect.origin.y *= SCALE_HEIGHT;
+        rect.size.width *= SCALE_WIDTH;
+        rect.size.height *= SCALE_HEIGHT;
+    }
+    // T runs 0..ATLAS_TILES like drawSky's (the sky draws under the atlas texture matrix, X.8).
+    const float tb = _maxT * ATLAS_TILES;
+    float coordinates[] = { u0 * _maxS, tb, u1 * _maxS, tb, u0 * _maxS, 0, u1 * _maxS, 0 };
+    float vertices[] = {
+        rect.origin.x, rect.origin.y, depth,
+        rect.origin.x + rect.size.width, rect.origin.y, depth,
+        rect.origin.x, rect.origin.y + rect.size.height, depth,
+        rect.origin.x + rect.size.width, rect.origin.y + rect.size.height, depth
+    };
+    const R::Rgba tint = { r, g, b, a };
+    drawSkyQuad(name, vertices, coordinates, tint);
+}
+
 // =============================================================================================
 // The recolor pipeline (audit row 11 / A5). Both of these were inert `return 0;` stubs until
 // 2026-07-31, which is the whole of the invisible-paint-icon bug: Resources.mm feeds the result

@@ -758,7 +758,7 @@ int run_convert_prompt_selftest() {
 
 // Stage 5.7: the pickers kept stock's hit path; prove a tap on a cell still picks, through the
 // HUD's own rects, and that the current choice is what a build would use.
-extern "C" const int hudBlocksMap[NUM_BLOCKS+1];   // Classes/Hud.mm
+extern "C" int hudBlocksMap[BLOCK_IDS];   // Classes/Hud.mm
 int run_picker_selftest() {
     char detail[200];
     Hud* hud = World::getWorld->hud;

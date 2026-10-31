@@ -171,12 +171,12 @@ uint32_t append_record(std::vector<uint8_t>& out, uint8_t type, uint8_t codec, u
     return c;
 }
 
-void file_header(uint8_t out[FILE_HEADER], int bands, uint64_t created) {
+void file_header(uint8_t out[FILE_HEADER], int bands, uint64_t created, uint32_t flags = 0) {
     std::memset(out, 0, FILE_HEADER);
     std::memcpy(out, kMagic, 8);
     wr16(out + 8, 1);
     wr16(out + 10, (uint16_t)bands);
-    wr32(out + 12, 0);
+    wr32(out + 12, flags);
     wr64(out + 16, created);
     wr32(out + 60, crc32_of(out, 60));
 }
@@ -425,11 +425,222 @@ int eden_detect_bands_raw(const uint8_t header[EDEN_HEADER], const uint8_t* dir,
 }
 
 // =============================================================================================
+// BLOCK_PALETTE (K.1-2; emod.py parse_palette / palette_payload / palette_superset_errors)
+// =============================================================================================
+bool palette_name_ok(const std::string& n) {
+    if (n.size() > 63 || n.compare(0, 5, "eden:") == 0) return false;
+    size_t c = n.find(':');
+    if (c == std::string::npos || c < 1 || c > 24) return false;
+    size_t path = n.size() - c - 1;
+    if (path < 1 || path > 48) return false;
+    for (size_t i = 0; i < n.size(); i++) {
+        char ch = n[i];
+        bool ok = (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' || (i > c && ch == '/');
+        if (i != c && !ok) return false;
+    }
+    return true;
+}
+
+bool palette_parse(const uint8_t* p, size_t n, std::vector<PaletteEntry>* out, std::vector<std::string>* errs) {
+    std::vector<std::string> e;
+    if (out) out->clear();
+    if (n < PALETTE_HEAD) e.push_back(fmt("BLOCK_PALETTE is %zu B, shorter than its 8-byte head", n));
+    else if (rd32(p) != PALETTE_VERSION) e.push_back(fmt("BLOCK_PALETTE version %u (this reader knows %u)", rd32(p), (unsigned)PALETTE_VERSION));
+    else {
+        uint32_t count = rd32(p + 4);
+        if (count > PALETTE_MAX) e.push_back(fmt("BLOCK_PALETTE count %u > %u", count, (unsigned)PALETTE_MAX));
+        if ((uint64_t)n != PALETTE_HEAD + (uint64_t)count * PALETTE_ENTRY) {
+            e.push_back(fmt("BLOCK_PALETTE is %zu B; count %u needs %llu", n, count,
+                            (unsigned long long)(PALETTE_HEAD + (uint64_t)count * PALETTE_ENTRY)));
+        } else {
+            std::vector<std::string> names;
+            int last = -1;
+            for (uint32_t i = 0; i < count; i++) {
+                const uint8_t* r = p + PALETTE_HEAD + (size_t)i * PALETTE_ENTRY;
+                PaletteEntry pe;
+                pe.id = r[0]; pe.fallbackType = r[1]; pe.fallbackPaint = r[2]; pe.flags = r[3];
+                const char* nm = (const char*)r + 4;
+                size_t len = 0;
+                while (len < 64 && nm[len]) len++;
+                pe.name.assign(nm, len);
+                std::string bad;
+                auto add = [&](const std::string& w) { bad += (bad.empty() ? "" : "; ") + w; };
+                if (pe.id < 128) add(fmt("id %u < 128", pe.id));
+                if ((int)pe.id <= last) add(fmt("id %u not ascending", pe.id));
+                const int ft = pe.fallbackType;
+                if (ft < 1 || ft > 127 || (ft >= 66 && ft <= 70) || (ft >= 75 && ft <= 80)) add(fmt("fallback type %d", ft));
+                if (pe.fallbackPaint > PALETTE_PAINT_MAX) add(fmt("fallback paint %u", pe.fallbackPaint));
+                if (pe.flags) add(fmt("flags %#x", pe.flags));
+                if (len == 64 || !all_zero(r + 4 + len, 64 - len)) add("name not NUL-padded");
+                else if (!palette_name_ok(pe.name)) add("name '" + pe.name + "' breaks namespace:path");
+                if (std::find(names.begin(), names.end(), pe.name) != names.end()) add("name '" + pe.name + "' repeated");
+                names.push_back(pe.name);
+                last = std::max(last, (int)pe.id);
+                if (!bad.empty()) e.push_back(fmt("BLOCK_PALETTE entry %u: ", i) + bad);
+                else if (out) out->push_back(pe);
+            }
+        }
+    }
+    if (errs) errs->insert(errs->end(), e.begin(), e.end());
+    return e.empty();
+}
+
+void palette_build(std::vector<PaletteEntry> entries, std::vector<uint8_t>& out) {
+    std::sort(entries.begin(), entries.end(), [](const PaletteEntry& a, const PaletteEntry& b) { return a.id < b.id; });
+    out.assign(PALETTE_HEAD + entries.size() * PALETTE_ENTRY, 0);
+    wr32(&out[0], PALETTE_VERSION);
+    wr32(&out[4], (uint32_t)entries.size());
+    for (size_t i = 0; i < entries.size(); i++) {
+        uint8_t* r = &out[PALETTE_HEAD + i * PALETTE_ENTRY];
+        r[0] = entries[i].id; r[1] = entries[i].fallbackType; r[2] = entries[i].fallbackPaint; r[3] = entries[i].flags;
+        std::memcpy(r + 4, entries[i].name.data(), std::min<size_t>(entries[i].name.size(), 63));
+    }
+}
+
+std::vector<int> palette_lost_ids(const std::vector<uint8_t>& older, const std::vector<uint8_t>& newer) {
+    // compares the 68 raw bytes of each entry that parses (emod.py palette_superset_errors)
+    auto index = [](const std::vector<uint8_t>& v, const uint8_t* rows[256]) {
+        for (int i = 0; i < 256; i++) rows[i] = nullptr;
+        std::vector<PaletteEntry> ok;
+        if (v.size() < PALETTE_HEAD) return;
+        palette_parse(v.data(), v.size(), &ok, nullptr);
+        uint32_t count = rd32(&v[4]);
+        if ((uint64_t)v.size() != PALETTE_HEAD + (uint64_t)count * PALETTE_ENTRY) return;
+        for (uint32_t i = 0; i < count; i++) {
+            const uint8_t* r = &v[PALETTE_HEAD + (size_t)i * PALETTE_ENTRY];
+            for (const PaletteEntry& pe : ok) if (pe.id == r[0]) { rows[r[0]] = r; break; }
+        }
+    };
+    const uint8_t* o[256]; const uint8_t* n[256];
+    index(older, o);
+    index(newer, n);
+    std::vector<int> lost;
+    for (int i = 0; i < 256; i++)
+        if (o[i] && (!n[i] || std::memcmp(o[i], n[i], PALETTE_ENTRY) != 0)) lost.push_back(i);
+    return lost;
+}
+
+// ---- BPL1 (K.1-4) -------------------------------------------------------------------------------
+namespace {
+// The trailer model's walk (docs/eden-file-format.md "The trailer model" rules 1-2), without SGN1/CMB1's
+// own checks: the payload, each section's [start, end) in it, and where the tail starts.
+bool walk_trailer(const uint8_t* t, size_t n, std::vector<uint8_t>& pay, std::vector<std::pair<size_t, size_t> >& secs,
+                  size_t* tail) {
+    pay.clear(); secs.clear();
+    if (n % EDEN_DIR_ROW) return false;
+    for (size_t i = 0; i < n; i += EDEN_DIR_ROW) {
+        if (rd32(t + i) != 0xffffffffu) return false;
+        pay.insert(pay.end(), t + i + 4, t + i + EDEN_DIR_ROW);
+    }
+    size_t i = 0;
+    while (i + 12 <= pay.size()) {
+        if (!rd32(&pay[i])) break;
+        uint64_t end = i + 12 + (uint64_t)rd32(&pay[i + 4]);
+        if (end > pay.size()) return false;
+        secs.push_back(std::make_pair(i, (size_t)end));
+        i = (size_t)end;
+    }
+    for (size_t k = i; k < pay.size(); k++) if (pay[k]) return false;
+    *tail = i;
+    return true;
+}
+bool is_bpl1(const std::vector<uint8_t>& pay, size_t at) { return std::memcmp(&pay[at], "BPL1", 4) == 0; }
+}  // namespace
+
+bool trailer_find_palette(const uint8_t* t, size_t n, std::vector<uint8_t>* record) {
+    std::vector<uint8_t> pay;
+    std::vector<std::pair<size_t, size_t> > secs;
+    size_t tail;
+    if (!n || !walk_trailer(t, n, pay, secs, &tail)) return false;
+    int found = 0;
+    size_t at = 0, end = 0;
+    for (const auto& s : secs) if (is_bpl1(pay, s.first)) { found++; at = s.first; end = s.second; }
+    if (found != 1 || end - at < 16 || std::memcmp(&pay[at + 12], "BPL1", 4) != 0) return false;
+    if (record) record->assign(pay.begin() + at + 16, pay.begin() + end);
+    return true;
+}
+
+bool trailer_put_palette(const std::vector<uint8_t>& t, const std::vector<uint8_t>* record, std::vector<uint8_t>& out) {
+    std::vector<uint8_t> pay;
+    std::vector<std::pair<size_t, size_t> > secs;
+    size_t tail = 0;
+    if (!t.empty() && !walk_trailer(t.data(), t.size(), pay, secs, &tail)) return false;
+    std::vector<uint8_t> sec;
+    if (record) {
+        sec.resize(16);
+        std::memcpy(&sec[0], "BPL1", 4);
+        wr32(&sec[4], (uint32_t)(4 + record->size()));
+        wr32(&sec[8], 0);
+        std::memcpy(&sec[12], "BPL1", 4);
+        sec.insert(sec.end(), record->begin(), record->end());
+    }
+    std::vector<uint8_t> p;
+    bool placed = false;
+    for (const auto& s : secs) {
+        if (!is_bpl1(pay, s.first)) { p.insert(p.end(), pay.begin() + s.first, pay.begin() + s.second); continue; }
+        if (placed || !record) continue;
+        std::memcpy(&sec[8], &pay[s.first + 8], 4);          // its w3, kept as read
+        p.insert(p.end(), sec.begin(), sec.end());
+        placed = true;
+    }
+    if (record && !placed) p.insert(p.end(), sec.begin(), sec.end());
+    out.clear();
+    if (p.empty()) return true;
+    if (p.size() == tail) p.insert(p.end(), pay.begin() + tail, pay.end());   // same section sizes: the tail as it was
+    p.resize((p.size() + 11) / 12 * 12, 0);
+    static const uint8_t tag[4] = {0xff, 0xff, 0xff, 0xff};
+    for (size_t i = 0; i < p.size(); i += 12) {
+        out.insert(out.end(), tag, tag + 4);
+        out.insert(out.end(), p.begin() + i, p.begin() + i + 12);
+    }
+    return true;
+}
+
+bool converted_palette(const std::vector<uint8_t>& bpl1, const bool seen[256], std::vector<uint8_t>& out) {
+    std::vector<PaletteEntry> es;
+    if (!palette_parse(bpl1.data(), bpl1.size(), &es, nullptr)) return false;
+    bool have[256] = {false};
+    for (const PaletteEntry& e : es) {
+        // an `emod:unknown_*` name is only ever its own id's reservation, so the ones added below never clash
+        if (e.name.compare(0, 13, "emod:unknown_") == 0 && e.name != fmt("emod:unknown_%u", (unsigned)e.id)) return false;
+        have[e.id] = true;
+    }
+    for (int id = 128; id < 256; id++) {
+        if (!seen || !seen[id] || have[id]) continue;
+        PaletteEntry u;
+        u.id = (uint8_t)id; u.fallbackType = PALETTE_UNKNOWN_FALLBACK; u.fallbackPaint = 0; u.flags = 0;
+        u.name = fmt("emod:unknown_%d", id);
+        es.push_back(u);
+    }
+    palette_build(es, out);
+    return true;
+}
+
+void mark_high_type_bytes(const uint8_t* col, int bands, bool seen[256]) {
+    for (int b = 0; b < bands; b++)
+        for (size_t i = 0; i < 4096; i++) if (col[(size_t)b * BAND + i] >= 128) seen[col[(size_t)b * BAND + i]] = true;
+}
+
+namespace {
+// The type bytes >= 128 of a decoded COLUMN payload (each stored band: 4,096 types, then paint).
+void mark_high_types(const std::vector<uint8_t>& payload, bool seen[256]) {
+    for (size_t b = 0; b + BAND <= payload.size(); b += BAND)
+        for (size_t i = 0; i < 4096; i++) if (payload[b + i] >= 128) seen[payload[b + i]] = true;
+}
+}  // namespace
+
+// =============================================================================================
 // EdenWorldStore — opening (docs/emod-file-format.md "Reading (normative)")
 // =============================================================================================
+// K.1-3: ON. The runtime resolves palettes (Classes/BlockRegistry) and rebuild2() no longer rewrites a
+// byte >= 128, so a flagged world is safe to open. The --emod-selftest D3 case turns it off to stand in
+// for a pre-K.1 build.
+bool EdenWorldStore::acceptPaletteFlag = true;
+
 EdenWorldStore::EdenWorldStore()
-    : testCrashAfter((size_t)-1), testCrashZeroFill(false), f_(nullptr), writable_(false), checkCrc_(true), headerOnly_(false),
-      creating_(false), bands_(0), created_(0), size_(0) {
+    : testCrashAfter((size_t)-1), testCrashZeroFill(false), testUncheckedPut(false), testCompactCrashAfter((size_t)-1),
+      f_(nullptr), writable_(false), checkCrc_(true), headerOnly_(false),
+      creating_(false), bands_(0), fileFlags_(0), created_(0), size_(0) {
     close();
 }
 
@@ -440,7 +651,7 @@ void EdenWorldStore::close() {
     f_ = nullptr;
     path_.clear(); finalPath_.clear();
     writable_ = false; creating_ = false;
-    bands_ = 0; created_ = 0; size_ = 0;
+    bands_ = 0; fileFlags_ = 0; created_ = 0; size_ = 0;
     recs_.clear(); spans_.clear(); entries_.clear(); colIndex_.clear();
     for (int i = 0; i < 256; i++) latestT_[i] = -1;
     damage_.clear(); warnings_.clear(); errors_.clear();
@@ -481,7 +692,13 @@ bool EdenWorldStore::open(const char* path, bool writable, bool checkCrc, bool h
     if (rd16(h + 8) != 1) { close(); return fail(fmt("fmt_version %u (this reader knows 1)", rd16(h + 8))); }
     bands_ = rd16(h + 10);
     if (bands_ != 4 && bands_ != 16) { close(); return fail(fmt("bands %d is neither 4 nor 16", bands_)); }
-    if (rd32(h + 12) != 0 || !all_zero(h + 24, 36)) { close(); return fail("non-zero flags/reserved in the file header (written by a newer build)"); }
+    // K.1-2: bit 0 (a block palette) is known, but only accepted where acceptPaletteFlag says this
+    // build can honour it; otherwise the refusal is word for word a pre-K.1 build's (D3).
+    const uint32_t fl = rd32(h + 12);
+    if ((fl & ~(uint32_t)FH_FLAG_BLOCK_PALETTE) || (fl && !acceptPaletteFlag) || !all_zero(h + 24, 36)) {
+        close(); return fail("non-zero flags/reserved in the file header (written by a newer build)");
+    }
+    fileFlags_ = fl;
     created_ = rd64(h + 16);
     // 2-6. Scan, commits, apply, tail, truncation point
     scan();
@@ -668,7 +885,7 @@ void EdenWorldStore::evaluate() {
     if (commits.empty()) errors_.push_back("no committed batch");
     for (const Rec& r : recs_) {
         if (!r.padOk && r.off < end) damage_.push_back(fmt("non-zero padding after record @%llu", (unsigned long long)r.off));
-        if ((r.type < 1 || r.type > T_GENERATOR) && r.off < truncateAt_)
+        if (!known_record_type(r.type) && r.off < truncateAt_)
             warnings_.push_back(fmt("record @%llu has reserved type %u", (unsigned long long)r.off, r.type));
     }
 }
@@ -866,13 +1083,29 @@ bool EdenWorldStore::putRecord(int type, const void* data, size_t len) {
     if (!f_ || !writable_) return fail("store is not open for writing");
     if (type <= 0 || type > 255 || type == T_COLUMN || type == T_COMMIT || type == T_SUMMARY)
         return fail("putRecord: COLUMN/COMMIT/SUMMARY are written by putColumn/commitBatch");
-    if (type == T_WORLD_HEADER && len != EDEN_HEADER) return fail("WORLD_HEADER must be 192 bytes");
-    if (type == T_CREATURES && (len % EDEN_ENT || len / EDEN_ENT > EDEN_MAX_SLOTS)) return fail("CREATURES must be 0-400 x 60 bytes");
-    if (type == T_SIGN_TRAILER && (len % EDEN_DIR_ROW || len > TRAILER_MAX)) return fail("SIGN_TRAILER must be a multiple of 16, <= 1 MiB");
-    if (type == T_GENERATOR && len != GENERATOR_LEN) return fail("GENERATOR must be 28 bytes");
+    if (!testUncheckedPut) {
+        if (type == T_WORLD_HEADER && len != EDEN_HEADER) return fail("WORLD_HEADER must be 192 bytes");
+        if (type == T_CREATURES && (len % EDEN_ENT || len / EDEN_ENT > EDEN_MAX_SLOTS)) return fail("CREATURES must be 0-400 x 60 bytes");
+        if (type == T_SIGN_TRAILER && (len % EDEN_DIR_ROW || len > TRAILER_MAX)) return fail("SIGN_TRAILER must be a multiple of 16, <= 1 MiB");
+        if (type == T_GENERATOR && len != GENERATOR_LEN) return fail("GENERATOR must be 28 bytes");
+        if (type == T_SKY_CLOCK && len != SKY_CLOCK_LEN) return fail("SKY_CLOCK must be 16 bytes");
+        if (type == T_BLOCK_PALETTE) {
+            // D14: the flag compaction comes first, so no byte >= 128 ever means something in an unflagged file
+            if (!paletteFlag()) return fail("BLOCK_PALETTE needs a flagged file: compact(true) first");
+            std::vector<std::string> pe;
+            if (!palette_parse((const uint8_t*)data, len, nullptr, &pe)) return fail(pe[0]);
+            std::vector<uint8_t> live;
+            if (readRecord(T_BLOCK_PALETTE, live) <= READ_FALLBACK) {
+                std::vector<uint8_t> next((const uint8_t*)data, (const uint8_t*)data + len);
+                std::vector<int> lost = palette_lost_ids(live, next);
+                if (!lost.empty()) return fail(fmt("BLOCK_PALETTE drops or changes id %d (slots are never freed: D8)", lost[0]));
+            }
+        }
+    }
     uint8_t codec;
     std::vector<uint8_t>& enc = scratch_;
-    if (!codecs_.encode(codec_, (const uint8_t*)data, len, type != T_WORLD_HEADER && type != T_GENERATOR, &codec, enc)) return fail("encode failed");
+    const bool raw = type == T_WORLD_HEADER || type == T_GENERATOR || type == T_SKY_CLOCK || type == T_BLOCK_PALETTE;   // codec 0 by spec
+    if (!codecs_.encode(codec_, (const uint8_t*)data, len, !raw, &codec, enc)) return fail("encode failed");
     if (enc.size() > MAX_PAYLOAD) return fail("record payload exceeds 16 MiB");
     addRecord((uint8_t)type, codec, 0, 0, 0, (uint32_t)len, enc.data(), enc.size());
     return true;
@@ -976,23 +1209,46 @@ bool EdenWorldStore::commitBatch() {
 // =============================================================================================
 // compaction (docs/emod-file-format.md "Batches and commits — writing")
 // =============================================================================================
-bool EdenWorldStore::compact() {
+bool EdenWorldStore::compact(bool setPaletteFlag, const std::vector<uint8_t>* palette) {
     error_.clear();
+    latent_.clear();
     if (!f_ || !writable_ || creating_) return fail("compaction needs a committed store open for writing");
     if (!batchRecs_.empty()) return fail("compaction mid-batch");
     if (damaged()) return fail("store is damaged: compaction is blocked (export first)");
+    // K.1-2: the flag compaction (D13/D14)
+    const bool flagged = paletteFlag();
+    const bool flagNow = setPaletteFlag && !flagged;
+    if (palette && !flagNow) return fail("a palette is only given to the flag compaction of an unflagged file");
+    std::vector<PaletteEntry> supplied;
+    if (flagNow) {
+        std::vector<uint8_t> none;
+        if (!palette) palette_build(std::vector<PaletteEntry>(), none);
+        const std::vector<uint8_t>& pb = palette ? *palette : none;
+        std::vector<std::string> pe;
+        if (!palette_parse(pb.data(), pb.size(), &supplied, &pe)) return fail("the supplied palette breaks the rules: " + pe[0]);
+    } else if (flagged && latestT_[T_BLOCK_PALETTE] < 0) {
+        return fail("the file is flagged but has no BLOCK_PALETTE");
+    }
+    bool seen[256] = {false};
     const std::string tmp = path_ + ".compact";
     FILE* o = fopen_utf8(tmp.c_str(), "wb");
     if (!o) return fail("cannot create " + tmp);
     std::vector<uint8_t> out, data, enc;
     std::vector<uint32_t> crcs;
     uint8_t fh[FILE_HEADER];
-    file_header(fh, bands_, created_);
+    file_header(fh, bands_, created_, (flagged || flagNow) ? (uint32_t)FH_FLAG_BLOCK_PALETTE : 0u);
     out.insert(out.end(), fh, fh + FILE_HEADER);
-    bool ok = true;
+    bool ok = true, crashed = false;
+    uint64_t written = 0;
     auto flush = [&](bool force) {
         if (ok && (force || out.size() >= (1u << 20))) {
-            ok = std::fwrite(out.data(), 1, out.size(), o) == out.size();
+            size_t n = out.size();
+            if (testCompactCrashAfter != (size_t)-1 && written + n > testCompactCrashAfter) {
+                n = (size_t)(testCompactCrashAfter - written);     // the test hook: the process dies here
+                crashed = true;
+            }
+            ok = std::fwrite(out.data(), 1, n, o) == n && !crashed;
+            written += n;
             out.clear();
         }
     };
@@ -1014,15 +1270,18 @@ bool EdenWorldStore::compact() {
         return ok;
     };
     // H.4: GENERATOR last of the singletons, so a fresh conversion (which never has one) still
-    // compacts to itself byte for byte.
-    static const int order[] = {T_WORLD_HEADER, T_CREATURES, T_SIGN_TRAILER, T_PROVENANCE, T_GENERATOR};
+    // compacts to itself byte for byte. DN.2: SKY_CLOCK after it, for the same reason.
+    static const int order[] = {T_WORLD_HEADER, T_CREATURES, T_SIGN_TRAILER, T_PROVENANCE, T_GENERATOR, T_SKY_CLOCK};
     for (int t : order) {
         if (!ok) break;
         int32_t i = latestT_[t];
         if (i < 0) continue;
         if (t == T_SIGN_TRAILER && entries_[i].aux == 0) continue;    // an empty trailer = none
-        ok = copy(entries_[i], t == T_WORLD_HEADER || t == T_GENERATOR);
+        ok = copy(entries_[i], t == T_WORLD_HEADER || t == T_GENERATOR || t == T_SKY_CLOCK);
     }
+    // K.1-2: BLOCK_PALETTE goes after the COLUMNs, so the flag compaction learns the latent bytes
+    // while it copies them (one decode pass). An unflagged file's stray palette (no writer makes one)
+    // is dropped.
     std::vector<std::pair<uint32_t, int32_t> > cols;
     cols.reserve(colIndex_.size());
     for (const auto& kv : colIndex_) cols.push_back(std::make_pair(entries_[kv.second].aux, kv.second));
@@ -1031,7 +1290,32 @@ bool EdenWorldStore::compact() {
         const Entry& ea = entries_[a.second]; const Entry& eb = entries_[b.second];
         return ea.x != eb.x ? ea.x < eb.x : ea.z < eb.z;
     });
-    for (size_t i = 0; ok && i < cols.size(); i++) ok = copy(entries_[cols[i].second], false);
+    for (size_t i = 0; ok && i < cols.size(); i++) {
+        ok = copy(entries_[cols[i].second], false);
+        if (ok && flagNow) mark_high_types(data, seen);
+    }
+    if (ok && flagNow) {
+        std::vector<int> clash;
+        for (const PaletteEntry& pe : supplied) if (seen[pe.id]) clash.push_back(pe.id);
+        for (int id = 128; id < 256; id++) if (seen[id]) latent_.push_back((uint8_t)id);
+        if (!clash.empty()) {
+            std::fclose(o);
+            remove_file(tmp);
+            return fail(fmt("palette id %d is a latent type byte in this world (D13); nothing was replaced", clash[0]));
+        }
+        std::vector<PaletteEntry> all = supplied;
+        for (uint8_t id : latent_) {
+            PaletteEntry u;
+            u.id = id; u.fallbackType = PALETTE_UNKNOWN_FALLBACK; u.fallbackPaint = 0; u.flags = 0;
+            u.name = fmt("emod:unknown_%u", (unsigned)id);
+            all.push_back(u);
+        }
+        std::vector<uint8_t> pb;
+        palette_build(all, pb);
+        crcs.push_back(append_record(out, T_BLOCK_PALETTE, C_NONE, 0, 0, 0, (uint32_t)pb.size(), 1, pb.data(), pb.size()));
+    } else if (ok && flagged) {
+        ok = copy(entries_[latestT_[T_BLOCK_PALETTE]], true);
+    }
     if (ok) {
         Summary s = summary();
         uint8_t sp[SUMMARY_LEN];
@@ -1046,6 +1330,11 @@ bool EdenWorldStore::compact() {
         ok = ok && sync_file(o);
     }
     std::fclose(o);
+    if (crashed) {                       // the test hook: died before the rename; the .compact stays
+        std::fclose(f_);
+        f_ = nullptr;
+        return fail("test crash");
+    }
     if (!ok) {
         remove_file(tmp);
         return fail(damaged() ? "compaction found damage; nothing was replaced" : "compaction write failed; nothing was replaced");
@@ -1059,8 +1348,10 @@ bool EdenWorldStore::compact() {
         open(p.c_str(), true);
         return fail("cannot rename the compacted file into place");
     }
+    std::vector<uint8_t> latent = latent_;
     bool r = open(p.c_str(), true);
     codec_ = codec;
+    latent_ = latent;
     return r;
 }
 
@@ -1095,7 +1386,38 @@ std::vector<std::string> EdenWorldStore::verify() {
     int32_t gr = latestT_[T_GENERATOR];
     if (gr >= 0 && entries_[gr].aux != GENERATOR_LEN)
         errs.push_back(fmt("GENERATOR raw length %u is not %u", entries_[gr].aux, (unsigned)GENERATOR_LEN));
-    static const int single[] = {T_CREATURES, T_SIGN_TRAILER, T_PROVENANCE, T_SUMMARY, T_GENERATOR};
+    int32_t sk = latestT_[T_SKY_CLOCK];
+    if (sk >= 0 && entries_[sk].aux != SKY_CLOCK_LEN)
+        errs.push_back(fmt("SKY_CLOCK raw length %u is not %u", entries_[sk].aux, (unsigned)SKY_CLOCK_LEN));
+    if (sk >= 0 && entries_[sk].codec != C_NONE) errs.push_back("SKY_CLOCK must be codec 0");
+    // K.1-2: the flag <=> a live BLOCK_PALETTE; the record's rules; every version a superset of the last
+    int32_t bp = latestT_[T_BLOCK_PALETTE];
+    bool havePalette = false;
+    bool inPalette[256] = {false};
+    if (paletteFlag() && bp < 0) errs.push_back("FileHeader flags bit 0 is set but there is no BLOCK_PALETTE");
+    if (bp >= 0 && !paletteFlag()) errs.push_back(fmt("BLOCK_PALETTE @%llu in a file without FileHeader flags bit 0", (unsigned long long)entries_[bp].off));
+    if (bp >= 0) {
+        if (entries_[bp].codec != C_NONE) errs.push_back("BLOCK_PALETTE must be codec 0");
+        if (decodeEntry(entries_[bp], d)) {
+            std::vector<PaletteEntry> pe;
+            palette_parse(d.data(), d.size(), &pe, &errs);
+            for (const PaletteEntry& e : pe) inPalette[e.id] = true;
+            havePalette = true;
+        }
+        std::vector<int32_t> chain;                       // oldest first
+        for (int32_t i = bp; i >= 0; i = entries_[i].prev) chain.push_back(i);
+        std::reverse(chain.begin(), chain.end());
+        std::vector<uint8_t> older, newer;
+        for (size_t k = 1; k < chain.size(); k++) {
+            if (!decodeEntry(entries_[chain[k - 1]], older) || !decodeEntry(entries_[chain[k]], newer)) continue;
+            std::vector<int> lost = palette_lost_ids(older, newer);
+            if (!lost.empty())
+                errs.push_back(fmt("BLOCK_PALETTE @%llu is not a superset of @%llu: id %d dropped or changed",
+                                   (unsigned long long)entries_[chain[k]].off, (unsigned long long)entries_[chain[k - 1]].off, lost[0]));
+        }
+    }
+    bool high[256] = {false};
+    static const int single[] = {T_CREATURES, T_SIGN_TRAILER, T_PROVENANCE, T_SUMMARY, T_GENERATOR, T_BLOCK_PALETTE, T_SKY_CLOCK};
     for (int t : single) {
         int32_t i = latestT_[t];
         if (i < 0) continue;
@@ -1140,8 +1462,20 @@ std::vector<std::string> EdenWorldStore::verify() {
                     warnings_.push_back(fmt("COLUMN (%d,%d): band %d stored but all zero (non-canonical)", e.x, e.z, b));
                 bi++;
             }
+            mark_high_types(d, high);
         }
     }
+    // K.1-2: placeholders are legal (a mod that is not installed), so these are warnings, not damage
+    std::string hiList, noEntry;
+    for (int id = 128; id < 256; id++) {
+        if (!high[id]) continue;
+        hiList += fmt("%s%d", hiList.empty() ? "" : ", ", id);
+        if (!inPalette[id]) noEntry += fmt("%s%d", noEntry.empty() ? "" : ", ", id);
+    }
+    if (!hiList.empty() && !paletteFlag())
+        warnings_.push_back("type byte(s) >= 128 in a file without the palette flag: [" + hiList + "]");
+    else if (!noEntry.empty() && havePalette)
+        warnings_.push_back("type byte(s) with no BLOCK_PALETTE entry (drawn as the missing block): [" + noEntry + "]");
     int32_t sm = latestT_[T_SUMMARY];
     if (!colIndex_.empty() && sm < 0) errs.push_back("no SUMMARY");
     else if (sm >= 0) {
@@ -1182,6 +1516,12 @@ std::string EdenWorldStore::stateDigest() {
         wr16(k + 8, e.mask);
         h.update(k, 10);
         if (!decodeEntry(e, d)) return "undecodable";
+        if (!d.empty()) h.update(d.data(), d.size());
+    }
+    // K.1-2: what bytes >= 128 mean is part of the state; absent -> nothing, so older digests hold
+    if (latestT_[T_BLOCK_PALETTE] >= 0) {
+        if (!decodeEntry(entries_[latestT_[T_BLOCK_PALETTE]], d)) return "undecodable";
+        h.update("BPL", 3);
         if (!d.empty()) h.update(d.data(), d.size());
     }
     uint8_t out[32];
@@ -1532,8 +1872,15 @@ bool EdenEmodConverter::finish() {
         crcs.push_back(append_record(rec, type, codec, 0, 0, 0, (uint32_t)n, 1, enc.data(), enc.size()));
         flush(false);
     };
+    // K.1-4: a trailer carrying a clean BPL1 (an own-format export of a world with mod blocks) gives the
+    // world its BLOCK_PALETTE and FileHeader flags bit 0; the section itself stays in SIGN_TRAILER verbatim.
+    // The record goes after the COLUMNs (as the flag compaction writes it): latent bytes >= 128 with no
+    // entry are reserved there (D13), so this pass marks them.
+    std::vector<uint8_t> bpl1, palRec;
+    const bool palette = trailer_find_palette(L.trailer.data(), L.trailer.size(), &bpl1) && converted_palette(bpl1, nullptr, palRec);
+    bool seen[256] = {false};
     uint8_t fh[FILE_HEADER];
-    file_header(fh, outBands, (uint64_t)opt_.createdUnix);
+    file_header(fh, outBands, (uint64_t)opt_.createdUnix, palette ? (uint32_t)FH_FLAG_BLOCK_PALETTE : 0u);
     rec.insert(rec.end(), fh, fh + FILE_HEADER);
     put(T_WORLD_HEADER, hdrOut, EDEN_HEADER, false);
     put(T_CREATURES, creatures.data(), creatures.size(), true);
@@ -1557,11 +1904,17 @@ bool EdenEmodConverter::finish() {
             if (s.stored && (!seek_to(spill_, s.spillOff) || std::fread(enc.data(), 1, s.stored, spill_) != s.stored)) { ok = false; break; }
             mask = s.mask; codec = s.codec; want[ord] = s.crc;
             st_.copied++;
+            if (palette) {
+                const uint8_t* raw; uint32_t rl;
+                if (!slotRaw(k, &raw, &rl)) { ok = false; break; }
+                mark_high_type_bytes(raw, outBands, seen);
+            }
         } else {
             // short span, off-grid offset, an offset outside the region: rebuild as Eden.column reads it
             if (!readSource(c.off, c.span, data)) { ok = false; break; }
             data.resize((size_t)outCol, 0);             // S.5e: an upgraded column's bands 4-15 are air
             want[ord] = crc32_of(data.data(), data.size());
+            if (palette) mark_high_type_bytes(data.data(), outBands, seen);
             mask = split_bands(data.data(), outBands, payload);
             if (!codecs_.encode(opt_.codec, payload.data(), payload.size(), true, &codec, enc)) { ok = false; break; }
             st_.rebuilt++;
@@ -1569,6 +1922,11 @@ bool EdenEmodConverter::finish() {
         bandOr |= mask;
         crcs.push_back(append_record(rec, T_COLUMN, codec, mask, c.x, c.z, (uint32_t)ord, 1, enc.data(), enc.size()));
         flush(false);
+    }
+    if (ok && palette) {
+        converted_palette(bpl1, seen, palRec);
+        put(T_BLOCK_PALETTE, palRec.data(), palRec.size(), false);
+        st_.paletteEntries = (uint32_t)((palRec.size() - 8) / 68);
     }
     if (ok) {
         uint8_t sp[SUMMARY_LEN];
@@ -1594,6 +1952,7 @@ bool EdenEmodConverter::finish() {
     st_.flags = L.flags;
     st_.bandsIn = L.bands;
     st_.bandsOut = outBands;
+    st_.palette = palette;
     // convert-on-open step 3: re-read every record and compare with the source before the rename
     const auto v0 = std::chrono::steady_clock::now();
     {

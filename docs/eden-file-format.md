@@ -274,6 +274,20 @@ Neither carries the trailer into a 64z file. The exporter (`Classes/EdenWorldExp
 § Export) parses it into sections only to count, prune or drop records: a record's column is
 `(floor(x/16), floor(y/16))` — `x, y` horizontal, as above.
 
+### BPL1 — an Emod block palette (K.1-4, 2026-10-31)
+
+Emod's own section, written only by an **own-format** export of a world with mod blocks (type bytes
+128–255; `docs/emod-file-format.md` "BLOCK_PALETTE"). Same shape as `SGN1`/`CMB1`: wrapper `BPL1 | u32
+inner_len | u32 w3 = 0`, then `BPL1 | u32 version = 1 | u32 count` and `count` × 68-byte entries (`u8 id`
+128–255, `u8 fallback_type`, `u8 fallback_paint`, `u8 flags` 0, `char name[64]`), i.e. `BPL1` + the
+`BLOCK_PALETTE` record's bytes, so `inner_len` = 12 + 68 × count. It goes after the other sections (or in
+the slot of the one it replaces). Entries are not positional: pruning never drops one. The stock game and
+the trailer model keep it verbatim as an unknown section; a stock reader shows bytes ≥ 128 as whatever it
+makes of them (a pre-K.1 Emod: stone), which is why every other export target and every upload write the
+entries' fallbacks instead. Emod's converter turns a clean one back into the palette record and the file
+flag (`emod-file-format.md` "Conversion from `.eden`"); the round trip of an unchanged world is
+byte-identical.
+
 ## RLE variant (bundled default world only)
 
 > **S.6 (2026-10-10): the game no longer reads this variant by default.** The app bundle ships

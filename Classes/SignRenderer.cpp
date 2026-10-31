@@ -282,7 +282,7 @@ bool faceNormal(int a, V3* n) {   // a's faces, engine axes; false for bottom / 
     }
 }
 
-bool opaque(int t) { return t > 0 && t <= NUM_BLOCKS && !(blockinfo[t] & IS_NOTSOLID); }
+bool opaque(int t) { return t > 0 && t <= STOCK_BLOCK_MAX && !(blockinfo[t] & IS_NOTSOLID); }
 
 // The six faces of a block for the skin: the outward normal, the face's in-plane axes, the
 // trailer's face code (a) for a wall sign on it, and a fixed shade so the cube reads as one.

@@ -178,13 +178,58 @@ public:
     // saveWorld() uses. Refuses if `name` is the world currently open in this session.
     ConvertTo64Report convertWorldTo64(const std::string& name);
 
+    // K.1-3 (block-registry plan D13/D14): before the first mod block id is allocated in the open world.
+    // A flagged world: true. An unflagged one is rewritten once by the flag compaction (FileHeader flags
+    // bit 0 + a BLOCK_PALETTE that reserves every latent byte >= 128 as `emod:unknown_<id>`), then the
+    // registry reloads that palette, so a new id can never give old garbage a meaning. Main thread, in
+    // play. False + `why` when there is no open `.emod`, it is damaged, or the rewrite fails.
+    bool preparePaletteAllocation(std::string* why);
     // ---- Stage S: `.emod` worlds (docs/emod-file-format.md; Classes/EdenWorldStore.h) ----
     // A world is an `.emod` iff its file name ends in ".emod"; every method above routes on that.
     static bool isEmodName(const std::string& name);
     // A dropped-in `.gz` / `.zip` (a compressed `.eden`): only ever a source for convertStep().
     static bool isArchiveName(const std::string& name);
-    // The file name for a brand-new world: genhash() + ".emod".
+    // The key for a brand-new world: "Worlds/<id>/world.emod" (K.0w; the folder is made by the first save).
     static std::string newWorldFileName();
+    // ---- K.0w world folders (WORKING/world-folders-plan-2026-10-30.md §3, §5.1) ----
+    // A world key is a Documents-relative path. A folder world is "Worlds/<id>/world.emod"; a loose one
+    // is its bare name. The id lives in the folder name only.
+    static bool validWorldId(const std::string& id);               // [0-9A-Za-z_-]{1,64}, no leading dot
+    static std::string newWorldId(const std::string& documents);   // "<unix>-<4 a-z>", folder name free
+    static std::string downloadWorldId(const std::string& documents,const std::string& serverId);
+    static std::string worldKeyOfId(const std::string& id);        // "Worlds/<id>/world.emod"
+    static std::string stagingDirOf(const std::string& id);        // "Worlds/.<id>.partial" (a Documents-relative path)
+    // K.0w-3 staging (plan §5.2): an import writes `<documents>/Worlds/.<id>.partial/world.emod`; the commit
+    // point is ONE no-replace rename of that dir to `Worlds/<id>` (a fresh id if taken). beginStaging makes the
+    // dir (returns its absolute path, "" on failure); commitStaging returns the new key ("" = still staged).
+    // stageStep is the EDEN_TEST_STAGE_KILL_AFTER=<n> hook (_Exit(86) after the n-th staging step).
+    static std::string beginStaging(const std::string& documents,const std::string& id);
+    static std::string commitStaging(const std::string& documents,const std::string& id);
+    static void discardStaging(const std::string& documents,const std::string& id);
+    static void stageStep(const char* what);
+    static bool isFolderWorld(const std::string& key);             // "Worlds/<valid id>/world.emod"
+    static std::string worldDirOf(const std::string& key);         // "Worlds/<id>" or "" for a loose key
+    static std::string photoPathOf(const std::string& key);        // folder: <dir>/photo.png; loose: key+".png"
+    static std::string originalPathOf(const std::string& key,const std::string& ext); // <dir>/original<ext>
+    static std::string sidecarPathOf(const std::string& key,const std::string& kind); // kind "signs"|"cmd": <dir>/<kind>.eden.dat
+    // Rule 4: removes `<documents>/Worlds/<valid id>` and nothing else (false for any other path).
+    // K.0w-1: every "Worlds/<id>/world.emod" that exists (listWorlds' folder half).
+    std::vector<std::string> folderWorldKeys();
+    // K.0w-4 (plan §5.3): THE world list, shared by Menu::loadWorlds and the Storage seam so "row N" cannot
+    // disagree. Folder worlds + loose .emod by world.emod mtime (newest first, ties by key), then dropped
+    // sources (.eden/archives that still need converting) by name. A .eden with a paired .emod is hidden and
+    // its size goes on the .emod's original_bytes. Adoption is NOT run here (callers run adoptLooseWorlds first).
+    struct WorldEntry{ std::string key,name; long long mtime=0,original_bytes=0; bool needs_convert=false; };
+    void listWorlds(std::vector<WorldEntry>* out);
+    bool removeWorldDir(const std::string& relDir);
+    // K.0w-2 (plan §4): recovers any `Worlds/.<id>.migrating` and moves every loose, readable `<X>.emod`
+    // in the Documents root (but the open world) into `Worlds/<id>/` with its photo, paired original
+    // and 2026-game sidecars. Crash-safe and idempotent; a no-op while a convert/download/import job
+    // runs. Runs at the top of every world-list scan. Returns the number of worlds adopted/recovered;
+    // `moved` gets (loose name, new key) pairs.
+    int adoptLooseWorlds(std::vector<std::pair<std::string,std::string> >* moved=NULL);
+    // The key a loose name was adopted under in this process, or the name itself (harness lookups).
+    static std::string adoptedKeyOf(const std::string& looseName);
     // The world list's two questions about a `.eden`: is it already converted (a `<stem>.emod`
     // whose PROVENANCE names a source of the same size -> the list hides the `.eden`), and does it
     // still need converting.

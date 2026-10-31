@@ -24,7 +24,7 @@ enum { WP_TYPE_FLAT=0, WP_TYPE_NORMAL=1, WP_TYPE_CLASSIC=2 };
 // this build cannot read (void: the Terrain tab is read-only).
 enum { WP_GEN_RECORD=0, WP_GEN_MIRROR=1, WP_GEN_LEGACY=2, WP_GEN_VOID=3 };
 // applyWorldProperties()'s result bits (0 = nothing to write; -1 = failed, nothing changed).
-enum { WP_WROTE_NAME=1, WP_WROTE_GENERATOR=2, WP_LIFTED_POS=4, WP_LIFTED_HOME=8 };
+enum { WP_WROTE_NAME=1, WP_WROTE_GENERATOR=2, WP_LIFTED_POS=4, WP_LIFTED_HOME=8, WP_WROTE_SKY=16 };
 struct WorldProps{
     int kind;
     std::string name;             // the header's display name
@@ -38,6 +38,8 @@ struct WorldProps{
     int convertedVersion;
     Vector pos, home;
     double openMs;                // what reading all this cost (gate 4)
+    bool skyLocked;               // DN.6: SKY_CLOCK flag bit 0 (Emod only)
+    double skyT;                  // DN.6: the stored time of day, SkyCycle::DEFAULT_TIME when no record
 };
 
 #endif

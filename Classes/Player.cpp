@@ -13,6 +13,7 @@
 #include "TerrainGen2.h" //for sky color change
 #include "SignTool.h"
 #include "CmdScript.h"
+#include "SkyCycle.h"
 #include "MpWorld.h"   // MP.3a: session gates; MP.4: the intent sites
 #include "TouchLook.h"   // Stage L: the touch drag camera
 #include "Renderer.h"    // G.5b-4: Player::render's cube bracket
@@ -500,6 +501,9 @@ void Player::processInput(float etime){
                     }
                     
 					if(point.x==-1&&fwc_result==-1){
+                        if(mode==MODE_PAINT&&SkyCycle::enabled()){   // DN.6 (U4): the clock owns the sky; region colours stay saved
+                            World::getWorld->hud->sb->setStatus("The day/night cycle is on: it sets the sky. Turn it off in Settings > Experiments to paint it.",3);
+                        }else
                         if(mode==MODE_PAINT&&!MpWorld::active()){   // MP.3a: no sky paint in a session (no wire form)
                             
                             extern Vector colorTable[256];
@@ -1419,7 +1423,7 @@ bool Player::postMove(float etime){
             // bed channel, so it only ever plays in place of (never alongside) the default overworld
             // soundscape, and any of the specific biome/cave/underwater/skyhigh ambiences below
             // still take priority over it exactly as they do over AMBIENT_OPEN.
-            bool isNight=nightAmbienceEnabled&&v_equals(World::getWorld->terrain->final_skycolor,colorTable[54]);
+            bool isNight=nightAmbienceEnabled&&sky_isNight();
             if(World::getWorld->terrain->tgen->LEVEL_SEED!=DEFAULT_LEVEL_SEED){
                  Resources::getResources->soundEventBed(isNight?AMBIENT_NIGHT:AMBIENT_OPEN,pos);
             }else
@@ -1459,7 +1463,7 @@ bool ladderExists=false;
 extern Vector colorTable[256];
 extern Vector tranDist;
 //extern Vector minTranDist;
-extern const uint8_t blockColor[NUM_BLOCKS+1][3];
+extern uint8_t blockColor[BLOCK_IDS][3];
 float poffsetx=0;
 float poffsetz=0;
 bool Player::vertc(){

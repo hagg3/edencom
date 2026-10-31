@@ -17,6 +17,7 @@
 #include "../../../Classes/World.h"
 #include "../../../Classes/Globals.h"
 #include "../../../Classes/Input.h"
+#include "SkyCycle.h"
 #include "../../../Classes/Constants.h"       // NUM_CREATURES, for the pass-27 model probe
 #include "../../../Classes/CreatureModel.h"    // CreatureModel, ditto (LG.7)
 #include "../../../Classes/Resources.h"       // audit row 11 (A5) recolor probe
@@ -376,6 +377,20 @@ extern "C" const char *eden_debug_world_format(void) {
 // here as a different total; `unpublished` catches the other failure mode, a chunk left holding a
 // built-but-never-uploaded mesh (needsVBO still set), which is what "the chunk went invisible"
 // looks like from the inside. Diagnostics-only, like everything else in this file.
+// DN.5: the resident chunks holding geometry, split by the night bit their colours were baked with
+// (TerrainChunk::bakedNight). After a night flip has settled, one of the two is 0.
+extern "C" void eden_debug_baked_night(int *day, int *night) {
+    *day = *night = 0;
+    extern TerrainChunk** chunkTablec;
+    if (!chunkTablec) return;
+    const int n = CHUNKS_PER_SIDE * CHUNKS_PER_SIDE * CHUNKS_PER_COLUMN;
+    for (int i = 0; i < n; i++) {
+        TerrainChunk* c = chunkTablec[i];
+        if (!c || !(c->n_vertices || c->n_vertices2)) continue;
+        if (c->bakedNight) (*night)++; else (*day)++;
+    }
+}
+
 extern "C" const char *eden_debug_terrain_geometry(void) {
     static char buf[256];
     long long verts = 0, verts2 = 0, objects = 0;
@@ -632,7 +647,7 @@ extern "C" const char *eden_debug_top_shade(int x, int z, int y) {
     for (int k = 0; k < 4; k++) corner[k] = shadow_corner(tops, lx, lz, ly, k >> 1, k & 1);
     extern Vector colorTable[256];
     float skylight = 1.0f, light[3] = {1.0f, 1.0f, 1.0f}, lt[3];
-    if (!LOW_MEM_DEVICE && v_equals(World::getWorld->terrain->final_skycolor, colorTable[54])) skylight = .35f;
+    if (!LOW_MEM_DEVICE && sky_isNight()) skylight = .35f;
     if (skylight != 1.0f)
         for (int c = 0; c < 3; c++) light[c] = calcLight(x, z, y, skylight, c);
     shadow_lightTop(x, z, y, skylight, classic, light, lt);

@@ -14,17 +14,18 @@
 #include "Util.h"
 #include "Globals.h"
 #include "TerrainGen2.h"
+#include "SkyCycle.h"
 #include "Constants.h"
 #include "Globals.h"
 
 #define TG_SEED 400
 #define TG_SEED2 123
 
-block8* biomez;
+sbyte* biomez;      // biome map, not block types (sbyte since K.1-1 made block8 unsigned)
 block8* blockz;
 color8* colorz;
 
-block8* elevation;
+sbyte* elevation;   // not block types (sbyte since K.1-1)
 
 
 
@@ -2518,7 +2519,7 @@ int g_terrain_type=7;
 void clear(){
     World::getWorld->terrain->final_skycolor=colorTable[9];
     
-    memset(elevation,0,sizeof(block8)*(GSIZE*GSIZE));
+    memset(elevation,0,sizeof(sbyte)*(GSIZE*GSIZE));
     if(NOBLOCKGEN)return;
     memset(blockz,0,sizeof(block8)*(BLOCKZ_SIZE));
     memset(colorz,0,sizeof(color8)*(BLOCKZ_SIZE));
@@ -2638,7 +2639,7 @@ void makeOcean(){
 }
 int tg2_init(){
     //clear();
-    elevation=(block8*)malloc(sizeof(block8)*GSIZE*GSIZE);
+    elevation=(sbyte*)malloc(sizeof(sbyte)*GSIZE*GSIZE);
     
     if(!NOBLOCKGEN){
     blockz=(block8*)malloc(sizeof(block8)*BLOCKZ_SIZE);
@@ -2793,15 +2794,10 @@ void updateSkyColor2(Player* player,bool force,float etime){
                 
                 //timeSinceLastChange=0;
                 int rct=regionSkyColors[(int)(ppz+64)%4][(int)(ppx+64)%4];
-                if(!LOW_MEM_DEVICE)
-                if((v_equals(World::getWorld->terrain->final_skycolor,colorTable[54])&&rct!=54)||
-                   (!v_equals(World::getWorld->terrain->final_skycolor,colorTable[54])&&rct==54)){
-                    extern bool* chunksToUpdate;
-                    extern bool* columnsToUpdate;
-                    
-                    memset(chunksToUpdate,true,sizeof(bool)*CHUNKS_PER_SIDE*CHUNKS_PER_SIDE*CHUNKS_PER_COLUMN);
-                    memset(columnsToUpdate,true,sizeof(bool)*CHUNKS_PER_SIDE*CHUNKS_PER_SIDE);
-                }
+                // DN.5: the painted bit; while the day/night cycle is on it owns the night (and its re-mesh).
+                if(!SkyCycle::enabled()&&((sky_paintedNight()&&rct!=54)||
+                   (!sky_paintedNight()&&rct==54)))
+                    sky_requestNightRemesh();
                 World::getWorld->terrain->final_skycolor=colorTable[rct];
                 if(force){
                     World::getWorld->terrain->skycolor=MakeVector(World::getWorld->terrain->final_skycolor.x,World::getWorld->terrain->final_skycolor.y,World::getWorld->terrain->final_skycolor.z+.03f);
@@ -2825,7 +2821,7 @@ void paintSky(int color){
     if( v_equals(World::getWorld->terrain->final_skycolor,colorTable[color]))return;
    // timeSinceLastChange=0;
     {
-        bool wasNight=v_equals(World::getWorld->terrain->final_skycolor,colorTable[54]);
+        bool wasNight=sky_paintedNight();
         bool willBeNight=(color==54);
         if(wasNight&&!willBeNight)
             Resources::getResources->playSound(S_SKY_CHANGE_DARK_TO_LIGHT);
@@ -2834,15 +2830,9 @@ void paintSky(int color){
         else
             Resources::getResources->playSound(S_SKY_PAINTING);
     }
-    if(!LOW_MEM_DEVICE)
-    if((v_equals(World::getWorld->terrain->final_skycolor,colorTable[54])&&color!=54)||
-        (!v_equals(World::getWorld->terrain->final_skycolor,colorTable[54])&&color==54)){
-        extern bool* chunksToUpdate;
-        extern bool* columnsToUpdate;
-        
-        memset(chunksToUpdate,true,sizeof(bool)*CHUNKS_PER_SIDE*CHUNKS_PER_SIDE*CHUNKS_PER_COLUMN);
-        memset(columnsToUpdate,true,sizeof(bool)*CHUNKS_PER_SIDE*CHUNKS_PER_SIDE);
-    }
+    if(!SkyCycle::enabled()&&((sky_paintedNight()&&color!=54)||   // DN.5: as the region walk above
+        (!sky_paintedNight()&&color==54)))
+        sky_requestNightRemesh();
     World::getWorld->terrain->final_skycolor=colorTable[color];
     
     int ppx=World::getWorld->player->pos.x-4096*CHUNK_SIZE+GSIZE/2;

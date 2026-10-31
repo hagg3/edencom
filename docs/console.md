@@ -90,8 +90,9 @@ A block instance has no sink: everything behaves exactly as in D.4c.
 ## The time hook
 
 `OP_TIME` (`day/noon/night/midnight/time T`) calls `CmdScript::timeHook(t)`. The default is the region
-sky repaint (`CmdScript.h`: Eden has no clock). A day/night cycle replaces the hook, and blocks and the
-console change together.
+sky repaint (`CmdScript.h`: Eden has no clock). With Experiments › *Day/night cycle* on (Stage DN), the
+default hook (`skyTime`) calls `SkyCycle::setTime` instead, so blocks and the console change together;
+`timefreeze on|off` (`OP_TIMEFREEZE`) holds or releases the clock, and `world.time` reads it.
 
 ## The registry: verbs and cvars (`Classes/Console.{h,mm}`, C.2)
 

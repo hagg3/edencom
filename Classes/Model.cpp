@@ -23,6 +23,7 @@
 
 #include "Resources.h"
 #include "TerrainGen2.h"
+#include "SkyCycle.h"
 
 int compare_creatures2 (const void *a, const void *b);
 #define START_LIFE 5
@@ -2430,7 +2431,16 @@ bool RenderModels()
     Vec4f lightPosition = Vec4f(0.0f,0.0f, 0.0f, 1.0f);
     Vec4f lightAmbient  = Vec4f(0.3f, 0.3f, 0.3f, 1.0f);
     Vec4f lightDiffuse  = Vec4f(0.7f, 0.7f, 0.7f, 1.0f);
-    if(!LOW_MEM_DEVICE&&v_equals(World::getWorld->terrain->final_skycolor,colorTable[54])){
+    if(SkyCycle::enabled()){
+        // DN.5: the stock day/night pair blended for the clock (SkyCycle::blendLight).
+        const float dA[3]={0.3f,0.3f,0.3f}, nA[3]={0.2f,0.2f,0.2f};
+        const float dD[3]={0.7f,0.7f,0.7f}, nD[3]={0.35f,0.35f,0.35f};
+        float a[3],d[3];
+        SkyCycle::blendLight(dA,nA,a);
+        SkyCycle::blendLight(dD,nD,d);
+        lightAmbient  = Vec4f(a[0], a[1], a[2], 1.0f);
+        lightDiffuse  = Vec4f(d[0], d[1], d[2], 1.0f);
+    }else if(!LOW_MEM_DEVICE&&sky_isNight()){
        lightAmbient  = Vec4f(0.2f, 0.2f, 0.2f, 1.0f);
        lightDiffuse  = Vec4f(0.35f, 0.35f, 0.35f, 1.0f);
     }

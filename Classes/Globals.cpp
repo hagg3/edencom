@@ -97,7 +97,7 @@ void eden_set_save_journal_columns(int on){
     printf("save: dirty-column journalling %s\n",g_save_journal_columns?"ON":"OFF");
 }
 
-extern "C" int blockinfo[NUM_BLOCKS+1]={
+extern "C" int blockinfo[BLOCK_IDS]={
 	[TYPE_NONE]=IS_NOTSOLID,
 	[TYPE_BEDROCK]=0|IS_HARD,
 	[TYPE_SAND]=0,
@@ -256,7 +256,7 @@ extern "C" const uint8_t creatureColor[NUM_CREATURES+1][3]={
    
     
 };
-extern "C" const uint8_t blockColor[NUM_BLOCKS+1][3]={
+extern "C" uint8_t blockColor[BLOCK_IDS][3]={
 	[TYPE_NONE]={0},
 	[TYPE_BEDROCK]={90,90,90},
 	[TYPE_DARK_STONE]={120,120,120},
@@ -399,7 +399,7 @@ extern "C" const uint8_t blockColor[NUM_BLOCKS+1][3]={
 	
 };
 
-extern "C" const int blockTypeFaces[NUM_BLOCKS+1][6]={
+extern "C" int blockTypeFaces[BLOCK_IDS][6]={
 	[TYPE_NONE]={0},
 	[TYPE_BEDROCK]={TEX_DARK_STONE,TEX_DARK_STONE,TEX_DARK_STONE,TEX_DARK_STONE,TEX_DARK_STONE,TEX_DARK_STONE},
 	[TYPE_SAND]={TEX_SAND,TEX_SAND,TEX_SAND,TEX_SAND,TEX_SAND,TEX_SAND},
@@ -534,3 +534,26 @@ extern "C" const int blockTypeFaces[NUM_BLOCKS+1][6]={
     [TYPE_ALGAE]={TEX_NEWBLOCK+15,TEX_NEWBLOCK+15,TEX_NEWBLOCK+15,TEX_NEWBLOCK+15,TEX_NEWBLOCK+15,TEX_NEWBLOCK+15},
 	
 };
+
+// K.1-1: the per-type tables have BLOCK_IDS (256) rows. Rows STOCK_BLOCK_MAX+1..255 are the world's
+// palette ids; K.1-3 (BlockRegistry::resolve, at every world load) fills each from its definition, or
+// with the "missing" block's rows below when it has none (D4/D10/D12): solid and breakable like stone
+// (IS_HARD, no TNT mapping, not flammable), every face TEX_MISSING, magenta for particles, no picker
+// mapping, and IS_MISSING so the mesher never paints it. Before K.1-1 the type byte was signed and a
+// byte >= 128 indexed these tables at a negative offset; K.1-1 gave the rows stone's look.
+extern "C" int hudBlocksMap[BLOCK_IDS];
+extern "C" int blockTntMap[BLOCK_IDS];
+void eden_set_missing_block_row(int t){
+    if(t<=STOCK_BLOCK_MAX||t>=BLOCK_IDS)return;
+    blockinfo[t]=IS_HARD|IS_MISSING;
+    blockColor[t][0]=255; blockColor[t][1]=0; blockColor[t][2]=255;
+    for(int i=0;i<6;i++)blockTypeFaces[t][i]=TEX_MISSING;
+    hudBlocksMap[t]=-1;
+    blockTntMap[t]=0;
+}
+void eden_fill_missing_block_rows(){
+    for(int t=STOCK_BLOCK_MAX+1;t<BLOCK_IDS;t++)eden_set_missing_block_row(t);
+}
+// Dynamic initialisation: every table above (and in Hud.cpp/Terrain.cpp) is constant-initialised,
+// which happens before any dynamic initialiser in any translation unit.
+[[maybe_unused]] static const bool g_missing_block_rows_filled=(eden_fill_missing_block_rows(),true);

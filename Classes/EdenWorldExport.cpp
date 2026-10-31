@@ -143,7 +143,7 @@ uint8_t legacy_block_substitute_paint(uint8_t type) {
 }
 
 bool ExportReport::lossy() const {
-    return blocksAbove63 || doorsOrphaned || newBlocksReplaced || creaturesDropped || creaturesOverflow ||
+    return blocksAbove63 || doorsOrphaned || newBlocksReplaced || paletteReplaced || creaturesDropped || creaturesOverflow ||
            trailerBytesOut < trailerBytesIn || posClamped || homeClamped;
 }
 
@@ -153,13 +153,26 @@ std::string ExportReport::json() const {
                "\"columnsAffected\":%u,\"doorsOrphaned\":%u,\"newBlocksReplaced\":%llu,\"newBlockColumns\":%u,"
                "\"trailerBytesIn\":%u,\"trailerBytesOut\":%u,\"trailerParsed\":%s,\"signsIn\":%u,\"signsOut\":%u,"
                "\"cmdsIn\":%u,\"cmdsOut\":%u,\"otherIn\":%u,\"otherOut\":%u,\"creaturesDropped\":%u,"
-               "\"creaturesRelocated\":%u,\"creaturesOverflow\":%u,\"posClamped\":%s,\"homeClamped\":%s,\"lossy\":%s}",
+               "\"creaturesRelocated\":%u,\"creaturesOverflow\":%u,\"posClamped\":%s,\"homeClamped\":%s,\"lossy\":%s",
                export_target_name(target), bandsIn, bandsOut, versionIn, versionOut, (unsigned long long)bytes, columns,
                creatureSlotsIn, creatureSlotsOut, scanned ? "true" : "false", (unsigned long long)blocksAbove63,
                columnsAffected, doorsOrphaned, (unsigned long long)newBlocksReplaced, newBlockColumns, trailerBytesIn,
                trailerBytesOut, trailerParsed ? "true" : "false", signsIn, signsOut, cmdsIn, cmdsOut, otherIn, otherOut,
                creaturesDropped, creaturesRelocated, creaturesOverflow, posClamped ? "true" : "false",
-               homeClamped ? "true" : "false", lossy() ? "true" : "false");
+               homeClamped ? "true" : "false", lossy() ? "true" : "false") + paletteJson() + "}";
+}
+
+// K.1-4: `,"paletteEntries":N,...,"paletteBlocks":{"stairs:oak":12,"#200":3}` (an unassigned id as `#<id>`)
+std::string ExportReport::paletteJson() const {
+    std::string b;
+    for (int i = 0; i < 128; i++) {
+        if (!paletteById[i]) continue;
+        b += fmt("%s\"%s\":%llu", b.empty() ? "" : ",", paletteNames[i][0] ? paletteNames[i] : fmt("#%d", 128 + i).c_str(),
+                 (unsigned long long)paletteById[i]);
+    }
+    return fmt(",\"paletteEntries\":%u,\"paletteWritten\":%s,\"paletteReplaced\":%llu,\"paletteUnassigned\":%llu,"
+               "\"paletteColumns\":%u,\"paletteBlocks\":{", paletteEntries, paletteWritten ? "true" : "false",
+               (unsigned long long)paletteReplaced, (unsigned long long)paletteUnassigned, paletteColumns) + b + "}";
 }
 
 std::string ExportReport::summary() const {
@@ -167,6 +180,22 @@ std::string ExportReport::summary() const {
     auto add = [&](const std::string& p) { s += s.empty() ? p : ", " + p; };
     if (blocksAbove63) add(fmt("%llu blocks above height 63 removed", (unsigned long long)blocksAbove63));
     if (doorsOrphaned) add(fmt("%u cut doors cleared", doorsOrphaned));
+    if (paletteReplaced) {
+        // the three most used names, then "..."
+        std::string top;
+        int shown = 0, more = 0;
+        bool used[128] = {false};
+        for (int k = 0; k < 4; k++) {
+            int best = -1;
+            for (int i = 0; i < 128; i++) if (paletteById[i] && !used[i] && (best < 0 || paletteById[i] > paletteById[best])) best = i;
+            if (best < 0) break;
+            if (k == 3) { more = 1; break; }
+            used[best] = true;
+            top += fmt("%s%s %llu", shown++ ? ", " : "", paletteNames[best][0] ? paletteNames[best] : "unknown",
+                       (unsigned long long)paletteById[best]);
+        }
+        add(fmt("%llu mod blocks become their stock fallback (%s%s)", (unsigned long long)paletteReplaced, top.c_str(), more ? ", ..." : ""));
+    }
     if (newBlocksReplaced) add(fmt("%llu new-block-type blocks become painted stone", (unsigned long long)newBlocksReplaced));
     uint32_t sDrop = signsIn - signsOut, cDrop = cmdsIn - cmdsOut;
     if (sDrop) add(fmt("%u of %u signs dropped", sDrop, signsIn));
@@ -182,7 +211,7 @@ std::string ExportReport::summary() const {
 // =============================================================================================
 // EdenExporter
 // =============================================================================================
-EdenExporter::EdenExporter() : emod_(false), f_(nullptr), phase_(P_END), ord_(0), cur_(nullptr), curLeft_(0), produced_(0) {
+EdenExporter::EdenExporter() : emod_(false), f_(nullptr), phase_(P_END), ord_(0), cur_(nullptr), curLeft_(0), produced_(0), subPal_(false) {
     std::memset(&rep_, 0, sizeof rep_);
 }
 EdenExporter::~EdenExporter() { close(); }
@@ -245,6 +274,25 @@ void EdenExporter::transform(const uint8_t* in, uint8_t* out, ExportReport* coun
     } else {
         std::memcpy(out, in, (size_t)bo * BAND);
     }
+    if (subPal_) {
+        // K.1-4: before the 112-127 rule, so a fallback in 112-127 still reaches a pre-2026 target as painted stone
+        uint64_t n = 0;
+        for (int b = 0; b < bo; b++) {
+            uint8_t* p = out + (size_t)b * BAND;
+            for (size_t j = 0; j < PLANE; j++) {
+                const uint8_t v = p[j];
+                if (v < 128) continue;
+                p[j] = subType_[v - 128];
+                if (subPaint_[v - 128]) p[PLANE + j] = subPaint_[v - 128];
+                n++;
+                if (count) {
+                    count->paletteById[v - 128]++;
+                    if (!count->paletteNames[v - 128][0]) count->paletteUnassigned++;
+                }
+            }
+        }
+        if (count && n) { count->paletteReplaced += n; count->paletteColumns++; }
+    }
     if (rep_.target == X_LEGACY64Z || rep_.target == X_NEWDAWN256Z) {
         uint64_t n = 0;
         for (int b = 0; b < bo; b++) {
@@ -269,6 +317,9 @@ bool EdenExporter::begin(const std::string& srcPath, const ExportOptions& opt) {
     rep_.target = opt.target;
     if (opt.target < X_OWN || opt.target > X_NEWFORMAT256Z) return fail("unknown export target");
     std::vector<std::pair<int32_t, int32_t> > dirOrder;
+    bool havePal = false, palClean = false;
+    std::vector<uint8_t> palRec;
+    std::vector<PaletteEntry> pal;
     emod_ = ends_with(srcPath, ".emod");
     if (emod_) {
         if (!store_.open(srcPath.c_str(), false)) return fail("cannot open " + srcPath + ": " + store_.error());
@@ -278,6 +329,12 @@ bool EdenExporter::begin(const std::string& srcPath, const ExportOptions& opt) {
             return fail("the creature block does not decode");
         if (store_.hasRecord(T_SIGN_TRAILER) && store_.readRecord(T_SIGN_TRAILER, trailer_) > EdenWorldStore::READ_FALLBACK)
             trailer_.clear();
+        // K.1-4: the palette of a flagged world (an unflagged one has none, whatever its trailer holds)
+        if (store_.paletteFlag()) {
+            havePal = true;
+            const int r = store_.hasRecord(T_BLOCK_PALETTE) ? store_.readRecord(T_BLOCK_PALETTE, palRec) : EdenWorldStore::READ_ABSENT;
+            if (r <= EdenWorldStore::READ_FALLBACK) palClean = palette_parse(palRec.data(), palRec.size(), &pal, nullptr) && r == EdenWorldStore::READ_OK;
+        }
         keys_ = store_.columnKeys();
         rep_.bandsIn = store_.bands();
         std::vector<uint8_t> p;
@@ -319,6 +376,11 @@ bool EdenExporter::begin(const std::string& srcPath, const ExportOptions& opt) {
         for (const EdenLayoutCol& c : lay_.cols) keys_.push_back(std::make_pair(c.x, c.z));
         dirOrder = lay_.dirOrder;
         trailer_ = lay_.trailer;
+        // K.1-4: a `.eden` source's palette is its BPL1 section (kept verbatim by OWN, so not needed there)
+        if (trailer_find_palette(trailer_.data(), trailer_.size(), &palRec)) {
+            havePal = true;
+            palClean = palette_parse(palRec.data(), palRec.size(), &pal, nullptr);
+        }
         creatures_.resize((size_t)lay_.slots * EDEN_ENT);
         if (!creatures_.empty() && (!io::seek_to(f_, lay_.blockEnd) || std::fread(creatures_.data(), 1, creatures_.size(), f_) != creatures_.size()))
             return fail("cannot read the creature block");
@@ -334,6 +396,21 @@ bool EdenExporter::begin(const std::string& srcPath, const ExportOptions& opt) {
     else rep_.versionOut = rep_.bandsIn == 16 ? rep_.versionIn : 5;
     rep_.columns = (uint32_t)keys_.size();
 
+    // ---- K.1-4: the block palette. Stock targets get fallbacks; OWN (and keepPalette) the raw bytes + BPL1.
+    const bool keep = (t == X_OWN || opt.keepPalette) && !opt.paletteFallbacks;
+    subPal_ = !keep;
+    rep_.paletteEntries = (uint32_t)pal.size();
+    for (int i = 0; i < 128; i++) { subType_[i] = T_STONE; subPaint_[i] = 0; }
+    for (const PaletteEntry& e : pal) {
+        subType_[e.id - 128] = e.fallbackType;
+        subPaint_[e.id - 128] = e.fallbackPaint;
+        std::snprintf(rep_.paletteNames[e.id - 128], 64, "%s", e.name.c_str());
+    }
+    // An `.emod`'s palette goes in as BPL1 (rebuilt from the record); a `.eden`'s BPL1 is already in its trailer,
+    // unless the target drops the trailer (keepPalette on Legacy64z / NewDawn256z): then it goes back in alone.
+    const bool writeBpl1 = keep && havePal && (emod_ || t == X_LEGACY64Z || t == X_NEWDAWN256Z);
+    if (writeBpl1 && emod_ && !palClean) return fail("the world's block palette does not decode: export it to a stock format instead");
+
     // ---- trailer: kept (own, NewFormat), pruned, or dropped (the pre-2026 eras have none)
     rep_.trailerBytesIn = (uint32_t)trailer_.size();
     std::vector<uint8_t> pay;
@@ -343,6 +420,11 @@ bool EdenExporter::begin(const std::string& srcPath, const ExportOptions& opt) {
     if (opt.signs == SIGNS_PRUNE) for (const auto& k : keys_) have.insert(colKey(k.first, k.second));
     std::vector<uint8_t> outPay;
     for (const Section& s : secs) {
+        if (is_magic(s, "BPL1")) {
+            // K.1-4: a palette, not positional records: never pruned or counted; replaced or dropped below
+            outPay.insert(outPay.end(), pay.begin() + (s.recs - 24), pay.begin() + (s.recs + (size_t)s.count * s.rs));
+            continue;
+        }
         uint32_t& in = is_magic(s, "SGN1") ? rep_.signsIn : is_magic(s, "CMB1") ? rep_.cmdsIn : rep_.otherIn;
         uint32_t& out = is_magic(s, "SGN1") ? rep_.signsOut : is_magic(s, "CMB1") ? rep_.cmdsOut : rep_.otherOut;
         in += s.count;
@@ -382,6 +464,13 @@ bool EdenExporter::begin(const std::string& srcPath, const ExportOptions& opt) {
         rep_.signsOut = rep_.signsIn; rep_.cmdsOut = rep_.cmdsIn; rep_.otherOut = rep_.otherIn;
     }
     if (t == X_LEGACY64Z || t == X_NEWDAWN256Z) { rep_.signsOut = rep_.cmdsOut = rep_.otherOut = 0; }
+    // K.1-4: BPL1 from the record (OWN / keepPalette), or no BPL1 at all (fallbacks)
+    if (writeBpl1 || (subPal_ && !trailer_.empty())) {
+        std::vector<uint8_t> nt;
+        if (trailer_put_palette(trailer_, writeBpl1 ? &palRec : nullptr, nt)) trailer_.swap(nt);
+        else if (writeBpl1) return fail("the sign trailer cannot be read, so the block palette cannot go in it");
+    }
+    rep_.paletteWritten = keep && havePal && trailer_find_palette(trailer_.data(), trailer_.size(), nullptr);
     rep_.trailerBytesOut = (uint32_t)trailer_.size();
 
     // ---- creatures
@@ -479,7 +568,7 @@ bool EdenExporter::begin(const std::string& srcPath, const ExportOptions& opt) {
     // ---- the pre-flight's block counts (only targets that change blocks need the decode)
     inCol_.resize((size_t)rep_.bandsIn * BAND);
     outCol_.resize((size_t)rep_.bandsOut * BAND);
-    if (t == X_LEGACY64Z || t == X_NEWDAWN256Z) {
+    if (t == X_LEGACY64Z || t == X_NEWDAWN256Z || (subPal_ && havePal)) {
         rep_.scanned = true;
         for (size_t i = 0; i < keys_.size(); i++) {
             if (!readSourceColumn(i, inCol_.data())) return fail(fmt("cannot read column (%d,%d)", keys_[i].first, keys_[i].second));
@@ -751,6 +840,7 @@ std::string upload_suffix(const std::vector<uint8_t>& png) {
 bool begin_upload_body(ExportFileJob& job, int server, const std::string& srcPath, const std::string& pngPath,
                        ExportOptions opt, const std::string& bodyPath, std::string* err) {
     if (server == UPLOAD_LEGACY) opt.target = X_LEGACY64Z;     // the Legacy server's clients read nothing else
+    opt.paletteFallbacks = true;                               // K.1-4 (D9): Get Worlds serves the stock game too
     std::vector<uint8_t> png;
     if (FILE* p = io::fopen_utf8(pngPath.c_str(), "rb")) {
         uint8_t b[65536]; size_t n;

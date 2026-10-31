@@ -89,6 +89,7 @@ static const char* kWorldVS =
     "uniform mat4 u_mvp;\n"
     "uniform mat4 u_mv;\n"
     "uniform vec4 u_uvso;\n"
+    "uniform vec3 u_worldLight;\n"   // DN.5: R::setWorldLight; (1,1,1) unless the day/night cycle is on (x1.0 is exact)
     "in vec4 a_position;\n"
     "in vec4 a_color;\n"
     "in vec2 a_texcoord;\n"
@@ -99,7 +100,7 @@ static const char* kWorldVS =
     "  gl_Position = u_mvp * a_position;\n"
     "  vec4 eye = u_mv * a_position;\n"
     "  v_eyedist = length(eye.xyz);\n"
-    "  v_color = a_color;\n"
+    "  v_color = a_color * vec4(u_worldLight, 1.0);\n"
     "  v_texcoord = a_texcoord * u_uvso.xy + u_uvso.zw;\n"
     "}\n";
 static const char* kWorldFS =
@@ -321,6 +322,7 @@ static const char* const kUniName[U_COUNT] = {
     "u_pointAtten",
     "u_palette[0]", "u_boneCount", "u_lightAmbient", "u_lightDiffuse",
     "u_ambSum", "u_lpos0", "u_lpos1", "u_ldiff0", "u_ldiff1", "u_lspec0", "u_lspec1", "u_shininess",
+    "u_worldLight",
 };
 
 static Program g_progs[P_PROG_COUNT];

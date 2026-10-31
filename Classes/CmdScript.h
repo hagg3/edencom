@@ -62,14 +62,17 @@ public:
     enum { MAX_DEPTH = 8, MAX_RUNNING = 32, MAX_FILL = 4096, MAX_WAIT = 600, TIMER_RANGE = 48,
            MAX_GOLD = 999, WORK_PER_FRAME = 20000, MAX_JOBS = 4, MAX_LINE = 511 };
     enum Trigger { TRIG_TOUCH = 0, TRIG_STEP, TRIG_NEAR, TRIG_TIMER };
+    // K.1-3: Stmt::type of a mod block whose definition is loaded but which has no id in this world yet;
+    // Stmt::text holds its name and the statement allocates the id when it first places it.
+    enum { TYPE_BY_NAME = 1000 };
     enum Op { OP_BAD = 0, OP_SAY, OP_TP, OP_SET, OP_FILL, OP_PAINT, OP_EXPLODE, OP_FIRE, OP_SPAWN,
               OP_TIME, OP_HEAL, OP_HURT, OP_GOLD, OP_SOUND, OP_FLASH, OP_WAIT, OP_RUN, OP_IF,
-              OP_UNLESS, OP_EXT };
+              OP_UNLESS, OP_EXT, OP_TIMEFREEZE };
     struct Stmt {
         int op = OP_BAD;
         int v[6] = {};     // coordinates in script order (X, height, Z [, X2, height2, Z2])
         bool abs[6] = {};  // console only: v[i] was written `=N`, an engine coordinate
-        int type = 0;      // set/fill/if/unless: a block id; spawn: a creature
+        int type = 0;      // set/fill/if/unless: a block id (or TYPE_BY_NAME); spawn: a creature
         int color = -1;    // set/fill/paint: the colour byte, -1 = none given
         bool hasPos = false;   // spawn: a spot was given
         float f = 0;       // wait/time/hurt/gold/sound
@@ -116,7 +119,9 @@ public:
     };
     static void parse(const char* src, Program* out);   // == parseLine(src, out, blockOptions())
     static void parseLine(const char* src, Program* out, const ParseOptions& opts);
-    static int blockByName(const char* name);      // a name or a number 0..127; -1 if neither
+    // K.1-3: an alias (`stone`), a canonical `eden:` name, a mod `ns:path` with an id in this world, a
+    // number 0..127, or a number 128..255 this world's palette assigns; -1 otherwise.
+    static int blockByName(const char* name);
     static int creatureByName(const char* name);   // moof..stalker or 0..6; -1 if neither
     // C.2 (completion): the names the two lookups above accept, in table order.
     static std::vector<std::string> blockNames();
@@ -124,7 +129,7 @@ public:
 
     // The built-in verbs: one row each, in reference order. The parser's "X needs ..." errors are
     // name + " needs " + (needs ? needs : usage), so help and errors can't drift.
-    enum { ARG_COORD = 1, ARG_BLOCK, ARG_COLOR, ARG_CREATURE, ARG_NUMBER, ARG_TEXT };
+    enum { ARG_COORD = 1, ARG_BLOCK, ARG_COLOR, ARG_CREATURE, ARG_NUMBER, ARG_TEXT, ARG_ONOFF };   // ARG_ONOFF: DN.2 timefreeze
     struct Verb {
         const char* name;
         const char* usage;       // the arguments, e.g. "X Y Z TYPE [COLOR]"; "" = none
@@ -163,8 +168,9 @@ public:
     // Returns how many stopped.
     enum { STOP_JOBS = 0, STOP_ALL = -1 };
     static int stop(int job);
-    // OP_TIME calls this (default: the region's sky repaint, see above). A day/night cycle replaces it,
-    // and blocks and the console change together.
+    // OP_TIME calls this. The default (DN.2) sets the day/night clock while Experiments > Day/night
+    // cycle is on (SkyCycle::setTime) and is the region's sky repaint (setSky, see above) while it is
+    // off. A test may replace it; blocks and the console change together.
     static void (*timeHook)(float t);
 
     struct Stats {

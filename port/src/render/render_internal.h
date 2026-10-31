@@ -17,6 +17,7 @@ struct DrawState {
     bool        fogOn = false;
     float       fogStart = 0.0f, fogEnd = 1.0f;
     R::LightSet lights = {};
+    float       worldLight[3] = {1.0f, 1.0f, 1.0f};   // DN.5: R::setWorldLight (program 1's u_worldLight)
 };
 DrawState& ds();
 

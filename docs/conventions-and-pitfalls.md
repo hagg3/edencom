@@ -119,7 +119,10 @@ Read this before writing any code. These are the implicit rules the codebase fol
 - 32-bit-era struct layout, little-endian, for every byte written to disk
   (`WorldFileHeader` = 192 bytes, `ColumnIndex` = 16, `EntityData` = 60). Compiling
   for a platform that pads differently silently corrupts save files.
-- `block8` is *signed* (types ≤ 127; negative = corrupt sentinel), `color8` unsigned.
+- `block8` is *unsigned* since K.1-1 (stock types ≤ `STOCK_BLOCK_MAX` 127; 128–255 the per-world block
+  palette, K.1-3: drawn from their definition's rows or as the "missing" block, never rewritten), `color8` unsigned. Before K.1-1 it was signed and
+  a byte ≥ 128 was a negative "corrupt" value; a `block8` read widened to `int` is never `< 0` now (only
+  `getLand()`'s explicit `-1` is). Non-type byte arrays use `sbyte`.
 - World height exactly 64; chunk size exactly 16; window 18×18 (`T_SIZE` etc. are
   `#define`s that many literals secretly depend on). *(Port: height and window are both runtime
   now — 2026-08-06 and B.5b-2, 2026-10-12; `rebuildList[13000]` was one such literal.)*
@@ -127,8 +130,11 @@ Read this before writing any code. These are the implicit rules the codebase fol
 - The bundled map exists and matches `DEFAULT_LEVEL_SEED` worlds. *(Port: the bundle is `Eden.emod`;
   the repo-root `Eden.eden` is its source and is not shipped.)*
 - Frame time ≈ 1/60 s; physics constants are tuned for it (with a 50 ms clamp).
-- Documents directory contains only world files and their PNGs (the world browser
-  header-parses every file in it).
+- Documents holds loose `.eden`/`.emod` sources only transiently: since K.0w every local world lives in
+  `Documents/Worlds/<id>/` (`world.emod` plus `photo.png`, `original.<ext>`, `signs/`), and
+  `Worlds/.<id>.partial|.migrating` dirs are in-flight staging. Nothing else may be written into `Worlds/`
+  (the lister treats every valid-id folder as a world; `FileManager::removeWorldDir` refuses anything else).
+  See `save-load.md` "World folders".
 
 ## Known limitations
 
@@ -156,13 +162,14 @@ Read this before writing any code. These are the implicit rules the codebase fol
 
 | If you change… | Also check… |
 |---|---|
-| Block type enum / tables | Save compat (raw bytes on disk!), `enum BLOCK_TYPES` (`Constants.h`), `blockinfo`, `blockTypeFaces`, `blockColor` (`Globals.cpp`), atlas tile, `blockTntMap`, `hudBlocksMap`, HUD picker list (`Hud.cpp`), and the type's flags in meshing/physics/fire. **The id space is full at 127** (`block8` is signed; ids 112–127 since Stage D.2a): there is no room to append another type |
+| Block type enum / tables | Save compat (raw bytes on disk!), `enum BLOCK_TYPES` (`Constants.h`), `blockinfo`, `blockTypeFaces`, `blockColor` (`Globals.cpp`), atlas tile, `blockTntMap`, `hudBlocksMap`, HUD picker list (`Hud.cpp`), and the type's flags in meshing/physics/fire. **The stock id space is full at 127** (`STOCK_BLOCK_MAX`; ids 112–127 since Stage D.2a): there is no room to append another stock type. Tables are `[BLOCK_IDS]` (256) since K.1-1; rows 128–255 belong to the world's palette and are rebuilt at every world load by `BlockRegistry::resolve` (K.1-3; the missing block's rows, `eden_set_missing_block_row`, until a definition fills one), so a new per-type table needs a row there too, and anything built once from `blockinfo` (like `g_shadow_caster`) must be rebuilt in `resolve()`. Ranges meaning "stock ids" must stay bounded by `STOCK_BLOCK_MAX`; a new block is a registry definition (K.2), not an enum entry |
 | Anything `Hud::Hud()`/`Menu::Menu()` calls that reads `World::getWorld->…` | `World::World()` builds `hud` before `fm` (and `menu` after both); a C++ `new` does not zero, so an unset member is garbage on Windows and happens to be 0 on Linux. `fm` is nulled at the top of the ctor; null-check anything else you read |
 | `Player::update`'s tail (after `move()`) | It lives in `postMove`, shared with the noclip branch (`noclipUpdate`, which never calls `move()`); change it there and `--fly-selftest` (`--fly-mutate=move` must fail it) |
 | A new damage source | Route it through `Player::takeDamage`, or noclip stops being invulnerable (it returns early there) |
 | A trigger in `Player::move()`/`vertc` (portals, pickups, ladders, liquids, lava, footsteps) | Noclip skips `move()` entirely, so it never fires there; decide if that is intended |
 | The jump/crouch HUD slots or `Hud::m_flyup/m_flydown` | While flying they are fly up/down, not jump/crouch; the cycle button is `rflyhit`; `--fly-selftest` taps them via `eden_tap_hud_button_begin(8/9/10)` |
 | `colorTable` generation | Every painted block in every existing world re-tints |
+| Anything that tests or bakes "night" (skylight 0.35, lamp lights, night LightSets) | Use `sky_isNight()` (`Classes/SkyCycle.h`), never `final_skycolor == colorTable[54]`; code that compares a *painted* sky colour (`paintSky`, `setSky`, the region walk) uses `sky_paintedNight()` and leaves the re-mesh to the cycle while it is on. A new baked consumer must agree with `TerrainChunk::bakedNight` / `SkyCycle::worldLight` (DN.5), or the day/night flip patchworks |
 | A block type's flags (`IS_LIQUID`/`IS_OBJECT`) or `TYPE_CLOUD`/`GLASS`/`WEAVE` | Whether it casts a baked shadow (`g_shadow_caster[]`, `Classes/Shadow.cpp`, built from the flags), and so CI's "geometry 64z shadows" `full` if the bundled map holds it |
 | Touch arbitration in `Player::processInput` (`inuse`, `movecam`, `placeBlock`, the `num > 1` rule) or the touch look (Stage L) | `Classes/TouchLook` owns the arithmetic only; the slop must stay ONE threshold for tap and look (a look below the tap threshold turns the camera and then builds where the world moved to); the release loop runs before the look loop, so a look's last frame is consumed in `touchlook_end`; `TOUCH_PT_SCALE` is written in `eden_display_apply()` beside `SCREEN_WIDTH`. Gate: `--look-selftest` and its `--look-mutate=` legs; then a device (docs/player-input-camera.md "Touch look") |
 | `CHUNK_SIZE` | `SIZEOF_COLUMN` (file format!), progress divisors, `INDICES_MAX` sizing |
@@ -180,6 +187,7 @@ Read this before writing any code. These are the implicit rules the codebase fol
 | The `.emod` container (`EdenWorldStore`) | [emod-file-format.md](emod-file-format.md) is normative: change it, `port/tools/emod.py` and the fixture pack `port/tools/fixtures/emod/` together (`--emod-selftest` byte-compares them on every target) |
 | zstd (version, level, compile flags) | Byte-identical output on every target (the fixture gate); re-bake `Eden.emod` with `emod.py bake-default` |
 | `WorldTrailer` records (`SGN1`/`CMB1`) | `static_assert`ed at 120/528 bytes in `WorldTrailer.h`; existing saves, `emod.py trailer` |
+| Block-palette interchange (`BPL1`, export fallbacks; K.1-4) | Two implementations held byte-identical by the fixture pack: `EdenWorldStore.cpp` `trailer_find_palette`/`trailer_put_palette`/`converted_palette` + `EdenEmodConverter::finish` vs `emod.py`'s same-named functions + `write_converted`/`export`; the exporter's target rules (`EdenWorldExport.cpp`, `--emod-selftest` "interchange"); regenerate with `emod.py fixtures-pack` and keep every old line and file byte-identical |
 | Meshing (`rebuild2`) | Counting pass and fill pass must agree exactly; `prepareVBO` swap; the CI geometry checksums (`.github/scripts/check-stage1.py`: re-pin only for a deliberate change, and say so in the commit) |
 | Shade formula or `SHADOW_REACH_*` (`Shadow.cpp`) | The pinned Classic `full` in `check-stage1.py --shadows` |
 | Code that binds a `Texture2D`'s `name` and draws it with its own UVs | Since Q.2 uploads are NPOT (no POT canvas unless `sizeToFit`): the art must be POT or the UVs in image units. Since Q.4 a grey+alpha PNG is LA88, and desktop core turns L/A/LA into R8/RG8 + a per-texture swizzle, so re-uploading RGBA into a name that held LA would keep the swizzle (`port/docs/history/gl-shim.md`) |

@@ -434,6 +434,8 @@ Settings › Interface › Crosshair (`eden_get_crosshair()`) is on (default ON 
   `renameSelected()` remain (the harness, an `.eden`'s name path) but nothing in the list reaches the
   prompt. `FileManager::renameWorld()` now **refuses** a dropped-in `.eden.gz` / `.zip`: its header is
   inside the deflate stream, and the in-place write used to land 50 raw bytes in it.
+  **The list is `FileManager::listWorlds` (K.0w-4):** one folder per world under `Documents/Worlds/`, last played
+  first (mtime desc, ties by key), then unconverted dropped sources by name; the photo is the folder's `photo.png`.
   **An empty Documents folder means an empty list** — `selected_world` is `NULL` and every
   deref reachable from that state is guarded (`refreshfn`, `activate`, the layout block).
   Stock behaviour was to synthesise one placeholder `WorldNode` so the carousel was never
@@ -572,7 +574,7 @@ Settings › Interface › Crosshair (`eden_get_crosshair()`) is on (default ON 
   selection downloads, as the menu plays); the detail pane shows the preview (`<id>.eden.png`,
   fetched 0.25 s after the selection settles), the date (an official id IS the upload's unix time),
   author / size / tags where the archive has them, and the download's progress. **Download** streams
-  through the net seam to `<saves>/.emod-download(.part)` (preview: `.emod-preview.png`), then **unpacks a few MB per frame** over
+  through the net seam to `Worlds/.<id>.partial/download-N` (K.0w-3a; pre-K.0w: `<saves>/.emod-download(.part)`) (preview: `.emod-preview.png`), then **unpacks a few MB per frame** over
   zlib — gzip (multi-member), a single-entry zip (central directory trusted over a streamed local
   header) and the archive's zip-in-a-zip, up to four layers — and converts as it unpacks (S.5:
   `emod::ImportJob`, `DL_CONVERT`; no inflated `.eden` is written; an uncompressed payload must
@@ -707,6 +709,12 @@ button shows the `blocktoggle` icon (`ICO_SIZETOGGLE2` small→big, `ICO_SIZETOG
 `buildBrush2` (`Player.cpp`) places a 2×2×2 block at the aimed cell, filling only air or shallow liquid cells,
 skipping the whole brush if it would pass the world top, spending one golden cube at most, with one sound per
 tap; the player-box test (`Player::test(...,2)`) was already in place.
+
+**Day/night cycle (Stage DN).** Experiments › *Day/night cycle* (`day_night_cycle`, default off) and *Day length*
+(`day_length`, 10/20/40/60 min, default 20; `Settings.cpp`). While on, the sky brush shows a status-bar toast
+(*"The day/night cycle is on: it sets the sky…"*, `Player.cpp`) and paints nothing. World Properties › World has
+*Lock time of day* (Emod worlds; `WorldProps.skyLocked`/`skyT`, written as `SKY_CLOCK` in the Save batch; the live
+clock if that world is open). Look and clock: `docs/lighting-liquids-effects.md`.
 
 **Camera view (H.12).** Experiments › *Camera view* (`camera_view`, enum First person / Third person /
 Third person (front), default first) and a native-only `kKeybinds[]` row **F5** `cameraView` (Interface)

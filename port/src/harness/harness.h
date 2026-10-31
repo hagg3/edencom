@@ -151,6 +151,7 @@ int   eden_console_setblock(int x, int z, int y, int type);
 const char* eden_debug_menu_state(void);
 const char* eden_debug_player_state(void);
 const char* eden_debug_terrain_geometry(void);
+void eden_debug_baked_night(int* day, int* night);   // DN.5: meshed chunks by TerrainChunk::bakedNight
 const char* eden_debug_display_state(void);   // --touch-selftest reads `rmenu` out of this
 void        eden_native_gl_get_letterbox(int* x, int* y, int* w, int* h);
 struct SDL_Window;
@@ -302,6 +303,7 @@ struct Options {
     std::string bundledEden, bundledEmod;                    // --bundled-map-selftest's inputs
     bool emodQuick = false;
     std::string liveCmds;                // --live-cmds=FILE: see src/seam/LiveCommands_native.cpp
+    std::string foldersPhase;            // --folders-phase=fixture|adopt|verify (K.0w-2 crash loop); "" = the full run
     bool trailerNoDirty = false;         // --trailer-no-dirty-mark: the mutation (live leg only)
     bool trailerKeep = false;            // --trailer-keep: stop after the reload (leave the edited world for emod.py --diff)
     std::vector<std::string> trailerFiles;   // --trailer-file=W.eden|W.emod (repeatable): --trailer-selftest's byte gate
@@ -332,6 +334,7 @@ struct Options {
     std::string propsMutate;             // --props-mutate=nogen: --props-selftest's mutation leg (H.15)
     std::string propsWorld;              // --props-world=FILE: --props-selftest times reading this world (gate 4)
     std::string classicNew;              // --classic=SEED[,SCALE4]: a world open_world() CREATES is Classic (ring-walk gate)
+    std::string skyTimes;                // --sky-times=T,T,...: --sky-shot's clock times (DN.3)
     std::string stateTrace;              // --state-trace=FILE: --scene-shot's one-frame draw trace (G.5b-0)
     std::string litOracleDir;            // --lit-oracle=DIR: also write each scene's two images there (G.5b-4)
 };
@@ -390,6 +393,10 @@ using g_world::run_newblocks_selftest;
 using g_world::run_photo_selftest;
 using g_world::run_trailer_selftest;
 using g_world::run_classic_selftest;
+namespace g_folders { int run_folders_selftest(); }
+using g_folders::run_folders_selftest;
+namespace g_registry { int run_registry_selftest(); }
+using g_registry::run_registry_selftest;
 namespace g_props { int run_camera_selftest(); int run_props_selftest(); int run_signs_selftest(); int run_sign_shot(); }
 using g_props::run_camera_selftest;
 using g_props::run_props_selftest;
@@ -430,8 +437,9 @@ using g_browser::run_browser_selftest_body;
 using g_browser::run_browser_selftest;
 using g_browser::run_keybind_selftest;
 namespace g_session { int run_input_selftest(); int run_background_selftest(); int run_save_roundtrip(); }
-namespace g_render { int run_scene_shot(); int run_render_selftest(); int run_lit_oracle(); }
+namespace g_render { int run_scene_shot(); int run_sky_shot(); int run_render_selftest(); int run_lit_oracle(); }
 using g_render::run_scene_shot;
+using g_render::run_sky_shot;
 using g_render::run_render_selftest;
 using g_render::run_lit_oracle;
 using g_session::run_input_selftest;
@@ -515,6 +523,7 @@ bool write_world(const std::string& path, const char* name, int seed, int hx, in
                  const Fixture* fx, const uint8_t* genRecord, const uint8_t* mirror, std::string& err);
 int count_records(const std::string& path, int type);
 bool play_file(const char* file);
+std::string adopt_key(const char* loose);   // K.0w-2: adopt a loose docs/<loose>, return its key
 int column_vs_pure(const ClassicGen& g, int cx, int cz, int height);
 } }
 

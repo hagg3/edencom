@@ -19,6 +19,7 @@
 #include "ChatFeed.h"   // MP.7
 #include "WorldTrailer.h"
 #include "Renderer.h"   // G.5b-4: the name tags' 2D bracket
+#include "SkyCycle.h"   // DN.2: the session-local clock
 
 #include <algorithm>
 #include <chrono>
@@ -169,6 +170,7 @@ void beginSession(const char* host, int port, const char* displayName) {
     g_name = strf("mp:%s:%d", host ? host : "", port);
     w->fm->sessionWorld = true;
     w->fm->trailer()->clear();
+    SkyCycle::reset();   // DN.2 (plan D9): a session-local clock from 0.30, kept across its warps, never saved
     // E11: no creatures (Model.mm paints blocks nobody else would see), no H.8 fire rules.
     if (!g_creaturesKnown) { g_creaturesWanted = CREATURES_ON; g_creaturesKnown = true; }
     CREATURES_ON = false;
@@ -214,7 +216,7 @@ void* header() { return &g_header; }
 namespace {
 bool recValid(const MpRec& r) {
     bool ok = cellInRange(r.x, r.y, r.z);
-    if (ok && r.flag == 0) ok = r.type >= 1 && r.type <= NUM_BLOCKS;
+    if (ok && r.flag == 0) ok = r.type >= 1 && r.type <= STOCK_BLOCK_MAX;
     else if (ok && r.flag == 3) ok = r.type >= 0 && r.type <= 54;
     else if (ok) ok = r.flag == 1;
     return ok;
@@ -268,7 +270,7 @@ void mergeRecs(const MpRec* recs, size_t n) {
 int actionRule(bool server, int mode, int extra, int* t, int* c) {
     switch (mode) {
         case 0:
-            if (extra < 0 || extra > NUM_BLOCKS) return -1;
+            if (extra < 0 || extra > STOCK_BLOCK_MAX) return -1;
             // A peer's bare build does not overwrite (protocol "legacy snapshot"); a restore does.
             if (!server && *t != TYPE_NONE && !(*t > 0 && (blockinfo[*t] & IS_LIQUID))) return 0;
             *t = extra; *c = 0;
@@ -1244,6 +1246,10 @@ struct Intent {
             const Watch& o = w[i];
             const int t = ter->getLand(o.x, o.z, o.y), c = ter->getColor(o.x, o.z, o.y);
             if (t < 0 || (t == o.t && c == o.c) || (t == TYPE_NONE && o.t == TYPE_NONE)) continue;
+            // K.1-3 (D7): a type byte >= 128 is world-local and never goes on the wire (the server's
+            // build ids are 0..127; 254/255 are its cell sentinels). Nothing in a session can make one
+            // (no palette, intentBuild refuses), so this only guards a future bug.
+            if (t > STOCK_BLOCK_MAX) { std::fprintf(stderr, "mp: not sending local block id %d\n", t); continue; }
             char l[64];
             if (t == TYPE_NONE) {
                 std::snprintf(l, sizeof l, "ACTION:%d:%d:%d:1", o.x, o.y, o.z);
@@ -1270,6 +1276,7 @@ struct Intent {
 
 void intentBuild(int x, int z, int y) {
     if (!active()) { World::getWorld->terrain->buildBlock(x, z, y); return; }
+    if (World::getWorld->hud->blocktype > STOCK_BLOCK_MAX) return;   // K.1-3 (D7): refused before the edit
     Intent in(x, z, y);
     World::getWorld->terrain->buildBlock(x, z, y);
     in.send();

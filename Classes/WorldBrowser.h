@@ -69,6 +69,7 @@ public:
     int    selectedIndex() const;
     bool   listLoading() const;             // the current source's list request is in flight
     bool   busy() const;                    // a download or unpack is in flight
+    static bool anyBusy();                  // K.0w-2: the menu's browser is busy (FileManager's adoption waits)
     bool   previewShown() const;            // a preview texture is on screen for the selection
     const char* statusText() const;
 

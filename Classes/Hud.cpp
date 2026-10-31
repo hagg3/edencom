@@ -91,7 +91,7 @@ static int hudBlocks[NUM_DISPLAY_BLOCKS]={
     
 };
 
-extern "C" const int hudBlocksMap[NUM_BLOCKS+1]={
+extern "C" int hudBlocksMap[BLOCK_IDS]={
     [TYPE_GRASS]=TYPE_BTGRASS,
     [TYPE_FLOWER]=-1,
     [TYPE_GRASS3]=-1,   // H.14: block 12 has no BT variant
@@ -1204,7 +1204,7 @@ bool Hud::update(float etime){
 
 //extern float P_ZFAR;
 
-extern const uint8_t blockColor[NUM_BLOCKS+1][3];
+extern uint8_t blockColor[BLOCK_IDS][3];
     
 bool Hud::handlePickColor(int x,int y){
     bool handled=false;
@@ -1847,7 +1847,7 @@ void Hud::renderBlockAndBorder(CGRect recto){
                        Pen::strip(vertices, coordinates, 8, 4);
             
              Pen::color(1.0f, 1.0f, 1.0f, 1.0f);
-            extern  int blockTntMap[NUM_BLOCKS+1];
+            extern  int blockTntMap[BLOCK_IDS];
             int subtype=blockTntMap[type];
             if (block_paintcolor!=0) {
                 Vector clr=colorTable[block_paintcolor];

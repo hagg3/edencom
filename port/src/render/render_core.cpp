@@ -225,6 +225,7 @@ void beginFrame() {
     g_inFrame = true;
     for (int i = 0; i < 3; ++i) g_frameDepth[i] = frame_mark_depth(i);
     g_open2D = 0;
+    { float* w = ds().worldLight; w[0] = w[1] = w[2] = 1.0f; }   // DN.5: a frame starts unlit-by-the-clock
     if (eden_gl_have_context()) rgl::beginFrame();
 }
 
@@ -285,6 +286,7 @@ void setFog(const Rgba& c, float start, float end) {
 }
 void fogOff() { ds().fogOn = false; }
 void setLights(const LightSet& l) { ds().lights = l; }
+void setWorldLight(float r, float g, float b) { float* w = ds().worldLight; w[0] = r; w[1] = g; w[2] = b; }
 
 bool originalLighting() { return g_originalLighting; }
 void setOriginalLighting(bool on) { g_originalLighting = on; }
@@ -328,6 +330,12 @@ static void traceDraw(void* site, const char* prog, const Geometry& g, Tex t, co
     if (d.state.offsetFactor != 0.0f || d.state.offsetUnits != 0.0f)
         std::snprintf(off, sizeof off, " offset=%g,%g", d.state.offsetFactor, d.state.offsetUnits);
     if (alphaRef >= 0.0f) std::snprintf(alpha, sizeof alpha, ">%.3f", alphaRef);
+    // DN.5: the world light only when it is not (1,1,1), so a trace with the cycle off is unchanged.
+    const float* wl = d.worldLight;
+    const bool wlOn = (!std::strcmp(prog, "world") || (!std::strcmp(prog, "lit") && !g_originalLighting)) &&
+                      (wl[0] != 1.0f || wl[1] != 1.0f || wl[2] != 1.0f);
+    char wlb[48] = "";
+    if (wlOn) std::snprintf(wlb, sizeof wlb, " wlight=(%.3f,%.3f,%.3f)", wl[0], wl[1], wl[2]);
     if (!std::strcmp(prog, "lit")) {
         const LightSet& L = d.lights;
         std::snprintf(lit, sizeof lit, " lights=%d%d%s l0=(%.2f,%.2f,%.2f,%.0f a%.2f d%.2f) amb%.2f spec%.2f^%g",
@@ -342,9 +350,9 @@ static void traceDraw(void* site, const char* prog, const Geometry& g, Tex t, co
     char uv[64] = "I";
     if (!uvI) std::snprintf(uv, sizeof uv, "X(s%g,%g t%g,%g)", so[0], so[1], so[2], so[3]);
     char body[640];
-    std::snprintf(body, sizeof body, "prim=%s n=%d prog=%s tex=%u col=%s fog=%s blend=%s depth=%d/%d cull=%d%s alpha=%s%s texmat=%s",
+    std::snprintf(body, sizeof body, "prim=%s n=%d prog=%s tex=%u col=%s fog=%s blend=%s depth=%d/%d cull=%d%s alpha=%s%s texmat=%s%s",
                   kPrim[g.prim], g.count, prog, (unsigned)t, col, fog, kBlend[d.state.blend], d.state.depthTest ? 1 : 0,
-                  d.state.depthWrite ? 1 : 0, d.state.cull ? 1 : 0, off, alpha, lit, uv);
+                  d.state.depthWrite ? 1 : 0, d.state.cull ? 1 : 0, off, alpha, lit, uv, wlb);
     traceLine(site, body);
 }
 

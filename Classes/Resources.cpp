@@ -1841,7 +1841,7 @@ void Resources::update(float etime){
 
 Texture2D* Resources::getArtTex(int id){
     static const char* const kArtFiles[ART_COUNT]={"sign_icon.png","cmd_block_V2_icon.png",
-        "crouch_pressed.png","crouch_depressed.png","console_button.png","chat_button.png"};
+        "crouch_pressed.png","crouch_depressed.png","console_button.png","chat_button.png","sky_sprites.png"};
     static Texture2D* art[ART_COUNT];
     if(id<0||id>=ART_COUNT) return NULL;
     // Mipmapped: the 90 px icons draw at ~30-50 px and the 32 px block face at any distance, and
@@ -1853,7 +1853,7 @@ Texture2D* Resources::getArtTex(int id){
         // crouch button vanished, 2026-10-27). Report and drain it; it is not this load's.
         for(unsigned e=R::takeError();e!=0;e=R::takeError())   // G.5b-7: GL's glGetError
             printf("getArtTex(%s): stale GL error 0x%04x drained\n",kArtFiles[id],(unsigned)e);
-        art[id]=new Texture2D(kArtFiles[id],false,true);
+        art[id]=new Texture2D(kArtFiles[id],false,id!=ART_SKY_SPRITES);   // sky sprites: no mips, stays NEAREST
     }
     return art[id];
 }

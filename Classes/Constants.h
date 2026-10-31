@@ -26,10 +26,15 @@ extern int CAMERA_VIEW;
 
 #define EXPLOSION_RADIUS 5
 
-// 127 since Stage D.2a (2026-10-10): ids 112-127 are the blocks the 2026 game added to
-// NewFormat256z worlds. block8 is a signed char, so the id space is now FULL -- the next block
-// type cannot be appended, and these 16 can never get expansion-TNT ("BT") shadows.
-#define NUM_BLOCKS 127
+// STOCK_BLOCK_MAX: the highest stock block id. 127 since Stage D.2a (2026-10-10): ids 112-127 are
+// the blocks the 2026 game added to NewFormat256z worlds. The stock id space is FULL -- the next
+// block type cannot be appended, and these 16 can never get expansion-TNT ("BT") shadows.
+// BLOCK_IDS: rows in every per-type table, one per value of the (unsigned since K.1-1) type byte.
+// Until K.1-1 both were the one NUM_BLOCKS (127 = highest id = table size - 1). Use
+// STOCK_BLOCK_MAX for "is this a stock id" (the multiplayer wire, worldgen, the console's
+// numbers) and BLOCK_IDS for table sizes and loops over every byte value.
+#define STOCK_BLOCK_MAX 127
+#define BLOCK_IDS 256
 
 #define NUM_CREATURES 7
 #define M_MOOF 0
@@ -291,6 +296,9 @@ enum BLOCK_TYPES{
 #define IS_PORTAL          0b00000100000000000000
 #define IS_HARD            0b00001000000000000000
 #define IS_BLOCKTNT        0b00010000000000000000
+// K.1-3: the "missing" placeholder (BlockRegistry): a palette byte with no loaded definition, or a byte
+// >= 128 with no palette entry. Runtime only (blockinfo never reaches a file); the mesher draws it unpainted.
+#define IS_MISSING         0b00100000000000000000
 
 
 // Tiles per atlas strip (atlas.png and atlas2.png are both 32 x 32*ATLAS_TILES). Stock was 32, baked in
@@ -339,6 +347,9 @@ enum BLOCK_TEXTURES{
     // H.14: the atlas grew again, to 128 tiles. 64 is the 1.x flower patch (grass3o.png, full colour, so
     // it is never tinted: paint stays white). Block 12 (TYPE_GRASS3) draws it on top, grass sides.
     TEX_GRASS_FLOWER=64,
+    // K.1-3: the "missing" block (a magenta/black checker, port/tools/atlas-k13.py): every face of a type
+    // byte >= 128 whose palette entry has no loaded definition (BlockRegistry, D4/D12). atlas.png only.
+    TEX_MISSING=65,
     
     
     TEX_GLASS=0,	

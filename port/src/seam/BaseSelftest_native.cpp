@@ -110,6 +110,21 @@ void test_files(const std::string& dir) {
     CHECK(!eden_fs_remove(sub));
     CHECK(eden_fs_size(sub) == -1);
     CHECK(eden_fs_remove(f));
+
+    // K.0w-1: no-replace move, mkdir -p, rm -rf, mtime, dir fsync
+    const std::string t = dir + "/k0w";
+    CHECK(eden_fs_make_dirs(t + "/a/b/c") && eden_fs_is_dir(t + "/a/b/c") && eden_fs_make_dirs(t + "/a/b/c"));
+    CHECK(!eden_fs_make_dirs(""));
+    CHECK(eden_fs_create_empty(t + "/x") && eden_fs_create_empty(t + "/y"));
+    CHECK(!eden_fs_move_new(t + "/x", t + "/y") && eden_fs_exists(t + "/x"));            // target exists: refused, source kept
+    CHECK(eden_fs_move_new(t + "/x", t + "/z") && !eden_fs_exists(t + "/x") && eden_fs_exists(t + "/z"));
+    CHECK(!eden_fs_move_new(t + "/missing", t + "/w"));
+    CHECK(eden_fs_move_new(t + "/a", t + "/a2") && eden_fs_is_dir(t + "/a2/b/c") && !eden_fs_exists(t + "/a"));   // a directory
+    CHECK(!eden_fs_move_new(t + "/a2", t + "/y"));
+    CHECK(eden_fs_mtime(t + "/y") > 1000000000LL && eden_fs_mtime(t + "/nope") == -1);
+    CHECK(eden_fs_sync_dir(t));
+    CHECK(eden_fs_create_empty(t + "/a2/b/f"));
+    CHECK(eden_fs_remove_tree(t) && !eden_fs_exists(t) && eden_fs_remove_tree(t));       // a missing path is already gone
 }
 
 void test_bundle() {

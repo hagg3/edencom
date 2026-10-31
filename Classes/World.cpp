@@ -26,6 +26,7 @@
 #include "port/src/shim/foundation/platform_shims.h"   // eden_platform_now_ms, eden_platform_bundle_root
 
 #include "VKeyboard.h"
+#include "SkyCycle.h"   // DN.2
 
 // Web port hook (port/src/seam/LoadFailure.cpp), same cross-TU-call convention FileManager.cpp
 // already uses for eden_report_load_failure -- see the doneLoading==2 check in World::loadWorld
@@ -708,6 +709,7 @@ bool World::update(float etime){
 		// tap) and claims every touch; the play step below then runs as usual with no player
 		// input. Unlike Settings it freezes nothing.
 		if(menu->showconsole) menu->console->update(etime);
+        SkyCycle::update(etime,hud->inmenu);   // DN.2: the day/night clock (stops under the pause menu)
         cam->update(etime);
 		
         pass_begin(P_U_TERRAIN);

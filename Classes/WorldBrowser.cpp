@@ -400,6 +400,7 @@ struct BrowserImpl {
     Entry dlEntry;
     emod::ImportJob convert;             // S.5: the download converts while it inflates
     std::string dlFile, layerIn, layerOut, dlStatus, convOut;
+    std::string stageId;                 // K.0w-3: Worlds/.<stageId>.partial holds the download and its conversion
     float dlFrac;
     float clock;
 
@@ -587,13 +588,18 @@ struct BrowserImpl {
         layerIn = d + "/.emod-unpack-a";
         layerOut = d + "/.emod-unpack-b";
     }
-    // Q.1 F23: the download temp is per job (`.emod-download-N`), so a cancelled job's late writer can't
-    // clobber the next one. `sweep` (browser open, idle) also deletes every leftover `.emod-download*`.
+    // Q.1 F23 / K.0w-3a: the download temp is per job (`<stage>/download-N`, N a process-wide serial), so a
+    // cancelled job's detached writer can't clobber the next one even when it reuses the same staging dir.
+    // `sweep` (browser open, idle) also deletes every leftover pre-K.0w `.emod-download*` in Documents.
     void cleanTemps(bool sweep = false) {
         tempPaths();
         if (!dlFile.empty()) {
             std::remove(dlFile.c_str());
             std::remove((dlFile + ".part").c_str());
+        }
+        if (!stageId.empty()) {          // cancel / fail: the staging dir goes (a finished import cleared the id)
+            FileManager::discardStaging(documents_dir(), stageId);
+            stageId.clear();
         }
         if (sweep) {
             // POSIX (the engine's idiom), not std::filesystem.
@@ -615,13 +621,16 @@ struct BrowserImpl {
         const Entry* e = selectedEntry();
         if (!e || dl != DL_IDLE) return;
         cleanTemps();
-        static unsigned g_dlSerial = 0;
-        dlFile = documents_dir() + "/.emod-download-" + std::to_string(++g_dlSerial);
+        stageId = FileManager::downloadWorldId(documents_dir(), e->id);
+        const std::string stage = FileManager::beginStaging(documents_dir(), stageId);
+        if (stage.empty()) { stageId.clear(); dlStatus = "Cannot make the staging folder"; return; }
+        static int g_dlSerial = 0;
+        dlFile = stage + "/download-" + std::to_string(++g_dlSerial);
         dlEntry = *e;
         dlSrc = src;
         dlFrac = 0;
         dlJob = eden_net_fetch(worldUrl(src, e->id).c_str(), dlFile.c_str());
-        if (!dlJob) { dlStatus = "No network on this device"; return; }
+        if (!dlJob) { cleanTemps(); dlStatus = "No network on this device"; return; }
         dl = DL_FETCH;
         dlStatus.clear();
     }
@@ -666,11 +675,7 @@ struct BrowserImpl {
                 failDownload("that is not an Eden world file");
                 return;
             }
-            const std::string d = documents_dir();
-            for (int k = 1; k < 1000; k++) {
-                convOut = d + "/" + dlEntry.id + (k == 1 ? std::string() : "-" + std::to_string(k)) + ".emod";
-                if (file_size(convOut) < 0) break;
-            }
+            convOut = documents_dir() + "/" + FileManager::stagingDirOf(stageId) + "/world.emod";
             // S.5e: Settings' "Upgrade 64z worlds to 256z when converting" (no per-world prompt here).
             if (!convert.begin(dlFile, convOut, dlEntry.id + ".eden", (int64_t)time(NULL), eden_get_upgrade_256z() != 0)) {
                 failDownload(convert.error());
@@ -688,8 +693,12 @@ struct BrowserImpl {
             dlFrac = convert.percent() / 100.0f;
             if (r == emod::ImportJob::RUNNING) return;
             std::remove(dlFile.c_str());        // the user's call (2026-10-09): the download is discarded
+            FileManager::stageStep("download converted");
+            const std::string key = FileManager::commitStaging(documents_dir(), stageId);   // the commit point
+            if (key.empty()) { failDownload("cannot move the world into place"); return; }
+            stageId.clear();                    // committed: cleanTemps must not touch the new folder
             dl = DL_IDLE;
-            addImported(convOut.substr(documents_dir().size() + 1));
+            addImported(key);
             return;
         }
     }
@@ -719,8 +728,10 @@ struct BrowserImpl {
 
 // ---------------------------------------------------------------------------------------------
 
-WorldBrowser::WorldBrowser() : d(new BrowserImpl()) {}
+static WorldBrowser* s_browser = NULL;   // K.0w-2: anyBusy() (the menu owns the one browser)
+WorldBrowser::WorldBrowser() : d(new BrowserImpl()) { s_browser = this; }
 WorldBrowser::~WorldBrowser() {
+    if (s_browser == this) s_browser = NULL;
     for (int s = 0; s < SRC_COUNT; s++) eden_net_release(d->S[s].listJob);
     d->cancelDownload(NULL);
     d->dropPreview();
@@ -1173,6 +1184,7 @@ const char* WorldBrowser::entrySize(int i) const {
 }
 int  WorldBrowser::selectedIndex() const { return d->S[d->src].selected; }
 bool WorldBrowser::listLoading() const { return d->S[d->src].listJob != 0; }
+bool WorldBrowser::anyBusy() { return s_browser && s_browser->busy(); }
 bool WorldBrowser::busy() const { return d->dl != DL_IDLE; }
 bool WorldBrowser::previewShown() const { return d->previewTex != NULL; }
 const char* WorldBrowser::statusText() const {

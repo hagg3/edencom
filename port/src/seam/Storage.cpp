@@ -57,44 +57,23 @@ static void jsonEscape(std::string& out, const char* s) {
     out += '"';
 }
 
-// Shared scan: every filename in Documents that passes Menu::loadWorlds' own filter, in
-// contentsOfDirectoryAtPath's enumeration order. Both exports below walk this so "row N in the
-// list" and "index N to delete" can never disagree about what N means.
-static bool eden_storage_scan(std::string* outDocuments, std::vector<std::string>* names) {
+// K.0w-4: the world list is FileManager::listWorlds (the same call Menu::loadWorlds makes), so "row N in the
+// list" and "index N to delete" cannot disagree. Adoption runs first, as the menu does.
+static bool eden_storage_scan(std::string* outDocuments, std::vector<FileManager::WorldEntry>* entries) {
     if (!World::getWorld || !World::getWorld->fm) return false;
-    const std::string documents = World::getWorld->fm->documents;
-    if (outDocuments) *outDocuments = documents;
-    *names = eden_fs_list(documents);
+    if (outDocuments) *outDocuments = World::getWorld->fm->documents;
+    World::getWorld->fm->adoptLooseWorlds();
+    World::getWorld->fm->listWorlds(entries);
     return true;
 }
 
-static bool eden_storage_is_world_file(const std::string& file_name) {
-    if (file_name == "Eden.eden.archive") return false;
-    // NSString pathExtension, uppercased: after the last '.', none for a leading-dot-only name.
-    std::string ext;
-    const size_t dot = file_name.rfind('.');
-    if (dot != std::string::npos && dot > 0) ext = file_name.substr(dot + 1);
-    for (size_t i = 0; i < ext.size(); ++i) ext[i] = (char)toupper((unsigned char)ext[i]);
-    // Stage S / S.4: an `.emod` world is a world too (only ever present here when a harness set
-    // eden_set_world_format(1); the Storage tab's export/import learn the format in S.5).
-    return ext == "EDEN" || ext == "EMOD";
-}
-
-// "Index N" for every index-based export below: the list's filter exactly (a kept original lists
-// through its `.emod`, so it has no index of its own). Empty string = no such world.
+// "Index N" for every index-based export below. Empty string = no such world.
 static std::string eden_storage_nth(int index) {
-    if (index < 0 || !World::getWorld || !World::getWorld->fm) return std::string();
-    std::vector<std::string> names;
-    if (!eden_storage_scan(NULL, &names)) return std::string();
-    int seen = 0;
-    for (size_t i = 0; i < names.size(); ++i) {
-        const std::string& f = names[i];
-        if (!eden_storage_is_world_file(f)) continue;
-        if (!World::getWorld->fm->pairedEmodFor(f).empty()) continue;      // same filter as the list
-        if (seen == index) return f;
-        seen++;
-    }
-    return std::string();
+    if (index < 0) return std::string();
+    std::vector<FileManager::WorldEntry> entries;
+    if (!eden_storage_scan(NULL, &entries)) return std::string();
+    if (index >= (int)entries.size()) return std::string();
+    return entries[index].key;
 }
 
 extern "C" {
@@ -107,16 +86,13 @@ const char* eden_storage_list_worlds(void) {
     bool first = true;
 
     std::string documents;
-    std::vector<std::string> names;
-    eden_storage_scan(&documents, &names);
-    FileManager* fm = World::getWorld ? World::getWorld->fm : NULL;
-    int n = (int)names.size();
+    std::vector<FileManager::WorldEntry> entries;
+    if (!eden_storage_scan(&documents, &entries)) { buf = "[]"; return buf.c_str(); }
+    FileManager* fm = World::getWorld->fm;
+    int n = (int)entries.size();
     for (int i = 0; i < n; ++i) {
-        const std::string& file_name = names[i];
-        if (!eden_storage_is_world_file(file_name)) continue;
-
-        const std::string real_name = fm->getName(file_name);
-        const char* nameC = !real_name.empty() ? real_name.c_str() : "Unknown World";
+        const std::string& file_name = entries[i].key;
+        const char* nameC = entries[i].name.c_str();
 
         const std::string full = documents + "/" + file_name;
         long long bytes = 0, mtimeMs = 0;
@@ -135,14 +111,7 @@ const char* eden_storage_list_worlds(void) {
         // Stage S / S.5: the container, and the kept original's size (plan §4 "What the world list
         // shows"; 0 here in practice, since web never converts a local `.eden` in place).
         const bool isEmod = FileManager::isEmodName(file_name);
-        long long originalBytes = 0;
-        if (isEmod) {
-            const std::string orig = fm->originalOf(file_name);
-            struct stat ost;
-            if (!orig.empty() && stat((documents + "/" + orig).c_str(), &ost) == 0) originalBytes = (long long)ost.st_size;
-        } else if (!fm->pairedEmodFor(file_name).empty()) {
-            continue;                       // a kept original lists through its `.emod`, as in the GL menu
-        }
+        const long long originalBytes = entries[i].original_bytes;   // K.0w-4: from the shared lister
 
         if (!first) buf += ",";
         first = false;
@@ -229,6 +198,7 @@ static emod::GzipPump* s_gz = NULL;
 static bool s_gzip = false;
 static unsigned char s_chunk[1 << 20];
 static emod::ImportJob* s_import = NULL;
+static std::string s_importId;   // K.0w-3: the staging id of the live import
 
 char* eden_storage_name_buffer(void) { return s_nameBuf; }
 int eden_storage_name_buffer_size(void) { return (int)sizeof(s_nameBuf); }
@@ -282,7 +252,7 @@ int eden_storage_export_next(void) {
 const unsigned char* eden_storage_export_chunk(void) { return s_chunk; }
 
 // Import: the page has written the picked/downloaded file to /tmp/.emod-import (MEMFS, outside the
-// mirrored /documents) and its original name to the name buffer. The world becomes `<stem>.emod`;
+// mirrored /documents) and its original name to the name buffer. The world becomes `Worlds/<id>/world.emod`;
 // nothing inflated is ever written (plan §4). Only meaningful with eden_set_world_format(1).
 int eden_storage_import_begin(void) {
     delete s_import; s_import = NULL;
@@ -290,22 +260,25 @@ int eden_storage_import_begin(void) {
     if (!World::getWorld || !World::getWorld->fm) { s_jobError = "not ready"; return 0; }
     s_nameBuf[sizeof(s_nameBuf) - 1] = 0;
     const std::string docs = World::getWorld->fm->documents;
-    std::string stem = emod::WorldSource::stemOf(s_nameBuf[0] ? s_nameBuf : "import");
-    for (char& c : stem) if (c == '/' || c == '\\') c = '_';
-    std::string out;
-    for (int k = 1; k < 1000; k++) {
-        out = docs + "/" + stem + (k == 1 ? std::string() : "-" + std::to_string(k)) + ".emod";
-        struct stat sb;
-        if (stat(out.c_str(), &sb) != 0) break;
+    // K.0w-3: staged in Worlds/.<id>.partial, renamed to Worlds/<id> when done (the display name comes
+    // from `s_nameBuf` through the import job's header, not from the folder).
+    if (!s_importId.empty()) FileManager::discardStaging(docs, s_importId);
+    s_importId = FileManager::newWorldId(docs);
+    if (FileManager::beginStaging(docs, s_importId).empty()) {
+        s_jobError = "cannot make the staging folder"; s_importId.clear();
+        remove("/tmp/.emod-import");
+        return 0;
     }
+    const std::string out = docs + "/" + FileManager::stagingDirOf(s_importId) + "/world.emod";
     s_import = new emod::ImportJob();
     if (!s_import->begin("/tmp/.emod-import", out, s_nameBuf, (int64_t)time(NULL), eden_get_upgrade_256z() != 0)) {
         s_jobError = s_import->error();
         delete s_import; s_import = NULL;
+        FileManager::discardStaging(docs, s_importId); s_importId.clear();
         remove("/tmp/.emod-import");
         return 0;
     }
-    s_jobResult = out.substr(docs.size() + 1);
+    s_jobResult.clear();
     return 1;
 }
 
@@ -317,9 +290,20 @@ int eden_storage_import_step(void) {
     if (r == emod::ImportJob::FAILED) s_jobError = s_import->error();
     delete s_import; s_import = NULL;
     remove("/tmp/.emod-import");
+    const std::string docs = World::getWorld->fm->documents;
+    if (r == emod::ImportJob::DONE) {
+        FileManager::stageStep("import converted");
+        const std::string key = FileManager::commitStaging(docs, s_importId);   // the commit point
+        if (key.empty()) { s_jobError = "cannot move the world into place"; r = emod::ImportJob::FAILED; }
+        else s_jobResult = key;
+    }
+    if (r != emod::ImportJob::DONE) FileManager::discardStaging(docs, s_importId);
+    s_importId.clear();
     if (r == emod::ImportJob::DONE && World::getWorld->menu) World::getWorld->menu->loadWorlds();
     return r == emod::ImportJob::DONE ? 1 : -1;
 }
+// K.0w-2: FileManager::adoptLooseWorlds waits while an import job is live.
+extern "C" int eden_storage_import_active(void) { return s_import != NULL; }
 int eden_storage_import_percent(void) { return s_import ? s_import->percent() : 0; }
 
 // Stage S / S.8 (2026-10-11): there is no `.eden` world format switch any more -- every new world is an

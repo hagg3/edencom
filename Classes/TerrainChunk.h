@@ -110,6 +110,11 @@ public:
     bool in_view;
     bool has_light;
     bool modified;
+    // DN.5 (day/night cycle): the night bit (sky_isNight) the live vertex colours were baked with, so
+    // Terrain::render can pick the R::setWorldLight that makes a day- and a night-baked chunk match
+    // (SkyCycle::worldLight). rebuild2 records it in pendingNight; prepareVBO publishes it with the
+    // upload. Colours only: the counting/fill passes never see it.
+    bool bakedNight,pendingNight;
     int isTesting;
     uint32_t query
     ;

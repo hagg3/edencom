@@ -23,9 +23,14 @@
 #include "WorldProps.h"        // H.15: readWorldProperties / applyWorldProperties
 #include "Alert.h"            // showAlertConvertHeight (S.5e)
 #include "MpWorld.h"          // MP.3a: the session world
+#include "WorldBrowser.h"     // K.0w-2: adoption waits while a download runs
+#include <map>
+#include <cstdlib>   // std::_Exit (the adoption kill hook)
 #include "StrUtil.h"          // G.2b-4: utf8_valid, eden_cstr_copy, path_has_suffix
 #include "port/src/shim/foundation/eden_fs.h"          // G.2b-4: EdenFile, eden_fs_*, eden_bundle_path
 #include "port/src/shim/foundation/platform_shims.h"   // G.2b-4: eden_platform_documents_root
+#include "SkyCycle.h"                                 // DN.2: the SKY_CLOCK record
+#include "BlockRegistry.h"                            // K.1-3: the BLOCK_PALETTE record
 
 // See FileManager.h. Both NULL on web — its Foundation shim already answers both questions the
 // way this port wants — and both installed by the native entry point.
@@ -114,6 +119,7 @@ static WorldFileHeader* emodHeader=NULL;
 // replaces a 128 KB allocate-and-zero per column read.
 static uint8_t emodColBuf[CHUNKS_PER_COLUMN_MAX*emod::BAND];
 // A finished conversion's source `.eden`, waiting for the player's answer (nil once resolved).
+static std::string pendingOriginalPath;   // K.0w-3: where the kept original sits now (Documents-relative)
 static std::string pendingOriginalName;   // G.2b-2: "" once resolved (was a retained NSString*)
 
 // The 192-byte header of a dropped-in archive (`.eden.gz`, `.zip`), inflated from its first bytes.
@@ -275,6 +281,10 @@ static int count=0;
 
 bool FileManager::deleteWorld(const std::string& nameIn){
     const std::string& name=nameIn;
+    if(isFolderWorld(name)){   // K.0w: the whole folder is the world (rule 4)
+        this->closeWorld();
+        return removeWorldDir(worldDirOf(name));
+    }
     if(isEmodName(nameIn)){
         // The open store holds the file; Windows will not delete an open one. Its temp names go too.
         this->closeWorld();
@@ -354,9 +364,9 @@ void FileManager::loadGenFromDisk(){
         CGContextDrawImage(context, CGRectMake(0, 0, width, height), imageRef);
         CGContextRelease(context);
        
-        extern block8* biomez;
-        biomez=(block8*)malloc(height*width*sizeof(block8));
-        memset(biomez,0,height*width*sizeof(block8));
+        extern sbyte* biomez;
+        biomez=(sbyte*)malloc(height*width*sizeof(sbyte));
+        memset(biomez,0,height*width*sizeof(sbyte));
         /*
         int xx=0;
         int yy=0;
@@ -1772,9 +1782,15 @@ void FileManager::loadWorld(const std::string& nameIn,bool fromArchive){
 		ter->clearBlocks();
 	Player* player=World::getWorld->player;
     this->closeWorld();   // a previous session's `.emod` store (warp, re-load); no-op for `.eden`
+    // K.1-3: no palette survives into the next world or a session (a new world and a session have none;
+    // loadEmodWorld reads the world's own). Rows 128..255 go back to the missing block.
+    BlockRegistry::resetWorld();
     // D.3a: a brand-new world has none; the two load branches below read theirs. MP.3a: a session's
     // trailer is filled from SIGNP and outlives its warps and reloads (MpWorld::endSession clears it).
     if(!sessionWorld)worldTrailer.clear();
+    // DN.2: a world without a SKY_CLOCK record (new, or from before Stage DN) starts at 0.30;
+    // loadEmodWorld reads the record. A session's clock lives through its warps (MpWorld::beginSession).
+    if(!sessionWorld)SkyCycle::reset();
     if(emod::WorldSource::isArchiveName(name)){
         // An archive that was not converted can't be played, and must never reach the .eden branch
         // below: its "header" is compressed bytes, which that branch would try to "upgrade" in place.
@@ -2016,8 +2032,193 @@ bool FileManager::isArchiveName(const std::string& name){
     return emod::WorldSource::isArchiveName(name);
 }
 
+// ---- K.0w world folders (plan §3, §5.1). All keys/paths here are Documents-relative with "/". ----
+static const char* const kWorldsDir="Worlds";
+static const char* const kWorldFile="world.emod";
+
+bool FileManager::validWorldId(const std::string& id){
+    if(id.empty()||id.size()>64||id[0]=='.')return false;
+    for(size_t i=0;i<id.size();i++){
+        char c=id[i];
+        if(!((c>='0'&&c<='9')||(c>='a'&&c<='z')||(c>='A'&&c<='Z')||c=='_'||c=='-'))return false;
+    }
+    return true;
+}
+
+static std::string fm_randomLetters(int n){
+    std::string s;
+    for(int i=0;i<n;i++)s+=(char)('a'+arc4random()%26);
+    return s;
+}
+
+// An id is free when no world folder, staging dir or adoption dir uses it.
+static bool fm_idFree(const std::string& documents,const std::string& id){
+    const std::string w=documents+"/"+kWorldsDir+"/";
+    return !eden_fs_exists(w+id)&&!eden_fs_exists(w+"."+id+".partial")&&!eden_fs_exists(w+"."+id+".migrating");
+}
+
+std::string FileManager::worldKeyOfId(const std::string& id){
+    return std::string(kWorldsDir)+"/"+id+"/"+kWorldFile;
+}
+
+std::string FileManager::stagingDirOf(const std::string& id){
+    return std::string(kWorldsDir)+"/."+id+".partial";
+}
+
+// K.0w-3: EDEN_TEST_STAGE_KILL_AFTER=<n> _Exits (86) after the n-th mutating staging step, counted across
+// the process (port/tools/folders-crash-gate.sh loops n over a conversion).
+void FileManager::stageStep(const char* what){
+    static int limit=-2,count=0;
+    if(limit==-2){const char* e=getenv("EDEN_TEST_STAGE_KILL_AFTER");limit=(e&&*e)?atoi(e):-1;}
+    if(limit<0)return;
+    if(++count==limit){
+        fprintf(stderr,"stage: test kill after step %d (%s)\n",count,what);
+        fflush(stderr);fflush(stdout);
+        std::_Exit(86);
+    }
+}
+
+std::string FileManager::beginStaging(const std::string& documents,const std::string& id){
+    if(!validWorldId(id))return std::string();
+    const std::string d=documents+"/"+stagingDirOf(id);
+    if(!eden_fs_make_dirs(d))return std::string();
+    stageStep("staging dir made");
+    return d;
+}
+
+std::string FileManager::commitStaging(const std::string& documents,const std::string& id){
+    const std::string wroot=documents+"/"+kWorldsDir,from=documents+"/"+stagingDirOf(id);
+    if(eden_fs_size(from+"/"+kWorldFile)<0)return std::string();   // nothing committed in it
+    std::string nid=id;
+    for(int tries=0;tries<8;tries++){
+        // The commit point: one no-replace rename on one volume. Before it the world is only ever a dot-dir
+        // (swept by cleanConversionTemps); after it the world is listed.
+        if(eden_fs_move_new(from,wroot+"/"+nid)){
+            stageStep("staging dir renamed");
+            eden_fs_sync_dir(wroot);
+            return worldKeyOfId(nid);
+        }
+        nid=id+"-"+fm_randomLetters(4);
+        while(eden_fs_exists(wroot+"/"+nid))nid=id+"-"+fm_randomLetters(4);
+    }
+    return std::string();
+}
+
+void FileManager::discardStaging(const std::string& documents,const std::string& id){
+    if(validWorldId(id))eden_fs_remove_tree(documents+"/"+stagingDirOf(id));
+}
+
+std::string FileManager::newWorldId(const std::string& documents){
+    char base[32];
+    snprintf(base,sizeof(base),"%lld",(long long)time(NULL));
+    for(;;){
+        std::string id=std::string(base)+"-"+fm_randomLetters(4);
+        if(fm_idFree(documents,id))return id;
+    }
+}
+
+std::string FileManager::downloadWorldId(const std::string& documents,const std::string& serverId){
+    if(!validWorldId(serverId))return newWorldId(documents);
+    for(std::string id=serverId;;id=serverId+"-"+fm_randomLetters(4)){
+        if(fm_idFree(documents,id))return id;
+    }
+}
+
+bool FileManager::isFolderWorld(const std::string& key){
+    const std::string pre=std::string(kWorldsDir)+"/",post=std::string("/")+kWorldFile;
+    if(key.size()<=pre.size()+post.size()||key.compare(0,pre.size(),pre)!=0)return false;
+    if(key.compare(key.size()-post.size(),post.size(),post)!=0)return false;
+    return validWorldId(key.substr(pre.size(),key.size()-pre.size()-post.size()));
+}
+
+std::string FileManager::worldDirOf(const std::string& key){
+    if(!isFolderWorld(key))return std::string();
+    return key.substr(0,key.size()-strlen(kWorldFile)-1);
+}
+
+std::string FileManager::photoPathOf(const std::string& key){
+    std::string d=worldDirOf(key);
+    return d.empty()?key+".png":d+"/photo.png";
+}
+
+std::string FileManager::originalPathOf(const std::string& key,const std::string& ext){
+    std::string d=worldDirOf(key);
+    return d.empty()?std::string():d+"/original"+ext;
+}
+
+std::string FileManager::sidecarPathOf(const std::string& key,const std::string& kind){
+    std::string d=worldDirOf(key);
+    return d.empty()?std::string():d+"/"+kind+".eden.dat";
+}
+
+std::vector<std::string> FileManager::folderWorldKeys(){
+    std::vector<std::string> out;
+    const std::string root=documents+"/"+kWorldsDir;
+    std::vector<std::string> ids=eden_fs_list(root);
+    for(size_t i=0;i<ids.size();i++){
+        if(!validWorldId(ids[i]))continue;
+        std::string key=worldKeyOfId(ids[i]);
+        if(eden_fs_size(documents+"/"+key)>=0)out.push_back(key);
+    }
+    return out;
+}
+
+void FileManager::listWorlds(std::vector<WorldEntry>* out){
+    out->clear();
+    std::vector<std::string> names=eden_fs_list(documents);
+    std::vector<std::string> fw=folderWorldKeys();
+    names.insert(names.end(),fw.begin(),fw.end());
+    std::vector<WorldEntry> worlds,dropped;
+    std::vector<std::pair<std::string,long long> > hidden;   // (paired .emod, original's bytes)
+    for(size_t i=0;i<names.size();i++){
+        const std::string& f=names[i];
+        if(f=="Eden.eden.archive")continue;
+        std::string ext=path_ext(f);
+        for(size_t k=0;k<ext.size();k++)ext[k]=(char)toupper((unsigned char)ext[k]);
+        const bool archive=(ext=="GZ"||ext=="ZIP")&&isArchiveName(f);
+        if(ext!="EDEN"&&ext!="EMOD"&&!archive)continue;
+        bool needs=false;
+        if(ext=="EDEN"||archive){
+            std::string paired=pairedEmodFor(f);
+            if(!paired.empty()){
+                long long b=eden_fs_size(documents+"/"+f);
+                hidden.push_back(std::make_pair(paired,b>0?b:0));
+                continue;
+            }
+            needs=worldNeedsConversion(f);
+        }
+        WorldEntry e;
+        e.key=f;
+        e.name=getName(f);
+        if(e.name.empty())e.name="Unknown World";   // a name with no UTF-8 form
+        if(e.name=="error~")continue;
+        e.needs_convert=needs;
+        e.mtime=eden_fs_mtime(documents+"/"+f);
+        if(isFolderWorld(f)){
+            const std::string o=originalOf(f);
+            long long b=o.empty()?-1:eden_fs_size(documents+"/"+o);
+            if(b>0)e.original_bytes=b;
+        }
+        (ext=="EMOD"?worlds:dropped).push_back(e);
+    }
+    std::sort(worlds.begin(),worlds.end(),[](const WorldEntry& a,const WorldEntry& b){
+        return a.mtime!=b.mtime?a.mtime>b.mtime:a.key<b.key;});
+    std::sort(dropped.begin(),dropped.end(),[](const WorldEntry& a,const WorldEntry& b){return a.key<b.key;});
+    out->insert(out->end(),worlds.begin(),worlds.end());
+    out->insert(out->end(),dropped.begin(),dropped.end());
+    for(size_t i=0;i<hidden.size();i++)
+        for(size_t j=0;j<out->size();j++)
+            if((*out)[j].key==hidden[i].first){(*out)[j].original_bytes=hidden[i].second;break;}
+}
+
+bool FileManager::removeWorldDir(const std::string& relDir){
+    const std::string pre=std::string(kWorldsDir)+"/";
+    if(relDir.size()<=pre.size()||relDir.compare(0,pre.size(),pre)!=0||!validWorldId(relDir.substr(pre.size())))return false;
+    return eden_fs_remove_tree(docs+"/"+relDir);
+}
+
 std::string FileManager::newWorldFileName(){
-    return genhash()+".emod";
+    return worldKeyOfId(newWorldId(docs));
 }
 
 void FileManager::closeWorld(){
@@ -2166,6 +2367,28 @@ bool FileManager::loadEmodWorld(const std::string& nameIn){
     // writes an empty one over whatever an earlier version still holds.
     std::vector<uint8_t> traw;
     if(st->hasRecord(emod::T_SIGN_TRAILER)&&st->readRecord(emod::T_SIGN_TRAILER,traw)>emod::EdenWorldStore::READ_FALLBACK)traw.clear();
+    // DN.2: the day/night clock. An unreadable or malformed record loads as none (t 0.30, unlocked).
+    {
+        std::vector<uint8_t> kraw;
+        if(st->hasRecord(emod::T_SKY_CLOCK)&&st->readRecord(emod::T_SKY_CLOCK,kraw)<=emod::EdenWorldStore::READ_FALLBACK)
+            SkyCycle::load(kraw.empty()?NULL:&kraw[0],kraw.size());
+        else SkyCycle::reset();
+    }
+    // K.1-3: the palette (rows 128..255) resolves before the first column is read, so nothing ever
+    // meshes a palette id with another world's rows. A flagged file without a readable record locks it.
+    {
+        std::vector<uint8_t> praw;
+        const bool flagged=st->paletteFlag();
+        emod::EdenWorldStore::ReadResult pr=emod::EdenWorldStore::READ_ABSENT;
+        if(flagged&&st->hasRecord(emod::T_BLOCK_PALETTE))pr=st->readRecord(emod::T_BLOCK_PALETTE,praw);
+        if(pr>emod::EdenWorldStore::READ_FALLBACK)praw.clear();
+        // An unflagged file's palette is never read (the flag announces it; compaction drops a stray one).
+        BlockRegistry::loadPalette(praw.empty()?NULL:&praw[0],praw.size(),flagged);
+        // An older version decoded but the newest did not: the newest may have given out more ids.
+        if(pr==emod::EdenWorldStore::READ_FALLBACK)BlockRegistry::lock();
+        if(flagged)printg("registry: %d palette entr%s%s\n",BlockRegistry::count(),BlockRegistry::count()==1?"y":"ies",
+                          BlockRegistry::locked()?" (LOCKED: unreadable)":"");
+    }
     closeWorld();
     // The `.eden` directory maps belong to whatever world was open before: nothing below reads
     // them for an `.emod`, and leaving a previous world's rows in them is how one would one day.
@@ -2316,7 +2539,9 @@ void FileManager::loadTrailer(const std::string& nameIn,const unsigned char* byt
     std::string stem=emod::WorldSource::stemOf(nameIn);
     static const char* const kinds[2]={"signs_","cmd_"};
     for(int k=0;k<2;k++){
-        std::string path=docs+"/"+kinds[k]+stem+".eden.dat";
+        // K.0w: a folder world's sidecars sit in its folder as signs.eden.dat / cmd.eden.dat.
+        std::string path=isFolderWorld(nameIn)?docs+"/"+sidecarPathOf(nameIn,k==0?"signs":"cmd")
+                                              :docs+"/"+kinds[k]+stem+".eden.dat";
         FILE* f=emod::io::fopen_utf8(path.c_str(),"rb");
         if(!f)continue;
         std::vector<uint8_t> b;
@@ -2328,10 +2553,37 @@ void FileManager::loadTrailer(const std::string& nameIn,const unsigned char* byt
         fclose(f);
         int r=b.empty()?WorldTrailer::TR_BAD:worldTrailer.adoptSidecar(&b[0],b.size());
         if(r==WorldTrailer::TR_OK)adoptedSidecars.push_back(path);
-        printg("trailer: sidecar %s%s.eden.dat (%llu B): %s\n",kinds[k],stem.c_str(),(unsigned long long)n,
+        printg("trailer: sidecar %s (%llu B): %s\n",path.substr(docs.size()+1).c_str(),(unsigned long long)n,
                r==WorldTrailer::TR_OK?"adopted":r==WorldTrailer::TR_EXISTS?"ignored (the world has its own)":"not readable");
     }
     printg("trailer: %s\n",worldTrailer.describe().c_str());
+}
+
+// K.1-3: the flag compaction at the first allocation, not at the first save (plan §3 "Built in K.1-2":
+// "allocate after the flag compaction"). The rewrite reads the file, not the window: every byte >= 128 a
+// resident column holds came from that file (the generators and a session write stock ids only), so the
+// latent bytes it reserves are all there are, and no id handed out afterwards can collide with one. The
+// file is flagged from here on even if the player quits without saving (harmless: an empty or unused
+// palette, D8). A one-time rewrite of the whole world on the main thread (K.1-6 measures it on the Air 2).
+bool FileManager::preparePaletteAllocation(std::string* why){
+    if(MpWorld::active()){ if(why)*why="Mod blocks are not available in a multiplayer world"; return false; }
+    if(!emodStore){ if(why)*why="No saved world is open"; return false; }
+    if(emodStore->paletteFlag())return true;
+    if(emodStore->damaged()){ if(why)*why="This world's file is damaged, so it cannot take mod blocks (export it first)"; return false; }
+    if(!emodStore->compact(true,NULL)){
+        fprintf(stderr,"registry: flag compaction failed: %s\n",emodStore->error().c_str());
+        if(why)*why="Could not prepare this world for mod blocks: "+emodStore->error();
+        return false;
+    }
+    std::vector<uint8_t> praw;
+    if(!emodStore->paletteFlag()||emodStore->readRecord(emod::T_BLOCK_PALETTE,praw)!=emod::EdenWorldStore::READ_OK){
+        BlockRegistry::lock();
+        if(why)*why="This world's block palette is unreadable: mod blocks are off";
+        return false;
+    }
+    BlockRegistry::loadPalette(praw.empty()?NULL:&praw[0],praw.size(),true);
+    printg("registry: flag compaction done (%d latent id(s) reserved)\n",(int)emodStore->latentIds().size());
+    return !BlockRegistry::locked();
 }
 
 void FileManager::saveEmodWorld(Vector warp){
@@ -2343,6 +2595,7 @@ void FileManager::saveEmodWorld(Vector warp){
         // A brand-new world (loadWorld's generator branch saves it once, straight away): create the
         // file. It only becomes visible at the first commit, which carries header + creatures.
         emod::EdenWorldStore* st=new emod::EdenWorldStore();
+        if(isFolderWorld(name))eden_fs_make_dirs(docs+"/"+worldDirOf(name));   // K.0w: the first save makes the folder
         bool ok=worldExists(name,false)
             ?st->open(path.c_str(),true)
             :st->create(path.c_str(),g_world_height>=T_HEIGHT_MAX?16:4,(uint64_t)time(NULL));
@@ -2431,6 +2684,32 @@ void FileManager::saveEmodWorld(Vector warp){
             return;
         }
     }
+    // DN.2: the day/night clock, when it or its lock moved since the load or the last commit. Exit and
+    // warp always commit a batch (header + creatures), so the time sticks with no edits; a world
+    // nobody ran the cycle in never gets the record.
+    bool clockSaving=SkyCycle::needsSave();
+    if(clockSaving){
+        uint8_t rec[SkyCycle::RECORD_BYTES];
+        SkyCycle::encode(rec);
+        if(!emodStore->putRecord(emod::T_SKY_CLOCK,rec,sizeof(rec))){
+            printg("saveWorld: could not stage the sky clock: %s\n",emodStore->error().c_str());
+            emodStore->abortBatch();
+            return;
+        }
+    }
+    // K.1-3: a palette that gained ids since the load or the last commit. The file is flagged already
+    // (preparePaletteAllocation ran before the first id): a dirty palette in an unflagged file is a bug,
+    // and the save is refused rather than put a byte >= 128 into a file that does not announce it (D14).
+    bool paletteSaving=BlockRegistry::dirty();
+    if(paletteSaving){
+        std::vector<uint8_t> pb=BlockRegistry::encode();
+        if(!emodStore->paletteFlag()||!emodStore->putRecord(emod::T_BLOCK_PALETTE,&pb[0],pb.size())){
+            fprintf(stderr,"saveWorld: could not stage the block palette (%s) -- save skipped\n",
+                    emodStore->paletteFlag()?emodStore->error().c_str():"file not flagged");
+            emodStore->abortBatch();
+            return;
+        }
+    }
     bool trailerSaving=worldTrailer.dirty();
     if(trailerSaving){
         std::vector<uint8_t> t=worldTrailer.encode();
@@ -2445,7 +2724,9 @@ void FileManager::saveEmodWorld(Vector warp){
         return;
     }
     if(trailerSaving)trailerSaved();
+    if(paletteSaving)BlockRegistry::markSaved();
     if(generatorSaving)fm_generatorPending=false;
+    if(clockSaving)SkyCycle::saved();
     g_seconds_since_save=0;
     for(size_t i=0;i<saved.size();i++){
         for(int cy=0;cy<CHUNKS_PER_COLUMN;cy++)
@@ -2496,6 +2777,7 @@ static ConvertTo64Report convertEmodTo64(const std::string& name){
     cleanup();
 
     emod::ExportOptions opt; opt.target=emod::X_LEGACY64Z;
+    opt.keepPalette=true;   // K.1-4: mod blocks stay raw; the scratch .eden's BPL1 gives the new world the palette + flag
     emod::ExportReport xr; std::string err;
     {
         emod::EdenWorldStore st;
@@ -2582,6 +2864,13 @@ std::string FileManager::pairedEmodFor(const std::string& srcNameIn){
 }
 
 std::string FileManager::originalOf(const std::string& emodName){
+    if(isFolderWorld(emodName)){   // K.0w: the folder is the pairing (D4)
+        const std::string dir=worldDirOf(emodName);
+        std::vector<std::string> names=eden_fs_list(documents+"/"+dir);
+        for(size_t i=0;i<names.size();i++)
+            if(names[i].compare(0,9,"original.")==0&&isSourceName(names[i]))return dir+"/"+names[i];
+        return std::string();
+    }
     if(!isEmodName(emodName))return std::string();
     std::vector<std::string> names=eden_fs_list(documents);   // G.2b-4: sorted (Foundation's order was unspecified)
     for(size_t i=0;i<names.size();i++){
@@ -2602,6 +2891,276 @@ bool FileManager::removeOriginal(const std::string& emodName){
     return ok;
 }
 
+// ---- K.0w-2: adoption of loose worlds into Worlds/<id>/ (world-folders-plan §4) --------------------
+// A loose `<X>.emod` in the Documents root moves into `Worlds/<id>/world.emod` with its neighbours
+// (photo, the PROVENANCE-paired original, the 2026 game's signs_/cmd_ sidecars). The world file moves
+// by ONE no-replace rename on one volume (the commit point) and is never opened writable, copied or
+// rewritten. A kill anywhere leaves either the world loose with some sidecars in a `.migrating` dir
+// (rolled back by the next scan) or the world in that dir (rolled forward). No marker: every scan
+// adopts whatever loose `.emod` it finds, so a world an older build made is picked up later.
+static const char* const kAdoptJournal=".adopt";
+extern "C" int eden_storage_import_active(void);   // port/src/seam/Storage.cpp: an import job is live
+static std::map<std::string,std::string> adoptedKeys;   // loose name -> key, this process (the harness maps names)
+
+// EDEN_TEST_ADOPT_KILL_AFTER=<n>: _Exit(86) after the n-th mutating step of adoption or recovery
+// (--folders-selftest loops n over every step). Counted across the whole process.
+static void adoptStep(const char* what){
+    static int limit=-2,count=0;
+    if(limit==-2){const char* e=getenv("EDEN_TEST_ADOPT_KILL_AFTER");limit=(e&&*e)?atoi(e):-1;}
+    if(limit<0)return;
+    if(++count==limit){
+        fprintf(stderr,"adopt: test kill after step %d (%s)\n",count,what);
+        fflush(stderr);fflush(stdout);
+        std::_Exit(86);
+    }
+}
+
+static std::string fm_freeIdFrom(const std::string& base,bool tryBare){
+    if(tryBare&&FileManager::validWorldId(base)&&fm_idFree(docs,base))return base;
+    for(;;){
+        std::string id=base+"-"+fm_randomLetters(4);
+        if(fm_idFree(docs,id))return id;
+    }
+}
+
+static bool fm_writeJournal(const std::string& dir,const std::vector<std::pair<std::string,std::string> >& moves){
+    const std::string tmp=dir+"/"+kAdoptJournal+".tmp",fin=dir+"/"+kAdoptJournal;
+    FILE* f=emod::io::fopen_utf8(tmp.c_str(),"wb");
+    if(!f)return false;
+    bool ok=true;
+    for(size_t i=0;i<moves.size();i++)
+        ok=fprintf(f,"%s\t%s\n",moves[i].first.c_str(),moves[i].second.c_str())>0&&ok;
+    ok=emod::io::sync_file(f)&&ok;
+    ok=fclose(f)==0&&ok;
+    ok=ok&&eden_fs_move_new(tmp,fin);
+    if(!ok)eden_fs_remove(tmp);
+    return ok;
+}
+
+// The journal of a `.migrating` dir: root name -> folder name. false when absent or unreadable.
+static bool fm_readJournal(const std::string& dir,std::vector<std::pair<std::string,std::string> >* moves){
+    FILE* f=emod::io::fopen_utf8((dir+"/"+kAdoptJournal).c_str(),"rb");
+    if(!f)return false;
+    std::string all;
+    char buf[4096];size_t n;
+    while((n=fread(buf,1,sizeof buf,f))>0)all.append(buf,n);
+    fclose(f);
+    size_t at=0;
+    while(at<all.size()){
+        size_t nl=all.find('\n',at);
+        if(nl==std::string::npos)return false;            // a torn last line: not ours
+        std::string line=all.substr(at,nl-at);at=nl+1;
+        size_t tab=line.find('\t');
+        if(tab==std::string::npos||tab==0||tab+1>=line.size())return false;
+        std::string r=line.substr(0,tab),d=line.substr(tab+1);
+        if(r.find('/')!=std::string::npos||r.find('\\')!=std::string::npos||d.find('/')!=std::string::npos
+           ||d.find('\\')!=std::string::npos||d==kWorldFile||r==".."||d=="..")return false;
+        moves->push_back(std::make_pair(r,d));
+    }
+    return true;
+}
+
+// Rolls a `.migrating` dir without its world back: every journalled sidecar still in the dir moves back
+// to its root name (no-replace). The dir goes only when nothing but the journal is left in it.
+static bool fm_rollBack(const std::string& dir){
+    std::vector<std::pair<std::string,std::string> > moves;
+    const bool haveJournal=fm_readJournal(dir,&moves);
+    if(haveJournal){
+        for(size_t i=0;i<moves.size();i++){
+            const std::string in=dir+"/"+moves[i].second,out=docs+"/"+moves[i].first;
+            if(!eden_fs_exists(in))continue;
+            if(!eden_fs_move_new(in,out)){
+                fprintf(stderr,"adopt: cannot move %s back to %s (taken?); %s left as is\n",in.c_str(),out.c_str(),dir.c_str());
+                return false;
+            }
+            adoptStep("roll back a sidecar");
+        }
+        eden_fs_sync_dir(docs);
+    }
+    // Only the journal (or its unrenamed .tmp) may be left; anything else is not ours to delete.
+    std::vector<std::string> left=eden_fs_list(dir);
+    for(size_t i=0;i<left.size();i++){
+        if(left[i]==kAdoptJournal||left[i]==std::string(kAdoptJournal)+".tmp")continue;
+        fprintf(stderr,"adopt: %s %s; left as is\n",dir.c_str(),haveJournal?"still holds files after the roll back":"has no readable journal");
+        return false;
+    }
+    eden_fs_remove(dir+"/"+kAdoptJournal+".tmp");
+    eden_fs_remove(dir+"/"+kAdoptJournal);
+    adoptStep("roll back: journal removed");
+    bool ok=eden_fs_remove(dir);
+    adoptStep("roll back: dir removed");
+    return ok;
+}
+
+// Rolls a `.migrating` dir that holds its world forward: drop the journal, then rename it to `<id>`
+// (a fresh id when that is taken). Returns the new key, or "" when it stays (logged).
+static std::string fm_rollForward(const std::string& dirName,const std::string& id){
+    const std::string wroot=docs+"/"+kWorldsDir,dir=wroot+"/"+dirName;
+    eden_fs_remove(dir+"/"+kAdoptJournal+".tmp");
+    if(eden_fs_exists(dir+"/"+kAdoptJournal)){
+        eden_fs_remove(dir+"/"+kAdoptJournal);
+        adoptStep("journal removed");
+    }
+    std::string nid=id;
+    for(int tries=0;tries<8;tries++){
+        if(eden_fs_move_new(dir,wroot+"/"+nid)){
+            adoptStep("dir renamed");
+            eden_fs_sync_dir(wroot);
+            return FileManager::worldKeyOfId(nid);
+        }
+        nid=fm_freeIdFrom(id,false);
+    }
+    fprintf(stderr,"adopt: cannot rename %s to a world folder; retried next scan\n",dir.c_str());
+    return std::string();
+}
+
+static bool fm_adoptBusy(){
+    if((single&&single->conversionActive())||eden_storage_import_active())return true;
+    return WorldBrowser::anyBusy();   // not via World::getWorld->menu: Menu's constructor scans before it is set
+}
+
+int FileManager::adoptLooseWorlds(std::vector<std::pair<std::string,std::string> >* moved){
+    if(fm_adoptBusy())return 0;
+    const std::string wroot=docs+"/"+kWorldsDir;
+    int adopted=0;
+
+    // 1. Recover every `.<id>.migrating` a kill or a failure left.
+    if(eden_fs_is_dir(wroot)){
+        std::vector<std::string> ents=eden_fs_list(wroot);
+        for(size_t i=0;i<ents.size();i++){
+            const std::string& e=ents[i];
+            static const std::string suf=".migrating";
+            if(e.size()<=1+suf.size()||e[0]!='.'||!path_has_suffix(e,suf.c_str()))continue;
+            const std::string id=e.substr(1,e.size()-1-suf.size());
+            const std::string dir=wroot+"/"+e;
+            if(!validWorldId(id)||!eden_fs_is_dir(dir))continue;
+            if(eden_fs_exists(dir+"/"+kWorldFile)){
+                std::string key=fm_rollForward(e,id);
+                if(!key.empty()){
+                    printg("adopt: recovered %s -> %s\n",e.c_str(),key.c_str());
+                    adopted++;
+                }
+            }else if(fm_rollBack(dir)){
+                printg("adopt: rolled back %s\n",e.c_str());
+            }
+        }
+    }
+
+    // 2. Adopt every loose `.emod` in the root, except the world that is open.
+    std::string openPath=emodStore?emodStore->path():std::string();
+    std::string openName;
+    if(World::getWorld&&World::getWorld->terrain)openName=World::getWorld->terrain->world_name;
+    std::vector<std::string> names=eden_fs_list(docs);
+    for(size_t i=0;i<names.size();i++){
+        const std::string X=names[i];
+        if(!isEmodName(X)||X.size()<=strlen(EMOD_WORLD_EXTENSION)||X[0]=='.')continue;
+        const std::string src=docs+"/"+X;
+        if(X==openName||src==openPath||eden_fs_is_dir(src))continue;
+
+        // §4.1 Probe: header only. A refused file stays loose (and still lists).
+        uint64_t created=0;
+        {
+            emod::EdenWorldStore st;
+            if(!st.open(src.c_str(),false,true,true)){
+                fprintf(stderr,"adopt: %s is not a readable .emod (%s); left loose\n",X.c_str(),st.error().c_str());
+                continue;
+            }
+            created=st.createdUnix();
+        }   // closed here: Windows cannot move an open file
+
+        // §4.2 The id.
+        const std::string stem=X.substr(0,X.size()-strlen(EMOD_WORLD_EXTENSION));
+        bool digits=!stem.empty()&&stem.size()<=20;
+        for(size_t k=0;k<stem.size()&&digits;k++)digits=stem[k]>='0'&&stem[k]<='9';
+        std::string id;
+        if(digits)id=fm_freeIdFrom(stem,true);
+        else{
+            long long t=(long long)created,now=(long long)time(NULL);
+            if(t<=0||t>now)t=fileMtimeOf(src);
+            if(t<=0)t=now;
+            id=fm_freeIdFrom(std::to_string(t),false);
+        }
+
+        // §4.3 The neighbours (root name -> folder name), and the stale temps deleteWorld would remove.
+        std::vector<std::pair<std::string,std::string> > moves;
+        auto plan=[&](const std::string& root,const std::string& in){
+            if(root.find('\t')!=std::string::npos||root.find('\n')!=std::string::npos)return;
+            if(eden_fs_exists(docs+"/"+root)&&!eden_fs_is_dir(docs+"/"+root))moves.push_back(std::make_pair(root,in));
+        };
+        plan(X+".png","photo.png");
+        {
+            const std::string orig=originalOf(X);   // PROVENANCE pairing, its last use for this world
+            if(!orig.empty())plan(orig,"original"+orig.substr(stemOf(orig).size()));
+        }
+        static const char* const kKinds[2]={"signs","cmd"};
+        for(int k=0;k<2;k++){
+            const std::string a=std::string(kKinds[k])+"_"+stem+".eden.dat",b=std::string(kKinds[k])+".eden.dat";
+            plan(a,b);
+            plan(a+".adopted",b+".adopted");
+        }
+        static const char* const kStale[]={".savejrnl",".converting",".spill",".creating",".compact"};
+        bool removedStale=false;
+        for(size_t k=0;k<sizeof(kStale)/sizeof(kStale[0]);k++){
+            const std::string t=src+kStale[k];
+            if(eden_fs_exists(t)&&!eden_fs_is_dir(t)){eden_fs_remove(t);removedStale=true;}
+        }
+        if(removedStale)adoptStep("stale temps removed");
+
+        // §4.4 The dir and its journal.
+        const std::string mdirName="."+id+".migrating",mdir=wroot+"/"+mdirName;
+        if(!eden_fs_make_dirs(wroot)||!eden_fs_make_dir(mdir)){
+            fprintf(stderr,"adopt: cannot make %s; %s left loose\n",mdir.c_str(),X.c_str());
+            continue;
+        }
+        adoptStep("dir made");
+        if(!fm_writeJournal(mdir,moves)){
+            fprintf(stderr,"adopt: cannot write the journal in %s; %s left loose\n",mdir.c_str(),X.c_str());
+            fm_rollBack(mdir);
+            continue;
+        }
+        eden_fs_sync_dir(mdir);
+        eden_fs_sync_dir(wroot);
+        adoptStep("journal written");
+
+        // §4.5 Sidecars in (no-replace).
+        bool ok=true;
+        for(size_t k=0;k<moves.size()&&ok;k++){
+            ok=eden_fs_move_new(docs+"/"+moves[k].first,mdir+"/"+moves[k].second);
+            if(ok)adoptStep("sidecar moved");
+            else fprintf(stderr,"adopt: cannot move %s into %s\n",moves[k].first.c_str(),mdirName.c_str());
+        }
+        // §4.6 The commit point: the world file, one rename.
+        if(ok){
+            ok=eden_fs_move_new(src,mdir+"/"+kWorldFile);
+            if(!ok)fprintf(stderr,"adopt: cannot move %s into %s\n",X.c_str(),mdirName.c_str());
+        }
+        if(!ok){
+            eden_fs_sync_dir(docs);
+            if(!fm_rollBack(mdir))fprintf(stderr,"adopt: roll back of %s incomplete; retried next scan\n",mdirName.c_str());
+            fprintf(stderr,"adopt: %s left loose\n",X.c_str());
+            continue;
+        }
+        eden_fs_sync_dir(mdir);
+        eden_fs_sync_dir(docs);
+        adoptStep("world moved");
+
+        // §4.7 Journal out, dir renamed to <id>.
+        std::string key=fm_rollForward(mdirName,id);
+        eden_fs_sync_dir(docs);
+        if(key.empty())continue;   // the world is safe in the .migrating dir; the next scan finishes it
+        adoptedKeys[X]=key;
+        if(moved)moved->push_back(std::make_pair(X,key));
+        printg("adopt: %s -> %s (%d neighbour%s)\n",X.c_str(),key.c_str(),(int)moves.size(),moves.size()==1?"":"s");
+        adopted++;
+    }
+    return adopted;
+}
+
+std::string FileManager::adoptedKeyOf(const std::string& looseName){
+    std::map<std::string,std::string>::const_iterator it=adoptedKeys.find(looseName);
+    return it==adoptedKeys.end()?looseName:it->second;
+}
+
 bool FileManager::worldNeedsConversion(const std::string& nameIn){
     const std::string& name=nameIn;
     if(isEmodName(nameIn)||!isSourceName(name))return false;
@@ -2616,6 +3175,7 @@ struct EmodConvJob{
     emod::ImportJob job;
     std::string outPath,srcPath;
     std::string outName;   // G.2b-4: was a retained NSString*
+    std::string id;        // K.0w-3: the staging id (Worlds/.<id>.partial)
 };
 static EmodConvJob* convJob=NULL;
 static std::string convError;
@@ -2680,6 +3240,20 @@ std::string FileManager::conversionError(){return convError;}
 
 void FileManager::cleanConversionTemps(){
     if(convJob)return;
+    // K.0w-3: a killed import's staging dir. Never while a convert / download / import is live (fm_adoptBusy),
+    // and never a `.migrating` dir (adoption's recovery owns those).
+    if(!fm_adoptBusy()){
+        const std::string wroot=documents+"/"+kWorldsDir;
+        std::vector<std::string> ents=eden_fs_list(wroot);
+        for(size_t i=0;i<ents.size();i++){
+            static const std::string suf=".partial";
+            const std::string& e=ents[i];
+            if(e.size()>1+suf.size()&&e[0]=='.'&&path_has_suffix(e,suf.c_str())&&eden_fs_is_dir(wroot+"/"+e)){
+                eden_fs_remove_tree(wroot+"/"+e);
+                printg("emod: removed the stale staging dir %s\n",e.c_str());
+            }
+        }
+    }
     std::vector<std::string> names=eden_fs_list(documents);
     for(size_t i=0;i<names.size();i++){
         const std::string& f=names[i];
@@ -2702,18 +3276,23 @@ int FileManager::convertStep(const std::string& nameIn,int* percent,std::string*
         j->srcPath=docs+"/"+name;
         // A fresh stem unless this one is taken by a `.emod` of some OTHER source (a different
         // `.eden` re-imported under the same name lists separately and converts beside the first).
-        std::string stem=stemOf(name);
-        for(int k=1;k<=99;k++){
-            j->outPath=docs+"/"+stem+(k==1?std::string():"-"+std::to_string(k))+".emod";
-            if(fileSizeOf(j->outPath)==0)break;
+        // K.0w-3 (plan §5.2): the output goes to Worlds/.<id>.partial/world.emod and the dir is renamed to
+        // Worlds/<id> when the job is done, so a source never needs a fresh stem any more.
+        j->id=newWorldId(docs);
+        const std::string stage=beginStaging(docs,j->id);
+        if(stage.empty()){
+            convError="cannot make the staging folder";
+            delete j;
+            return -1;
         }
-        j->outName=j->outPath.substr(docs.size()+1);
+        j->outPath=stage+"/"+kWorldFile;
         // S.5e: the prompt's answer for this world, else the Settings toggle. Consumed here.
         bool up=(heightAsked&&heightAskName==name&&heightChoice>=0)?(heightChoice==1):upgradeOnConvert();
         clearHeightChoice();
         if(!j->job.begin(j->srcPath,j->outPath,name,(int64_t)fileMtimeOf(j->srcPath),up)){
             convError=j->job.error();
             printg("emod: cannot convert %s: %s\n",j->srcPath.c_str(),convError.c_str());
+            discardStaging(docs,j->id);
             delete j;
             return -1;
         }
@@ -2726,6 +3305,7 @@ int FileManager::convertStep(const std::string& nameIn,int* percent,std::string*
     if(r==emod::ImportJob::FAILED){
         convError=j->job.error();
         printg("emod: conversion of %s failed: %s\n",j->srcPath.c_str(),convError.c_str());
+        discardStaging(docs,j->id);
         delete j;convJob=NULL;
         return -1;
     }
@@ -2733,18 +3313,48 @@ int FileManager::convertStep(const std::string& nameIn,int* percent,std::string*
         if(percent)*percent=j->job.percent();
         return 0;
     }
-    // Committed and renamed by the converter; the source was only ever read.
-    // G.2b-4: moveItemAtPath: never replaced an existing file on Apple (eden_fs_move would), hence the check.
-    std::string oldPng=documents+"/"+name+".png";
-    std::string newPng=documents+"/"+j->outName+".png";
-    if(eden_fs_exists(oldPng)&&!eden_fs_exists(newPng)){
-        eden_fs_move(oldPng,newPng);
+    // The converter committed Worlds/.<id>.partial/world.emod; the source was only ever read.
+    stageStep("converted");
+    const std::string key=commitStaging(docs,j->id);   // the commit point
+    if(key.empty()){
+        convError="cannot move the converted world into place";
+        printg("emod: conversion of %s: %s\n",j->srcPath.c_str(),convError.c_str());
+        discardStaging(docs,j->id);
+        delete j;convJob=NULL;
+        return -1;
     }
-    if(outName)*outName=j->outName;
+    j->outName=key;
+    // Neighbours move in AFTER the commit, sidecars first and the source last: a kill in between leaves the
+    // world listed and the source still loose (converts again as a second world; nothing is lost). All
+    // no-replace; a failed move leaves that file where it was.
+    const std::string dir=worldDirOf(key);
+    const std::string stem=stemOf(name);
+    auto into=[&](const std::string& rootName,const std::string& inName)->bool{
+        const std::string from=docs+"/"+rootName;
+        if(!eden_fs_exists(from)||eden_fs_is_dir(from))return false;
+        bool ok=eden_fs_move_new(from,docs+"/"+dir+"/"+inName);
+        if(ok)stageStep("neighbour moved");
+        else printg("emod: could not move %s into %s\n",rootName.c_str(),dir.c_str());
+        return ok;
+    };
+    static const char* const kKinds[2]={"signs","cmd"};
+    for(int k=0;k<2;k++){
+        const std::string a=std::string(kKinds[k])+"_"+stem+".eden.dat",b=std::string(kKinds[k])+".eden.dat";
+        into(a,b);
+        into(a+".adopted",b+".adopted");
+    }
+    into(name+".png","photo.png");
+    const std::string origIn="original"+name.substr(stem.size());
+    const bool movedSrc=into(name,origIn);
+    if(outName)*outName=key;
     if(percent)*percent=100;
-    pendingOriginalName=nameIn;
-    printg("emod: converted %s (%llu B, %d bands) -> %s (%llu B, %d bands)\n",j->srcPath.c_str(),fileSizeOf(j->srcPath),
-           j->job.stats().bandsIn,j->outPath.c_str(),fileSizeOf(j->outPath),j->job.stats().bandsOut);
+    if(movedSrc){
+        pendingOriginalName=nameIn;                 // the prompt's label
+        pendingOriginalPath=dir+"/"+origIn;         // what resolveOriginal(TRUE) deletes
+    }
+    printg("emod: converted %s (%llu B, %d bands) -> %s (%llu B, %d bands)\n",j->srcPath.c_str(),
+           movedSrc?fileSizeOf(docs+"/"+pendingOriginalPath):fileSizeOf(j->srcPath),
+           j->job.stats().bandsIn,key.c_str(),fileSizeOf(docs+"/"+key),j->job.stats().bandsOut);
     delete j;convJob=NULL;
     return 1;
 }
@@ -2754,7 +3364,7 @@ std::string FileManager::pendingOriginal(){return pendingOriginalName;}
 void FileManager::resolveOriginal(bool deleteIt){
     if(pendingOriginalName.empty())return;
     if(deleteIt){
-        std::string p=documents+"/"+pendingOriginalName;
+        std::string p=documents+"/"+(pendingOriginalPath.empty()?pendingOriginalName:pendingOriginalPath);
         if(eden_fs_remove(p)){
             printg("emod: deleted the original %s\n",p.c_str());
         }else{
@@ -2762,6 +3372,7 @@ void FileManager::resolveOriginal(bool deleteIt){
         }
     }
     pendingOriginalName.clear();
+    pendingOriginalPath.clear();
 }
 
 // ---- H.15: the world list's Properties screen ---------------------------------------------------
@@ -2806,6 +3417,7 @@ bool FileManager::readWorldProperties(const std::string& file_name,WorldProps* o
     p.genSource=WP_GEN_RECORD; memset(&p.gen,0,sizeof(p.gen));
     p.originalBytes=0; p.createdUnix=0; p.columns=-1; p.signs=-1; p.goldencubes=-1; p.convertedVersion=0;
     p.openMs=0;
+    p.skyLocked=false; p.skyT=SkyCycle::DEFAULT_TIME;
     const std::string fn=file_name,path=docs+"/"+fn;
     p.fileBytes=fileSizeOf(path);
     p.savedUnix=fileMtimeOf(path);
@@ -2822,6 +3434,9 @@ bool FileManager::readWorldProperties(const std::string& file_name,WorldProps* o
         p.height=st.bands()*CHUNK_SIZE;
         p.columns=(int)st.columnCount();
         p.createdUnix=(long long)st.createdUnix();
+        std::vector<uint8_t> kraw;   // DN.6: the clock, for Lock time of day
+        if(st.hasRecord(emod::T_SKY_CLOCK)&&st.readRecord(emod::T_SKY_CLOCK,kraw)<=emod::EdenWorldStore::READ_FALLBACK&&!kraw.empty())
+            SkyCycle::decode(&kraw[0],kraw.size(),&p.skyT,&p.skyLocked);
         std::vector<uint8_t> traw;
         p.signs=0;
         if(st.hasRecord(emod::T_SIGN_TRAILER)&&st.readRecord(emod::T_SIGN_TRAILER,traw)<=emod::EdenWorldStore::READ_FALLBACK&&!traw.empty()){
@@ -2894,7 +3509,8 @@ int FileManager::applyWorldProperties(const std::string& file_name,const WorldPr
         genChanged=memcmp(a,b,sizeof(a))!=0;
         writeGen=genChanged||cur.genSource!=WP_GEN_RECORD;
     }
-    if(!nameChanged&&!writeGen)return 0;
+    const bool lockChanged=e.skyLocked!=cur.skyLocked;   // DN.6: Lock time of day
+    if(!nameChanged&&!writeGen&&!lockChanged)return 0;
     const std::string path=docs+"/"+file_name;
     emod::EdenWorldStore own;
     emod::EdenWorldStore* st=(emodStore&&emodStore->path()==path)?emodStore:&own;
@@ -2923,6 +3539,19 @@ int FileManager::applyWorldProperties(const std::string& file_name,const WorldPr
         ok=st->putRecord(emod::T_GENERATOR,rec,sizeof(rec));
     }
     if(writeGen)res|=WP_WROTE_GENERATOR;
+    if(ok&&lockChanged){
+        // The stored time stands; only the lock bit moves. An open world's clock is the live one.
+        uint8_t krec[SkyCycle::RECORD_BYTES];
+        if(st==emodStore){ SkyCycle::setLocked(e.skyLocked); SkyCycle::encode(krec); }
+        else{
+            memset(krec,0,sizeof(krec));
+            const float tf=(float)cur.skyT;
+            memcpy(krec,&tf,4);
+            krec[4]=e.skyLocked?SkyCycle::FLAG_LOCKED:0;
+        }
+        ok=st->putRecord(emod::T_SKY_CLOCK,krec,sizeof(krec));
+        if(ok)res|=WP_WROTE_SKY;
+    }
     if(!ok){
         printg("applyWorldProperties: could not stage the records: %s\n",st->error().c_str());
         st->abortBatch();
@@ -2933,5 +3562,6 @@ int FileManager::applyWorldProperties(const std::string& file_name,const WorldPr
         return -1;
     }
     if(st==emodStore&&emodHeader)memcpy(emodHeader,&h,sizeof(h));
+    if(st==emodStore&&(res&WP_WROTE_SKY))SkyCycle::saved();
     return res;
 }

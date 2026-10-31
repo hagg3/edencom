@@ -154,7 +154,11 @@ void setState(const State& s);
 void setFog(const Rgba& c, float start, float end);
 void fogOff();
 void setLights(const LightSet& l);
-void drawWorld  (const Geometry& g, Tex t, const Rgba& tint, float alphaRef = -1.0f);   // program 1
+// DN.5 (day/night cycle): an RGB multiplier on program 1's vertex colour (drawWorld, and drawLit with
+// Original lighting off). Kept until changed and reset to (1,1,1) by beginFrame; x1.0 is exact, so a
+// caller that never sets it draws exactly as before. A caller that sets it puts (1,1,1) back after.
+void setWorldLight(float r, float g, float b);
+void drawWorld (const Geometry& g, Tex t, const Rgba& tint, float alphaRef = -1.0f);   // program 1
 void draw2D     (const Geometry& g, Tex t, const Rgba& tint);                          // program 2
 void drawSprites(const Geometry& g, Tex t, const SpriteParams& p);                     // program 3
 void drawSkinned(const Geometry& g, Tex t, const Rgba& tint, const float* palette, int nmat,

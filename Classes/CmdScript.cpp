@@ -17,7 +17,9 @@
 #include "Model.h"
 #include "SignTool.h"
 #include "WorldTrailer.h"
+#include "SkyCycle.h"
 #include "MpWorld.h"   // MP.3a: no scripts or world edits in a session
+#include "BlockRegistry.h"   // K.1-3: block names, the world palette
 
 #include <cctype>
 #include <cmath>
@@ -92,26 +94,8 @@ bool coord(const std::string& t, int* out, bool* isAbs, bool absOK) {
     return true;
 }
 
-// cmd.html's names. voidstone, sky, pillar, jungle, future, tech and lavafield are the 2026 game's
-// names for blocks Emod cannot identify (no list maps them onto 112-127): unknown here, on purpose.
-struct Name { const char* name; int id; };
-const Name kBlocks[] = {
-    {"air", TYPE_NONE}, {"stone", TYPE_STONE}, {"dirt", TYPE_DIRT}, {"grass", TYPE_GRASS},
-    {"sand", TYPE_SAND}, {"wood", TYPE_WOOD}, {"tree", TYPE_TREE}, {"leaves", TYPE_LEAVES},
-    {"glass", TYPE_GLASS}, {"water", TYPE_WATER}, {"lava", TYPE_LAVA}, {"tnt", TYPE_TNT},
-    {"lamp", TYPE_LIGHTBOX}, {"brick", TYPE_BRICK}, {"cobble", TYPE_COBBLESTONE}, {"ice", TYPE_ICE},
-    {"snow", TYPE_SNOW}, {"crystal", TYPE_CRYSTAL}, {"trampoline", TYPE_TRAMPOLINE},
-    {"ladder", TYPE_LADDER}, {"cloud", TYPE_CLOUD}, {"weave", TYPE_WEAVE}, {"vine", TYPE_VINE},
-    {"shingle", TYPE_SHINGLE}, {"gradient", TYPE_GRADIENT}, {"firework", TYPE_FIREWORK},
-    {"gold", TYPE_GOLDEN_CUBE}, {"steel", TYPE_STEEL}, {"darkstone", TYPE_DARK_STONE},
-    {"flower", TYPE_FLOWER},
-    // Emod's own names for the 2026 blocks (docs/world-and-terrain.md), so they can be named at all.
-    {"oresand", TYPE_ORE_SAND}, {"spacestone", TYPE_SPACE_STONE}, {"carpet", TYPE_CARPET},
-    {"snakeskin", TYPE_SNAKESKIN}, {"obsidian", TYPE_OBSIDIAN}, {"cheese", TYPE_CHEESE},
-    {"spacedirt", TYPE_SPACE_DIRT}, {"spacegrass", TYPE_SPACE_GRASS}, {"moss", TYPE_MOSS},
-    {"darkmatter", TYPE_DARK_MATTER}, {"spacesand", TYPE_SPACE_SAND}, {"moonrock", TYPE_MOONROCK},
-    {"basalt", TYPE_BASALT}, {"darktile", TYPE_DARK_TILE}, {"algae", TYPE_ALGAE},
-};
+// The block names (stock canonical `eden:*`, the console aliases, mod `ns:path`) live in BlockRegistry
+// since K.1-3; CmdScript::blockByName reads them.
 const char* const kCreatures[NUM_CREATURES] = {"moof", "batty", "green", "nergle", "stumpy", "charger", "stalker"};
 
 // The built-in verbs (CmdScript::verbs). The wording of every "X needs ..." error comes from here.
@@ -134,6 +118,8 @@ const CmdScript::Verb kVerbs[] = {
     {"midnight", "", NULL, "The night sky (time 0).", {0}},
     {"time", "T", "T from 0 to 1", "Sets the time, T from 0 to 1: 0.25..0.75 is day, the rest night.",
      {CmdScript::ARG_NUMBER}},
+    {"timefreeze", "on|off", "on or off", "Stops or restarts the day/night clock; saved with the world. time T still sets it.",
+     {CmdScript::ARG_ONOFF}},
     {"heal", "", NULL, "Full health.", {0}},
     {"hurt", "N", "a number", "Deals N% damage. Only bites with Health on.", {CmdScript::ARG_NUMBER}},
     {"gold", "N", "a number", "Grants N golden cubes (the purse holds 999).", {CmdScript::ARG_NUMBER}},
@@ -168,8 +154,18 @@ bool coords(const std::vector<std::string>& w, size_t from, int n, CmdScript::St
 }
 bool block(const std::string& t, CmdScript::Stmt* s) {
     s->type = CmdScript::blockByName(t.c_str());
-    if (s->type < 0) return bad(s, "Unknown block: " + t);
-    return true;
+    if (s->type >= 0) return true;
+    // K.1-3: a mod block whose definition is loaded but has no id in this world yet. It gets one when the
+    // statement first places it (BlockRegistry::acquire), not here: parsing a script must never use up a
+    // palette slot (D8: slots are never freed).
+    const std::string n = lower(t);
+    if (n.find(':') != std::string::npos && BlockRegistry::findDef(n)) {
+        if (MpWorld::active()) return bad(s, "Mod blocks are not available in a multiplayer world: " + t);   // D7
+        s->type = CmdScript::TYPE_BY_NAME;
+        s->text = n;
+        return true;
+    }
+    return bad(s, "Unknown block: " + t);
 }
 bool colour(const std::string& t, CmdScript::Stmt* s) {
     double v;
@@ -258,6 +254,13 @@ bool parseStmt(const std::string& src, CmdScript::Stmt* s, const CmdScript::Pars
         s->f = (float)v;
         return true;
     }
+    if (c == "timefreeze") {
+        const std::string a = n > 1 ? lower(w[1]) : std::string();
+        if (n != 2 || (a != "on" && a != "off")) return bad(s, needs("timefreeze", true));
+        s->op = CS::OP_TIMEFREEZE;
+        s->f = a == "on" ? 1.0f : 0.0f;
+        return true;
+    }
     if (c == "heal") { s->op = CS::OP_HEAL; return true; }
     if (c == "flash") { s->op = CS::OP_FLASH; return true; }
     if (c == "hurt" || c == "gold" || c == "sound" || c == "wait") {
@@ -306,8 +309,16 @@ int CmdScript::blockByName(const char* name) {
     const std::string t = lower(name ? name : "");
     if (t.empty()) return -1;
     double v;
-    if (number(t, &v)) return (v == std::floor(v) && v >= 0 && v <= 127) ? (int)v : -1;
-    for (const Name& b : kBlocks) if (t == b.name) return b.id;
+    // K.1-3: 0..127 are the stock ids; 128..255 are world-local, so a number names one only when this
+    // world's palette assigns it (names are portable, numbers are not).
+    if (number(t, &v)) {
+        if (v != std::floor(v) || v < 0 || v > 255) return -1;
+        return (v <= STOCK_BLOCK_MAX || BlockRegistry::assigned((int)v)) ? (int)v : -1;
+    }
+    const int stock = BlockRegistry::stockByName(t);   // `eden:stone_ramp1` or an alias (`stone`)
+    if (stock >= 0) return stock;
+    // A mod name (D15: always written in full) with an id in this world. In a session the palette is empty.
+    if (t.find(':') != std::string::npos) return BlockRegistry::idOf(t);
     return -1;
 }
 
@@ -320,9 +331,7 @@ int CmdScript::creatureByName(const char* name) {
 }
 
 std::vector<std::string> CmdScript::blockNames() {
-    std::vector<std::string> r;
-    for (const Name& b : kBlocks) r.push_back(b.name);
-    return r;
+    return BlockRegistry::aliasNames();
 }
 
 std::vector<std::string> CmdScript::creatureNames() {
@@ -515,14 +524,28 @@ bool setCell(int ex, int ey, int ez, int type, int color) {
     return true;
 }
 
+// Stock: below 127 (TYPE_ALGAE stays non-placeable), no door/portal half, not the custom block. K.1-3: a
+// palette id this world assigns (a missing definition included: the byte keeps its meaning).
 bool placeable(int type) {
-    return type >= 0 && type < NUM_BLOCKS && !(blockinfo[type] & (IS_DOOR | IS_PORTAL)) && type != TYPE_CUSTOM;
+    if (type < 0 || type >= BLOCK_IDS || (blockinfo[type] & (IS_DOOR | IS_PORTAL))) return false;
+    if (type > STOCK_BLOCK_MAX) return BlockRegistry::assigned(type);
+    return type < STOCK_BLOCK_MAX && type != TYPE_CUSTOM;
+}
+
+// K.1-3: the statement's block id; a mod name not yet in the palette gets its id now (the flag
+// compaction first, on an unflagged world: BlockRegistry::acquire). -1 = refused (told to the sink).
+int stmtType(const CmdScript::Stmt& s, Inst* in) {
+    if (s.type != CmdScript::TYPE_BY_NAME) return s.type;
+    std::string why;
+    const int t = BlockRegistry::acquire(s.text, &why);
+    if (t < 0) refuse(in->sink, why);
+    return t;
 }
 
 void setSky(float t) {
     Terrain* ter = World::getWorld->terrain;
     const bool night = t < 0.25f || t >= 0.75f;
-    const bool isNight = v_equals(ter->final_skycolor, colorTable[54]);
+    const bool isNight = sky_paintedNight();   // setSky repaints: the painted bit (DN.5)
     if (night == isNight) return;
     if (night) {
         // Remember the day sky this region had, to give it back on `day`.
@@ -608,7 +631,9 @@ void execute(Inst* in) {
         switch (s.op) {
         case CS::OP_IF:
         case CS::OP_UNLESS: {
-            const bool holds = resident(x, y, z) && ter->getLand(x, z, y) == s.type;
+            // K.1-3: a mod name with no id in this world matches no cell (and is not given one).
+            const int want = s.type == CS::TYPE_BY_NAME ? BlockRegistry::idOf(s.text) : s.type;
+            const bool holds = want >= 0 && resident(x, y, z) && ter->getLand(x, z, y) == want;
             in->pc = (holds == (s.op == CS::OP_IF)) ? in->pc + 1 : skipFrom(st, in->pc + 1);
             continue;
         }
@@ -642,18 +667,21 @@ void execute(Inst* in) {
                 pl->vel = MakeVector(0, 0, 0);
             }
             break;
-        case CS::OP_SET:
-            if (placeable(s.type)) setCell(x, y, z, s.type, s.color);
+        case CS::OP_SET: {
+            const int t = stmtType(s, in);
+            if (placeable(t)) setCell(x, y, z, t, s.color);
             else g_stats.refusedCells++;
             break;
+        }
         case CS::OP_FILL: {
-            if (!placeable(s.type)) { g_stats.refusedCells++; break; }
+            const int t = stmtType(s, in);
+            if (!placeable(t)) { g_stats.refusedCells++; break; }
             const int x2 = s.abs[3] ? s.v[3] : bx + s.v[3], y2 = s.abs[4] ? s.v[4] : by + s.v[4],
                       z2 = s.abs[5] ? s.v[5] : bz + s.v[5];
             for (int a = std::min(x, x2); a <= std::max(x, x2); ++a)
                 for (int b = std::min(y, y2); b <= std::max(y, y2); ++b)
                     for (int c = std::min(z, z2); c <= std::max(z, z2); ++c)
-                        setCell(a, b, c, s.type, s.color);
+                        setCell(a, b, c, t, s.color);
             break;
         }
         case CS::OP_PAINT:
@@ -687,6 +715,9 @@ void execute(Inst* in) {
         }
         case CS::OP_TIME:
             CS::timeHook(s.f);
+            break;
+        case CS::OP_TIMEFREEZE:
+            SkyCycle::setLocked(s.f != 0);   // DN.2 (plan D7): the same flag as SKY_CLOCK's bit 0
             break;
         case CS::OP_HEAL:
             pl->life = 1;
@@ -737,6 +768,13 @@ void syncGreen() {
     g_green.swap(want);
 }
 
+// DN.2 (plan D8): the default time hook for blocks and the console. It decides on every call, so
+// the Experiments toggle takes effect at once.
+void skyTime(float t) {
+    if (SkyCycle::enabled()) SkyCycle::setTime(t);
+    else setSky(t);
+}
+
 }  // namespace
 
 int CmdScript::liveCount() {
@@ -745,7 +783,7 @@ int CmdScript::liveCount() {
     return n;
 }
 
-void (*CmdScript::timeHook)(float t) = setSky;
+void (*CmdScript::timeHook)(float t) = skyTime;
 
 void CmdScript::playerAnchor(int* x, int* y, int* z) {
     const Player* p = World::getWorld->player;
@@ -781,9 +819,15 @@ int CmdScript::runLine(const char* src, int ax, int ay, int az, int source, Sink
     if (MpWorld::active()) {
         for (const Stmt& s : prog->stmts) {
             switch (s.op) {
+                // K.1-3: these were listed with OP_TIME below until K.1-3, so with the cycle on they ran in a
+                // session (an aa31e2a regression); world edits are refused whatever the cycle says.
                 case OP_TP: case OP_SET: case OP_FILL: case OP_PAINT: case OP_EXPLODE: case OP_FIRE: case OP_SPAWN:
-                case OP_TIME: case OP_GOLD: case OP_RUN: case OP_IF: case OP_UNLESS:
+                case OP_GOLD: case OP_RUN: case OP_IF: case OP_UNLESS:
                     if (sink) sink->line(Sink::ERR, "Not in a multiplayer world: that changes the world (line not run)");
+                    return RUN_BAD;
+                case OP_TIME: case OP_TIMEFREEZE:
+                    if (SkyCycle::enabled()) break;   // DN.6 (D9): with the cycle on these move the session-local clock only
+                    if (sink) sink->line(Sink::ERR, "Not in a multiplayer world unless the Day/night cycle is on (Settings > Experiments): time would be a world edit");
                     return RUN_BAD;
                 default: break;
             }

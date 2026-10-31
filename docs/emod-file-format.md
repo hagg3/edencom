@@ -51,14 +51,24 @@ Records start at offset 64 and every record starts on an 8-byte boundary.
 | 0 | `char[8]` | magic | `"EMODWLD\0"` |
 | 8 | u16 | fmt_version | **1** |
 | 10 | u16 | bands | **4** (64-block-tall world) or **16** (256z) |
-| 12 | u32 | flags | 0 |
+| 12 | u32 | flags | bit 0 = `BLOCK_PALETTE` (K.1-2, below); every other bit 0 |
 | 16 | u64 | created_unix | seconds; informational, never read for a decision |
 | 24 | `u8[36]` | reserved | 0 |
 | 60 | u32 | crc32 | CRC-32 of bytes 0..59 |
 
 A reader **must refuse** the file if the magic, the CRC or `fmt_version` doesn't match, if `bands`
-is not 4 or 16, or if `flags` or `reserved` is non-zero (that means a newer writer). Changing a
-world's height (256z → 64z) is done by writing a new file, never by editing this header.
+is not 4 or 16, or if `reserved` or any `flags` bit it does not know is non-zero (that means a newer
+writer). Changing a world's height (256z → 64z) is done by writing a new file, never by editing this
+header.
+
+**`flags` bit 0, `BLOCK_PALETTE` (K.1-2, 2026-10-31):** type bytes 128–255 in this file are defined by
+the live `BLOCK_PALETTE` record (below); set ⇔ such a record is live. It is set only by a compaction
+(the header is never edited in place) and, since K.1-4, by converting a `.eden` that carries a clean
+`BPL1` trailer section ("Conversion from `.eden`"). Every reader before K.1-2 refuses a flagged file as "written by a newer build", which
+is the point: it can neither open nor damage a world whose bytes ≥ 128 mean something. *Engine
+policy:* `EdenWorldStore::acceptPaletteFlag` gates bit 0; it was off in the game through K.1-2 and is
+**on since K.1-3** (2026-10-31), when the runtime (`Classes/BlockRegistry`) began resolving palettes and
+`rebuild2()` stopped rewriting bytes ≥ 128. `--emod-selftest` turns it off to stand in for an old reader.
 
 ### RecordHeader (32 bytes)
 
@@ -105,7 +115,62 @@ the version S.2 vendors. Offline artefacts (the bundled map) may use level 19.
 | 7 | `COMMIT` | — | 24 bytes (below) | **0** | ends a batch |
 | 8 | `INDEX` | — | reserved | — | **not written in v1** (decided by S.3: a full scan opens Quarry's 30,299-column log in 15 ms on the Mac, ~45 ms by the ×3 A8X proxy, under the 100 ms threshold). A v1 reader ignores it. |
 | 9 | `GENERATOR` | singleton | 28 bytes (below) | **0** | H.4 (2026-10-15): which runtime generator fills the world's unsaved columns; World Properties (H.15) may append a newer one. Taken from the reserved range, so a reader that predates it ignores it, as this table always required. |
-| 10–255 | reserved | — | — | — | a reader treats one as a member of its batch and otherwise ignores it; `verify` reports it |
+| 10 | `BLOCK_PALETTE` | singleton | 8 + count × 68 bytes (below) | **0** | K.1-2 (2026-10-31): what type bytes 128–255 mean. Only in a file with `flags` bit 0. A pre-K.1-2 reader never sees one (it refuses flagged files). |
+| 11 | `SKY_CLOCK` | singleton | 16 bytes (below) | **0** | DN.2 (2026-10-31): the day/night cycle's time of day and lock. Taken from the reserved range, so a reader that predates it ignores it. |
+| 12–255 | reserved | — | — | — | a reader treats one as a member of its batch and otherwise ignores it; `verify` reports it |
+
+### BLOCK_PALETTE (K.1-2)
+
+The world-local half of the block id space (plan `WORKING/block-registry-plan-2026-10-31.md` §1, §3).
+Type bytes **0–127 are the stock ids, fixed forever** and never appear here; bytes **128–255** get a
+meaning per world from this record. Codec 0.
+
+| offset | type | field |
+|---|---|---|
+| 0 | u32 | version = 1 |
+| 4 | u32 | count, 0–128 |
+| 8 | count × 68 B | entries, ascending `id` |
+
+Entry (68 bytes, no padding):
+
+| offset | type | field |
+|---|---|---|
+| 0 | u8 | id, 128–255 |
+| 1 | u8 | fallback_type: the stock block export/upload/multiplayer write instead, 1–127, not a door or portal half (66–70, 75–79) and not 80 (`TYPE_CUSTOM`) |
+| 2 | u8 | fallback_paint, 0–54 |
+| 3 | u8 | flags = 0 (reserved) |
+| 4 | `char[64]` | name, `namespace:path`, NUL-padded: at least one NUL and nothing but NULs after the first |
+
+**Names** (D15): namespace `[a-z0-9_]{1,24}`, path `[a-z0-9_/]{1,48}`, the whole ≤ 63 bytes. Namespace
+`eden` names the stock ids and never appears in a palette; `emod` is Emod's own (test blocks, the
+`emod:unknown_<id>` reservations).
+
+**Rules:** ids and names distinct; `flags` bit 0 set ⇔ a live `BLOCK_PALETTE`; **every committed version is
+a superset of the one before, with identical bytes for every kept id** (D8: a slot, once named, is never
+freed or renamed). Like every singleton the newest committed version counts. A byte ≥ 128 with no entry
+is legal and keeps its value: the engine draws it as the "missing" block (K.1-3, `docs/world-and-terrain.md`).
+
+**Writers:** a byte ≥ 128 must never sit in an unflagged file with a meaning (D14), so a world's first
+palette arrives by the **flag compaction** (`EdenWorldStore::compact(true, palette)`, `emod.py compact
+--set-palette-flag`): the compaction below with `flags` bit 0 in the new file header and a
+`BLOCK_PALETTE` holding the supplied entries plus, for every type byte ≥ 128 already present in a live
+column with no entry, an entry `emod:unknown_<id>` (fallback 2 stone, paint 0; D13: old garbage is
+reserved before anything can be allocated over it). A supplied entry whose id is such a latent byte
+is refused with nothing written. The rename of the compacted file is the commit point, so the path
+holds either the old unflagged world or the flagged one with its record, never a flagged file without
+it. Later palettes are ordinary appended records (`EdenWorldStore::putRecord` refuses one in an
+unflagged file, one that breaks a rule, and one that drops or changes a live entry). Conversion writes
+one from a `BPL1` trailer section (K.1-4, "Conversion from `.eden`"). *The game (K.1-3)* runs the flag compaction with no supplied entries at the
+first allocation in an unflagged world, reloads the palette it wrote (the `emod:unknown_<id>`
+reservations included), and only then gives out an id, so the D13 clash refusal cannot arise; later ids
+travel in the save's ordinary batch (`FileManager::preparePaletteAllocation`, `saveEmodWorld`).
+
+**`verify`** checks the flag ⇔ record, codec 0, every rule above, and the superset rule between each
+pair of consecutive committed versions; it **warns** (not damage) about a byte ≥ 128 in an unflagged
+file and about a byte with no entry in a flagged one. The **state digest** appends `"BPL"` + the live
+record's bytes when one exists (so every digest of a file without one is unchanged). `dump` lists the
+entries. **Export** (K.1-4): the own format carries the live record as a `BPL1` trailer section ("Export to
+`.eden`"); every other target writes each byte's fallback.
 
 ### COLUMN
 
@@ -219,6 +284,28 @@ record (reserved types are dropped), and the world then loads as the legacy prof
 `emod.py dump` prints it decoded; `verify` checks its length and decodes it. Export writes it into
 the `.eden` header's `reserved[]` as the `EMG1` mirror ([eden-file-format.md](eden-file-format.md)).
 
+### SKY_CLOCK (16 bytes, DN.2)
+
+The day/night cycle's clock (`Classes/SkyCycle.{h,cpp}`; plan `WORKING/day-night-cycle-plan-2026-10-31.md`
+D3/D7). Written by the engine's save, in any batch, whenever the time or the lock changed since the world
+was loaded or the record last committed: the clock runs only while Experiments › *Day/night cycle* is on,
+so a world nobody ran the cycle in (or used `timefreeze` in) never gets one. Exit and warp always commit a
+batch, so the time is kept with no edits. Like every singleton the newest committed version counts.
+Never written by conversion or by a multiplayer session (whose clock is session-local). Codec 0.
+
+| offset | type | field |
+|---|---|---|
+| 0 | f32 | t, time of day in [0, 1): 0 midnight, 0.25 sunrise, 0.5 noon, 0.75 sunset |
+| 4 | u8 | flags: bit 0 = locked (`timefreeze on`, World Properties *Lock time of day*); other bits 0 |
+| 5 | `u8[11]` | 0 |
+
+A reader ignores the other flag bits and bytes 5–15. A record that is not 16 bytes, or whose `t` is not
+in [0, 1) (NaN included), is ignored: the world starts at **t = 0.30**, unlocked, as one with no record does.
+`verify` reports a wrong length or codec. Compaction copies it raw, last of the singletons (after
+`GENERATOR`). Not in the state digest (nor is `GENERATOR`). Not exported to `.eden` (v1); a pre-DN build
+keeps it live through its own saves but drops it if it compacts (the time then resets to 0.30), and a
+pre-DN `emod.py verify` reports it as a reserved type.
+
 ## Batches and commits — writing
 
 A **batch** is one save: records that share one `seq`, followed by a `COMMIT` carrying that `seq`.
@@ -236,8 +323,12 @@ A world's first batch contains at least `WORLD_HEADER`, `CREATURES` and `SUMMARY
 batch (seq 1) of the live records, then `fsync`s and renames over the old one. Ords are kept as
 they are, so they may be sparse.
 - `EdenWorldStore` writes them in conversion's order (`WORLD_HEADER`, `CREATURES`, a non-empty
-  `SIGN_TRAILER`, `PROVENANCE`, then H.4's `GENERATOR`, `COLUMN`s by ord, `SUMMARY`, `COMMIT`);
-  reserved types are dropped.
+  `SIGN_TRAILER`, `PROVENANCE`, then H.4's `GENERATOR`, DN.2's `SKY_CLOCK`, `COLUMN`s by (ord, x, z),
+  K.1-2's `BLOCK_PALETTE`, `SUMMARY`, `COMMIT`); reserved types are dropped, and so is a stray
+  `BLOCK_PALETTE` in an unflagged file. The palette comes after the columns so the flag compaction
+  learns the latent bytes ≥ 128 in the same decode pass. The file header keeps `flags`, or sets bit 0
+  for the flag compaction (above). `emod.py compact` is the byte-for-byte reference (K.1-2's
+  `flagcompact` lines in the fixture pack).
   zstd payloads are copied verbatim after they decode, anything else is re-encoded at zstd-3. So
   compacting a fresh conversion reproduces it byte for byte (an S.3 gate).
 - Compaction is refused while the session's *damaged* flag is set.
@@ -298,6 +389,8 @@ generator, because the next save would then overwrite a player's build. Either c
 - `WORLD_HEADER` and `CREATURES` exist and decode. `WORLD_HEADER` is 192 bytes, its version is 1–6
   (5/6 only with 16 bands), and it uses codec 0.
 - `CREATURES` is 0–400 × 60 bytes, and `SIGN_TRAILER` is a multiple of 16 up to 1 MiB.
+- `flags` bit 0 ⇔ a live `BLOCK_PALETTE`, which obeys its rules (including the superset rule across
+  versions).
 - If there are columns, a `SUMMARY` exists and is exact.
 - Every live column:
   - has an addressable key and no band bits ≥ `bands`;
@@ -341,8 +434,22 @@ It writes one batch, seq 1, in this order:
 3. `SIGN_TRAILER`, if there is one;
 4. `PROVENANCE`;
 5. one `COLUMN` per live directory key, in file-offset order, with ord = rank;
-6. `SUMMARY`;
-7. `COMMIT`.
+6. `BLOCK_PALETTE`, if the trailer carries a clean `BPL1` (below);
+7. `SUMMARY`;
+8. `COMMIT`.
+
+**`BPL1` (K.1-4, 2026-10-31).** When the sign trailer has exactly one well-formed `BPL1` section
+([eden-file-format.md](eden-file-format.md) "BPL1") whose record bytes obey every `BLOCK_PALETTE` rule and
+name no `emod:unknown_*` but their own id's (`emod:unknown_<that id>`), the file header gets `flags` bit 0
+and step 6 writes a `BLOCK_PALETTE`: those entries, plus `emod:unknown_<id>` (fallback 2, paint 0) for
+every type byte ≥ 128 in a live column that has no entry (D13, as the flag compaction does; the decision
+to flag does not depend on the columns, so a streaming converter writes the file header first). Any other
+`BPL1` (malformed, two of them, entries that break a rule) is ignored: no record, no flag, and the bytes
+≥ 128 draw as placeholders until the first allocation's flag compaction reserves them. The section stays
+in `SIGN_TRAILER` verbatim; the loader never reads it (the record is the palette), and export rebuilds it
+from the record. `EdenWorldStore.cpp` `trailer_find_palette` / `converted_palette` and `emod.py`'s
+functions of the same names are the two implementations; the fixture pack's `f256-bpl1*` / `f64-bpl1-latent`
+lines hold them to the same bytes (256z = the streaming converter's copy path, 64z = its rebuild path).
 
 The output goes to `<stem>.emod.converting`. Every record is re-read and compared with the source,
 then the file is `fsync`ed and renamed. The source is only ever read.
@@ -393,7 +500,12 @@ directory region over 256 MiB, and an optional temp-bytes cap (S.5's 500 MB).
 4. **Creature block:** `CREATURES`.
 5. **Directory:** one row per live column. Rows come in `PROVENANCE`'s source row order (keys still
    live), then any other columns in ord order. Each row is `{i32 x, i32 z, u64 offset}`.
-6. **Trailer:** `SIGN_TRAILER`.
+6. **Trailer:** `SIGN_TRAILER`; for a flagged world (K.1-4) with its `BPL1` section set to the live
+   `BLOCK_PALETTE` (`BPL1 | 12 + 68n | w3`, `BPL1`, the record): in the first `BPL1`'s slot keeping its
+   `w3`, else appended after the last section. The trailer's zero tail is kept when the sections' total
+   size is unchanged and re-padded to a whole row otherwise, so a world converted from a `BPL1` source and
+   not given a new id exports byte-identical to it. A flagged world whose palette does not decode, or
+   whose trailer cannot be walked, is refused.
 7. **Generator (H.4):** when the world has a `GENERATOR`, the header's bytes 152..187 are its 36-byte
    `EMG1` mirror (eden-file-format.md, "Header"), except for a 256z → 64z export of a world whose scale
    is not 1× (that terrain cannot continue at 64z, so the cut world takes the legacy fallback).
@@ -403,23 +515,44 @@ and the world has not been saved since conversion, the export is byte-identical 
 Otherwise it is *logically* identical: the same header apart from `directory_offset`, the same
 creature block, the same trailer, and the same engine view of every column.
 
+### Files beside a world (K.0w, 2026-10-31) — not part of the container
+
+An `.emod` is one file; the port keeps it in a folder with Emod-only sidecars: `Worlds/<id>/world.emod`,
+`photo.png` (the list thumbnail), `original.<ext>` (the `.eden` it was converted from, if kept), `signs/cmd.eden.dat`
+(2026-game command-block trailer, `.adopted` once absorbed) and a reserved `world.json`. The folder name is the id
+and nothing inside the `.emod` records it, so the format, header and records are unchanged and the file can be
+moved out and opened alone. Rules and crash safety: `save-load.md` "World folders".
+
 ### Target formats (S.5b, 2026-10-10) — not part of the container
 
 The rules above are the **own-format** export. The engine's exporter (`Classes/EdenWorldExport.cpp`)
 adds three targets for other readers; they are policy, so `emod.py` does not implement them, and
 none of them changes what an `.emod` holds:
 
-| Target | Height | `version` | Creature block | Ids 112–127 | Sign trailer |
-|---|---|---|---|---|---|
-| own format | the source's | the source's | the source's | kept | kept, or pruned |
-| Legacy64z | 64 (bands 0–3; `convertWorldTo64`'s cut: lost type bytes counted, doors/portals orphaned at y = 63 cleared) | 4 if the source is 256z, else the source's | 200 slots; y ≥ 64 dropped, survivors relocated | → stone (2), painted the nearest swatch (D.2b) | dropped |
-| NewDawn256z | 256 (64z padded with air) | 5 | 400 slots, padding type −1 | → painted stone | dropped |
-| NewFormat256z | 256 | the source's if 256z, else 5 | 400 slots | kept | kept, or pruned |
+| Target | Height | `version` | Creature block | Ids 112–127 | Bytes 128–255 (K.1-4) | Sign trailer |
+|---|---|---|---|---|---|---|
+| own format | the source's | the source's | the source's | kept | kept, palette as `BPL1` | kept, or pruned |
+| Legacy64z | 64 (bands 0–3; `convertWorldTo64`'s cut: lost type bytes counted, doors/portals orphaned at y = 63 cleared) | 4 if the source is 256z, else the source's | 200 slots; y ≥ 64 dropped, survivors relocated | → stone (2), painted the nearest swatch (D.2b) | → fallback | dropped |
+| NewDawn256z | 256 (64z padded with air) | 5 | 400 slots, padding type −1 | → painted stone | → fallback | dropped |
+| NewFormat256z | 256 | the source's if 256z, else 5 | 400 slots | kept | → fallback, no `BPL1` | kept, or pruned (no `BPL1`) |
+
+**Bytes 128–255 (K.1-4).** *Fallback* = the palette entry's `fallback_type`, and its `fallback_paint`
+when non-zero (0 keeps the voxel's own paint: a red-painted mod block stays red); a byte with no entry →
+stone (2), paint kept. The palette is the live `BLOCK_PALETTE` of a flagged `.emod`, or a `.eden` source's
+`BPL1`; an unflagged `.emod` has none, so its stray bytes ≥ 128 all become stone. The substitution runs
+before the 112–127 rule, so a fallback in 112–127 still reaches a pre-2026 target as painted stone.
+`ExportOptions::paletteFallbacks` gives the own format the fallbacks too (**every upload**, D9: Get Worlds
+serves the stock game), and `keepPalette` gives any target the raw bytes plus a `BPL1` (*Convert to 64z*,
+whose Legacy64z scratch file then carries a `BPL1`-only trailer back through the converter). The report
+counts replaced bytes per name (`paletteBlocks` in `json()`, an unassigned id as `#<id>`; the three most
+used names in `summary()`) whenever the pre-flight scans: always for Legacy64z / NewDawn256z, and for
+NewFormat256z / an upload only when the source has a palette.
 
 `pos.y` / `home.y` are clamped on a 256→64 cut. **Pruning** keeps a trailer record (sign or command
 block) only when its column `(floor(x/16), floor(y/16))` is in the world; the trailer is rebuilt only
 when something is actually dropped, so a keep-all export carries the original bytes. The pre-flight
-(`begin()`) scans columns only for Legacy64z / NewDawn (the cut and the substitution need it) and
+(`begin()`) scans columns only for Legacy64z / NewDawn (the cut and the substitution need it), or a
+source with a block palette going to a fallback target (K.1-4), and
 reports the exact output size and every loss — blocks above 63, ids replaced, signs and command
 blocks dropped or pruned, creatures dropped — as JSON (`ExportReport::json()`) and as one sentence
 for a dialog (`summary()`). D.2b (done): 112–127 → stone painted the colorTable swatch nearest each id's placeholder colour (`kNewBlockPaint` in `EdenWorldExport.cpp`).
@@ -488,6 +621,31 @@ Results: `WORKING/archive/s1-results-2026-10-09.md`.
   - both heights.
 
   `emod.py selftest` round-trips them under zstd, zlib and none, then runs the gate.
+
+## Verified (K.1-2, 2026-10-31) — the block palette
+Mac (`TESTERS/k12/`): `emod.py selftest` PASSED (new palette section: every rule's negative case, the D13
+clash refusal, idempotent compaction; the corrupt gate's base now carries the flag and a two-version
+palette: 34/34 reported). `--emod-selftest` 236/236 against the regenerated pack, whose 12 old lines and
+files are byte-identical; its four new lines (`f64-highbytes.emod`: unflagged with latent bytes 131/250;
+`f256-palette.2batch.emod`: a palette growing over two batches, byte 200 unassigned) prove the engine's
+flag compaction is `emod.py compact --set-palette-flag` byte for byte. Crash injection: the flag
+compaction killed at every one of its 9,240 bytes leaves the old world byte for byte and the retry
+writes the uncrashed file; the first palette batch killed at 1,200 points × prefix/zero-fill is always
+the old or the new commit, always flagged with a record. Old reader: the shipped Beta 0.3 build
+(`77ca3e4`) and this build's game (acceptPaletteFlag off) both refuse a flagged world, list it as
+absent and leave it byte-identical. Stage1 pins unchanged.
+
+## Verified (K.1-4, 2026-10-31) — interchange
+Mac (`TESTERS/k14/`): `emod.py selftest` PASSED (the `f256-bpl1` round trip `.eden` → `.emod` → `.eden` is
+byte-identical; `BPL1` put/find/remove; a flagged world's export converts back flagged with the same palette).
+The pack gained 7 lines (3 `convert` of `BPL1` sources, 4 `export`), its 15 old lines and 14 old files are
+byte-identical; `--emod-selftest` 273/273: the engine converter and the engine's own-format export are
+`emod.py`'s byte for byte on all of them, and the interchange section checks every target's bytes and
+report, `BPL1` written/dropped, `keepPalette`, `paletteFallbacks` winning, and the upload body (no byte
+≥ 128). `--registry-selftest` (64 and 256 high): a game world's own export carries its record as `BPL1`,
+NewFormat256z writes fallbacks, Convert to 64z keeps the flag and the palette byte for byte. Both also
+clean under ASan + UBSan (`build-san`). Stage1 pins, convert64, browser (upload), round-trip, props,
+trailer, newblocks, folders, display unchanged.
 
 ### Q.1a notes (2026-10-21)
 - **F12 (X.12 note):** header-only opens now also cover the world-name read, the height probe and the provenance pairing check; only `loadEmodWorld` full-CRCs.

@@ -26,6 +26,8 @@
 // this file is a stale snapshot with no prototypes, hence these explicit decls.
 void calculateLighting();
 #include "F3Timing.h"
+#include "SkyCycle.h"
+#include "SkyLook.h"
 #include "PassTimers.h"   // P.1b per-pass instruments
 #include "Renderer.h"     // G.5b-6: the terrain passes draw through R::
 #include "port/src/shim/foundation/platform_shims.h"   // eden_platform_now_ms
@@ -1829,7 +1831,7 @@ void Terrain::shootFirework(int x,int z,int y){
     destroyBlock(x ,z,y);
     //printg("shooting firework, color:%d\n",getColor:x:z:y]);
 }
-extern "C" const int blockTntMap[NUM_BLOCKS+1]={
+extern "C" int blockTntMap[BLOCK_IDS]={
     [TYPE_BTGRASS]=TYPE_GRASS,
     [TYPE_BTDARKSTONE]=TYPE_DARK_STONE,
     [TYPE_BTSTONE]=TYPE_STONE,
@@ -2299,6 +2301,11 @@ bool Terrain::update(float etime){
         
         Graphics::setFogColor(clr);
        // printg("TRUE\n");
+    }
+    if(SkyCycle::enabled()){   // DN.3: the fog follows the clock's horizon colour (plan §5)
+        float fclr[4];
+        SkyLook::fogColor(fclr);
+        Graphics::setFogColor(fclr);
     }
     
     if(v_equals(final_skycolor,colorTable[14])){
@@ -3390,8 +3397,14 @@ void Terrain::render(){
    // qsort (renderList, chunks_rendered, sizeof (TerrainChunk*), compare_front2back);
   //  glDisable(GL_TEXTURE_2D);
     int chunksr=chunks_rendered;
+    // DN.5: with the day/night cycle on, each chunk is drawn under the world light that matches the
+    // night bit its colours were baked with (SkyCycle::worldLight). Off: never set, (1,1,1).
+    const bool dnLight=SkyCycle::enabled();
+    float wlDay[3],wlNight[3];
+    if(dnLight){ SkyCycle::worldLight(false,wlDay); SkyCycle::worldLight(true,wlNight); }
     pass_begin(P_R_CHUNKS);
     for(int i=0;i<chunks_rendered&&!pexp(EDEN_PEXP_NOCHUNKS);i++){
+        if(dnLight){ const float* w=renderList[i]->bakedNight?wlNight:wlDay; R::setWorldLight(w[0],w[1],w[2]); }
       
         vertices_rendered+=renderList[i]->render();
         /*if(vertices_rendered>=max_vertices&&World::getWorld->hud.fps<40){
@@ -3404,11 +3417,16 @@ void Terrain::render(){
     }
     pass_end(P_R_CHUNKS);
     pass_begin(P_R_OBJECTS);
+    // DN.5: doors and golden cubes are not baked; with Original lighting off they draw on program 1, so
+    // they take the day-baked world light (with it on, the LightSets below carry the clock instead).
+    if(dnLight){
+        float wl[3]; SkyCycle::worldLight(false,wl); R::setWorldLight(wl[0],wl[1],wl[2]);
+    }
 #define max_render_objects 300
     // G.5b-6: doors and golden cubes are R::drawLit (smooth shaded, as here); the lights below go into
     // R::LightSets. Their positions were loaded under an identity modelview: eye space as written.
     extern Vector colorTable[256];
-    bool isNight=v_equals(final_skycolor,colorTable[54]);
+    bool isNight=sky_isNight();
     float lightPosition[4] = {0.0f,0.0f, 0.0f, 1.0f};
     float lightAmbient[4]  = {0.3f, 0.3f, 0.3f, 1.0f};
     float lightDiffuse[4]  = {0.7f, 0.7f, 0.7f, 1.0f};
@@ -3418,7 +3436,15 @@ void Terrain::render(){
     float lightDiffuse2[4]  = {0.3f, 0.3f, 0.3f, 1.0f};
     
     
-    if(!LOW_MEM_DEVICE&&isNight){
+    if(dnLight){
+        // DN.5: the stock day and night values below, blended for the clock (SkyCycle::blendLight).
+        const float NA[3]={0.17f,0.17f,0.17f}, ND[3]={0.3f,0.3f,0.3f};
+        const float NA2[3]={0.15f,0.15f,0.15f}, ND2[3]={0.15f,0.15f,0.15f};
+        SkyCycle::blendLight(lightAmbient,NA,lightAmbient);
+        SkyCycle::blendLight(lightDiffuse,ND,lightDiffuse);
+        SkyCycle::blendLight(lightAmbient2,NA2,lightAmbient2);
+        SkyCycle::blendLight(lightDiffuse2,ND2,lightDiffuse2);
+    }else if(!LOW_MEM_DEVICE&&isNight){
         float NlightPosition[4] = {0.0f,0.0f, 0.0f, 1.0f};
         float NlightAmbient[4]  = {0.17f, 0.17f, 0.17f, 1.0f};
         float NlightDiffuse[4]  = {0.3f, 0.3f, 0.3f, 1.0f};
@@ -3729,6 +3755,7 @@ void Terrain::render(){
    // glDisable(GL_TEXTURE_2D);
     R::setLights(lights);
     objBatchDraw(&g_goldenBatch,vert,Resources::getResources->getTex(ICO_SPHEREMAP)->name,true);
+    if(dnLight)R::setWorldLight(1,1,1);   // DN.5: the portals glow at any hour
    // glEnable(GL_TEXTURE_2D);
     
     cubeVertices=cubeShortVertices;
@@ -3859,7 +3886,13 @@ void Terrain::render(){
     float handoffColor[4]={1,1,1,1};   // the current colour the stock glColor4f calls left behind
     //skycolor.x=0;
     extern Vector colorTable[256];
-    if(v_equals(final_skycolor,colorTable[14])){
+    if(SkyCycle::enabled()){
+        // DN.3: the day/night cycle owns the sky: keyframed gradient + horizon glow + stars (SkyLook.cpp).
+        // The painted region sky and its blend state are left as they are (plan D6).
+        const float skyW=IS_IPAD?(IS_RETINA?SCREEN_WIDTH*2:IPAD_WIDTH):SCREEN_WIDTH;
+        const float skyH=IS_IPAD?(IS_RETINA?SCREEN_HEIGHT*2:IPAD_HEIGHT):SCREEN_HEIGHT;
+        SkyLook::drawSky(skyW,skyH,P_ZFAR);
+    }else if(v_equals(final_skycolor,colorTable[14])){
         last_skycolor_was_defaultblue=true;
         R::setState(skyOpaque);
         Resources::getResources->getTex(ICO_SKY_BOX)->drawSky(CGRectMake(0,0, SCREEN_WIDTH,SCREEN_HEIGHT) ,-P_ZFAR/1.000001,1,1,1,1);
@@ -3910,6 +3943,7 @@ void Terrain::render(){
         Resources::getResources->getTex(ICO_SKY_BOX_BW)->drawSky(CGRectMake(0,0, SCREEN_WIDTH,SCREEN_HEIGHT),-P_ZFAR/1.000001,v.x,v.y,v.z,1.0f);
         }
     }
+    if(SkyCycle::enabled()){ R::setState(skyBlend); SkyCycle::drawSunMoon(); }   // DN.4: no-op unless Experiments > Day/night cycle
     R::mv().pop();
     R::proj().pop();
     ////////////////sky
@@ -4081,8 +4115,13 @@ void Terrain::render2(){
     qsort (renderList2, chunks_rendered2, sizeof (TerrainChunk*), compare_back2front);
     pass_end(P_R_CULL);
     
+    // DN.5: as Terrain::render's opaque chunks, per chunk by the night bit it was baked with.
+    const bool dnLight=SkyCycle::enabled();
+    float wlDay[3],wlNight[3];
+    if(dnLight){ SkyCycle::worldLight(false,wlDay); SkyCycle::worldLight(true,wlNight); }
     pass_begin(P_R_TCHUNKS);
     for(int i=0;i<chunks_rendered2&&!pexp(EDEN_PEXP_NOCHUNKS);i++){
+        if(dnLight){ const float* w=renderList2[i]->bakedNight?wlNight:wlDay; R::setWorldLight(w[0],w[1],w[2]); }
         renderList2[i]->render2();
     }
     pass_end(P_R_TCHUNKS);
@@ -4117,7 +4156,7 @@ void Terrain::render2(){
     
     qsort (flowerList, flowers, sizeof (StaticObject), compare_objects_back2front);
     extern Vector colorTable[256];
-    bool isNight=v_equals(final_skycolor,colorTable[54]);
+    bool isNight=sky_isNight();
     // 6 vertices per billboard. MAX_FLOWERS of them is 60000, which never fitted the old
     // max_render_objects*6*6 (10800) stack array -- 1801 visible flowers overran it.
     vertexObject* objVertices=objBatchStage(&g_flowerBatch,flowers*6);
@@ -4204,7 +4243,10 @@ void Terrain::render2(){
     
     //glDepthMask(GL_FALSE);
     const R::Tex flowerTex=Resources::getResources->getTex(ICO_FLOWER)->name;
+    // DN.5: the flowers are lit every frame with today's night bit, so they take that bit's world light.
+    if(dnLight){ const float* w=(isNight&&!LOW_MEM_DEVICE)?wlNight:wlDay; R::setWorldLight(w[0],w[1],w[2]); }
     objBatchDraw(&g_flowerBatch,vert,flowerTex,false);
+    if(dnLight)R::setWorldLight(1,1,1);
     pass_end(P_R_OBJECTS);
 
     

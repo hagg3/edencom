@@ -580,8 +580,8 @@ void Graphics::drawSkybox(){
 	
 }
 
-extern const uint8_t blockColor[NUM_BLOCKS+1][3];
-extern const int blockTypeFaces[NUM_BLOCKS+1][6];
+extern uint8_t blockColor[BLOCK_IDS][3];
+extern int blockTypeFaces[BLOCK_IDS][6];
 extern Vector colorTable[256];
 //extern int16_t cubeShortVertices[];
 extern int16_t ramp2ShortVertices[3*6*6];

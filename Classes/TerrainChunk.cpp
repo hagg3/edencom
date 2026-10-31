@@ -12,6 +12,7 @@
 #include "Liquids.h"
 #include "Terrain.h"
 #include "Geometry.h"
+#include "SkyCycle.h"
 #include "Shadow.h"   // H.2 baked shadows
 
 
@@ -84,6 +85,7 @@ TerrainChunk::TerrainChunk(const int* boundz,Terrain* terrain){
     objects=NULL;
     needsVBO=false;
     modified=false;
+    bakedNight=pendingNight=false;   // DN.5
     typesEmpty=false;   // R.2: "not known" until Terrain::addChunk sees what lands in it
  //   memset(sblocks,0,sizeof(SmallBlock*)*CHUNK_SIZE3);
     
@@ -200,7 +202,7 @@ extern bool isSideFaceSolid[4][6];
 const static int dz2[6]={-1,1,0,0,0,0};
 const static int dx2[6]={0,0,-1,1,0,0};
 const static int dy2[6]={0,0,0,0,-1,1};
-extern const uint8_t blockColor[NUM_BLOCKS+1][3];
+extern uint8_t blockColor[BLOCK_IDS][3];
 
 
 static bool hasBlocky[CHUNK_SIZE];
@@ -276,17 +278,12 @@ int TerrainChunk::rebuild2(){   //here be dragons//
                     //[self setLand:x:z:y:TYPE_GRASS];
                     //type=TYPE_GRASS;
                 }
-				if(type<0||type>NUM_BLOCKS){
-					// Repairs a corrupt block byte in the WORLD, not just in this mesh. The mesh itself still
-					// treats the block as stone either way, since face_visibility/pblocks are
-					// re-read by nobody between here and the fill pass.
-					if(ter)ter->setLand(x+pbounds[0],z+pbounds[2],y+pbounds[1],TYPE_STONE,true);
-					setLand(x,z,y,TYPE_STONE);
-                    
-                    hasAnything=true;
-                    hasBlocky[y]=true;
-					
-				}else if(blockinfo[type]&IS_ATLAS2){
+				// K.1-3 (plan D12): bytes 128..255 are the world's palette ids, drawn from their rows (a
+				// definition's, or the "missing" block's: BlockRegistry::resolve), and never rewritten. Until
+				// K.1-3 this pass "repaired" any such byte to stone IN THE WORLD (the repair that once destroyed
+				// every 2026 block, D.2c). It now takes the same branches as any stock type, here and in the
+				// fill pass, so the two passes still agree (rule 7).
+				if(blockinfo[type]&IS_ATLAS2){
                     hasSeeThrough=true;
                     hasAnything=true;
                     hasBlocky[y]=true;
@@ -766,8 +763,9 @@ int TerrainChunk::rebuild2(){   //here be dragons//
     
     float skylight=1.0f;
     float light[3]={1.0f,1.0f,1.0f};
-    if(!LOW_MEM_DEVICE&&v_equals(World::getWorld->terrain->final_skycolor,colorTable[54]))
+    if(!LOW_MEM_DEVICE&&sky_isNight())
         skylight=.35f;
+    pendingNight=skylight!=1.0f;   // DN.5: published with the upload (prepareVBO)
     // H.2: the shadow tops round this chunk, gathered now. NULL = Off: every colour below is stock.
     unsigned char shadeLocal[SHADOW_GATHER_BYTES];
     const unsigned char* mshade=NULL;
@@ -1143,7 +1141,8 @@ int TerrainChunk::rebuild2(){   //here be dragons//
         float paint[3];
         
         color8 clr=pcolors[idx];
-        if(blockinfo[type]&IS_PORTAL){
+        // K.1-3: the missing block is never painted when drawn (its paint byte is kept in the world).
+        if(blockinfo[type]&(IS_PORTAL|IS_MISSING)){
             clr=0;
           
         }
@@ -1225,7 +1224,7 @@ int TerrainChunk::rebuild2(){   //here be dragons//
                 coloring=true;
             }
             if(blockinfo[type]&IS_BLOCKTNT){
-                 extern  int blockTntMap[NUM_BLOCKS+1];
+                 extern  int blockTntMap[BLOCK_IDS];
                 for(int i=0;i<3;i++)
                     paint[i]=(float)blockColor[blockTntMap[type]][i]/255;
             }else{
@@ -1420,7 +1419,7 @@ int TerrainChunk::rebuild2(){   //here be dragons//
                 }else if(IS_NEWBLOCK_TEX(bf)){
                     bf=NEWBLOCK_COLOR_TEX(bf);   // D.2t: the colour art, drawn white
                 }else if(blockinfo[type]&IS_BLOCKTNT){
-                    extern  int blockTntMap[NUM_BLOCKS+1];
+                    extern  int blockTntMap[BLOCK_IDS];
                     for(int i=0;i<3;i++){
                         paint[i]=(float)blockColor[ blockTntMap[type]][i]/255;
                     }
@@ -1699,6 +1698,7 @@ void TerrainChunk::prepareVBO(){
     verticesbg=NULL;
     verticesbg2=NULL;
     needsVBO=false;
+    bakedNight=pendingNight;   // DN.5: the colours just uploaded were baked with this night bit
     
 }
 

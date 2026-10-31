@@ -104,6 +104,21 @@ int run_empty_bit_selftest() {
 // and asserts every id comes back. Runs on either container (add --world-format=emod).
 int run_newblocks_selftest() {
     g_selftestTag = "eden-newblocks";
+    // K.1-1: the per-type tables have BLOCK_IDS rows. K.1-3: with no world open (no palette), rows 128..255
+    // are the "missing" block's (eden_fill_missing_block_rows). A short stock initialiser would leave a row zero.
+    static_assert(STOCK_BLOCK_MAX == 127 && BLOCK_IDS == 256, "K.1-1 id space");
+    static_assert(sizeof(block8) == 1 && (block8)200 == 200, "block8 is an unsigned byte");
+    {
+        int bad = 0;
+        for (int t = STOCK_BLOCK_MAX + 1; t < BLOCK_IDS; t++) {
+            bad += blockinfo[t] != (IS_HARD | IS_MISSING) || hudBlocksMap[t] != -1 || blockTntMap[t] != 0 ||
+                   blockColor[t][0] != 255 || blockColor[t][1] != 0 || blockColor[t][2] != 255;
+            for (int f = 0; f < 6; f++) bad += blockTypeFaces[t][f] != TEX_MISSING;
+        }
+        char d0[96];
+        std::snprintf(d0, sizeof(d0), "%d mismatches in rows 128..255", bad);
+        check(bad == 0 && blockTypeFaces[TYPE_STONE][0] != 0, "unassigned type bytes have the missing block's rows", d0);
+    }
     const char* name = g_opt.world.empty() ? "newblocks-selftest" : g_opt.world.c_str();
     if (!open_world(name, g_opt.height)) return 1;
     eden_console_teleport(g_opt.at[0], g_opt.at[1], g_opt.at[2]);
@@ -606,8 +621,22 @@ bool write_world(const std::string& path, const char* name, int seed, int hx, in
     return true;
 }
 
-bool play_file(const char* file) {
+// K.0w-2: a gate that wrote a loose `docs/<file>` and then reads it by path adopts it first and works on
+// the key (Worlds/<id>/world.emod) from then on. Returns the key ("" if it did not adopt).
+std::string adopt_key(const char* loose) {
+    World::getWorld->fm->adoptLooseWorlds();
+    const std::string k = FileManager::adoptedKeyOf(loose);
+    if (k == loose) { std::fprintf(stderr, "[harness] %s was not adopted\n", loose); return std::string(); }
+    return k;
+}
+
+// K.0w-2: the caller wrote a loose `docs/<file>`; the scan adopts it into Worlds/<id>/ (plan §4), so
+// every gate that plays a written world exercises adoption. The list holds the adopted key.
+bool play_file(const char* fileIn) {
+    World::getWorld->fm->adoptLooseWorlds();
     World::getWorld->menu->loadWorlds();
+    const std::string key = FileManager::adoptedKeyOf(fileIn);
+    const char* file = key.c_str();
     int idx = -1;
     for (int i = 0; i < eden_menu_world_count(); ++i)
         if (std::strcmp(eden_menu_world_file(i), file) == 0) idx = i;
@@ -751,8 +780,9 @@ int run_classic_selftest() {
         TerrainGenerator* tg = World::getWorld->terrain->tgen;
         const int hx = fx.keys[0].first * 16 + 8, hz = fx.keys[0].second * 16 + 8;
         // (a) a 1.x world
-        const std::string lp = docs + "/classic-legacy.emod";
+        std::string lp = docs + "/classic-legacy.emod";
         bool ok = write_world(lp, "classic legacy", fx.seed, hx, hz, &fx, NULL, NULL, err) && play_file("classic-legacy.emod");
+        lp = docs + "/" + FileManager::adoptedKeyOf("classic-legacy.emod");   // K.0w-2: adopted by play_file
         check(ok, "a 1.x world (fixture columns, no record) plays", err.c_str());
         if (ok) {
             tick(30);
@@ -804,9 +834,10 @@ int run_classic_selftest() {
         mg.trees = 3; mg.hilliness = 3; mg.caves = CLASSIC_CAVES_DEEP;
         uint8_t mirror[36];
         classic_encode_mirror(mg, mirror);
-        const std::string mp = docs + "/classic-mirror.emod";
+        std::string mp = docs + "/classic-mirror.emod";
         ok = write_world(mp, "classic mirror", 31337, 4096 * 16 + 8, 4096 * 16 + 8, NULL, NULL, mirror, err) &&
              play_file("classic-mirror.emod");
+        mp = docs + "/" + FileManager::adoptedKeyOf("classic-mirror.emod");   // K.0w-2: adopted by play_file
         check(ok, "a world whose header holds a mirror plays", err.c_str());
         if (ok) {
             tick(30);
@@ -832,9 +863,10 @@ int run_classic_selftest() {
         uint8_t future[CLASSIC_RECORD_BYTES];
         classic_encode_record(mg, future);
         future[2] = 2;   // revision 2
-        const std::string vp = docs + "/classic-void.emod";
+        std::string vp = docs + "/classic-void.emod";
         ok = write_world(vp, "classic void", 31337, 4096 * 16 + 8, 4096 * 16 + 8, NULL, future, NULL, err) &&
              play_file("classic-void.emod");
+        vp = docs + "/" + FileManager::adoptedKeyOf("classic-void.emod");   // K.0w-2: adopted by play_file
         check(ok, "a world with an unknown GENERATOR plays", err.c_str());
         if (ok) {
             tick(10);

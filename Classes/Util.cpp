@@ -371,7 +371,7 @@ void takeScreenshot(){
     std::vector<unsigned char> png;
     if(!photoEncodePNG(rgb.data(),ow,oh,png)) return;
     Terrain* ter=World::getWorld->terrain;
-    std::string file_name=World::getWorld->fm->documents+"/"+ter->world_name+".png";
+    std::string file_name=World::getWorld->fm->documents+"/"+FileManager::photoPathOf(ter->world_name);
     if(eden_fs_exists(file_name))
         if(!eden_fs_remove(file_name))
             return;

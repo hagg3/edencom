@@ -71,9 +71,17 @@ block would (that is a tested guarantee).
 
 ## Block verbs
 
-They work in a command block and in the console. Arguments: a **coordinate** (above), a **block** (a name such as
-`stone`, `glass`, `air`, or a number 0–127), a **colour** (the stored paint byte, 0 = unpainted … 54), a **creature**
+They work in a command block and in the console. Arguments: a **coordinate** (above), a **block** (a short name such as
+`stone`, `glass`, `air`; a canonical `eden:` name, the block's enum lowercased, e.g. `eden:stone_ramp1`; a mod
+block's full `namespace:path` name; or a number: 0–127 always, 128–255 only when this world's block palette
+assigns it, because those ids are world-local and only names are portable), a **colour** (the stored paint byte, 0 = unpainted … 54), a **creature**
 (`moof`, … `stalker`, or 0–6), a **number**.
+
+A mod block name is accepted only when its definition is loaded (none are in the game until K.2; otherwise
+`Unknown block: X`). The first `set`/`fill` that places it gives it this world's next free id 128–255 (a
+world's first one first rewrites the save file once to mark it as using a block palette); parsing a line or
+an `if`/`unless` test never uses up an id. Mod blocks are refused in a multiplayer world, and a world holds at
+most 128 of them. A byte whose definition is not loaded draws as the magenta "missing" block and keeps its value.
 
 <!-- BEGIN generated:block-verbs -->
 | Verb | Usage | What it does |
@@ -91,6 +99,7 @@ They work in a command block and in the console. Arguments: a **coordinate** (ab
 | `night` | - | Paints the region's sky night (time 0.75). |
 | `midnight` | - | The night sky (time 0). |
 | `time` | `T` | Sets the time, T from 0 to 1: 0.25..0.75 is day, the rest night. |
+| `timefreeze` | `on\|off` | Stops or restarts the day/night clock; saved with the world. time T still sets it. |
 | `heal` | - | Full health. |
 | `hurt` | `N` | Deals N% damage. Only bites with Health on. |
 | `gold` | `N` | Grants N golden cubes (the purse holds 999). |
@@ -240,6 +249,8 @@ A variable is `group.name`. **`NAME`** prints it, **`NAME VALUE`** sets it. Name
 | `experiments.creature_walk_voices` | on / off | off | at once | Creatures call out as they start walking. |
 | `experiments.double_brush` | on / off | off | at once | A key builds 2x2x2 blocks at a time. |
 | `experiments.camera_view` | First person, Third person, Third person (front) | First person | at once | Third person shows your body. F5 cycles. |
+| `experiments.day_night_cycle` | on / off | off | at once | The sky and light follow a clock. Overrides sky painting. (diagnostics builds) |
+| `experiments.day_length` | 10 min, 20 min, 40 min, 60 min | 20 min | at once | Real minutes per full day. (diagnostics builds) |
 
 #### `saves.`
 
@@ -297,6 +308,7 @@ A variable is `group.name`. **`NAME`** prints it, **`NAME VALUE`** sets it. Name
 | `world.signs` | text | - | read-only in game | Signs |
 | `world.cmdblocks` | text | - | read-only in game | Command blocks |
 | `world.gold` | 0 to 999 | 0 | at once | The purse (0..999). |
+| `world.time` | 0 to 1 | 0.3 | at once | 0 midnight, 0.25 sunrise, 0.5 noon, 0.75 sunset. The clock runs with Experiments > Day/night cycle. |
 
 #### `gen.`
 

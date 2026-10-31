@@ -34,7 +34,7 @@
 
 // D.2p: the block picker's second page (the 2026 game's layout, in id order): 112..127, then the
 // SIGN and CMD tools. The tools are SENTINELS, not block ids: they can never be a block8 or index
-// a [NUM_BLOCKS+1] table, so every table read on a picker cell goes through hud_picker_is_tool().
+// a [BLOCK_IDS] table, so every table read on a picker cell goes through hud_picker_is_tool().
 #define NUM_PICKER_PAGES 2
 #define NUM_PICKER_PAGE2_CELLS 20
 #define HUD_TOOL_SIGN 1000

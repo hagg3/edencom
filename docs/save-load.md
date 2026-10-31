@@ -322,7 +322,17 @@ The port's second world container: an append-only log of per-column zstd records
   rewritten; `SIGN_TRAILER` only when the trailer model is dirty (D.3a: the batch carries a new
   record, an empty one when the last record was removed), so an untouched trailer survives every
   save as committed (alpinecraft's 40,032-byte trailer, measured). The version stamp is the `.eden`
-  writer's rule.
+  writer's rule. **DN.2:** `SKY_CLOCK` (record 11) rides in the batch when `SkyCycle::needsSave()` (the
+  time or the lock moved since the load or the last commit); `SkyCycle::saved()` after the commit. Exit and
+  warp always commit, so they keep the time with no edits; the autosave still needs an edit. The load
+  reads it (`SkyCycle::load`; none or malformed → `SkyCycle::reset`, t 0.30); `FileManager::loadWorld`
+  resets first, except in a session, whose clock `MpWorld::beginSession` resets once.
+
+**K.1-3 (block palette):** `loadWorld` calls `BlockRegistry::resetWorld()` before any branch; `loadEmodWorld`
+reads a flagged file's `BLOCK_PALETTE` and resolves rows 128–255 before the first column read (an unreadable
+record locks the palette). The first mod-block allocation in an unflagged world runs the flag compaction
+(`FileManager::preparePaletteAllocation`); afterwards a dirty palette rides in `saveEmodWorld`'s batch, and a
+dirty palette in an unflagged file aborts the save (D14). Detail: [world-and-terrain.md](world-and-terrain.md).
 
 ### A multiplayer session: commit to RAM (MP.3a, 2026-10-17)
 `FileManager::sessionWorld` (set by `MpWorld::beginSession`) redirects every save: `saveWorld(warp)` (after its
@@ -355,7 +365,10 @@ every sign later cannot resurrect them. Refused edits (over 1 MiB, an opaque tra
   converter's temp names. **`convertWorldTo64`** on an `.emod` (X.9) exports Legacy64z to `<world>.64zsrc`,
   re-converts it with the 256z upgrade off to `<world>.64zconv`, then `replace_file`s it over the world (temps removed
   on failure; refuses the open world and an already-64z one). The Share > Export Legacy64z target (below) is the
-  same cut written out as a `.eden`.
+  same cut written out as a `.eden`. K.1-4: the scratch export uses `ExportOptions::keepPalette`, so mod blocks
+  (bytes ≥ 128) stay raw and the scratch `.eden` carries a `BPL1`-only trailer, which the converter turns back
+  into the new world's `BLOCK_PALETTE` and flag (byte for byte the old record unless latent bytes add
+  reservations).
 - **Converting, importing, pairing (S.5 / S.5d, 2026-10-10).** One job does every `.eden`/archive →
   `.emod` conversion: `emod::ImportJob` (`Classes/EdenWorldSource.{h,cpp}`) — convert-on-play
   (`FileManager::convertStep`), Get Worlds (`WorldBrowser`'s `DL_CONVERT`) and the `--import=` harness
@@ -397,7 +410,12 @@ every sign later cannot resurrect them. Refused edits (over 1 MiB, an opaque tra
   256z source, ≤ 200 creature slots), **NewDawn256z** (version 5, 64z padded with air, 400 slots)
   and **NewFormat256z** (the source's version if 256z, else 5). Legacy64z and NewDawn map ids
   112–127 to stone (D.2b refines it) and drop the sign trailer (signs and command blocks, counted in
-  the report); own/NewFormat can prune trailer records outside the world's columns. **`.eden.gz` is
+  the report); own/NewFormat can prune trailer records outside the world's columns. **Mod blocks
+  (K.1-4):** own format keeps bytes ≥ 128 and writes the world's palette as a `BPL1` trailer section; every
+  other target, and every **upload** (`begin_upload_body` sets `paletteFallbacks`; Share's confirm dialog
+  pre-flights with it, so the dialog names the substitutions), writes each byte's fallback stock block
+  (rules: `emod-file-format.md` "Target formats"). Importing or downloading a `.eden` with a `BPL1` gives the
+  `.emod` its palette and flag (`EdenEmodConverter`). **`.eden.gz` is
   the default export on every target**: native writes `Documents/Exports/<name>.eden.gz` through a
   time-sliced `ExportFileJob` (`.exporting` temp, fsync, rename; free space checked up front and every
   64 MB). (The retired web build streamed 1 MB chunks into a Blob.) Test CLI: `eden_native --export=… [--export-target= --export-gz
@@ -405,6 +423,60 @@ every sign later cannot resurrect them. Refused edits (over 1 MiB, an opaque tra
 - Measured (S.4, on the retired web build): a 100-column world is 61 KB as `.emod` vs 3.29 MB as
   `.eden`; a one-column save appends 1,104 B vs 91,584 B written in place; a no-edit save 664 B vs
   26,024 B.
+
+## World folders: adoption of loose worlds (K.0w-2, 2026-10-31) — modified from stock
+Plan: `WORKING/world-folders-plan-2026-10-30.md` (§3 layout, §4 adoption). A local world is moving from a loose
+`Documents/<X>.emod` to `Documents/Worlds/<id>/world.emod`; the world *key* (`WorldNode::file_name`,
+`Terrain::world_name`) is the Documents-relative path, so a folder world's key is `Worlds/<id>/world.emod` and every
+`docs+"/"+key` join still works. New worlds save into a folder since K.0w-1 (`newWorldFileName`).
+**Not yet (K.0w-3/4):** convert-on-play, Get Worlds and Storage import still write a loose `.emod` into the root (the
+next scan adopts it); the shared lister and "last played first" order.
+
+`FileManager::adoptLooseWorlds()` runs at the top of every world-list scan (`Menu::loadWorlds`, the Storage seam's
+`eden_storage_scan`) and in the harness's `play_file`/`open_props`. It is a no-op while a conversion
+(`conversionActive`), a Get Worlds download (`WorldBrowser::anyBusy`, a static: `Menu`'s constructor scans before
+`World::menu` is set) or a Storage import (`eden_storage_import_active`) runs, and it never touches the open world
+(`emodStore->path()` or `Terrain::world_name`).
+- **Recovery first.** Each `Worlds/.<id>.migrating/`: holding `world.emod` → roll forward (delete the `.adopt`
+  journal, then no-replace rename to `<id>`, a fresh `<id>-xxxx` on a clash); not holding it → roll back (each
+  journalled sidecar still in the dir moves back to its root name, no-replace; the dir goes only when nothing but the
+  journal is left). No readable journal and other files → left alone and logged (`adopt:` on stderr); empty, or only
+  `.adopt.tmp` → removed.
+- **Then each loose `<X>.emod`:** header-only probe (`open(path,false,true,true)`; a refused file stays loose, and
+  lists exactly as before: an unreadable one is `error~`, hidden). Id: a digits-only stem keeps it (a download),
+  else `<created_unix>-<4 a-z>` (the file's mtime when `created_unix` is 0 or in the future); an id is free when none
+  of `Worlds/<id>`, `.<id>.partial`, `.<id>.migrating` exists. Neighbours: `<X>.emod.png` → `photo.png`; the
+  PROVENANCE-paired original (`originalOf`, its last root use for this world) → `original<ext>` (ext verbatim, e.g.
+  `original.eden.gz`); `signs_<stem>.eden.dat[.adopted]` / `cmd_…` → `signs.eden.dat[.adopted]` / `cmd.eden.dat…`.
+  Stale `.savejrnl/.converting/.spill/.creating/.compact` are deleted. Then: `mkdir .<id>.migrating`, journal
+  (`.adopt`, one `root<TAB>folder` line per sidecar, written as `.adopt.tmp`, fsynced, no-replace renamed), sidecars
+  in, **the world file in: the single commit point, one `eden_fs_move_new` rename**, journal out, dir renamed to
+  `<id>`, directory fsyncs. Any failure rolls back and leaves the world loose. The world file is never opened
+  writable, copied or rewritten.
+- **Folder-aware readers since K.0w-2:** `loadTrailer` reads `signs.eden.dat`/`cmd.eden.dat` from the folder
+  (`sidecarPathOf`; `.adopted` renames there); `originalOf` returns `Worlds/<id>/original.*` (so `removeOriginal`,
+  Properties' size and the list row's "(+X MB original kept)", which `Menu::loadWorlds` now sets for a folder
+  world, work); photo paths go through `photoPathOf` (K.0w-1).
+- **Gates:** `--folders-selftest` (fixture of plan §6: layout, SHA-256 of every world unchanged, each `.migrating`
+  state, idempotence, list, rename, photo, delete, the rule-4 guard, the open world skipped) and
+  `port/tools/folders-crash-gate.sh` (`EDEN_TEST_ADOPT_KILL_AFTER=<n>` `_Exit(86)`s after the n-th mutating step;
+  for every n: kill, rerun, each world present once with its bytes, no sidecar lost, no `.migrating` left; 29 kill
+  points on the fixture). Every existing gate that writes a loose world and plays it now goes through adoption.
+
+### World folders: staging (K.0w-3)
+Convert-on-play (`FileManager::convertStep`), Get Worlds (`WorldBrowser`) and the Storage import
+(`eden_storage_import_*`) no longer write into the Documents root. Each writes `Worlds/.<id>.partial/world.emod`
+(Get Worlds also `download` there; id = `downloadWorldId`, else `newWorldId`), and the **commit point is one
+no-replace rename** of that dir to `Worlds/<id>` (`FileManager::commitStaging`; a fresh `-xxxx` id if taken).
+Before it the world is only a dot-dir (swept by `cleanConversionTemps` when no job is live; the browser removes
+its own on cancel/fail); after it the world lists. A converted `.eden` then moves in **after** the commit, sidecars
+first and the source last (all no-replace): `signs_/cmd_<stem>.eden.dat[.adopted]` -> `signs/cmd.eden.dat[.adopted]`,
+`<src>.png` -> `photo.png`, the source -> `original.<ext>`. A kill between the commit and the source move leaves the
+world listed and the source loose, so it converts again as a second world (nothing is lost). `resolveOriginal(true)`
+deletes `Worlds/<id>/original.<ext>`; Keep leaves it. `--import=` with `--import-out=` still writes exactly where told.
+Gates: `EDEN_TEST_STAGE_KILL_AFTER=<n>` (`FileManager::stageStep`, `_Exit(86)`), `port/tools/folders-stage-gate.sh`
+(7 kill points of a conversion), `--browser-selftest` (downloads land in `Worlds/<id>/`, a repeat in `<id>-xxxx`, no
+staging dir left).
 
 ## Legacy conversion (`convertFile`) — historical, deleted with S.8
 1.x files (version field is garbage) are rewritten: each old column
@@ -569,3 +641,12 @@ point migrates those in once (`migrate_legacy_saves`, `port/src/harness/`).
 
 ### Q.1a notes (2026-10-21)
 - **F12:** `getName`, `probeWorldHeight` and `emodPairsWith` open the `.emod` header-only (`open(path,false,true,true)`). A world whose column records are corrupt is no longer listed as `error~`; it fails on load via the load-failure path.
+
+### World folders: the shared lister (K.0w-4)
+`FileManager::listWorlds(std::vector<WorldEntry>*)` is the only world list: `Menu::loadWorlds` and the Storage seam
+(`eden_storage_scan/nth/list_worlds`) both call it (after `adoptLooseWorlds`), so row N cannot disagree. Order (D6):
+folder worlds and loose `.emod` by `world.emod` mtime, newest first, ties by key; then dropped sources
+(`needs_convert`) by name. A `.eden`/archive with a paired `.emod` is hidden and its size goes on that entry's
+`original_bytes` (a folder world reads its `original.*`). Skips: `Eden.eden.archive`, PNGs, `error~` names. Behaviour
+change: Storage now lists archives too (the menu always did). Delete, photo, share and trailer paths were already on
+`worldDirOf`/`photoPathOf`/`sidecarPathOf` (K.0w-1…3).

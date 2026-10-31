@@ -51,6 +51,7 @@ extern unsigned char g_shadow_caster[256];   // by (unsigned char)type: 1 = cast
 extern int g_shadow_test_mutation;
 extern int g_shadow_dirtied;              // diagnostics: chunks the edit hook marked dirty
 
+void shadow_buildCasterTable();           // K.1-3: g_shadow_caster from blockinfo (BlockRegistry::resolve)
 void shadow_allocate();                   // Terrain::allocateMemory, after the window is sized
 void shadow_free();                       // Terrain::deallocateMemory
 void shadow_clear();                      // Terrain::clearBlocks: every top 0, every column stale

@@ -27,7 +27,7 @@ static const int TREE_SPACING=50;
 int boundx;
 int boundz;
 block8 tblocks[(CHUNKS_PER_COLUMN_MAX*CHUNK_SIZE*2)*(CHUNK_SIZE*2)*(CHUNK_SIZE*2)];  //max-sized; indexing uses the runtime CHUNKS_PER_COLUMN
-block8 tcolors[(CHUNKS_PER_COLUMN_MAX*CHUNK_SIZE*2)*(CHUNK_SIZE*2)*(CHUNK_SIZE*2)];  //max-sized; indexing uses the runtime CHUNKS_PER_COLUMN
+sbyte tcolors[(CHUNKS_PER_COLUMN_MAX*CHUNK_SIZE*2)*(CHUNK_SIZE*2)*(CHUNK_SIZE*2)];  //max-sized; indexing uses the runtime CHUNKS_PER_COLUMN
 TerrainGenerator::TerrainGenerator(Terrain* parent){
     init();
 	ter=parent;

@@ -45,12 +45,26 @@ enum : uint32_t {
     EDEN_MAX_SLOTS = 400,
     TRAILER_MAX = 1u << 20,
     GENERATOR_LEN = 28,          // H.4: the GENERATOR record (TerrainGenerator.h CLASSIC_RECORD_BYTES)
+    SKY_CLOCK_LEN = 16,          // DN.2: the SKY_CLOCK record (Classes/SkyCycle.h)
+    // K.1-2 (WORKING/block-registry-plan-2026-10-31.md §3): FileHeader flags bit 0 = type bytes 128-255 are
+    // defined by the live BLOCK_PALETTE. Any other bit is still "written by a newer build".
+    FH_FLAG_BLOCK_PALETTE = 1,
+    PALETTE_VERSION = 1,
+    PALETTE_HEAD = 8,            // u32 version, u32 count
+    PALETTE_ENTRY = 68,          // u8 id, u8 fallback_type, u8 fallback_paint, u8 flags, char name[64]
+    PALETTE_MAX = 128,
+    PALETTE_PAINT_MAX = 54,
+    PALETTE_UNKNOWN_FALLBACK = 2,   // TYPE_STONE: the fallback of an `emod:unknown_<id>` reservation (D13)
 };
 enum RecordType : uint8_t {
     T_COLUMN = 1, T_WORLD_HEADER = 2, T_CREATURES = 3, T_SIGN_TRAILER = 4,
     T_PROVENANCE = 5, T_SUMMARY = 6, T_COMMIT = 7, T_INDEX = 8,
     T_GENERATOR = 9,             // H.4: Classic generator settings, 28 B, written once (TerrainGenerator.h)
+    T_BLOCK_PALETTE = 10,        // K.1-2: the world's palette for type bytes 128-255, codec 0 (needs flags bit 0)
+    T_SKY_CLOCK = 11,            // DN.2: the day/night clock, 16 B, codec 0 (Classes/SkyCycle.h)
 };
+// A type this build reads (the rest of 1..255 is reserved: a member of its batch, otherwise ignored).
+inline bool known_record_type(int t) { return t >= 1 && t <= T_SKY_CLOCK; }
 enum Codec : uint8_t { C_NONE = 0, C_ZSTD = 1, C_ZLIB = 2 };
 
 uint32_t crc32_of(const void* p, size_t n, uint32_t crc = 0);
@@ -82,6 +96,44 @@ private:
     void* cctx_; void* dctx_;
     Codecs(const Codecs&); Codecs& operator=(const Codecs&);
 };
+
+// ---- BLOCK_PALETTE (K.1-2; docs/emod-file-format.md "BLOCK_PALETTE"; emod.py parse_palette) ----------
+struct PaletteEntry {
+    uint8_t id, fallbackType, fallbackPaint, flags;
+    std::string name;            // D15 `namespace:path`, without the NUL padding
+};
+// D15: `[a-z0-9_]{1,24}:[a-z0-9_/]{1,48}`, <= 63 bytes, never the stock namespace `eden:`.
+bool palette_name_ok(const std::string& name);
+// Parses and checks every rule of one record (version, count, length, ascending distinct ids 128-255,
+// fallback type 1-127 but not 66-70/75-79/80, paint 0-54, flags 0, NUL-padded name, distinct names).
+// Entries that break a rule are reported in `errs` and left out of `out` (both may be null).
+bool palette_parse(const uint8_t* p, size_t n, std::vector<PaletteEntry>* out, std::vector<std::string>* errs);
+// The record's bytes for `entries` (sorted by id here; not checked: palette_parse the result).
+void palette_build(std::vector<PaletteEntry> entries, std::vector<uint8_t>& out);
+// D8/D16: the ids `newer` dropped or changed relative to `older` (empty == a valid successor).
+std::vector<int> palette_lost_ids(const std::vector<uint8_t>& older, const std::vector<uint8_t>& newer);
+
+// ---- the `.eden` trailer section BPL1 (K.1-4; docs/eden-file-format.md "BPL1"; emod.py trailer_find_palette) ----
+// A section like SGN1/CMB1: `BPL1 | u32 inner_len | u32 w3`, then `BPL1` + a BLOCK_PALETTE record's bytes
+// (`u32 version | u32 count | count x 68 B`), so inner_len = 12 + 68 * count. Read by the trailer model's walk
+// (rows tagged ff ff ff ff, sections until a zero magic, an all-zero tail); SGN1/CMB1 are not checked here.
+// The record bytes of the trailer's one well-formed BPL1. False: the trailer cannot be walked, has no BPL1,
+// has more than one, or it is malformed. The bytes are not checked: palette_parse them.
+bool trailer_find_palette(const uint8_t* t, size_t n, std::vector<uint8_t>* record);
+// `t` with its BPL1 replaced by one holding `record` (in the first BPL1's slot, keeping its w3; appended after
+// the last section when there is none) or removed (`record` null); every other section as it was. The zero
+// tail is kept only when the sections' total size is unchanged (so an equal replacement is byte-identical);
+// otherwise the payload is re-padded to a whole row. No section left -> empty. False (`out` untouched): the
+// trailer cannot be walked.
+bool trailer_put_palette(const std::vector<uint8_t>& t, const std::vector<uint8_t>* record, std::vector<uint8_t>& out);
+// The palette a `.eden` conversion writes (docs/emod-file-format.md "Conversion from .eden"): `bpl1` must
+// palette_parse clean and name no `emod:unknown_*` but its own id's; then every type byte >= 128 in `seen`
+// (null: none) without an entry gets `emod:unknown_<id>` (D13). False (no record, no flag): `bpl1` is not
+// such a palette. The answer does not depend on `seen`, so a converter can decide the flag first.
+bool converted_palette(const std::vector<uint8_t>& bpl1, const bool seen[256], std::vector<uint8_t>& out);
+// Marks every type byte >= 128 of `bands` bands at `col` (a full column, or a COLUMN payload of `bands`
+// stored bands) in `seen`.
+void mark_high_type_bytes(const uint8_t* col, int bands, bool seen[256]);
 
 // (band_mask, payload) for one full-stride column: a band is stored iff any of its 8,192 bytes
 // is non-zero (type plane OR paint plane — paint-only bands are real).
@@ -146,6 +198,12 @@ public:
     EdenWorldStore();
     ~EdenWorldStore();
 
+    // K.1-2: whether open() accepts FileHeader flags bit 0 (a world with a block palette). Off, the refusal
+    // is word for word a pre-K.1 build's (D3). ON since K.1-3 (BlockRegistry resolves the palette and
+    // rebuild2() keeps every byte >= 128); --emod-selftest turns it off for its old-reader case.
+    // Process-wide; set it before any store is opened.
+    static bool acceptPaletteFlag;
+
     // Open and scan per the spec's reading rules. Returns false (and error()) when the file must
     // be refused: unreadable, bad file header, or no valid commit. `writable` opens r+b; nothing
     // is written until commitBatch(). `checkCrc = false` exists ONLY for the corrupt gate's
@@ -164,6 +222,8 @@ public:
     const std::string& error() const { return error_; }
     const std::string& path() const { return path_; }
     int bands() const { return bands_; }
+    uint32_t fileFlags() const { return fileFlags_; }
+    bool paletteFlag() const { return (fileFlags_ & FH_FLAG_BLOCK_PALETTE) != 0; }
     uint64_t createdUnix() const { return created_; }
     uint64_t fileSize() const { return size_; }
     uint32_t lastSeq() const { return lastSeq_; }
@@ -198,8 +258,10 @@ public:
 
     // ---- writing (append-only; docs/emod-file-format.md "Batches and commits")
     // Columns are full-stride (bands() * 8192 bytes). A rewritten column keeps its ord; a new one
-    // takes SUMMARY.next_ord. Singletons: WORLD_HEADER and SUMMARY are stored raw, the rest
-    // compressed with the store's codec. Nothing reaches the file until commitBatch().
+    // takes SUMMARY.next_ord. Singletons: WORLD_HEADER, GENERATOR, SKY_CLOCK, BLOCK_PALETTE and
+    // SUMMARY are stored raw, the rest compressed with the store's codec. Nothing reaches the file
+    // until commitBatch(). A BLOCK_PALETTE is refused unless the file is flagged (compact(true)
+    // first: D14), it obeys palette_parse, and it keeps every entry of the live one (D8).
     void beginBatch();
     bool putColumn(int32_t x, int32_t z, const uint8_t* column);
     bool putRecord(int type, const void* data, size_t len);
@@ -216,9 +278,21 @@ public:
     // reopens. Refused when damaged() (the bad bytes must never be the only copy destroyed),
     // when read-only, or mid-batch. zstd payloads are copied verbatim after a successful decode;
     // other codecs are re-encoded with the store's codec. Order: WORLD_HEADER, CREATURES,
-    // SIGN_TRAILER (if non-empty), PROVENANCE, COLUMNs by ord, SUMMARY, COMMIT — conversion's
-    // order, so compacting a fresh conversion reproduces it byte for byte.
-    bool compact();
+    // SIGN_TRAILER (if non-empty), PROVENANCE, GENERATOR, SKY_CLOCK, COLUMNs by ord,
+    // BLOCK_PALETTE, SUMMARY, COMMIT — conversion's order, so compacting a fresh conversion
+    // reproduces it byte for byte. emod.py `compact` is the reference, byte for byte.
+    //
+    // K.1-2, the flag compaction (`setPaletteFlag` on an unflagged file; plan D13/D14): the new file
+    // has FileHeader flags bit 0 and a BLOCK_PALETTE holding `palette` (record bytes; null = no
+    // entries) plus an `emod:unknown_<id>` entry (fallback stone) for every type byte >= 128 a live
+    // column holds with no entry, so a later allocation can never give old garbage a meaning. A
+    // supplied entry whose id is such a latent byte is refused with nothing replaced (latentIds()
+    // says which). On a flagged file the flag is kept and the palette copied; `palette` must be null.
+    // There is no instant at which the path holds a flagged file without its record: the rename is
+    // the commit point.
+    bool compact(bool setPaletteFlag = false, const std::vector<uint8_t>* palette = nullptr);
+    // The type bytes >= 128 the last flag compaction found in live columns (ascending).
+    const std::vector<uint8_t>& latentIds() const { return latent_; }
 
     // The full semantic check `emod.py verify` makes: every live record decodes, the invariants
     // hold, SUMMARY is exact. Returns damage + errors (empty == clean). Sets damaged() when it
@@ -235,6 +309,12 @@ public:
     // ... and, when true, extends the file with zeros to the batch's full length (a filesystem
     // that persisted the size but not the data).
     bool testCrashZeroFill;
+    // ... and, when true, putRecord() skips its per-type length checks (the corrupt-length cases:
+    // a record a buggy or foreign writer produced).
+    bool testUncheckedPut;
+    // compact() writes only the first `n` bytes of `path`.compact, closes the store and returns
+    // false: the process died mid-compaction (the rename never happened). SIZE_MAX disables.
+    size_t testCompactCrashAfter;
 
 private:
     struct Rec {               // a framed record
@@ -272,7 +352,9 @@ private:
     std::string path_, error_, finalPath_;
     bool writable_, checkCrc_, headerOnly_, creating_;
     int bands_;
+    uint32_t fileFlags_;
     uint64_t created_, size_;
+    std::vector<uint8_t> latent_;
     std::vector<Rec> recs_;                                    // scan output (cleared after open)
     std::vector<std::pair<uint64_t, uint64_t> > spans_;        // damaged spans [p, q)
     std::vector<Entry> entries_;
@@ -328,6 +410,8 @@ public:
         uint64_t peakHeldBytes;    // slot buffer + directory + slot index + decode cache (no zstd ctx)
         uint32_t creatureSlots, trailerBytes, flags;
         int bandsIn, bandsOut;     // the source's height and the `.emod`'s (S.5e: 4 -> 16 when upgraded)
+        bool palette;              // K.1-4: a BPL1 gave the world a BLOCK_PALETTE (+ flags bit 0)
+        uint32_t paletteEntries;   // its entries, `emod:unknown_<id>` reservations included
         // X.5: where the conversion's own time went, in ms (steady_clock; feed() side then finish()).
         double msSpillEncode;      // feed: band split + codec (zstd) of each 2 MB source slot
         double msSpillWrite;       // feed: fwrite of the encoded slot to the spill file

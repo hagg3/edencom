@@ -191,6 +191,15 @@ jobs:
           # the cross-target .emod gate (macOS, Linux, Windows here).
           # G.2b-0: the de-ObjC replacement layer (strf/eden_cstr_copy/EdenFile/eden_fs/prefs) vs the Apple vectors.
           run_gate "base selftest" $B --base-selftest --docs="$PWD/base-docs"
+          # K.0w-2: world-folder adoption (loose .emod -> Worlds/<id>/), then the crash-injection loop (a kill
+          # after every mutating step, then recovery: each world once, bytes unchanged, no sidecar lost).
+          rm -rf folders-docs folders-crash && mkdir -p folders-docs
+          run_gate "folders selftest" $B --headless --folders-selftest --docs="$PWD/folders-docs"
+          # K.1-3: the block registry (names, palette, placeholders, flag compaction, refusals).
+          run_gate "registry selftest" $B --registry-selftest --docs="$PWD/registry-docs"
+          # K.1-4: a 256-high run adds Convert to 64z (the palette and flag survive the cut); linux leg only
+          run_gate "registry selftest 256" $B --registry-selftest --height=256 --docs="$PWD/registry-docs-256"
+          run_gate "folders crash loop" bash ../port/tools/folders-crash-gate.sh $B "$PWD/folders-crash"
           run_gate "emod selftest" $B --emod-selftest --emod-fixtures=../port/tools/fixtures/emod --emod-work="$PWD/emod-work"
           # MP.1/MP.2: the multiplayer TCP seam + protocol session against an in-process mock server on
           # loopback (Winsock on Windows). The live leg against ewb-server is port/tools/mp-live-gate.sh.
@@ -441,6 +450,11 @@ jobs:
           run_gate "geometry 256z" $B --headless --stage1 --shadows=off --height=256 --docs="$PWD/docs256"
           python3 ../.github/scripts/check-stage1.py gate-geometry-64z.log gate-geometry-256z.log
           run_gate "base selftest" $B --base-selftest --docs="$PWD/base-docs"
+          # K.0w-2: world-folder adoption (the crash loop runs on the plain legs).
+          rm -rf folders-docs && mkdir -p folders-docs
+          run_gate "folders selftest" $B --headless --folders-selftest --docs="$PWD/folders-docs"
+          # K.1-3: the block registry (names, palette, placeholders, flag compaction, refusals).
+          run_gate "registry selftest" $B --registry-selftest --docs="$PWD/registry-docs"
           run_gate "emod selftest" $B --emod-selftest --emod-fixtures=../port/tools/fixtures/emod --emod-work="$PWD/emod-work"
           run_gate "bundled map" $B --bundled-map-selftest --bundled-eden=../Eden.eden --bundled-emod=../Eden.emod
           rm -rf ci-docs evict-docs console-docs && mkdir -p ci-docs evict-docs console-docs
@@ -577,6 +591,13 @@ jobs:
           # the cross-target .emod gate (macOS, Linux, Windows here).
           # G.2b-0: the de-ObjC replacement layer (strf/eden_cstr_copy/EdenFile/eden_fs/prefs) vs the Apple vectors.
           run_gate "base selftest" $B --base-selftest --docs="$PWD/base-docs"
+          # K.0w-2: world-folder adoption (loose .emod -> Worlds/<id>/), then the crash-injection loop (a kill
+          # after every mutating step, then recovery: each world once, bytes unchanged, no sidecar lost).
+          rm -rf folders-docs folders-crash && mkdir -p folders-docs
+          run_gate "folders selftest" $B --headless --folders-selftest --docs="$PWD/folders-docs"
+          # K.1-3: the block registry (names, palette, placeholders, flag compaction, refusals).
+          run_gate "registry selftest" $B --registry-selftest --docs="$PWD/registry-docs"
+          run_gate "folders crash loop" bash ../port/tools/folders-crash-gate.sh $B "$PWD/folders-crash"
           run_gate "emod selftest" $B --emod-selftest --emod-fixtures=../port/tools/fixtures/emod --emod-work="$PWD/emod-work"
           # MP.1/MP.2: the multiplayer TCP seam + protocol session against an in-process mock server on
           # loopback (Winsock on Windows). The live leg against ewb-server is port/tools/mp-live-gate.sh.
@@ -862,6 +883,13 @@ jobs:
           run_gate "geometry 256z" $B --headless --stage1 --shadows=off --height=256 --docs="$PWD/docs256"
           python ../.github/scripts/check-stage1.py gate-geometry-64z.log gate-geometry-256z.log
           run_gate "base selftest" $B --base-selftest --docs="$PWD/base-docs"
+          # K.0w-2: world-folder adoption (loose .emod -> Worlds/<id>/), then the crash-injection loop (a kill
+          # after every mutating step, then recovery: each world once, bytes unchanged, no sidecar lost).
+          rm -rf folders-docs folders-crash && mkdir -p folders-docs
+          run_gate "folders selftest" $B --headless --folders-selftest --docs="$PWD/folders-docs"
+          # K.1-3: the block registry (names, palette, placeholders, flag compaction, refusals).
+          run_gate "registry selftest" $B --registry-selftest --docs="$PWD/registry-docs"
+          run_gate "folders crash loop" bash ../port/tools/folders-crash-gate.sh $B "$PWD/folders-crash"
           run_gate "emod selftest" $B --emod-selftest --emod-fixtures=../port/tools/fixtures/emod --emod-work="$PWD/emod-work"
           run_gate "classic selftest" $B --classic-selftest --docs="$PWD/classic-docs"
           rm -rf ci-docs && mkdir -p ci-docs
@@ -902,6 +930,9 @@ jobs:
           python3 ../.github/scripts/check-stage1.py --shadows stage1-64s.log
           rm -rf base-docs && mkdir -p base-docs
           ./build/eden_native --base-selftest --docs="$PWD/base-docs"   # G.2b-0
+          rm -rf folders-docs folders-crash && mkdir -p folders-docs   # K.0w-2: world-folder adoption + its crash loop
+          ./build/eden_native --headless --folders-selftest --docs="$PWD/folders-docs"
+          bash ../port/tools/folders-crash-gate.sh ./build/eden_native "$PWD/folders-crash"
           ./build/eden_native --input-selftest
           ./build/eden_native --gamepad-selftest
           ./build/eden_native --touch-selftest

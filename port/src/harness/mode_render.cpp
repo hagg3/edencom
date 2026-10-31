@@ -10,6 +10,7 @@
 #include "../render/render_internal.h"
 #include "../../../Classes/SpecialEffects.h"
 #include "../../../Classes/Firework.h"
+#include "../../../Classes/SkyCycle.h"
 
 extern "C" void eden_gl_trace_begin(FILE* f);   // render_core.cpp
 extern "C" void eden_gl_trace_end(void);
@@ -199,6 +200,87 @@ int run_scene_shot() {
     g_ignoreUserInput = false;
     std::printf("[eden-scene] %d captures, prefix %s\n", written, g_opt.shot.c_str());
     return written == 2 * 3 * 11 ? 0 : 1;
+}
+
+// DN.3: --sky-shot. The scene-shot world and site, cycle on and locked, one full frame per clock time and
+// camera pose. Rendering only: the clock is set, not advanced, so every frame is a pure function of t.
+int run_sky_shot() {
+    SDL_GL_SetSwapInterval(0);
+    if (g_opt.shot.empty()) g_opt.shot = "sky";
+    std::vector<double> times;
+    {
+        const std::string spec = g_opt.skyTimes.empty() ? "0,0.2,0.26,0.3,0.5,0.7,0.74,0.8" : g_opt.skyTimes;
+        size_t i = 0;
+        while (i <= spec.size()) {
+            size_t j = spec.find(',', i);
+            if (j == std::string::npos) j = spec.size();
+            if (j > i) times.push_back(std::atof(spec.substr(i, j - i).c_str()));
+            i = j + 1;
+        }
+    }
+    const std::string name = g_opt.world.empty() ? "sky-shot" : g_opt.world;
+    for (int i = 0, n = eden_menu_world_count(); i < n; ++i)
+        if (name == eden_menu_world_name(i)) { eden_menu_delete_at(i); break; }
+    g_ignoreUserInput = true;
+    g_app->setFixedEtime(1.0f / 60.0f);
+    eden_rng_seed(1);
+    if (!open_world(name.c_str(), g_opt.height)) return 1;
+    if (!g_opt.haveAt) { g_opt.at[0] = 65536.5f; g_opt.at[1] = 60.0f; g_opt.at[2] = 65536.5f; }
+    eden_console_teleport(g_opt.at[0], g_opt.at[1], g_opt.at[2]);
+    tick(g_opt.frames);
+    const Site site = build_site(player_state());
+    SkyCycle::setEnabled(true);
+    SkyCycle::setLocked(true);   // the clock holds still; setTime still sets it
+    const Pose poses[2] = { { -4.0f, 4.0f, 6.0f, 0.0f, 3.0f }, { -4.0f, 4.0f, 6.0f, 0.0f, 40.0f } };
+    const char* names[2] = { "level", "up" };
+    hold_pose(site, poses[0], 240);
+    int written = 0;
+    for (double t : times) {
+        SkyCycle::setTime(t);
+        for (int p = 0; p < 2; ++p) {
+            hold_pose(site, poses[p], 20);   // lets the fog and the night re-mesh settle
+            char label[64];
+            std::snprintf(label, sizeof label, "t%.2f-%s", t, names[p]);
+            if (shot(label, EDEN_RC_ALL)) ++written;
+        }
+    }
+    // DN.5: the night flip, from the scene-shot pose (lamps, flowers, creatures' site). The clock is set
+    // just short of the -4 degree flip and settled, then just past it: `-0` is drawn before any update
+    // (every chunk still baked with the old bit, under the new world light), `-1` after one frame (the
+    // re-mesh streaming in), `-settled` once it is done. -0 vs -settled away from lamps is the seam
+    // (plan section 4: no patchwork). The fog in -0 is the pre-flip time's (0.0016 of a day earlier).
+    const struct { const char* name; double before, after; } flips[2] = {
+        { "dusk", 0.7610, 0.7626 }, { "dawn", 0.2374, 0.2390 } };
+    const int flips0 = SkyCycle::nightFlips();
+    for (const auto& f : flips) {
+        SkyCycle::setTime(f.before);
+        hold_pose(site, kPoses[0], 240);
+        const bool nightBefore = sky_isNight();
+        char label[64];
+        std::snprintf(label, sizeof label, "flip-%s-pre", f.name);
+        if (shot(label, EDEN_RC_ALL)) ++written;
+        SkyCycle::setTime(f.after);
+        std::snprintf(label, sizeof label, "flip-%s-0", f.name);
+        if (shot(label, EDEN_RC_ALL)) ++written;
+        hold_pose(site, kPoses[0], 1);
+        std::snprintf(label, sizeof label, "flip-%s-1", f.name);
+        if (shot(label, EDEN_RC_ALL)) ++written;
+        hold_pose(site, kPoses[0], 240);
+        std::snprintf(label, sizeof label, "flip-%s-settled", f.name);
+        if (shot(label, EDEN_RC_ALL)) ++written;
+        int bd = 0, bn = 0;
+        eden_debug_baked_night(&bd, &bn);
+        std::printf("[eden-sky] flip %s: night %d -> %d, settled chunks %d day-baked / %d night-baked, L %.3f\n", f.name,
+                    nightBefore, sky_isNight(), bd, bn, SkyCycle::skyLight());
+    }
+    std::printf("[eden-sky] night flips requested: %d (want 2)\n", SkyCycle::nightFlips() - flips0);
+    SkyCycle::setLocked(false);
+    SkyCycle::setEnabled(false);
+    g_app->setFixedEtime(0.0f);
+    eden_rng_unpin();
+    g_ignoreUserInput = false;
+    std::printf("[eden-sky] %d captures, prefix %s\n", written, g_opt.shot.c_str());
+    return written == (int)times.size() * 2 + 8 ? 0 : 1;
 }
 
 }  // namespace g_render

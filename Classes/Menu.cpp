@@ -15,6 +15,7 @@
 #include "Graphics.h"
 #include "Globals.h"
 #include "Util.h"
+#include "UIIcons.h"
 #include "World.h"
 #include "zpipe.h"
 #include "FileArchive.h"
@@ -70,11 +71,12 @@ struct MenuKit {
     // the Get Worlds tile); the list's titlebar has `back` in Settings' old place.
     GLW::Button     back, myWorlds, multiplayer;
     // About screen: placeholder licence/credits text, one Label per paragraph
-    static const int ABOUT_PARAS=5;
+    static const int ABOUT_PARAS=6;
     GLW::Button     about, aboutBack;
     GLW::Label      aboutTitle, aboutPara[ABOUT_PARAS];
-    CGRect          aboutPanel;
-    float           aboutPt, aboutW;   // the font size / wrap width the paragraphs were last laid out at
+    CGRect          aboutPanel, aboutContent;
+    GLW::IconRail   aboutRail;   // one tile for now: Info
+    float           aboutPt, aboutW, aboutH;   // the font size / wrap width the paragraphs were last laid out at
     GLW::Label      subtitle, capWorlds, capMulti, capGet, betaTag;   // betaTag: the Multiplayer tile's BETA badge
     float           homeTopY;   // the bottom of the logo (the space under it is the home screen's)
     CGRect          homePanel;  // the gray WINDOW the home screen's tiles sit in
@@ -90,7 +92,7 @@ struct MenuKit {
     std::string     shownStatus;
     WorldNode*      lastSelected;
     int             listTouch, barTouch, downRow;
-    MenuKit() : pitch(30), btnH(30), titleY(0), homeTopY(0), homeSubY(0), homeTileW(0), aboutPt(0), aboutW(0), built(false), lastSelected(NULL),
+    MenuKit() : pitch(30), btnH(30), titleY(0), homeTopY(0), homeSubY(0), homeTileW(0), aboutPt(0), aboutW(0), aboutH(0), built(false), lastSelected(NULL),
                 listTouch(-1), barTouch(-1), downRow(-1) {
         panel=list=homePanel=CGRectMake(0,0,0,0);
         for(int k=0;k<MK_MAX_ROWS;k++) rowBuilt[k]=false;
@@ -125,8 +127,12 @@ void Menu::layoutKit(){
         k->back.setLabel("Back",du(22));
         k->settings.setLabel("Settings",du(22));
         k->about.setLabel("About",du(14));
-        k->aboutBack.setLabel("Back",du(22));
-        k->aboutTitle.set("About Emod",du(26),UITextAlignmentCenter);
+        k->aboutBack.setLabel("Back",du(20));
+        k->aboutBack.sizeToFit();
+        k->aboutTitle.set("About Emod",du(32),UITextAlignmentCenter);
+        static const int aboutIcons[1]={ UIICON_INFO };
+        k->aboutRail.setTiles(aboutIcons,1);
+        k->aboutRail.setSelected(0);
         k->myWorlds.setLabel("My Worlds",du(26));
         k->multiplayer.setLabel("Multiplayer",du(22));
         k->getWorlds.setLabel("Get Worlds",du(26));
@@ -655,78 +661,18 @@ void Menu::deactivate(){
 }
 void Menu::loadWorlds(){
 	World::getWorld->fm->cleanConversionTemps();   // a killed conversion's .spill/.converting
-	std::vector<std::pair<std::string,long long> > hidden_originals;   // S.5: (paired .emod, original's bytes)
+	World::getWorld->fm->adoptLooseWorlds();       // K.0w-2: loose .emod -> Worlds/<id>/ (plan §4)
 	world_list=NULL;
 	selected_world=NULL;
-	std::vector<std::string> dirContents=eden_fs_list(World::getWorld->fm->documents);
-    
-    
-    //readIndex();
 	world_list_end=world_list;
-    int dirc=(int)dirContents.size();
-    bool reloadDir=false;
-    
-  /*  for(int i=0;i<dirc;i++){
-		NSString* file_name=[dirContents objectAtIndex:i];
-        if([file_name hasSuffix:@".eden"]){
-            if([file_name isEqualToString:@"Eden.eden"])continue;
-            CompressWorld([file_name cStringUsingEncoding:NSUTF8StringEncoding]);
-            reloadDir=TRUE;
-        }
-        
-    }*/
-    if(reloadDir){
-        dirContents=eden_fs_list(World::getWorld->fm->documents);
-        dirc=(int)dirContents.size();
-    }
-    
-	for(int i=0;i<dirc;i++){
-		const std::string fileName=dirContents[i];
-        printg("%s\n",fileName.c_str());
-        if(fileName=="Eden.eden.archive")continue;
-		//NSString* real_name=[NSString stringWithFormat:@"test%d",i];
-        
-        std::string wut=path_ext(fileName);
-        for(size_t k=0;k<wut.size();k++) wut[k]=(char)toupper((unsigned char)wut[k]);
-        if(wut=="PNG"){
-            continue;
-        }
-        // Archives are listed because playing one converts it (S.5d).
-        bool is_archive=(wut=="GZ"||wut=="ZIP")
-            &&FileManager::isArchiveName(fileName);
-        if(wut!="EDEN"&&wut!="EMOD"&&!is_archive)
-            continue;
-        // Stage S / S.5: a `.eden` that already has a paired `.emod` is the same world -- the
-        // `.emod` lists, the original stays hidden (the player kept it when asked, or has not been
-        // asked yet). One that does not is listed and flagged: it converts when it is played.
-        bool needs_convert=false;
-        if(wut=="EDEN"||is_archive){
-            std::string paired=World::getWorld->fm->pairedEmodFor(fileName);
-            if(!paired.empty()){
-                // Hidden; its size goes on the `.emod`'s row once the list is built (below).
-                struct stat sb;
-                long long b=(stat((World::getWorld->fm->documents+"/"+fileName).c_str(),&sb)==0)?(long long)sb.st_size:0;
-                hidden_originals.push_back(std::make_pair(paired,b));
-                continue;
-            }
-            needs_convert=World::getWorld->fm->worldNeedsConversion(fileName);
-        }
-        
-		std::string real_name=World::getWorld->fm->getName(fileName);
-        if(real_name.empty()){   // G.2b-2: "" is the old nil (a name with no UTF-8 form)
-            real_name="Unknown World";
-        }
-        
-		printg("'%s'\n",real_name.c_str());
-        if(real_name=="error~"){
-            continue;
-        }
-        
-       // file_name=[file_name stringByDeletingPathExtension];
+	std::vector<FileManager::WorldEntry> entries;
+	World::getWorld->fm->listWorlds(&entries);   // K.0w-4: the one shared lister (Storage uses it too)
+	for(size_t i=0;i<entries.size();i++){
 		WorldNode* node=new WorldNode();   // G.2b-2: value-initialised (was malloc + memset 0)
-		node->display_name=real_name;
-		node->file_name=fileName;
-		node->needs_convert=needs_convert;
+		node->display_name=entries[i].name;
+		node->file_name=entries[i].key;
+		node->needs_convert=entries[i].needs_convert;
+		node->original_bytes=entries[i].original_bytes;
 		if(world_list_end==NULL){
 			world_list_end=node;
 			world_list=node;
@@ -735,14 +681,7 @@ void Menu::loadWorlds(){
 		}else{
 			world_list_end->next=node;
 			node->prev=world_list_end;
-			world_list_end=node;			
-		}
-		
-		
-	}
-	for(size_t i=0;i<hidden_originals.size();i++){
-		for(WorldNode* n=world_list;n;n=n->next){
-			if(n->file_name==hidden_originals[i].first){n->original_bytes=hidden_originals[i].second;break;}
+			world_list_end=node;
 		}
 	}
 	// An empty Documents folder used to synthesise one placeholder world here (a name from
@@ -924,6 +863,7 @@ static const char* const kAboutText[MenuKit::ABOUT_PARAS]={
     "Eden: Community Edition (Emod) is a fan project. It is not affiliated with or endorsed by Kingly Games or Ari Ronen.",
     "Community Edition is built on Eden: World Builder, (c) Ari Ronen / Kingly Games, whose source code was released under the GNU General Public License v3 (GPLv3). Community Edition is a fork of that code and, as a whole, is distributed under the GPLv3. You may use, study, share and modify it under that licence, and you are entitled to its source code: github.com/hagg3/Edencom. It comes with NO WARRANTY. Full text: gnu.org/licenses/gpl-3.0 (the COPYING file).",
     "Music: Kevin MacLeod (incompetech.com), licensed under Creative Commons: By Attribution 4.0 (creativecommons.org/licenses/by/4.0). The title music was made with Suno.",
+    "Additional art by maysunbo.",
     "Third-party code: zstd (BSD 3-Clause), SDL3 (zlib), stb_image / stb_truetype (public domain / MIT), Mesa GLU (SGI Free Software License B), Lucide icons (ISC).",
     "Full notices: the NOTICE file in the source repository.",
 };
@@ -932,16 +872,17 @@ void Menu::layoutAbout(){
     using namespace GLW;
     if(!kit->built) layoutKit();
     MenuKit* k=kit;
-    const CGRect safe=safeRect();
-    const float margin=du(12), btnH=controlH(30);
+    const RailFrame f=railFrame();
+    k->aboutPanel=f.panel;
+    k->aboutContent=f.content;
+    k->aboutRail.setRect(f.rail);
+    const CGRect& T=f.titlebar;
+    k->aboutBack.setRect(CGRectMake(T.origin.x,T.origin.y,0,T.size.height));
+    titlebarHit(k->aboutBack);
     const float pad=du(12), gap=du(8);
-    const float pw=std::min((float)du(520),(float)(safe.size.width-margin*2.0f));
-    const float ph=safe.size.height-margin*2.0f;
-    k->aboutPanel=CGRectMake(safe.origin.x+(safe.size.width-pw)*0.5f,safe.origin.y+margin,pw,ph);
-    k->aboutBack.setRect(CGRectMake(k->aboutPanel.origin.x+pad,k->aboutPanel.origin.y+pad,du(112),btnH));
-    const float w=pw-pad*2.0f;
-    const float room=ph-pad*3.0f-btnH-k->aboutTitle.height();
-    if(k->aboutW==w&&k->aboutPt>0) return;
+    const float w=f.content.size.width-pad*2.0f;
+    const float room=f.content.size.height-pad*2.0f;
+    if(k->aboutW==w&&k->aboutPt>0&&k->aboutH==room) return;
     // the largest size at which every paragraph fits; floored so it stays legible
     float pt=du(15);
     for(;;){
@@ -955,6 +896,7 @@ void Menu::layoutAbout(){
     }
     k->aboutPt=pt;
     k->aboutW=w;
+    k->aboutH=room;
 }
 
 void Menu::renderAbout(){
@@ -963,15 +905,18 @@ void Menu::renderAbout(){
     MenuKit* k=kit;
     Pen::blend(true);
     Pen::blendFunc(R::B_ALPHA);
+    const RailFrame f=railFrame();
     const CGRect p=k->aboutPanel;
     const float pad=du(12), gap=du(8);
     bevel(p,BEVEL_WINDOW);
     k->aboutBack.render();
-    const float top=p.origin.y+p.size.height-pad;   // y grows up: text blocks hang from their top
-    k->aboutTitle.drawCentered(p.origin.x+p.size.width*0.5f,top,kText);
-    float y=top-k->aboutTitle.height()-gap;
+    k->aboutTitle.drawCentered(p.origin.x+p.size.width*0.5f,f.titleY(k->aboutTitle),kText);
+    k->aboutRail.render();
+    const CGRect c=k->aboutContent;
+    bevel(c,BEVEL_CONTENT);
+    float y=c.origin.y+c.size.height-pad;   // y grows up: text blocks hang from their top
     for(int i=0;i<MenuKit::ABOUT_PARAS;i++){
-        k->aboutPara[i].draw(p.origin.x+pad,y,kText);
+        k->aboutPara[i].draw(c.origin.x+pad,y,kText);
         y-=k->aboutPara[i].height()+gap;
     }
     Pen::color(1.0f,1.0f,1.0f,1.0f);

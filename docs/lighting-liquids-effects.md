@@ -158,8 +158,16 @@ exactly that until R.3 and now imports `"../Lighting.h"`.
   reports voxels where they differ (`mismatch`, must be 0).
 - Consumption: `calcLight(x,z,y, skylight, channel)` (`Terrain.cpp`) adds
   `light/64` to the base skylight and clamps to 1.5; the mesher bakes this into
-  vertex colors. Skylight is 1.0 by day, 0.35 when the sky color is the night palette
-  entry (`colorTable[54]`). There is no sun direction; `getShadow` still returns a constant 1.0
+  vertex colors. Skylight is 1.0 by day, 0.35 at night: `sky_isNight()` (`Classes/SkyCycle`), which is the
+  painted sky being the night palette entry (`colorTable[54]`, `sky_paintedNight()`) unless Experiments ›
+  *Day/night cycle* is on (Stage DN; then the clock's bit, flipped with hysteresis at -4.5° / -3.5° of sun
+  elevation, each flip one full-window re-mesh). **DN.5 (2026-10-31), cycle on only:** each chunk records the
+  bit it was baked with (`TerrainChunk::bakedNight`, published by `prepareVBO`) and is drawn under
+  `R::setWorldLight(SkyCycle::worldLight(bakedNight))`: `L(t)` for a day bake, `L(t)/0.35` for a night one
+  (times a warm/cool tint), so the two match away from lamps and the flip's re-mesh streams in without a
+  patchwork (`--sky-shot` flip frames: ≤ 1 level). `L` is 1.0 above 15°, 0.35 at -4°, 0.2625 by -18°. Flowers
+  take the current bit's light; door / golden-cube / creature LightSets blend the stock day and night values
+  (`SkyCycle::blendLight`). Cycle off, none of this runs (`--scene-shot` 0/66). There is no sun direction in the lighting; `getShadow` still returns a constant 1.0
   and the 1.x `shadowarray` code stays commented out as archaeology. The port's replacement is the
   baked top-face shadows below (H.2).
 
@@ -282,6 +290,27 @@ quarter of `sky_box.png`, losing the pale horizon the fog colour blends into: X.
 the whole gradient, looking down shows its pale bottom. Painting the sky (`paintSky`) recolors the region the
 player is in — a signature Eden feature. Night = palette entry 54 (dims skylight and
 GL lights for doors/creatures).
+
+### Day/night cycle (Stage DN, Experiments › *Day/night cycle*, default off)
+
+Cycle off, everything above is unchanged (`--scene-shot` 0/66, `--stage1` pins). On, the painted regions are
+ignored (they stay saved; the sky brush toasts that the clock owns the sky) and:
+- **Clock** (`Classes/SkyCycle`): `t` in 0..1 (0 midnight, 0.25 sunrise, 0.5 noon, 0.75 sunset; new worlds
+  start at 0.30), full day = *Day length* (10/20/40/60 min, `experiments.day_length`). `update` runs from
+  `World::update` and stops under the pause menu. `timefreeze` / World Properties › *Lock time of day* hold
+  it; `time T` / `day` / `night` set it (`world.time`). Saved per world as `.emod` record 11 `SKY_CLOCK`
+  (`docs/emod-file-format.md`, `docs/save-load.md`); a multiplayer session has its own clock, reset once at
+  `MpWorld::beginSession`, never saved.
+- **Sky** (`Classes/SkyLook`, `Terrain::render`'s sky pass, one `SkyCycle::enabled()` branch ahead of the stock
+  sky): 7 sun-elevation keyframes (zenith / horizon / glow colours) drawn as a 12-row vertex-colour gradient
+  that follows camera pitch; a dawn/dusk glow band, stronger facing the sun; 400 fixed-seed pixel stars
+  (night only) rotated about the sun axis and projected on the CPU each frame (≤ 2 point draws, no static
+  buffer). `Terrain::update` sets the fog to the keyframe's horizon colour while on.
+- **Sun and moon** (`SkyCycle::drawSunMoon`): `media/sky_sprites.png` (32×16, stepped 16×16 sun left, moon
+  right, white; the tint colours them), ~5° tall snapped to 16-point multiples, drawn through
+  `Texture2D::drawSkySprite` after the sky and before terrain, so terrain occludes them.
+- **Light:** see the skylight paragraph above (`R::setWorldLight`, `bakedNight`, hysteresis, one re-mesh per
+  flip, two flips a day). Harness: `--sky-shot[=PREFIX] [--sky-times=…]` renders frames at fixed clock times.
 
 ## Common pitfalls
 - Lighting rebuilds re-mesh chunks in radius; a wall of lightboxes on a streaming

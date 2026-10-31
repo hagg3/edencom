@@ -144,6 +144,14 @@ mask, which was always on at frame start), and while `--scene-shot` masks passes
 `Texture2DPixelFormat` but have no `TexFormat` (nothing creates them since G.1; `initData` aborts as it did on an
 unknown format). `kFmtUI3UV` is the interleaved float3 pos + float2 uv quad.
 
+## World light (DN.5, 2026-10-31)
+`R::setWorldLight(r,g,b)` multiplies program 1's vertex colour in the vertex stage (`u_worldLight`;
+`drawWorld`, and `drawLit` with Original lighting off). It is draw state like the fog: kept until changed,
+reset to (1,1,1) by `beginFrame`, and x1.0 is exact, so a caller that never sets it draws as before
+(`--scene-shot` 0 of 66 against the tree without it). Only the day/night cycle sets it (Terrain's chunk,
+door/golden-cube and flower draws) and puts (1,1,1) back after. `--state-trace` adds `wlight=(…)` to a
+world line only when it is not (1,1,1).
+
 ## Original lighting (G.5b-4; plan §7)
 Settings › Video › *Original lighting* (`original_lighting`, default on, not in the presets) →
 `R::setOriginalLighting`. On, `drawLit` is program 5 (or `lit-flat`); off, it is `drawWorld`, which is

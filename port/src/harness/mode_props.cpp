@@ -194,7 +194,10 @@ Menu* menu() { return World::getWorld->menu; }
 
 
 // Selects `file` in the list and taps Properties.
-bool open_props(const char* file) {
+bool open_props(const char* fileIn) {
+    World::getWorld->fm->adoptLooseWorlds();   // K.0w-2: a loose name maps to its adopted key
+    const std::string key = FileManager::adoptedKeyOf(fileIn);
+    const char* file = key.c_str();
     menu()->loadWorlds();
     int idx = -1;
     for (int i = 0; i < eden_menu_world_count(); ++i)
@@ -279,8 +282,11 @@ int run_props_selftest() {
     classic_default_params(&g0, 4242);
     uint8_t rec[CLASSIC_RECORD_BYTES];
     classic_encode_record(g0, rec);
-    const std::string rp = docs + "/props-round.emod";
-    bool ok = write_bare(rp, "props round", 4242, 4, S, S, rec, err) && play_file("props-round.emod");
+    std::string rp = docs + "/props-round.emod";
+    bool ok = write_bare(rp, "props round", 4242, 4, S, S, rec, err);
+    const std::string rk = ok ? g_world::classic_test::adopt_key("props-round.emod") : std::string();   // K.0w-2: a folder world from here on
+    if (!rk.empty()) rp = docs + "/" + rk;
+    ok = ok && !rk.empty() && play_file(rk.c_str());
     check(ok, "a Classic world plays", err.c_str());
     if (!ok) return 1;
     tick(30);
@@ -309,7 +315,7 @@ int run_props_selftest() {
         check(ok, "the edited column is saved", "");
     }
 
-    ok = open_props("props-round.emod");
+    ok = open_props(rk.c_str());
     WorldPropertiesMenu* wp = menu()->props;
     std::snprintf(d, sizeof d, "type %d source %d seed \"%s\" photo %d", wp->props().type, wp->props().genSource,
                   wp->value("seed"), wp->rowVisible("photo") ? 1 : 0);
@@ -344,7 +350,7 @@ int run_props_selftest() {
 
     ClassicGen g1 = g0;
     g1.caves = CLASSIC_CAVES_DEEP;
-    ok = play_file("props-round.emod");
+    ok = play_file(rk.c_str());
     check(ok, "it reopens", "");
     if (ok) {
         tick(30);
@@ -374,10 +380,10 @@ int run_props_selftest() {
     }
     {
         WorldProps p;
-        ok = fm->readWorldProperties("props-round.emod", &p);
+        ok = fm->readWorldProperties(rk, &p);
         p.gen.caves = CLASSIC_CAVES_OFF;
-        const int r = ok ? fm->applyWorldProperties("props-round.emod", p) : -1;
-        ok = r >= 0 && (r & WP_WROTE_GENERATOR) && play_file("props-round.emod");
+        const int r = ok ? fm->applyWorldProperties(rk, p) : -1;
+        ok = r >= 0 && (r & WP_WROTE_GENERATOR) && play_file(rk.c_str());
         int back = 0;
         tested = 0;
         if (ok) {
@@ -412,9 +418,9 @@ int run_props_selftest() {
         }
         st.close();
         WorldProps p;
-        ok = ok && fm->readWorldProperties("props-round.emod", &p);
+        ok = ok && fm->readWorldProperties(rk, &p);
         p.gen.hilliness = 4;   // Wild: a different surface
-        const int r = ok ? fm->applyWorldProperties("props-round.emod", p) : -1;
+        const int r = ok ? fm->applyWorldProperties(rk, p) : -1;
         WorldFileHeader h2;
         ok = r >= 0 && read_header(rp, &h2);
         ClassicGen g2 = g0;
@@ -440,9 +446,10 @@ int run_props_selftest() {
     const bool haveFx = g_world::classic_test::load_fixture(g_opt.classicFixture, fx, err);
     check(haveFx, "the 1.x fixture loads", haveFx ? g_opt.classicFixture.c_str() : err.c_str());
     if (haveFx) {
-        const std::string lp = docs + "/props-legacy.emod";
+        std::string lp = docs + "/props-legacy.emod";
         const int hx = fx.keys[0].first * 16 + 8, hz = fx.keys[0].second * 16 + 8;
         ok = g_world::classic_test::write_world(lp, "props legacy", fx.seed, hx, hz, &fx, NULL, NULL, err) && open_props("props-legacy.emod");
+        if (ok) lp = docs + "/" + FileManager::adoptedKeyOf("props-legacy.emod");
         check(ok, "a 1.x world opens in Properties", err.c_str());
         if (ok) {
             const WorldProps& p = wp->props();

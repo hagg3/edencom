@@ -89,6 +89,20 @@ int menu_index_of_file(const char* file) {
 // Stage S / S.5: with --world-format=emod a download lands as `<id>.emod` (converted while it
 // inflated) — so "the same world" means its `.eden` export equals what was served.
 const char* world_ext() { return ".emod"; }
+// K.0w-3: a download lands in Worlds/<server id>/world.emod; the same id again in Worlds/<id>-<4 a-z>/world.emod.
+// Returns the listed key of that world ("" if none); `again` asks for the suffixed folder.
+std::string dl_key(const std::string& id, bool again) {
+    const std::string pre = "Worlds/" + id, post = "/world.emod";
+    for (int i = 0; i < eden_menu_world_count(); ++i) {
+        const std::string f = eden_menu_world_file(i);
+        if (f.size() < pre.size() + post.size() || f.compare(0, pre.size(), pre) != 0 ||
+            f.compare(f.size() - post.size(), post.size(), post) != 0) continue;
+        const bool plain = f.size() == pre.size() + post.size();
+        const bool suffixed = f.size() == pre.size() + 5 + post.size() && f[pre.size()] == '-';
+        if (again ? suffixed : plain) return f;
+    }
+    return std::string();
+}
 bool world_bytes(const std::string& path, std::vector<unsigned char>* out) {
     if (path.size() < 5 || path.compare(path.size() - 5, 5, ".emod") != 0) return read_file(path, out);
     emod::EdenExporter ex;
@@ -195,7 +209,7 @@ int run_browser_selftest_body(bool live) {
         const std::string size = pick >= 0 ? b->entrySize(pick) : "";
         const int before = eden_menu_world_count();
         const bool ok = !id.empty() && browser_download(b, m, id.c_str());
-        const int at = menu_index_of_file((id + world_ext()).c_str());
+        const int at = menu_index_of_file(dl_key(id, false).c_str());
         std::snprintf(detail, sizeof(detail), "id %s (%s), worlds %d -> %d, status \"%s\", listed as \"%s\"", id.c_str(),
                       size.c_str(), before, eden_menu_world_count(), b->statusText(), at >= 0 ? eden_menu_world_name(at) : "-");
         check(ok && at >= 0 && !m->showbrowser, "the smallest archive world downloads, unpacks and is listed", detail);
@@ -207,7 +221,7 @@ int run_browser_selftest_body(bool live) {
             const bool played = tick_until([] { return game_mode() == 1; }, 60000, "game_mode == PLAY");
             check(played, "the downloaded world loads", "");
             if (played) { tick(60); quit_to_menu(); tick(10); }
-            const int again = menu_index_of_file((id + world_ext()).c_str());
+            const int again = menu_index_of_file(dl_key(id, false).c_str());
             if (again >= 0) { eden_menu_select(again); m->a_deleteConfirm(); }
         }
         if (m->showbrowser) { ui_tap_rect(b->controlRect("back")); tick(3); }
@@ -311,12 +325,11 @@ int run_browser_selftest_body(bool live) {
 
     // --- downloads: deflate zip, nested zip, no overwrite --------------------------------------
     struct Want { const char* id; const char* file; const char* what; int source; };
-    const std::string X = world_ext();
-    const std::string f1 = "1600000001" + X, f2 = "1600000002" + X, f1b = "1600000001-2" + X, f3 = "1600000103" + X;
+    std::string f1, f2, f1b, f3;   // keys, found after each download (K.0w-3: Worlds/<id>[-xxxx]/world.emod)
     const Want wants[] = {
-        { "1600000001", f1.c_str(),  "a streamed deflate zip imports as a world", WorldBrowser::SRC_ARCHIVE },
-        { "1600000002", f2.c_str(),  "a zip inside a zip imports as a world", WorldBrowser::SRC_ARCHIVE },
-        { "1600000001", f1b.c_str(), "a second download never replaces the first", WorldBrowser::SRC_ARCHIVE },
+        { "1600000001", "",  "a streamed deflate zip imports as a world", WorldBrowser::SRC_ARCHIVE },
+        { "1600000002", "",  "a zip inside a zip imports as a world", WorldBrowser::SRC_ARCHIVE },
+        { "1600000001", "again", "a second download never replaces the first", WorldBrowser::SRC_ARCHIVE },
     };
     std::vector<std::string> made;
     for (const Want& w : wants) {
@@ -324,20 +337,28 @@ int run_browser_selftest_body(bool live) {
         const bool done = browser_download(b, m, w.id);
         // The converted case (S.5) runs a time slice per frame; wait for it to hand back.
         tick_until([m, b] { return !m->showbrowser || !b->busy(); }, 6000, "the conversion");
-        const int at = menu_index_of_file(w.file);
+        const std::string wfile = dl_key(w.id, w.file[0] != 0);
+        (w.file[0] ? f1b : (std::strcmp(w.id, "1600000001") == 0 ? f1 : f2)) = wfile;
+        const int at = menu_index_of_file(wfile.c_str());
         std::vector<unsigned char> got;
-        const bool same = world_bytes(docs + "/" + w.file, &got) && got == world;
-        std::snprintf(detail, sizeof(detail), "%s: listed %d selected %d same-bytes %d browser %d status \"%s\"", w.file,
+        const bool same = !wfile.empty() && world_bytes(docs + "/" + wfile, &got) && got == world;
+        std::snprintf(detail, sizeof(detail), "%s: listed %d selected %d same-bytes %d browser %d status \"%s\"", wfile.c_str(),
                       at, eden_menu_selected_index(), same ? 1 : 0, m->showbrowser ? 1 : 0, b->statusText());
         check(done && at >= 0 && eden_menu_selected_index() == at && same && !m->showbrowser, w.what, detail);
-        if (at >= 0) made.push_back(w.file);
+        if (at >= 0) made.push_back(wfile);
     }
     {
         // S.5 plan §4: the download is converted while it inflates and is gone after the commit.
         bool stray = false;
         for (const char* f : { "1600000001.eden", "1600000002.eden", "1600000001-2.eden", "1600000001.eden.zip", "1600000002.eden.zip" })
             if (FILE* t = std::fopen((docs + "/" + f).c_str(), "rb")) { std::fclose(t); stray = true; }
-        check(!stray, "converted downloads leave no .eden and no download behind", "");
+        // K.0w-3: and no staging dir, no `download` inside a world folder.
+        std::vector<std::string> ents = eden_fs_list(docs + "/Worlds");
+        for (const std::string& e : ents) {
+            if (e[0] == '.') stray = true;
+            if (eden_fs_exists(docs + "/Worlds/" + e + "/download")) stray = true;
+        }
+        check(!stray, "converted downloads leave no .eden, no download and no staging dir behind", "");
     }
     {
         const int at = menu_index_of_file(f1.c_str());
@@ -377,8 +398,9 @@ int run_browser_selftest_body(bool live) {
     {
         const bool done = browser_download(b, m, "1600000103");
         tick_until([m, b] { return !m->showbrowser || !b->busy(); }, 6000, "the conversion");
+        f3 = dl_key("1600000103", false);
         std::vector<unsigned char> got;
-        const bool same = world_bytes(docs + "/" + f3, &got) && got == world;
+        const bool same = !f3.empty() && world_bytes(docs + "/" + f3, &got) && got == world;
         std::snprintf(detail, sizeof(detail), "listed %d same-bytes %d status \"%s\"", menu_index_of_file(f3.c_str()),
                       same ? 1 : 0, b->statusText());
         check(done && same && !m->showbrowser, "a two-member gzip from the server imports as a world", detail);
@@ -388,6 +410,25 @@ int run_browser_selftest_body(bool live) {
     tick(3);
     check(b->source() == WorldBrowser::SRC_CURRENT && b->mode() == WorldBrowser::MODE_SEARCH,
           "the browser reopens where it was", "");
+    {   // K.0w-3a: cancel a download, then download the same entry again (the staging id is reused)
+        int at = -1;
+        for (int i = 0; i < b->entryCount(); ++i) if (!std::strcmp(b->entryId(i), "1600000103")) at = i;
+        CGRect r;
+        bool started = false;
+        if (at >= 0) { b->showRow(at); }
+        if (at >= 0 && b->rowRect(at, &r)) {
+            ui_tap_rect(r); tick(2);
+            ui_tap_rect(b->controlRect("download")); tick(1);
+            started = b->busy();
+            ui_tap_rect(b->controlRect("download")); tick(2);   // Cancel
+        }
+        const bool again = browser_download(b, m, "1600000103");
+        tick_until([m, b] { return !m->showbrowser || !b->busy(); }, 6000, "the conversion");
+        std::snprintf(detail, sizeof(detail), "started %d again %d status \"%s\"", started ? 1 : 0, again ? 1 : 0, b->statusText());
+        check(again && !std::strstr(b->statusText(), "could not move"),
+              "cancel then download the same entry again succeeds", detail);
+        ui_menu_to(true); ui_tap_rect(m->controlRect("getworlds")); tick(3);
+    }
     ui_tap_rect(b->modeRect(WorldBrowser::MODE_RECENT));
     tick(3);
     browser_wait_list(b);
@@ -429,6 +470,7 @@ int run_browser_selftest_body(bool live) {
     // --- Share (S.5 / S.5c): export to Exports/ as .eden.gz, and the upload, offline -----------
     {
         const std::string srcFile = docs + "/" + eden_menu_world_file(src);
+        const std::string srcPhoto = docs + "/" + FileManager::photoPathOf(eden_menu_world_file(src));   // K.0w: photo.png in a folder
         eden_menu_select(src);
         tick(2);
         WorldNode* node = m->selected_world;
@@ -449,7 +491,7 @@ int run_browser_selftest_body(bool live) {
         const bool refused = node && !WorldShare::startUpload(node, emod::UPLOAD_CURRENT, emod::X_OWN, emod::SIGNS_KEEP) &&
                              std::strstr(WorldShare::lastResult(), "failed");
         check(refused, "an upload without a preview PNG is refused", WorldShare::lastResult());
-        if (havePng) write_bytes(srcFile + ".png", png);
+        if (havePng) write_bytes(srcPhoto, png);
         const bool up = node && WorldShare::startUpload(node, emod::UPLOAD_CURRENT, emod::X_OWN, emod::SIGNS_KEEP);
         tick_until([] { return !WorldShare::busy(); }, 6000, "the upload");
         std::vector<unsigned char> posted, ignored;
@@ -463,7 +505,7 @@ int run_browser_selftest_body(bool live) {
                       posted.size(), shape ? 1 : 0, bodyGone ? 1 : 0);
         check(!havePng || (up && !std::strcmp(WorldShare::lastResult(), "ok: Uploaded") && shape && bodyGone),
               "Share > Upload POSTs the pinned upload2.php multipart and reads YES", detail);
-        std::remove((srcFile + ".png").c_str());
+        std::remove(srcPhoto.c_str());
     }
 
     // --- clean up: the downloads (through the menu's own delete), the fixtures, the world -------

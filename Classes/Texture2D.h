@@ -93,6 +93,7 @@ These functions require GL_TEXTURE_2D and both GL_VERTEX_ARRAY and GL_TEXTURE_CO
     void drawTextNoScale(CGRect rect);
     void drawTextM(CGRect rect);
     void drawInRect(CGRect rect, CGFloat depth);
+    void drawSkySprite(CGRect rect, CGFloat depth, float u0, float u1, float r, float g, float b, float a);   // DN.4: sub-rect [u0,u1] of the width, full height; sky ortho space
     void drawSky(CGRect rect, CGFloat depth, float r, float g, float b, float a);   // G.5b-6: the caller's R::State and fog; (r,g,b,a) tints
 
 

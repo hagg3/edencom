@@ -11,9 +11,14 @@
 #include <filesystem>
 #include <system_error>
 #include <io.h>      // _chsize_s, _fileno
+#include <sys/stat.h>  // _wstat64
 #else
 // POSIX, not std::filesystem: that is unavailable below iOS 13; kept POSIX because it is the engine's established idiom.
 #include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>     // renamex_np (Apple)
+#include <sys/syscall.h>   // SYS_renameat2 (Linux)
 #include <sys/stat.h>
 #include <unistd.h>  // ftruncate
 #endif
@@ -141,6 +146,73 @@ bool eden_fs_move(const std::string& from, const std::string& to) {
     if (!x_copy(from, to)) return false;               // cross-device fallback
     x_remove(from);
     return true;
+}
+bool eden_fs_move_new(const std::string& from, const std::string& to) {
+    if (x_exists(to)) return false;
+#if defined(_WIN32)
+    return x_rename(from, to);                          // `to` was just checked absent (windows.h stays out: BOOL clash)
+#elif defined(__APPLE__)
+    return renamex_np(from.c_str(), to.c_str(), RENAME_EXCL) == 0;
+#elif defined(__linux__) && defined(SYS_renameat2)
+    if (syscall(SYS_renameat2, AT_FDCWD, from.c_str(), AT_FDCWD, to.c_str(), 1u /*RENAME_NOREPLACE*/) == 0) return true;
+    if (errno != ENOSYS && errno != EINVAL) return false;           // a real failure
+    // The filesystem lacks RENAME_NOREPLACE: link+unlink for a file; check-then-rename for a directory
+    // (only ever our own fresh dot-name, so there is no race).
+    if (x_is_dir(from)) return rename(from.c_str(), to.c_str()) == 0;
+    if (link(from.c_str(), to.c_str()) != 0) return false;
+    unlink(from.c_str());
+    return true;
+#else
+    if (x_is_dir(from)) return rename(from.c_str(), to.c_str()) == 0;
+    if (link(from.c_str(), to.c_str()) != 0) return false;
+    unlink(from.c_str());
+    return true;
+#endif
+}
+bool eden_fs_make_dirs(const std::string& path) {
+    if (path.empty()) return false;
+    if (x_is_dir(path)) return true;
+    size_t cut = path.find_last_of("/\\");
+    if (cut != std::string::npos && cut > 0 && !eden_fs_make_dirs(path.substr(0, cut))) return false;
+    return x_mkdir(path);
+}
+bool eden_fs_remove_tree(const std::string& path) {
+    if (!x_exists(path)) return true;
+#if defined(_WIN32)
+    std::error_code ec;
+    fs::remove_all(P(path), ec);
+    return !ec && !x_exists(path);
+#else
+    struct stat st;
+    if (lstat(path.c_str(), &st) != 0) return false;
+    if (S_ISDIR(st.st_mode)) {                                      // never follows a symlink out of the tree
+        bool ok = true;
+        for (const std::string& n : x_list(path)) ok = eden_fs_remove_tree(path + "/" + n) && ok;
+        return ok && rmdir(path.c_str()) == 0;
+    }
+    return unlink(path.c_str()) == 0;
+#endif
+}
+long long eden_fs_mtime(const std::string& path) {
+#if defined(_WIN32)
+    struct _stat64 st;
+    return _wstat64(P(path).c_str(), &st) == 0 ? (long long)st.st_mtime : -1;
+#else
+    struct stat st;
+    return stat(path.c_str(), &st) == 0 ? (long long)st.st_mtime : -1;
+#endif
+}
+bool eden_fs_sync_dir(const std::string& dir) {
+#if defined(_WIN32)
+    (void)dir;
+    return true;
+#else
+    int fd = open(dir.c_str(), O_RDONLY);
+    if (fd < 0) return false;
+    bool ok = fsync(fd) == 0;
+    close(fd);
+    return ok;
+#endif
 }
 bool eden_fs_copy(const std::string& from, const std::string& to) { return x_copy(from, to); }
 bool eden_fs_create_empty(const std::string& path) {

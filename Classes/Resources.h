@@ -400,6 +400,7 @@ enum {
     ART_CROUCH_ACTIVE,   // ... held
     ART_CONSOLE,         // the pause menu's Console row
     ART_CHAT,            // the multiplayer chat button
+    ART_SKY_SPRITES,     // DN.4: media/sky_sprites.png, 32x16 atlas: stepped sun (left) and moon (right), no mips
     ART_COUNT
 };
 
