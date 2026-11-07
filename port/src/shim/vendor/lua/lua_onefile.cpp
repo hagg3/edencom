@@ -9,6 +9,22 @@
 // Only the core and the libraries a sandboxed mod may open are vendored: base, coroutine, string, table,
 // math, utf8. io, os, package and debug are not in the tree (no linit.c either), so nothing can open them.
 // The order is upstream onelua.c's.
+// libstdc++ pulls <cmath> -> <bits/stl_iterator_base_funcs.h> (a function named `next`) lazily from the C
+// headers lcode.c includes, after llex.c has #defined `next(ls)`: include the C++ headers first.
+#include <algorithm>
+#include <iterator>
+#include <cmath>
+#include <cfloat>
+#include <climits>
+#include <clocale>
+#include <csetjmp>
+#include <cstdarg>
+#include <cstddef>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+#include <cctype>
 #include "lprefix.h"
 #include "lzio.c"
 #include "lctype.c"
