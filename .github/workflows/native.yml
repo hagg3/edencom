@@ -535,7 +535,9 @@ jobs:
     steps:
       - name: Check out with LF endings (fixtures are byte-compared to expect.txt / pinned hashes)
         shell: pwsh
-        run: git config --global core.autocrlf false
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
       - uses: actions/checkout@v4
 
       - uses: msys2/setup-msys2@v2
@@ -909,7 +911,9 @@ jobs:
     steps:
       - name: Check out with LF endings (fixtures are byte-compared to expect.txt / pinned hashes)
         shell: pwsh
-        run: git config --global core.autocrlf false
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
       - uses: actions/checkout@v4
       - uses: ilammy/msvc-dev-cmd@v1
         with:
