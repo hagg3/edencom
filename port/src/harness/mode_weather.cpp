@@ -80,11 +80,11 @@ static void settings_leg() {
         eden_settings_set(ai, (float)t);
         bool ok = eden_atmo_tier() == t;
         for (int k = 0; k < 9; ++k) {
-            const int want = t == 0 ? 0 : t == 1 ? kLow[k] : 1;
+            const int want = t == 0 ? 0 : t == 1 ? kLow[k] : (k == 3 ? 0 : 1);   // High: all but cloud shadows (opt-in)
             ok = ok && eden_atmo_element(k) == want && (int)eden_settings_get(elRow[k]) == want;
         }
         std::snprintf(d, sizeof(d), "tier %d", t);
-        check(ok, "a tier change sets the element rows (Off none, Low the Low set, High all)", d);
+        check(ok, "a tier change sets the element rows (Off none, Low the Low set, High all but the opt-in cloud shadows)", d);
     }
     // A hand-set element stays until the next tier change; Off gates it (Off = absent).
     eden_settings_set(ai, 1.0f);
@@ -873,7 +873,10 @@ static void clouds_leg() {
     check(lowDrawn && !lowShadow && Clouds::coverage() == Clouds::BASE_COVER && res1 - res0 == 2 && Clouds::texUploads() - up0 == 1,
           "Low, weather off: the layer at the base coverage from one map + one quad, no shadows (P3)", d);
 
-    eden_atmo_set_override(2);
+    // Cloud shadows are opt-in at High: High through the rows, with the shadow row switched on.
+    eden_atmo_set_override(-1);
+    eden_settings_set(row("atmosphere"), 2.0f);
+    eden_settings_set(row("cloud_shadows"), 1.0f);
     tick(2);
     const bool noonShadow = Clouds::shadowStated();
     const float noonStrength = Clouds::shadowStrength();
