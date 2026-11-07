@@ -1,0 +1,2 @@
+# K.4: a pack of scripts alone needs no "blocks"
+= blocks 0

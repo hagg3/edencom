@@ -20,6 +20,9 @@ namespace eden_net {
 // What an `INFO` reply (or the cache in servers.txt) says. -1 = unknown.
 struct ServerInfo {
     std::string name, motd, flags;
+    // K.3 (mod-manager plan M8): INFO `mods=<sha256 hex>`, the server's mod list hash (ContentPack::modsHash()
+    // on the server's packs). "" = absent = vanilla; "?" = present but not 64 lowercase hex.
+    std::string mods;
     int players = -1, max = -1;
     int locked = -1;           // -1 "?", 0 open, 1 password
     int64_t seen = 0;          // unix seconds of the last good probe (cache only)
@@ -66,6 +69,13 @@ std::string formatServers(const ServerFile& f);
 bool parseServers(const std::string& text, ServerFile& f);   // false = no header (file ignored)
 bool loadServers(const std::string& path, ServerFile& f);    // false = missing/unreadable (f empty)
 bool saveServers(const std::string& path, const ServerFile& f);   // temp + rename
+
+// K.3: a `mods=` value is 64 lowercase hex.
+bool modsHashOk(const std::string& v);
+// K.3: may this client join? A vanilla server (no `mods=`) always; a modded one only when the hashes match.
+// The client is vanilla-only in a session (ContentPack::loadMods(session) loads nothing), so the local hash a
+// caller passes today is "" and any `mods=` server is refused with "This server uses mods".
+bool modsCompatible(const ServerInfo& info, const std::string& localHash);
 
 // `INFO:k=v:...:motd=...` (the reply line). False if it is not an INFO line.
 bool parseInfoLine(const std::string& line, ServerInfo& out);

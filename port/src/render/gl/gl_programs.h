@@ -20,6 +20,12 @@ GLuint linkProgram(GLuint vs, GLuint fs, const char* name, std::string* log = nu
 // colours it), for the lit draws 2.1.1 made under glShadeModel(GL_FLAT) (block-break debris; G.5b-4).
 enum ProgId { P_WORLD = 0, P_UI, P_SPRITE, P_SKINNED, P_LIT, P_LIT_FLAT,
               P_WORLD_OPAQUE, P_LIT_OPAQUE, P_LIT_FLAT_OPAQUE,   // PW.3: no `discard` (alphaRef < 0 draws)
+              P_PRECIP,   // AT.2b: rain streaks (R::drawPrecip), built on first use: never while precipitation is off
+              P_WORLD_HFOG, P_WORLD_OPAQUE_HFOG,   // AT.5: EDEN_HEIGHT_FOG twins of P_WORLD / P_WORLD_OPAQUE (R::setHeightFog)
+              P_CLOUDS,   // AT.6: the cloud layer (R::drawClouds), built on first use
+              P_WORLD_CS, P_WORLD_OPAQUE_CS, P_WORLD_HFOG_CS, P_WORLD_OPAQUE_HFOG_CS,   // AT.6: EDEN_CLOUD_SHADOW twins (R::setCloudShadow)
+              P_WORLD_OPAQUE_WT, P_WORLD_OPAQUE_HFOG_WT, P_WORLD_OPAQUE_CS_WT, P_WORLD_OPAQUE_HFOG_CS_WT,   // AT.8: EDEN_WATER_TINT twins of the four discard-free world programs (R::setWaterTint)
+              P_WORLD_OPAQUE_WG, P_WORLD_OPAQUE_HFOG_WG, P_WORLD_OPAQUE_CS_WG, P_WORLD_OPAQUE_HFOG_CS_WG,   // AT.11: + EDEN_WATER_GLINT (High: sun glint sparkles)
               P_PROG_COUNT };
 
 enum Uni {
@@ -29,6 +35,11 @@ enum Uni {
     U_PALETTE, U_BONECOUNT, U_LIGHTAMB, U_LIGHTDIFF,
     U_AMBSUM, U_LPOS0, U_LPOS1, U_LDIFF0, U_LDIFF1, U_LSPEC0, U_LSPEC1, U_SHININESS,
     U_WORLDLIGHT,   // DN.5: program 1 only
+    U_PBOX0, U_PBOX1, U_PMOVE, U_PSLANT, U_PCOLOR, U_PTOPS,   // AT.2b: P_PRECIP only
+    U_HFOGPLANE, U_HFOG,                                      // AT.5: the *_HFOG twins only
+    U_CRAY0, U_CRAY1, U_CRAY2, U_CPOS, U_CPARAM, U_CCOLOR, U_CSHADE,   // AT.6: P_CLOUDS only
+    U_CSU, U_CSV, U_CSHADOW, U_CLOUDTEX,                               // AT.6: the *_CS twins only
+    U_WTINT, U_WSUN, U_WUP,                                            // AT.8: the *_WT twins (AT.11: WSUN/WUP the *_WG twins only)
     U_COUNT
 };
 
@@ -44,6 +55,11 @@ struct Program {
 
 // PW.3: world/lit/lit-flat become their discard-free twin when alphaRef < 0 (unless --power-exp=discard).
 ProgId alphaVariant(ProgId id, float alphaRef);
+ProgId heightFogVariant(ProgId id);   // AT.5: P_WORLD(_OPAQUE) -> its EDEN_HEIGHT_FOG twin
+ProgId waterTintVariant(ProgId id);   // AT.8: a discard-free world program (plain, hfog, cs, hfog+cs) -> its EDEN_WATER_TINT twin
+ProgId waterGlintVariant(ProgId id);  // AT.11: a *_WT twin -> its EDEN_WATER_GLINT twin (High, glint strength > 0)
+ProgId cloudShadowVariant(ProgId id); // AT.6: P_WORLD(_OPAQUE)(_HFOG) -> its EDEN_CLOUD_SHADOW twin
+bool built(ProgId id);                // linked already (the selftest's "off = never built" check)
 
 // The program, compiled on first use (a context is live). nullptr if it failed to link.
 Program* program(ProgId p);

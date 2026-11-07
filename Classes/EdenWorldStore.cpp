@@ -1089,6 +1089,7 @@ bool EdenWorldStore::putRecord(int type, const void* data, size_t len) {
         if (type == T_SIGN_TRAILER && (len % EDEN_DIR_ROW || len > TRAILER_MAX)) return fail("SIGN_TRAILER must be a multiple of 16, <= 1 MiB");
         if (type == T_GENERATOR && len != GENERATOR_LEN) return fail("GENERATOR must be 28 bytes");
         if (type == T_SKY_CLOCK && len != SKY_CLOCK_LEN) return fail("SKY_CLOCK must be 16 bytes");
+        if (type == T_WEATHER && len != WEATHER_LEN) return fail("WEATHER must be 32 bytes");
         if (type == T_BLOCK_PALETTE) {
             // D14: the flag compaction comes first, so no byte >= 128 ever means something in an unflagged file
             if (!paletteFlag()) return fail("BLOCK_PALETTE needs a flagged file: compact(true) first");
@@ -1104,7 +1105,7 @@ bool EdenWorldStore::putRecord(int type, const void* data, size_t len) {
     }
     uint8_t codec;
     std::vector<uint8_t>& enc = scratch_;
-    const bool raw = type == T_WORLD_HEADER || type == T_GENERATOR || type == T_SKY_CLOCK || type == T_BLOCK_PALETTE;   // codec 0 by spec
+    const bool raw = type == T_WORLD_HEADER || type == T_GENERATOR || type == T_SKY_CLOCK || type == T_WEATHER || type == T_BLOCK_PALETTE;   // codec 0 by spec
     if (!codecs_.encode(codec_, (const uint8_t*)data, len, !raw, &codec, enc)) return fail("encode failed");
     if (enc.size() > MAX_PAYLOAD) return fail("record payload exceeds 16 MiB");
     addRecord((uint8_t)type, codec, 0, 0, 0, (uint32_t)len, enc.data(), enc.size());
@@ -1270,14 +1271,14 @@ bool EdenWorldStore::compact(bool setPaletteFlag, const std::vector<uint8_t>* pa
         return ok;
     };
     // H.4: GENERATOR last of the singletons, so a fresh conversion (which never has one) still
-    // compacts to itself byte for byte. DN.2: SKY_CLOCK after it, for the same reason.
-    static const int order[] = {T_WORLD_HEADER, T_CREATURES, T_SIGN_TRAILER, T_PROVENANCE, T_GENERATOR, T_SKY_CLOCK};
+    // compacts to itself byte for byte. DN.2: SKY_CLOCK after it, for the same reason; AT.1b: WEATHER after that.
+    static const int order[] = {T_WORLD_HEADER, T_CREATURES, T_SIGN_TRAILER, T_PROVENANCE, T_GENERATOR, T_SKY_CLOCK, T_WEATHER};
     for (int t : order) {
         if (!ok) break;
         int32_t i = latestT_[t];
         if (i < 0) continue;
         if (t == T_SIGN_TRAILER && entries_[i].aux == 0) continue;    // an empty trailer = none
-        ok = copy(entries_[i], t == T_WORLD_HEADER || t == T_GENERATOR || t == T_SKY_CLOCK);
+        ok = copy(entries_[i], t == T_WORLD_HEADER || t == T_GENERATOR || t == T_SKY_CLOCK || t == T_WEATHER);
     }
     // K.1-2: BLOCK_PALETTE goes after the COLUMNs, so the flag compaction learns the latent bytes
     // while it copies them (one decode pass). An unflagged file's stray palette (no writer makes one)
@@ -1390,6 +1391,10 @@ std::vector<std::string> EdenWorldStore::verify() {
     if (sk >= 0 && entries_[sk].aux != SKY_CLOCK_LEN)
         errs.push_back(fmt("SKY_CLOCK raw length %u is not %u", entries_[sk].aux, (unsigned)SKY_CLOCK_LEN));
     if (sk >= 0 && entries_[sk].codec != C_NONE) errs.push_back("SKY_CLOCK must be codec 0");
+    int32_t we = latestT_[T_WEATHER];
+    if (we >= 0 && entries_[we].aux != WEATHER_LEN)
+        errs.push_back(fmt("WEATHER raw length %u is not %u", entries_[we].aux, (unsigned)WEATHER_LEN));
+    if (we >= 0 && entries_[we].codec != C_NONE) errs.push_back("WEATHER must be codec 0");
     // K.1-2: the flag <=> a live BLOCK_PALETTE; the record's rules; every version a superset of the last
     int32_t bp = latestT_[T_BLOCK_PALETTE];
     bool havePalette = false;
@@ -1417,7 +1422,7 @@ std::vector<std::string> EdenWorldStore::verify() {
         }
     }
     bool high[256] = {false};
-    static const int single[] = {T_CREATURES, T_SIGN_TRAILER, T_PROVENANCE, T_SUMMARY, T_GENERATOR, T_BLOCK_PALETTE, T_SKY_CLOCK};
+    static const int single[] = {T_CREATURES, T_SIGN_TRAILER, T_PROVENANCE, T_SUMMARY, T_GENERATOR, T_BLOCK_PALETTE, T_SKY_CLOCK, T_WEATHER};
     for (int t : single) {
         int32_t i = latestT_[t];
         if (i < 0) continue;

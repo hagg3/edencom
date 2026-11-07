@@ -158,12 +158,85 @@ void setLights(const LightSet& l);
 // Original lighting off). Kept until changed and reset to (1,1,1) by beginFrame; x1.0 is exact, so a
 // caller that never sets it draws exactly as before. A caller that sets it puts (1,1,1) back after.
 void setWorldLight(float r, float g, float b);
-void drawWorld (const Geometry& g, Tex t, const Rgba& tint, float alphaRef = -1.0f);   // program 1
+// AT.5 (WORKING/atmosphere-plan-2026-11-05.md P3): height fog (valley mist) on drawWorld, a compiled variant of
+// program 1 (EDEN_HEIGHT_FOG), selected only while this is on and the fog is on; off = the plain program,
+// so a caller that never sets it draws exactly as before. `plane` maps an eye-space point to world y
+// (y = plane.xyz . eye + plane.w); `params` is (mist top y, 1 / its thickness, 1 / the distance to full
+// strength, the strength 0..1). Kept until heightFogOff() and cleared by beginFrame.
+void setHeightFog(const float plane[4], const float params[4]);
+void heightFogOff();
+// AT.6 (plan P3): cloud shadows on drawWorld, a compiled vertex-stage variant of program 1 (EDEN_CLOUD_SHADOW),
+// selected only while this is on; off = the plain program (or the height-fog twin), so a caller that never sets
+// it draws exactly as before. Each vertex samples `cloud` (TF_L8, repeat, on texture unit 1) at
+// (u . eye + u.w, v . eye + v.w), eye the vertex's eye-space position, and its colour is multiplied by
+// 1 - params.y where the texel is >= params.x (the cloud layer's threshold). Kept until cloudShadowOff() and
+// cleared by beginFrame.
+void setCloudShadow(Tex cloud, const float u[4], const float v[4], const float params[4]);
+void cloudShadowOff();
+// AT.8: water tint and sun glint on drawWorld's discard-free draws (alphaRef < 0), a compiled vertex-stage variant of
+// program 1 (EDEN_WATER_TINT); off = the plain program, so a caller that never sets it draws exactly as before.
+// Only vertices whose colour alpha is 145/255 (the mesher's water mark) change: their rgb moves toward tint.rgb by
+// tint.w, then gains sun.w * (r . sun)^32, r the view ray mirrored in the surface (up = world up in eye space,
+// unit; sun = the eye-space direction to the sun, unit). Kept until waterTintOff() and cleared by beginFrame.
+void setWaterTint(const float tint[4], const float sun[4], const float up[4]);
+void waterTintOff();
+void drawWorld(const Geometry& g, Tex t, const Rgba& tint, float alphaRef = -1.0f);   // program 1
 void draw2D     (const Geometry& g, Tex t, const Rgba& tint);                          // program 2
 void drawSprites(const Geometry& g, Tex t, const SpriteParams& p);                     // program 3
 void drawSkinned(const Geometry& g, Tex t, const Rgba& tint, const float* palette, int nmat,
                  int bonesPerVertex);                                                  // program 4
 void drawLit    (const Geometry& g, Tex t, const Rgba& tint);   // program 5, or 1 with Original lighting off (R8)
+
+// AT.2b (WORKING/atmosphere-plan-2026-11-05.md P1, P2): precipitation streaks, program P_PRECIP. The
+// vertices are static seeds (kFmtPrecip: u8 x, y, z in 0..255 + a corner: bit 0 the side, bit 1 the tail
+// end), six per streak, and the vertex shader places each one: seed x size + offset, wrapped into the box,
+// so a drop stays put in the world while the box follows the camera. Per frame only these uniforms move:
+// no simulation, no upload. A streak whose head is below its column's top (`tops`, sampled in the vertex
+// stage) collapses to a point outside the clip volume. Blended, no discard, no fog. Draw space is the
+// modelview's (the camera's render-local coordinates).
+struct PrecipParams {
+    float origin[3];      // the box's min corner
+    float size[3];        // the box
+    float offset[3];      // the motion so far (drift x/z, fall y), wrapped by the caller into [0, size)
+    float slant[2];       // horizontal drift per unit of fall: the streak leans up-wind by it
+    float length;         // streak length (world units)
+    float width;          // streak width, at least widthPerDist x the eye distance (no sub-pixel shimmer)
+    float widthPerDist;
+    float fade[2];        // horizontal distance from the box's centre where alpha starts / ends fading
+    Rgba  color;
+    Tex   tops;           // TF_L8 n x n: a column's top (the y of the first free cell above its highest block)
+    int   topsN;          // n
+    int   topsShift[2];   // draw-space column (0, 0) is texel (shift x, shift z); a column is (x, z) mod n
+    // AT.2c: splash mode. Same program, seeds and map; each streak's six vertices become a flat quad on its
+    // column's top, `length` is the phase clock (wrapped into [0, 1)), slant/width/offset are unused.
+    bool  splash = false;
+    // AT.3: flake mode. Same program, seeds, box and map; each seed is a camera-facing square (width, or
+    // widthPerDist x distance, doubled for every other seed), swaying; `offset` y is the slow fall.
+    bool  snow = false;
+};
+extern const VertexFormat kFmtPrecip;
+void drawPrecip(const Geometry& g, const PrecipParams& p);
+
+// AT.6 (plan P5): the pixel cloud layer, program P_CLOUDS. The vertices are the four NDC corners (kFmtClouds:
+// f32 x, y in -1..1), drawn at clip depth `depth` (the caller puts it a hair nearer than the sky and the sun,
+// so with a depth test against the frame's terrain only visible sky pixels pay). Each fragment's view ray is
+// ray0 + x ray1 + y ray2 (world directions, y up, any length), intersected with the horizontal plane `height`
+// above the eye; the hit's (x, z) + eyeXZ, x 1 / period, samples `tex` (TF_L8, repeat, nearest): a texel >=
+// threshold is cloud, coloured lit .. shade by how far above the threshold it is, faded out between fade[0]
+// and fade[1] (horizontal distance from the eye). Blended, no discard, no fog.
+struct CloudParams {
+    float ray0[3], ray1[3], ray2[3];
+    float depth;          // clip-space z of the quad
+    float eyeXZ[2];       // the eye's world x, z minus the wind, wrapped by the caller into [0, period)
+    float height;         // the cloud plane's height above the eye (negative: the eye is above it)
+    float period;         // world units per texture repeat
+    float threshold;      // 0..1: 1 - the coverage
+    float fade[2];
+    Rgba  lit, shade;     // lit.a is the layer's alpha
+    Tex   tex;
+};
+extern const VertexFormat kFmtClouds;
+void drawClouds(const Geometry& g, const CloudParams& p);
 
 // Settings › Video › Original lighting (plan §7). G.5b-4 added the row and the first call sites (block-break
 // debris, the firework cube); G.5b-6 added doors and the golden cube (Terrain::render).

@@ -107,7 +107,7 @@ results — callers read them immediately after the call.
     no separate mechanism was needed. The 2-frame gap costs lateral speed (ground
     friction `×0.9` plus the jump's own `vel.x*=.9` lateral tax apply
     during it), so chained hops decay rather than build. (The old
-    "Advanced movement (bhop)" Experiments row was removed in FT.2 (middle-click pick block also refuses bedrock, FT.1); a Source-style movement mod is planned later.)
+    "Advanced movement (bhop)" Experiments row was removed in FT.2 (middle-click pick block also refuses bedrock, FT.1); a Srclike movement mod is planned later.)
   - Creature interactions: tapping a creature in pick mode grabs it
     (`PickupModel`), tap again places (`PlaceModel`); paint mode colors it
     (`ColorModel`); mine mode hits it (`HitModel`); burn sets it on fire.
@@ -152,20 +152,20 @@ results — callers read them immediately after the call.
   and flow, ramps/ice, trampoline, lava damage, golden-cube pickup, portal entry, footsteps/landing
   sounds, autojump and the `y<-10` respawn; `hud->underLiquid` stays false (no tint/underwater bed).
   A new trigger added to `vertc`/`move` is skipped by noclip unless added to the branch too.
-  - Movement is Source-style: wish = look forward (yaw **and pitch**) × forward input + right ×
+  - Movement is Srclike: wish = look forward (yaw **and pitch**) × forward input + right ×
     strafe + up × (`FLY_UP` − `FLY_DOWN`). `walk_force` gives only the direction (the keyboard seam
     folds a frame-rate factor into its length; the joystick passes a unit vector); the magnitude is
     `max_walk_speed/(SPEED_M·1.3)` (1 normal, 0.5 walk, 1.3 sprint / full stick), capped so diagonals
     aren't faster. `vel` approaches `wish·NOCLIP_SPEED·FLY_ACCEL_MULT` by `1−e^(−NOCLIP_RATE·t)`:
     frame-rate independent, and the same law is the crisp stop. `FLY_MAX_SPEED` caps |vel| (3D);
     `fly_braking`/`fly_vertical` don't apply. `pos.y` is clamped to `[1, T_HEIGHT+8]`.
-  - **Speeds** (globals, no Settings rows): `NOCLIP_SPEED` 60 b/s (78 sprinting), `NOCLIP_RATE` 10/s.
+  - **Speeds** (`NOCLIP_SPEED` is the Settings row Gameplay › *Noclip speed* since SX.4, 10–100; `NOCLIP_RATE` has none): `NOCLIP_SPEED` 60 b/s (78 sprinting), `NOCLIP_RATE` 10/s.
     Keep `NOCLIP_SPEED·1.3·FLY_ACCEL_MULT` under **100.5 b/s**: `update()` splits a frame while
     `etime·|vel| > 0.1` and clamps `|vel|` to `JUMP_SPEED*15` first. Fly itself cruises at ~97.5 b/s
     with W held at 60 Hz (measured, `--fly-selftest`), i.e. it rides that clamp.
   - `takeDamage` returns at once in noclip (lava, creatures, TNT, command blocks).
   - **Leaving noclip** (`fly_set_state` to anything else, including *Allow fly* turned off) calls
-    `Player::unstick()`: while `boxBlocked()` step up 1 block (cap `T_HEIGHT+36`), then zero `vel`.
+    `Player::unstick()`: while `boxBlocked()` step up 1 block (cap `T_HEIGHT+36`), then zero `vel` and sync `lpos`, only if it moved the player (SRC.0: momentum survives leaving noclip/fly in open air).
     `boxBlocked()` scans only the cells the box overlaps and counts what `vertc` pushes out of (not
     liquids, flowers, doors, portals, golden cubes, ladders/vines), so an exit under water stays
     under water and one beside a wall doesn't climb it. Not `groundPlayer()`: its first loop drops
@@ -183,7 +183,7 @@ results — callers read them immediately after the call.
   `CROUCH_ENABLED && (CROUCH_HELD || hud->m_crouch)`, so both the keyboard key and the HUD button are
   inert when it's off. `Hud.cpp` additionally wraps the crouch button's hit-test *and* its render call
   in `if (CROUCH_ENABLED)` (`extern bool CROUCH_ENABLED`), so the on-screen button is hidden entirely,
-  not just non-functional, when disabled. Settings › Experiments › **Crouch mode** (`crouch`) flips it
+  not just non-functional, when disabled. Settings › Gameplay › **Crouch mode** (`crouch`) flips it
   via `eden_set_crouch_enabled` (`Input.cpp`). See
   [port/docs/player-input-camera.md](../port/docs/player-input-camera.md) for the input wiring.
 
@@ -265,6 +265,132 @@ a ~27 iOS pt dead zone (D4), and a drag sweeping back past its start stopping th
 - Gate: `--look-selftest` steps 0–9 plus `--look-mutate=` legs (native/README.md). `TOUCH_LOOK_MUTATE`
   bits are test-only hooks in `Input.cpp`/`Player.cpp`/`TouchLook.cpp`; 0 in every real run.
 
+## Srclike movement, overview (Stage SRC, closing pass)
+
+Experiments › *Srclike movement* (default off) replaces `Player::move()`/`vertc()` with a CS:S-flavoured fixed-tick
+model: strafe jumping, bunnyhopping (press-edge jump, *Auto-bhop*, mouse wheel jumps), surfing on any ramp, swimming,
+crouch, Source-style camera. Off = byte-identical stock. Clean-room from formulas (`port/tools/srclike-pm-ref.py`
+is the reference model; `fixtures/srclike-pm/vectors.txt` its output). Sections below, in order: input (SRC.2),
+camera (SRC.7), hull trace (SRC.3), the tick (SRC.4; water/ladder/ice/trampoline SRC.6), side effects (SRC.8).
+Tuning: `move.*` cvars = *Srclike settings* sliders. Not built: jump-duck / unduck-needs-room (SRC.5). Gate:
+`--srclike-selftest` (legs `input trace move effects special`), `--ui-selftest`, `--console-selftest`.
+
+## Srclike movement, input half (`Classes/SrclikeMove`, Stage SRC.2, 2026-10-31)
+
+Experiments › *Srclike movement* (`srclike_movement`, default off) and its child *Auto-bhop (hold jump)*
+(`srclike_autobhop`) reach `SrclikeMove::setEnabled/setAutoBhop` from `Settings.cpp`. Plan:
+`WORKING/srclike-movement-plan-2026-10-31.md`. Since SRC.4 the mode moves the player with its own fixed tick
+(next sections); everything is byte-identical when it is off.
+- **usercmd** (`SrclikeMove::UserCmd`): raw ±1 forward/side from `eden_set_move_input` (`setKeyAxes`, before the
+  frame-rate scaling `setSpeed` gets), jump, duck, yaw/pitch; the frame driver builds one **per tick** (`lastCmd()`).
+- **Jump** is a fresh press, never the held level: `takeJump(held)` = rising edge, or held with Auto-bhop, or a
+  wheel pulse; it runs once per tick and consumes the pulse, so a notch in the air is spent (a frame with no tick
+  keeps it for the next tick). The tick jumps only when grounded. Autojump (`autojump_option`) is ignored in the mode.
+- **Wheel**: a captured-mouse notch goes through `eden_wheel_action` (`Input.cpp`): jump pulse in the mode (not
+  while flying/noclip), else `eden_hotbar_scroll`. Gamepad shoulders and number keys still change the hotbar.
+- **Crouch** is implied: `wantCrouch` ORs `SrclikeMove::enabled()` with *Crouch mode*.
+- **`move.*` cvars** (SX.6: bridged from the `move_*` Settings rows; `bridgeMove` is gone): accelerate 5, airaccelerate 100, friction 4,
+  stopspeed 75, gravity 800, maxvelocity 3500, tickrate 66.67 (SRC.1 §4.1). Read by SRC.4.
+  **SRC.8b:** each is also a Settings row `move_*` (group "Movement tuning", `Settings.cpp`), shown as sliders on the
+  Settings sub-page `srclike` opened from Experiments › *Srclike settings* (since SX.1 a `kPages[]` page placed by
+  `page "srclike"`, renamed from Movement tuning in SX.4; Reset is the page's titlebar *Defaults*; `docs/ui.md`).
+  One store: the row applies into `SrclikeMove::tunables()` and persists as `move_*` prefs. **SX.6:** the rows are
+  the cvars' one range table: `eden_settings_cvar()` names a "Movement tuning" row `move.<key less move_>`, so
+  `bridgeSettings` registers it like any row (Console.cpp's duplicate range table `bridgeMove` was deleted).
+  Gate: `--ui-selftest` (Srclike settings leg).
+- Gate: `--srclike-selftest` (leg `input`).
+
+## Srclike movement, camera (Stage SRC.7, 2026-11-03)
+
+In the mode (and not flying/noclip) `Player::postMove` sets `cam->py = SrclikeMove::eyeY(player)` instead of
+`pos.y + 0.3·boxheight`:
+- **Eye (C2):** feet + `eyeHeight` = 64 u standing (1.644 blocks; stock 1.48) down to 28 u ducked, lerped by the
+  hull's own ease (`boxheight`), so the eye follows `Player::preupdate`'s crouch animation. SRC.5 will make an
+  in-air duck hold the eye in world space.
+- **Step smoothing (C4):** a grounded tick that changes height by 2..19 u adds the opposite offset to the eye,
+  eased out at 180 u/s (~0.1 s for a full step). Eden has no block that makes such a step (ramps are slopes), so
+  the selftest cannot exercise it; it matters once SRC.6 adds partial shapes.
+- **Pitch (C5):** `SrclikeMove::kPitchLimit` = 89 in the mode's `Player::update` branch (stock 80).
+- **Sensitivity (C6):** Experiments › *Srclike sensitivity* (`srclike_sens`, child of the mode, 0 = off). When
+  > 0, `eden_apply_look_delta` turns `value × 0.022` degrees per count on both axes (no iPad scale), so a CS
+  player can copy their `sensitivity`. Not verified: that SDL relative mode delivers unaccelerated deltas on
+  Windows (SRC.9 feel round).
+- **C1/C3/C7:** already true: look applies per frame in `processInput`, the tick samples yaw/pitch, `Player::pos`
+  is the interpolated tick position, and the engine has no view bob or landing punch.
+- Gate: `--srclike-selftest=move` (C2 eye heights, C5 clamp, C6 conversion).
+
+## Srclike movement, hull trace (`Classes/SrclikeTrace.cpp`, Stage SRC.3, 2026-11-01)
+
+`SrclikeMove::traceHull(start, end, mins, maxs)` sweeps an axis-aligned hull through the resident terrain and
+returns `fraction`, `endpos`, the hit plane `normal`, `startsolid`/`allsolid`, `ramp` (slope plane, 0.7 ≤ nz <
+0.99: the surf rule) and the block `type` + cell. It is the port of `port/tools/srclike-pm-ref.py`'s `trace_hull`
+(SRC.1 oracle): expanded-plane brush clip, `DIST_EPSILON` 0.03125 u back-off, "moving away" = `d2 >= d1 − 1e-6`
+(a slide along a plane you rest on is a miss), exact contact = start-solid.
+- **Units and axes:** Source units, **z up**, **double**: `S = (E.x, E.z, E.y) × 72/1.85` (`toSource`/`toEden`),
+  so Eden's `(x, z, y)` terrain order is Source `(x, y, z)`. Double because world coordinates reach ~112 000 u,
+  where a float step is a quarter of `DIST_EPSILON`; SRC.4 keeps its state in double too.
+- **Shapes** (`blockShape`, `blockBrush`): cube = 6 axial planes; ramp/side-ramp = those plus one 45° plane through
+  the cell centre (slope, or vertical diagonal facing the missing corner). Orientation copies stock
+  `makeRamp`/`makeSide` as `Player::vertc` calls them (`type%4`); the selftest compares vertices for all 32 ids.
+  **Not solid:** air/invalid (`-1`, above/below the world), all liquids (lava too: SRC.6 decides), doors, flowers,
+  portals, golden cubes (stock walks through doors/flowers; portal one-sidedness and pickups are SRC.8). Ladders,
+  vines, trampolines and palette/missing blocks are cubes.
+- Cells come from `getLandc2` (GBLOCK, toroidal; negative x/z skipped). Cost ≈ 0.2–0.4 µs per trace on the Mac.
+- Gate: `--srclike-selftest=trace` (14 checks, room built on the toroidal wrap seam `x = z = k·T_SIZE`).
+
+## Srclike movement, the tick (`Classes/SrclikeMove.cpp`, Stage SRC.4, 2026-11-03)
+
+`Player::update` hands the whole step to `SrclikeMove::frame` when the mode is on and the player is not flying
+(before the stock substep clamp; `SrclikeMove::invalidate()` otherwise). Stock `move()`/`vertc()` never run in
+the mode, so its side effects (footsteps, pickups, portals, lava, liquids, ladders, ice) are absent until
+SRC.6/SRC.8; `processInput` (build/mine) and `postMove` (edge wall, camera, sky, ambience) still run.
+- **Core** (`pmTick`, `PmState`): a line-for-line port of `port/tools/srclike-pm-ref.py`'s `Player.tick` minus water
+  and duck. Jump SETS vz 268.33 on the press tick, which skips friction (the bhop); leapfrog gravity (half before
+  the move, half after); ground = friction + accelerate + walk move (step move = plain slide vs up-18 u/slide/down,
+  then stay-on-ground); air = air-accelerate (30 u/s wish cap, rate from the uncapped wish) + slide move (4 bumps,
+  5 planes, same-plane nudge); categorize (2 u probe, `vz > 140` never ground, the **surf rule**: a ramp plane is
+  ground only if grounded last tick or slow, `|v_h| ≤ 1.1·walk`, `|vz| ≤ jump`). State is **double, Source units,
+  z up**; `Player::pos` is written in float only at the end.
+- **Wish:** `forward`/`side` in Eden's sense: forward `(cos yaw, sin yaw)`, side `(−sin yaw, cos yaw)` in Source
+  x/y (= Eden x/z, the stock `cosYaw90` direction), times `kWalkSpeed` (227.68 u/s = 5.85 b/s) × `speedMul`
+  (`max_walk_speed / (SPEED_M·1.3)`: sprint 1.3, Alt-walk, a stick's magnitude). With no key axes the stick/touch
+  direction comes from `walk_force` (D8).
+- **Fixed tick + interpolation** (D2): `frame` adds `etime` to an accumulator (capped at 8 ticks: a hitch is slow
+  motion, not a burst), runs `pmTick` every `1/move.tickrate`, then writes `Player::pos` = the previous tick origin
+  lerped toward the current one by the leftover fraction, and `Player::vel` = the tick velocity. So the eye lags
+  the simulation by up to one tick, and picks/builds use what is drawn.
+- **Re-seed:** the driver remembers the `pos`/`vel` it wrote. A different `pos` (teleport, portal, respawn, world
+  edge clamp; not crouch, which keeps the feet) re-seeds the state from Player; a different `vel` alone is adopted
+  (leaving noclip keeps its momentum, SRC.0). A seed that is start-solid (stock rests the feet exactly ON a floor,
+  which the trace calls start-solid) is lifted the least of `k·DIST_EPSILON` / 1–18 u that frees it, else stock
+  `unstick()`.
+- **Hover after landing** (model and Source behaviour): a landing tick that ends within the 2 u probe grounds the
+  hull where it is, and standing still never snaps it down (stay-on-ground runs only while moving), so a hull can
+  rest up to 2 u (0.05 block) above a floor; a jump from there peaks that much higher.
+- **Float `Player::pos`:** at x ≈ 65 500 a float step is 0.004 block, 4–10 % of one frame's walk travel; the
+  double state is exact, the drawn position is quantised as in stock.
+- Cost: ~0.5 µs per tick on the Mac (surfing).
+- Gate: `--srclike-selftest=move` (13 checks): the SRC.1 vectors (`port/tools/fixtures/srclike-pm/vectors.txt`, read
+  at run time, `--srclike-vectors=PATH`; `srclike-pm-ref.py --check` in CI keeps it the model's output) within 1 %
+  (absolute floor 0.05, so tick counts are exact), each `sc_*` scenario rebuilt in voxels; then real frames: 66.67
+  ticks/s under 60 Hz, smooth interpolation at 60/144 Hz, teleport re-seed, velocity adoption, a jump.
+
+## Srclike movement, side effects (Stage SRC.8, 2026-11-03)
+`SrclikeMove::frame` moves the player but runs none of what `Player::move()`/`vertc()` do around it, so the
+mode's branch in `Player::update` calls `Player::srclikeEffects(etime, wasOnground, preVelY)` after it, once per
+frame: footsteps (same cadence as `move()`), landing sound and `jumping=false` on an air→ground transition after a
+fall (`jumping || preVelY < -1`), golden-cube pickup (hull-overlap scan; scenery in an MP session, MP.3a), lava
+burn (`takeDamage(.08)` + `S_LAVA_BURN` while the feet are below a lava cell's surface), portal entry (the same
+`pos + heading/5.3` probe for `TYPE_PORTAL_TOP`; the frame driver re-seeds from the moved pos/vel next frame) and
+the `pos.y < -10` / `> 3·T_HEIGHT` pops. `postMove` already did the edge wall and camera. **Not here (SRC.6):**
+splash, `underLiquid`, swimming, ladders, ice, bounce blocks (the trace treats liquids as non-solid).
+Third-person body animation reads `vel`, which `frame` writes, so it needs nothing.
+**Multiplayer:** `MpWorld` sends `Player::pos/vel` (POSVEL, 4 Hz moving); `ewb-server` has no speed check, only
+`MOVE_VEL_MAX = 4096` b/s and position bounds (`hardening.h`), far above `move.maxvelocity` 3500 u ≈ 90 b/s.
+Remote clients dead-reckon (`kMaxExtrapolate` 0.6 s, snap beyond 12 blocks), so a 90 b/s surfer is seen with
+snaps rather than glide: a live check is owed (user).
+- Gate: `--srclike-selftest=effects` (E1 cube pickup, E2 lava, E3 landing, E4 world pop).
+
 ## Common pitfalls
 - The same touch can be claimed by HUD, camera-look, and block-edit logic; the
   `inuse`/`movecam` flags are the fragile arbitration — test on device with
@@ -302,3 +428,10 @@ generator leaves columns outside the square void, so it ends where the bundled m
   HUD-mode actions in `processInput`'s mode switch.
 - **Caution:** the touch-arbitration flags, collision epsilon handling
   (`minTranDist` thresholds), portal warp flow (it re-enters save/load).
+
+## Srclike movement: liquids and specials (SRC.6)
+
+In the mode, water levels 2-3 use a swim move (no gravity, jump held rises at 107.66 u/s, pitch steers); a wall at the
+feet with clear air above lets forward trigger a water-jump. Ladders/vines climb only with move input. Ice cuts ground
+friction to a tenth, trampolines rebound a landing elastically (at least 0.6 of a jump), flowing water pushes. Detail:
+`WORKING/srclike-movement-plan-2026-10-31.md` §11; surf map: `docs/surf-test-map.md`; gate: `--srclike-selftest=special`.

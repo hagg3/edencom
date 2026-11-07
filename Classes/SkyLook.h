@@ -1,6 +1,6 @@
 //  SkyLook.h — Stage DN.3 (WORKING/day-night-cycle-plan-2026-10-31.md §5): the cycle's sky look.
 //  Keyframed gradient + horizon glow + pixel stars, all inside Terrain::render's ortho sky pass.
-//  Only reached while Experiments > Day/night cycle is on (SkyCycle::enabled()).
+//  Only reached while Gameplay > Day/night cycle is on (SkyCycle::enabled()).
 #ifndef SkyLook_h
 #define SkyLook_h
 

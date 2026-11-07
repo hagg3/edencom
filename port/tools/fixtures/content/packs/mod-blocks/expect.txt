@@ -1,0 +1,23 @@
+# K.2-4 mod pack (folder name mod-*): every line, in order, then how much of it loads
+mod-blocks@167: block #0: must be an object
+mod-blocks@179: block #1: "id" must match [a-z0-9_/]{1,48}
+mod-blocks@218: block "stocky": "stock_id" is for the stock pack only
+mod-blocks@328: warning: block "warned": unknown key "shiny" (ignored)
+mod-blocks@422: block "warned": duplicate block id
+mod-blocks@536: block "door": kind "door" is for the stock pack only (a mod block is "cube")
+mod-blocks@651: block "oddkind": unknown kind "blob"
+mod-blocks@777: block "traits": trait "solid" listed twice
+mod-blocks@786: block "traits": unknown trait "glowing"
+mod-blocks@904: block "shape": "faces" must be {"all"}, {"sides","top","bottom"} or the six "front","back","left","right","bottom","top"
+mod-blocks@1042: block "wrong_atlas": tile "eden:stone" is in atlas 1 but the block draws from atlas 2
+mod-blocks@1141: block "no_tile": unknown tile "eden:nope"
+mod-blocks@1262: block "colour": "color" must be [r, g, b] with each 0..255
+mod-blocks@1299: block "nocolour": missing "color"
+mod-blocks@1457: block "sound": unknown sound set "eden:nope"
+mod-blocks@1499: block "nofaces": missing "faces"
+mod-blocks@1566: block "nofallback": missing "fallback"
+mod-blocks@1730: block "door_fallback": "fallback" must name a placeable stock block ("eden:..."; not air, a door or portal half, or custom)
+mod-blocks@1836: block "alias_fallback": "fallback" must name a placeable stock block ("eden:..."; not air, a door or portal half, or custom)
+mod-blocks@1960: block "paint": "fallback_paint" must be 0..54
+mod-blocks@2072: block "picker": "picker" must be true or false
+= blocks 2

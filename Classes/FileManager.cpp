@@ -30,6 +30,7 @@
 #include "port/src/shim/foundation/eden_fs.h"          // G.2b-4: EdenFile, eden_fs_*, eden_bundle_path
 #include "port/src/shim/foundation/platform_shims.h"   // G.2b-4: eden_platform_documents_root
 #include "SkyCycle.h"                                 // DN.2: the SKY_CLOCK record
+#include "Weather.h"                                  // AT.1b: the WEATHER record
 #include "BlockRegistry.h"                            // K.1-3: the BLOCK_PALETTE record
 
 // See FileManager.h. Both NULL on web — its Foundation shim already answers both questions the
@@ -1790,7 +1791,7 @@ void FileManager::loadWorld(const std::string& nameIn,bool fromArchive){
     if(!sessionWorld)worldTrailer.clear();
     // DN.2: a world without a SKY_CLOCK record (new, or from before Stage DN) starts at 0.30;
     // loadEmodWorld reads the record. A session's clock lives through its warps (MpWorld::beginSession).
-    if(!sessionWorld)SkyCycle::reset();
+    if(!sessionWorld){SkyCycle::reset();Weather::reset();}   // AT.1b: likewise the WEATHER record
     if(emod::WorldSource::isArchiveName(name)){
         // An archive that was not converted can't be played, and must never reach the .eden branch
         // below: its "header" is compressed bytes, which that branch would try to "upgrade" in place.
@@ -2374,6 +2375,13 @@ bool FileManager::loadEmodWorld(const std::string& nameIn){
             SkyCycle::load(kraw.empty()?NULL:&kraw[0],kraw.size());
         else SkyCycle::reset();
     }
+    // AT.1b: the weather (record 12). Unreadable, malformed or absent = none: clear, seeded from LEVEL_SEED.
+    {
+        std::vector<uint8_t> wraw;
+        if(st->hasRecord(emod::T_WEATHER)&&st->readRecord(emod::T_WEATHER,wraw)<=emod::EdenWorldStore::READ_FALLBACK)
+            Weather::load(wraw.empty()?NULL:&wraw[0],wraw.size());
+        else Weather::reset();
+    }
     // K.1-3: the palette (rows 128..255) resolves before the first column is read, so nothing ever
     // meshes a palette id with another world's rows. A flagged file without a readable record locks it.
     {
@@ -2565,6 +2573,8 @@ void FileManager::loadTrailer(const std::string& nameIn,const unsigned char* byt
 // latent bytes it reserves are all there are, and no id handed out afterwards can collide with one. The
 // file is flagged from here on even if the player quits without saving (harmless: an empty or unused
 // palette, D8). A one-time rewrite of the whole world on the main thread (K.1-6 measures it on the Air 2).
+bool FileManager::paletteFlagged() const{ return emodStore&&emodStore->paletteFlag(); }
+
 bool FileManager::preparePaletteAllocation(std::string* why){
     if(MpWorld::active()){ if(why)*why="Mod blocks are not available in a multiplayer world"; return false; }
     if(!emodStore){ if(why)*why="No saved world is open"; return false; }
@@ -2697,6 +2707,19 @@ void FileManager::saveEmodWorld(Vector warp){
             return;
         }
     }
+    // AT.1b (plan P7): the weather, the same way: only into a batch that commits anyway, only once it
+    // moved past needsSave()'s coarse steps. Weather never marks the world dirty or wakes autosave, and a
+    // world nobody ran weather in never gets the record.
+    bool weatherSaving=Weather::needsSave();
+    if(weatherSaving){
+        uint8_t rec[Weather::RECORD_BYTES];
+        Weather::encode(rec);
+        if(!emodStore->putRecord(emod::T_WEATHER,rec,sizeof(rec))){
+            printg("saveWorld: could not stage the weather: %s\n",emodStore->error().c_str());
+            emodStore->abortBatch();
+            return;
+        }
+    }
     // K.1-3: a palette that gained ids since the load or the last commit. The file is flagged already
     // (preparePaletteAllocation ran before the first id): a dirty palette in an unflagged file is a bug,
     // and the save is refused rather than put a byte >= 128 into a file that does not announce it (D14).
@@ -2727,6 +2750,7 @@ void FileManager::saveEmodWorld(Vector warp){
     if(paletteSaving)BlockRegistry::markSaved();
     if(generatorSaving)fm_generatorPending=false;
     if(clockSaving)SkyCycle::saved();
+    if(weatherSaving)Weather::saved();
     g_seconds_since_save=0;
     for(size_t i=0;i<saved.size();i++){
         for(int cy=0;cy<CHUNKS_PER_COLUMN;cy++)
@@ -3417,7 +3441,7 @@ bool FileManager::readWorldProperties(const std::string& file_name,WorldProps* o
     p.genSource=WP_GEN_RECORD; memset(&p.gen,0,sizeof(p.gen));
     p.originalBytes=0; p.createdUnix=0; p.columns=-1; p.signs=-1; p.goldencubes=-1; p.convertedVersion=0;
     p.openMs=0;
-    p.skyLocked=false; p.skyT=SkyCycle::DEFAULT_TIME;
+    p.skyLocked=false; p.weatherLocked=false; p.skyT=SkyCycle::DEFAULT_TIME;
     const std::string fn=file_name,path=docs+"/"+fn;
     p.fileBytes=fileSizeOf(path);
     p.savedUnix=fileMtimeOf(path);
@@ -3437,6 +3461,11 @@ bool FileManager::readWorldProperties(const std::string& file_name,WorldProps* o
         std::vector<uint8_t> kraw;   // DN.6: the clock, for Lock time of day
         if(st.hasRecord(emod::T_SKY_CLOCK)&&st.readRecord(emod::T_SKY_CLOCK,kraw)<=emod::EdenWorldStore::READ_FALLBACK&&!kraw.empty())
             SkyCycle::decode(&kraw[0],kraw.size(),&p.skyT,&p.skyLocked);
+        std::vector<uint8_t> wraw;   // AT.1c: the weather, for Lock weather
+        if(st.hasRecord(emod::T_WEATHER)&&st.readRecord(emod::T_WEATHER,wraw)<=emod::EdenWorldStore::READ_FALLBACK){
+            Weather::State ws;
+            if(Weather::decode(wraw.empty()?NULL:&wraw[0],wraw.size(),&ws))p.weatherLocked=(ws.flags&Weather::FLAG_LOCKED)!=0;
+        }
         std::vector<uint8_t> traw;
         p.signs=0;
         if(st.hasRecord(emod::T_SIGN_TRAILER)&&st.readRecord(emod::T_SIGN_TRAILER,traw)<=emod::EdenWorldStore::READ_FALLBACK&&!traw.empty()){
@@ -3510,7 +3539,8 @@ int FileManager::applyWorldProperties(const std::string& file_name,const WorldPr
         writeGen=genChanged||cur.genSource!=WP_GEN_RECORD;
     }
     const bool lockChanged=e.skyLocked!=cur.skyLocked;   // DN.6: Lock time of day
-    if(!nameChanged&&!writeGen&&!lockChanged)return 0;
+    const bool wLockChanged=e.weatherLocked!=cur.weatherLocked;   // AT.1c: Lock weather
+    if(!nameChanged&&!writeGen&&!lockChanged&&!wLockChanged)return 0;
     const std::string path=docs+"/"+file_name;
     emod::EdenWorldStore own;
     emod::EdenWorldStore* st=(emodStore&&emodStore->path()==path)?emodStore:&own;
@@ -3552,6 +3582,28 @@ int FileManager::applyWorldProperties(const std::string& file_name,const WorldPr
         ok=st->putRecord(emod::T_SKY_CLOCK,krec,sizeof(krec));
         if(ok)res|=WP_WROTE_SKY;
     }
+    if(ok&&wLockChanged){
+        // Same shape as the sky lock: an open world's state is the live one; else the stored record with the bit moved.
+        uint8_t wrec[Weather::RECORD_BYTES];
+        bool have=false;
+        if(st==emodStore){ Weather::setLocked(e.weatherLocked); Weather::encode(wrec); have=true; }
+        else{
+            std::vector<uint8_t> wr;
+            if(st->hasRecord(emod::T_WEATHER)&&st->readRecord(emod::T_WEATHER,wr)<=emod::EdenWorldStore::READ_FALLBACK&&
+               wr.size()==sizeof(wrec)){ memcpy(wrec,&wr[0],sizeof(wrec)); have=true; }
+            else{   // no record yet: a clear spell, no time to speak of, locked -- decode() accepts it
+                memset(wrec,0,sizeof(wrec));
+                const float one=1.0f;
+                memcpy(wrec+8,&one,4);
+                have=true;
+            }
+            if(e.weatherLocked)wrec[1]|=Weather::FLAG_LOCKED; else wrec[1]&=~Weather::FLAG_LOCKED;
+        }
+        if(have){
+            ok=st->putRecord(emod::T_WEATHER,wrec,sizeof(wrec));
+            if(ok)res|=WP_WROTE_WEATHER;
+        }
+    }
     if(!ok){
         printg("applyWorldProperties: could not stage the records: %s\n",st->error().c_str());
         st->abortBatch();
@@ -3563,5 +3615,6 @@ int FileManager::applyWorldProperties(const std::string& file_name,const WorldPr
     }
     if(st==emodStore&&emodHeader)memcpy(emodHeader,&h,sizeof(h));
     if(st==emodStore&&(res&WP_WROTE_SKY))SkyCycle::saved();
+    if(st==emodStore&&(res&WP_WROTE_WEATHER))Weather::saved();
     return res;
 }

@@ -282,7 +282,9 @@ The home **Multiplayer** tile opens `Classes/ServerListMenu` (list, detail pane,
   are kept and written back. ≤ 100 rows; written tmp + rename (Windows removes first). A password containing `:` is
   refused (the JOIN line is `:`-separated).
 - **Probe** (`probeServer`, `ServerProber`): TCP connect (ping = connect time, 3 s), send `INFO\n`, read one line for 1.5 s.
-  `INFO:` → Online (name, motd, players/max, locked, flags; remote text is capped and cleaned), `[Server] Server full.` →
+  `INFO:` → Online (name, motd, players/max, locked, flags, and since K.3 `mods=<64 hex>`, the server's mod-list hash
+  (`ServerInfo::mods`, `"?"` when malformed, cached in servers.txt; `modsCompatible()`: a client that loads no packs in a
+  session may join only servers without it; server side not built yet, `WORKING/mod-manager-plan-2026-11-01.md` M8; remote text is capped and cleaned), `[Server] Server full.` →
   Full, anything else or silence → "Online, no details" (a vanilla server). Never sends JOIN. ≤ 8 probes in flight on
   lazily started worker threads that only turn sockets into plain results (drained on the main thread by
   `eden_mp_servers_poll`); a generation counter drops results after a cancel. Probes run on open and on Refresh only, no

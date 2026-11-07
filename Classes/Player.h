@@ -68,6 +68,7 @@ public:
     bool checkCollision();
     bool postMove(float etime);       // FM.2: update()'s tail after move(), shared with noclip
     void noclipUpdate(float etime);   // FM.2
+    void srclikeEffects(float etime,bool wasOnground,float preVelY);   // SRC.8: move()'s side effects for the Srclike path
     bool boxBlocked();                // FM.2: box overlaps a block vertc() treats as solid
     void unstick();                   // FM.2: pop up out of solid on leaving noclip
     Vector lol[50];

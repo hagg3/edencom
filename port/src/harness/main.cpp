@@ -131,6 +131,32 @@
 //                        empty bit follows both transitions and the block really meshes.
 //   --newblocks-selftest D.2a: builds each of ids 112-127 (the 2026 blocks) through buildBlock,
 //                        asserts each meshes, then saves, reloads and reads every id back.
+//   --srclike-selftest[=leg]  Stage SRC: Srclike movement. SRC.2 leg `input`: settings, wheel jump pulse, jump latch,
+//                        Auto-bhop, autojump off, raw key axes, crouch implied, move.* cvars. SRC.3 leg `trace`: SrclikeMove::traceHull
+//                        on the toroidal seam (shapes vs stock, walls, ramps, sides, corners, start-solid). SRC.4 leg `move`:
+//                        the core tick vs port/tools/fixtures/srclike-pm/vectors.txt within 1 % (--srclike-vectors=PATH,
+//                        default relative to native/), rebuilt in voxels, plus the frame driver (tick rate,
+//                        interpolation at 60/144 Hz, re-seed on teleport, momentum adopted, start-solid lift).
+//   --content-dump       K.2-1: every per-type table + the BlockTraits oracle over 256 type values, canonical
+//                        text and its SHA-256 (.github/scripts/check-content-dump.py pins both).
+//   --json-selftest      K.2-1: Classes/Json (canonical forms, round trips, every refusal's byte offset).
+//   --pack-selftest=DIR  K.2-3: the stock pack the boot loaded equals a fresh compile of it; each DIR/<case>/
+//                        (port/tools/fixtures/content/packs) is refused with exactly its expect.txt lines, in order,
+//                        the same verdicts `port/tools/pack.py fixtures DIR` gives; the 1 MiB cap.
+//   --packs=DIR          K.2-4 (repeatable): also load mod packs from DIR (a pack folder, or a folder of packs) at
+//                        every world entry, before Documents/Packs (docs/content-packs.md "Mod packs"). With
+//                        --content-dump: also print what they compile to (after the pinned text).
+//   --packs-selftest     K.2-4: mod packs at run time with the bundled example pack (packs/emod_example) copied into
+//                        --docs/Packs: load, every block placed by the console, save + reload, the pack removed
+//                        (placeholders, bytes + paint unchanged) and restored, the tile budget overflow, load order,
+//                        impostor and duplicate ids, a session loads none, the atlas re-upload. Headless.
+//   --mods-selftest      K.3: the mod manager's model in --docs/Packs: the enable list (mods.json) and its order,
+//                        requires/conflicts, the mod-list hash, worldMods, zip install/update and every refusal,
+//                        the Get Mods catalogue parser. Headless, no world.
+//   --lua-selftest       K.4: sandboxed Lua mod scripts (docs/scripting.md): four test packs in --docs/Packs; load
+//                        order, the sandbox, the API vs the block verbs, player-edit events, eden.wait, the shared
+//                        work budget, CPU preemption + stops, the memory cap, maxErrors, the pack hash, session/close.
+//                        --lua-mutate=hook / =sandbox must FAIL it. Headless.
 //   --registry-selftest  K.1-3: the block registry at run time: canonical names, a latent byte >= 128 kept, mod
 //                        blocks via the console (flag compaction, save, reload), the pack unregistered
 //                        (placeholders, bytes unchanged) and back, refusals (session, full), K.1-4 export
@@ -187,6 +213,9 @@
 //                        locked, one full frame per clock time and camera pose (level at the sunrise
 //                        horizon, and looking up): PREFIX-t<time>-<level|up>.bmp. --sky-times=T,T,...
 //                        (default 0,0.2,0.26,0.3,0.5,0.7,0.74,0.8; 0 midnight, 0.25 sunrise, 0.5 noon).
+//   --atmo-shot[=PREFIX] AT.11, a REAL WINDOW: the scene-shot site + an annex (pool, grass, canopy, lamps), one
+//                        frame per atmosphere effect, each forcing its own tier and weather (PREFIX-<effect>.bmp)
+//                        and a counter line per frame. The review set of TESTERS/atmosphere/at11/.
 //   --state-trace=FILE   with --scene-shot: one line per draw for the day / pose 0 frame (pass, call
 //                        site, program, texture, colour, fog, blend, depth, cull, alpha, lights,
 //                        sprite, texture matrix, stack depths, arrays).
@@ -234,6 +263,12 @@
 //   --classic=SEED[,SCALE4[,CAVES[,HILLS[,TREES]]]]  H.4: a world --stage1 & co. CREATE is a Classic one
 //                        (new profile, the New World tab's defaults; SCALE4 4/6/8/12/16 at --height=256;
 //                        X.13: CAVES 0 Off/1 2011/2 Deep, HILLS 0-4, TREES 0-3), e.g. for the ring walk.
+//   --weather-selftest[=leg]  AT.1a: the atmosphere stage. Leg `settings`: the Weather / Atmosphere / Reduce flashing rows, the tier ->
+//                        atmo.* element rows, the per-device default, preset sync, the overrides. AT.1b: `schedule`, `region`, `record`, `save` (Classes/Weather).
+//   --atmo=off|low|high  AT.1a: override the Atmosphere tier for this run, NOT stored. --stage1, --scene-shot and --sky-shot
+//                        force it Off (and weather off) unless given, so their references never move (plan P11).
+//   --weather=off|clear|overcast|rain|snow|storm  AT.1a: force weather on (or off) for this run, NOT stored; Classes/Weather
+//                        (AT.1b) reads the kind from eden_weather_override().
 //   --shadows=off|classic|smooth  H.2: override the Shadows setting for this run, NOT stored (native
 //                        prefs are global, not per --docs). CI's geometry pair passes --shadows=off.
 //   --light-selfcheck    R.3: also keep the stock dense light array, written by the stock code,
@@ -342,6 +377,8 @@
 #if defined(EDEN_PLATFORM_IOS)
 #include <SDL3/SDL_main.h>
 #endif
+#include <SDL3/SDL_messagebox.h>
+#include "../../../Classes/ContentPack.h"   // K.2-3: the stock pack, loaded before any mode
 
 
 using namespace harness;
@@ -481,6 +518,9 @@ static int parse_one_arg(const char* a) {
         else if (!std::strcmp(a, "--touch-selftest")) { g_opt.mode = "touch-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--look-selftest"))  { g_opt.mode = "look-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--fly-selftest"))   { g_opt.mode = "fly-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--srclike-selftest"))  { g_opt.mode = "srclike-selftest"; g_opt.headless = true; }
+        else if (starts_with(a, "--srclike-selftest="))  { g_opt.mode = "srclike-selftest"; g_opt.headless = true; g_opt.sourceLeg = a + 19; }
+        else if (starts_with(a, "--srclike-vectors="))   g_opt.srclikeVectors = a + 17;
         else if (!std::strcmp(a, "--look-trace"))     eden_look_trace_enable(1);
         else if (starts_with(a, "--fly-mutate="))     g_opt.flyMutate = a + 13;
         else if (starts_with(a, "--look-mutate="))    g_opt.lookMutate = a + 14;
@@ -505,11 +545,35 @@ static int parse_one_arg(const char* a) {
         else if (starts_with(a, "--console-corpus=")) g_opt.consoleCorpus = a + 17;
         else if (starts_with(a, "--console-reference=")) g_opt.consoleRef = a + 20;
         else if (!std::strcmp(a, "--console-dump")) { g_opt.mode = "console-dump"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--content-dump")) { g_opt.mode = "content-dump"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--json-selftest")) { g_opt.mode = "json-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--packs-selftest")) { g_opt.mode = "packs-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--mods-selftest")) { g_opt.mode = "mods-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--lua-selftest")) { g_opt.mode = "lua-selftest"; g_opt.headless = true; }
+        else if (starts_with(a, "--packs="))         g_opt.packs.push_back(a + 8);
+        else if (starts_with(a, "--pack-selftest=")) { g_opt.mode = "pack-selftest"; g_opt.headless = true; g_opt.packFixtures = a + 16; }
         else if (starts_with(a, "--signs="))         SignRenderer::enabled = atoi(a + 8) != 0;
         else if (!std::strcmp(a, "--scene-shot"))     g_opt.mode = "scene-shot";
         else if (starts_with(a, "--scene-shot="))     { g_opt.mode = "scene-shot"; g_opt.shot = a + 13; }
+        else if (!std::strcmp(a, "--weather-selftest")) { g_opt.mode = "weather-selftest"; g_opt.headless = true; }
+        else if (starts_with(a, "--weather-selftest=")) { g_opt.mode = "weather-selftest"; g_opt.headless = true; g_opt.sourceLeg = a + 19; }
+        else if (starts_with(a, "--atmo=")) {
+            const char* m = a + 7;
+            const int v = !std::strcmp(m, "off") ? 0 : !std::strcmp(m, "low") ? 1 : !std::strcmp(m, "high") ? 2 : -1;
+            if (v < 0) { std::fprintf(stderr, "[eden] --atmo= takes off|low|high\n"); return 2; }
+            eden_atmo_set_override(v);
+        }
+        else if (starts_with(a, "--weather=")) {
+            static const char* const kK[] = {"off", "clear", "overcast", "rain", "snow", "storm"};
+            int v = -1;
+            for (int k = 0; k < 6; ++k) if (!std::strcmp(a + 10, kK[k])) v = k;
+            if (v < 0) { std::fprintf(stderr, "[eden] --weather= takes off|clear|overcast|rain|snow|storm\n"); return 2; }
+            eden_weather_set_override(v);
+        }
         else if (!std::strcmp(a, "--sky-shot"))       g_opt.mode = "sky-shot";
         else if (starts_with(a, "--sky-shot="))       { g_opt.mode = "sky-shot"; g_opt.shot = a + 11; }
+        else if (!std::strcmp(a, "--atmo-shot"))      g_opt.mode = "atmo-shot";
+        else if (starts_with(a, "--atmo-shot="))      { g_opt.mode = "atmo-shot"; g_opt.shot = a + 12; }
         else if (starts_with(a, "--sky-times="))      g_opt.skyTimes = a + 12;
         else if (starts_with(a, "--state-trace="))    g_opt.stateTrace = a + 14;
         else if (!std::strcmp(a, "--render-selftest")) { g_opt.mode = "render-selftest"; g_opt.headless = true; }
@@ -565,6 +629,7 @@ static int parse_one_arg(const char* a) {
         else if (starts_with(a, "--classic-mutate=")) g_opt.classicMutate = a + 17;
         else if (!std::strcmp(a, "--props-selftest")) { g_opt.mode = "props-selftest"; g_opt.headless = true; }
         else if (starts_with(a, "--props-mutate=")) g_opt.propsMutate = a + 15;
+        else if (starts_with(a, "--lua-mutate=")) g_opt.luaMutate = a + 13;
         else if (starts_with(a, "--props-world=")) g_opt.propsWorld = a + 14;
         else if (starts_with(a, "--classic="))        g_opt.classicNew = a + 10;
         else if (starts_with(a, "--shadows=")) {
@@ -736,6 +801,13 @@ static int eden_main_after_args(int argc, char** argv) {
         const bool plays = g_opt.mode && !std::strcmp(g_opt.mode, "mp-join");   // a real join keeps the profile
         if (selftest || !plays) eden_prefs_set_ephemeral(1);
     }
+    // AT.1a P11: the reference-pinned modes run with atmosphere and weather off unless --atmo= / --weather= asks,
+    // so clouds, particles and water tint (High on the Mac) never move --stage1 / --scene-shot / --sky-shot.
+    if (g_opt.mode && (!std::strcmp(g_opt.mode, "stage1") || !std::strcmp(g_opt.mode, "scene-shot") ||
+                       !std::strcmp(g_opt.mode, "sky-shot"))) {
+        if (eden_atmo_override() < 0) eden_atmo_set_override(0);
+        if (eden_weather_override() < 0) eden_weather_set_override(0);
+    }
     // `--touch-selftest --window=WxH` runs WINDOWED, and that is the whole point of the
     // combination: headless has no window, so the letterbox is degenerate and the mapping under
     // test is the fallback rather than the real one. With a window — and `--touch-profile` for the
@@ -769,6 +841,26 @@ static int eden_main_after_args(int argc, char** argv) {
     const std::string bundle = g_opt.bundle.empty() ? default_bundle(argv[0])   : g_opt.bundle;
     mkdirs(docs);
     eden_platform_set_roots(docs.c_str(), bundle.c_str());
+    // K.2-3 (plan D5): the stock content pack is the only source of rows 0..127 of every per-type table
+    // (Classes/ContentPack.h), so it loads here, before any mode -- the selftests and dumps read those
+    // tables too. A missing or broken `eden` pack is fatal: never a half-filled table. An interactive run
+    // gets a message box as well (a player double-clicked the app); scripted runs only print.
+    {
+        std::vector<std::string> errs;
+        if (!ContentPack::loadStock(eden_platform_bundle_root(), &errs)) {
+            std::string msg = "Emod cannot start: its block data (packs/eden/pack.json) is missing or damaged.\n\n";
+            std::fprintf(stderr, "[eden] FATAL: the stock content pack did not load: %s\n", ContentPack::stockPath().c_str());
+            for (size_t i = 0; i < errs.size(); ++i) {
+                if (i < 40) std::fprintf(stderr, "[pack] %s\n", errs[i].c_str());
+                if (i < 6) msg += errs[i] + "\n";
+            }
+            if (errs.size() > 40) std::fprintf(stderr, "[pack] ... %zu more\n", errs.size() - 40);
+            if (!g_opt.mode && !g_opt.headless)
+                SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, EDEN_APP_DIR_NAME, msg.c_str(), nullptr);
+            return arg_error_exit(1);
+        }
+    }
+    ContentPack::setExtraPackDirs(g_opt.packs);   // K.2-4: --packs=, read at every world entry (World::loadWorld)
     // C.10: `--console-dump` prints the generated tables of docs/console-reference.md (port/tools/
     // console-reference.py splices them in); the registry needs no world and no window.
     if (g_opt.mode && !std::strcmp(g_opt.mode, "console-dump")) {
@@ -778,6 +870,10 @@ static int eden_main_after_args(int argc, char** argv) {
             std::printf("<!-- BEGIN generated:%s -->\n%s<!-- END generated:%s -->\n", sec, Console::referenceMarkdown(sec).c_str(), sec);
         return 0;
     }
+    // K.2-1: the content pin and the pack JSON reader's gate (mode_content.cpp); no world, no window.
+    if (g_opt.mode && !std::strcmp(g_opt.mode, "content-dump")) return run_content_dump();
+    if (g_opt.mode && !std::strcmp(g_opt.mode, "json-selftest")) return run_json_selftest();
+    if (g_opt.mode && !std::strcmp(g_opt.mode, "pack-selftest")) return run_pack_selftest(g_opt.packFixtures);
     // Only the platform default save directory migrates. An explicit --docs= / EDEN_DOCUMENTS is a
     // harness or a deliberate override: migrating into it MOVED a real save out of
     // ~/Library/Application Support/Eden (2026-10-09) and, on macOS, hung unattended runs on the
@@ -787,6 +883,10 @@ static int eden_main_after_args(int argc, char** argv) {
     if (!g_opt.mode && g_opt.liveCmds.empty()) {
         const int r = eden_player_readme_write(docs.c_str());
         if (r < 0) std::fprintf(stderr, "[eden] README.txt not written in %s\n", docs.c_str());
+        // WB: the bundled example pack(s) into Packs/, once per Documents folder (ContentPack.h).
+        std::vector<std::string> seeded;
+        ContentPack::seedBundledPacks(docs, eden_platform_bundle_root(), &seeded);
+        for (const std::string& l : seeded) std::fprintf(stderr, "[pack] bundled: %s\n", l.c_str());
     }
 
     // The previous-save slot. Stage 1 left native WITHOUT one, and that was a real regression
@@ -955,9 +1055,13 @@ static int eden_main_after_args(int argc, char** argv) {
         else if (!std::strcmp(g_opt.mode, "touch-selftest")) rc = run_touch_selftest();
         else if (!std::strcmp(g_opt.mode, "look-selftest")) rc = run_look_selftest();
         else if (!std::strcmp(g_opt.mode, "fly-selftest")) rc = run_fly_selftest();
+        else if (!std::strcmp(g_opt.mode, "srclike-selftest")) rc = run_srclike_selftest();
         else if (!std::strcmp(g_opt.mode, "empty-bit-selftest")) rc = run_empty_bit_selftest();
         else if (!std::strcmp(g_opt.mode, "newblocks-selftest")) rc = run_newblocks_selftest();
         else if (!std::strcmp(g_opt.mode, "registry-selftest")) rc = run_registry_selftest();
+        else if (!std::strcmp(g_opt.mode, "packs-selftest")) rc = run_packs_selftest();
+        else if (!std::strcmp(g_opt.mode, "mods-selftest")) rc = run_mods_selftest();
+        else if (!std::strcmp(g_opt.mode, "lua-selftest")) rc = run_lua_selftest();
         else if (!std::strcmp(g_opt.mode, "base-selftest")) rc = eden_base_selftest_run(g_opt.docs.c_str());
         else if (!std::strcmp(g_opt.mode, "net-selftest"))  rc = eden_net_selftest_run(g_opt.netServer.c_str());
         else if (!std::strcmp(g_opt.mode, "mp-selftest"))   rc = eden_mp_selftest_run(g_opt.netServer.c_str());
@@ -971,6 +1075,8 @@ static int eden_main_after_args(int argc, char** argv) {
         else if (!std::strcmp(g_opt.mode, "sign-shot"))     rc = run_sign_shot();
         else if (!std::strcmp(g_opt.mode, "scene-shot"))    rc = run_scene_shot();
         else if (!std::strcmp(g_opt.mode, "sky-shot"))      rc = run_sky_shot();
+        else if (!std::strcmp(g_opt.mode, "atmo-shot"))     rc = run_atmo_shot();
+        else if (!std::strcmp(g_opt.mode, "weather-selftest")) rc = run_weather_selftest();
         else if (!std::strcmp(g_opt.mode, "render-selftest")) rc = run_render_selftest();
         else if (!std::strcmp(g_opt.mode, "lit-oracle")) rc = run_lit_oracle();
         else if (!std::strcmp(g_opt.mode, "cmds-selftest")) rc = run_cmds_selftest();

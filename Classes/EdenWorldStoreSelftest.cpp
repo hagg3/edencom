@@ -862,19 +862,19 @@ void section_skyclock() {
     v = s.verify();
     check(v.empty(), "verify clean after compaction", v.empty() ? "" : v[0]);
     s.close();
-    // An old reader: what a pre-DN build does with type 11 is what this build does with reserved 12 (10 was the example until K.1-2 made it BLOCK_PALETTE) --
+    // An old reader: what a pre-DN build does with type 11 is what this build does with reserved 13 (10 was the example until K.1-2 made it BLOCK_PALETTE, 12 until AT.1b made it WEATHER) --
     // a member of its batch, otherwise ignored; verify warns; compaction drops it.
     check(s.open(p.c_str(), true), "reopens", s.error());
     const std::string d1 = s.stateDigest();
     s.beginBatch();
-    s.putRecord(12, k1.data(), k1.size());
+    s.putRecord(13, k1.data(), k1.size());
     s.putRecord(T_WORLD_HEADER, hdr.data(), hdr.size());
     check(s.commitBatch(), "a batch with a reserved-type record commits", s.error());
     s.close();
-    check(s.open(p.c_str(), true) && !s.damaged() && has_warning(s, "reserved type 12") && s.stateDigest() == d1 &&
+    check(s.open(p.c_str(), true) && !s.damaged() && has_warning(s, "reserved type 13") && s.stateDigest() == d1 &&
           s.readRecord(T_SKY_CLOCK, got) == EdenWorldStore::READ_OK && got == k2,
           "an unknown singleton is ignored: opens undamaged, state and clock unchanged, a warning");
-    check(s.compact() && !s.hasRecord(12) && s.hasRecord(T_SKY_CLOCK), "compaction drops the unknown type, keeps SKY_CLOCK", s.error());
+    check(s.compact() && !s.hasRecord(13) && s.hasRecord(T_SKY_CLOCK), "compaction drops the unknown type, keeps SKY_CLOCK", s.error());
     s.close();
     // A malformed clock (a buggy or foreign writer): the file still opens; verify names it; the engine
     // (SkyCycle::load) ignores a payload that is not 16 bytes.
@@ -892,6 +892,83 @@ void section_skyclock() {
     bool named = false;
     for (const std::string& e : v) named = named || e.find("SKY_CLOCK raw length 15") != std::string::npos;
     check(named, "verify reports the SKY_CLOCK length", v.empty() ? "(clean)" : v[0]);
+    s.close();
+    std::remove(p.c_str());
+}
+
+// AT.1b: WEATHER (type 12), 32 B, codec 0, a singleton like SKY_CLOCK, compacted after it.
+void section_weather() {
+    say("== WEATHER (AT.1b): round trip, codec 0, compaction order, bad length");
+    std::string p = P("weather.emod");
+    std::remove(p.c_str());
+    Rng r(12);
+    EdenWorldStore s;
+    check(s.create(p.c_str(), 4, 1234567), "create()");
+    std::vector<uint8_t> hdr = eden_header(4, "wx", 0), cr(200 * EDEN_ENT, 0), c0 = make_column(r, 4, 10, 10, 40);
+    std::vector<uint8_t> k = sky_clock(0.5f, 0), w1(WEATHER_LEN, 0), w2(WEATHER_LEN, 0), got;
+    w1[0] = 2; w1[1] = 1; const float i = 0.7f, sl = 300.0f; std::memcpy(&w1[4], &i, 4); std::memcpy(&w1[8], &sl, 4);
+    w2 = w1; w2[0] = 3;
+    s.beginBatch();
+    s.putRecord(T_WORLD_HEADER, hdr.data(), hdr.size());
+    s.putRecord(T_CREATURES, cr.data(), cr.size());
+    s.putColumn(10, 10, c0.data());
+    check(s.commitBatch(), "a world with no weather commits", s.error());
+    const std::string d0 = s.stateDigest();
+    check(!s.hasRecord(T_WEATHER), "no WEATHER until a save writes one");
+    s.beginBatch();
+    check(!s.putRecord(T_WEATHER, w1.data(), 31), "putRecord refuses a 31-byte WEATHER");
+    check(s.putRecord(T_WEATHER, w1.data(), w1.size()) && s.putRecord(T_SKY_CLOCK, k.data(), k.size()), "putRecord takes 32 bytes", s.error());
+    s.putRecord(T_WORLD_HEADER, hdr.data(), hdr.size());
+    check(s.commitBatch(), "weather + clock + header commits", s.error());
+    s.close();
+    check(s.open(p.c_str(), true), "reopens", s.error());
+    check(s.readRecord(T_WEATHER, got) == EdenWorldStore::READ_OK && got == w1, "round trip byte for byte");
+    check(!has_warning(s, "reserved type"), "type 12 is a known type");
+    check(s.stateDigest() == d0, "the weather is not part of the state digest");
+    std::vector<std::string> v = s.verify();
+    check(v.empty(), "verify clean with a WEATHER", v.empty() ? "" : v[0]);
+    s.beginBatch();
+    s.putRecord(T_WEATHER, w2.data(), w2.size());
+    s.putRecord(T_WORLD_HEADER, hdr.data(), hdr.size());
+    check(s.commitBatch(), "a newer weather commits", s.error());
+    for (int n = 0; n < 6; n++) {
+        s.beginBatch();
+        s.putColumn(10, 10, c0.data());
+        s.putRecord(T_CREATURES, cr.data(), cr.size());
+        s.commitBatch();
+    }
+    check(s.compact(), "compact()", s.error());
+    check(s.readRecord(T_WEATHER, got) == EdenWorldStore::READ_OK && got == w2 && s.lastSeq() == 1, "compaction keeps the newest weather");
+    // Order: ... SKY_CLOCK, WEATHER, then the COLUMNs (emod.py compacts the same way). Walk the frames:
+    // 64 B file header, then 32 B record headers (type @4, codec @5, payload length @20), padded to 8.
+    std::vector<uint8_t> f;
+    std::vector<int> types;
+    bool raw = false;
+    if (read_file(p, f)) {
+        for (size_t o = 64; o + 32 <= f.size();) {
+            const int t = f[o + 4];
+            uint32_t n; std::memcpy(&n, &f[o + 20], 4);
+            if (t == T_SKY_CLOCK || t == T_WEATHER || t == T_COLUMN) types.push_back(t);
+            if (t == T_WEATHER) raw = f[o + 5] == C_NONE;
+            o += (32 + n + 7) / 8 * 8;
+        }
+    }
+    check(types.size() >= 3 && types[0] == T_SKY_CLOCK && types[1] == T_WEATHER && types[2] == T_COLUMN, "compaction writes WEATHER after SKY_CLOCK, before the columns");
+    check(raw, "WEATHER is stored codec 0");
+    v = s.verify();
+    check(v.empty(), "verify clean after compaction", v.empty() ? "" : v[0]);
+    s.testUncheckedPut = true;
+    s.beginBatch();
+    s.putRecord(T_WEATHER, w1.data(), 31);
+    s.putRecord(T_WORLD_HEADER, hdr.data(), hdr.size());
+    check(s.commitBatch(), "a 31-byte WEATHER commits under the test hook", s.error());
+    s.testUncheckedPut = false;
+    s.close();
+    check(s.open(p.c_str(), false) && !s.damaged(), "a bad-length weather does not make the world unreadable", s.error());
+    v = s.verify();
+    bool named = false;
+    for (const std::string& e : v) named = named || e.find("WEATHER raw length 31") != std::string::npos;
+    check(named, "verify reports the WEATHER length", v.empty() ? "(clean)" : v[0]);
     s.close();
     std::remove(p.c_str());
 }
@@ -1726,6 +1803,7 @@ extern "C" EMOD_EXPORT int eden_emod_selftest_run(const char* fixtureDir, const 
         section_errors();
         section_writer();
         section_skyclock();
+        section_weather();
         section_fallback();
         section_palette();
         if (fixtureDir && *fixtureDir) section_interchange(fixtureDir);

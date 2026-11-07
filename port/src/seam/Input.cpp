@@ -47,7 +47,8 @@
 #include "../../../Classes/World.h"
 #include "../../../Classes/Constants.h"
 #include "../../../Classes/GLDialog.h"
-#include "../../../Classes/TouchLook.h"   // --look-trace reads what the new touch look consumed
+#include "../../../Classes/TouchLook.h"
+#include "../../../Classes/SrclikeMove.h"   // SRC.2   // --look-trace reads what the new touch look consumed
 #include "../shim/foundation/platform_shims.h"   // (Phase N Stage 1)
 #include <unordered_map>
 #include <vector>
@@ -342,6 +343,7 @@ void eden_set_move_input(float forward, float strafe, float speedMul) {
     if (!World::getWorld || !World::getWorld->player || !World::getWorld->hud) return;
     extern int eden_effective_input_is_touch(void);
     if (!eden_effective_input_is_touch()) World::getWorld->hud->use_joystick = false;
+    SrclikeMove::setKeyAxes(forward, strafe);   // SRC.2: the raw axes the Source usercmd samples
     float len = sqrtf(forward * forward + strafe * strafe);
     if (len < 0.0001f) {
         World::getWorld->player->setSpeed(MakeVector(0, 0, 0), 0);
@@ -408,14 +410,23 @@ void eden_apply_look_delta(float dx, float dy) {
     extern float eden_look_sensitivity;
     extern float eden_mouse_sensitivity_y;
     const float ipadScale = IS_IPAD ? 2.0f : 1.0f;
-    const float sx = ipadScale * eden_look_sensitivity;
-    const float sy = ipadScale * eden_mouse_sensitivity_y;
+    float sx = ipadScale * eden_look_sensitivity;
+    float sy = ipadScale * eden_mouse_sensitivity_y;
+    // SRC.7 C6: in Srclike movement a CS sensitivity value gives degrees per count = value x 0.022,
+    // with no iPad scale and the same on both axes (m_yaw = m_pitch = 0.022). 0 = the rows above.
+    extern float eden_srclike_sens;
+    extern bool FLY_MODE;
+    float yawSpeed = YAW_SPEED, pitchSpeed = PITCH_SPEED;
+    if (SrclikeMove::enabled() && !FLY_MODE && eden_srclike_sens > 0) {
+        sx = sy = 1.0f;
+        yawSpeed = pitchSpeed = SrclikeMove::lookDegreesPerCount(eden_srclike_sens);
+    }
     if (p->invertcam) {
-        p->yaw -= sx * dx * YAW_SPEED;
-        p->pitch += sy * dy * PITCH_SPEED;
+        p->yaw -= sx * dx * yawSpeed;
+        p->pitch += sy * dy * pitchSpeed;
     } else {
-        p->yaw += sx * dx * YAW_SPEED;
-        p->pitch -= sy * dy * PITCH_SPEED;
+        p->yaw += sx * dx * yawSpeed;
+        p->pitch -= sy * dy * pitchSpeed;
     }
 }
 
@@ -613,6 +624,14 @@ void eden_select_hotbar_slot(int slot) {
 
 void eden_hotbar_scroll(int dir) {
     eden_select_hotbar_slot(((hotbarIndex + (dir > 0 ? 1 : -1)) % 9 + 9) % 9);
+}
+
+// SRC.2 (plan §4.6): a captured-mouse wheel notch. In Srclike movement it is a jump pulse in either
+// direction and the hotbar stays put; flying/noclip (and the mode off) keep the hotbar scroll.
+void eden_wheel_action(int dir) {
+    extern bool FLY_MODE;
+    if (SrclikeMove::enabled() && !FLY_MODE) { SrclikeMove::postJumpPulse(); return; }
+    eden_hotbar_scroll(dir);
 }
 
 int eden_get_hotbar_index(void) { return hotbarIndex; }
@@ -867,7 +886,11 @@ void eden_ui_tick(void) {
         // overwrites the CURRENTLY SELECTED hotbar slot with whatever the player just chose, so
         // the curated kHotbarBlocks[] becomes the initial contents rather than the only ones —
         // same edge lastActionMode's restore already uses, so this fires exactly once per pick.
-        if (prevMode == MODE_PICK_BLOCK) kHotbarBlocks[hotbarIndex] = World::getWorld->hud->blocktype;
+        // K.2-5: a mod block (pending sentinel or this world's id) is world-bound: never kept in the hotbar.
+        if (prevMode == MODE_PICK_BLOCK) {
+            const int bt = World::getWorld->hud->blocktype;
+            if (bt <= STOCK_BLOCK_MAX || (bt >= HUD_TOOL_SIGN && bt < HUD_MOD_BASE)) kHotbarBlocks[hotbarIndex] = bt;
+        }
     }
     prevMode = World::getWorld->hud->mode;
 }
@@ -898,7 +921,7 @@ int eden_get_fly_allowed(void) {
     return FLY_ALLOWED ? 1 : 0;
 }
 
-// H.12: Experiments › Camera view (0 first person, 1 third behind, 2 third front). Set through
+// H.12: Video › Camera view (0 first person, 1 third behind, 2 third front). Set through
 // Settings.cpp's camera_view row; the F5 key cycles that row (eden_cycle_camera_view).
 void eden_set_camera_view(int view) {   // CAMERA_VIEW: Classes/Globals.h
     CAMERA_VIEW = (view >= 0 && view <= 2) ? view : 0;

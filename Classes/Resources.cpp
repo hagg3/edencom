@@ -11,6 +11,10 @@
 #include "Vector.h"
 #include "SimpleAudioEngine.h"
 #include "World.h"
+#include "Weather.h"   // AT.2d: rain ambience layer 4
+#include "Precip.h"
+#include "Camera.h"
+#include "eden_fs.h"   // K.2-4: eden_bundle_path (setModTiles)
 
 
 
@@ -186,6 +190,7 @@ static int sfxNumVariations[NUM_SOUNDS]={
     [S_TNT_MIX]=1,
     [S_TNT_MIX_GLASS]=1,
     [S_RESPAWN]=1,
+    [S_THUNDER]=3,
 
 };
 static const char* soundFiles[NUM_SOUNDS][MAX_VARIATIONS2]={
@@ -269,6 +274,7 @@ static const char* soundFiles[NUM_SOUNDS][MAX_VARIATIONS2]={
     [S_TNT_MIX]={"tnt_explode_mix.mp3"},
     [S_TNT_MIX_GLASS]={"tnt_explode_mix_glass_crystal.mp3"},
     [S_RESPAWN]={"respawn_fade_from_black_to_world.mp3"},
+    [S_THUNDER]={"thunder_01.mp3","thunder_02.mp3","thunder_03.mp3"},
 
 };
 
@@ -761,6 +767,12 @@ void Resources::unloadGameAssets(){
 
 bool firstframe=false;
 bool pendingRespawnSound=false;   // H.9: set by Hud::update on the death warp, played after the load
+void Resources::playThunder(int variation){
+    if(!playsound||firstframe)return;
+    if(variation<0)variation=0;
+    if(variation>=sfxNumVariations[S_THUNDER])variation=sfxNumVariations[S_THUNDER]-1;
+    audio->playEffect(soundFiles[S_THUNDER][variation], false);
+}
 int Resources::playSound(int soundid){
     
 	if(playsound&&!firstframe&&soundid!=lasteffectplayed){
@@ -941,6 +953,25 @@ void Resources::soundEventTreasureProximity(bool active,Vector location){
         treasuretargetvolume=0;
     }
 }
+// AT.2d: layer 4 = the rain bed. Not an AMBIENT_* entry (it plays alongside the exclusive bed, so caves
+// and biomes keep their sound): volume = Weather::precipAmount() while rain falls at the camera; under
+// a roof (Precip's column-top cache above the eye) it is muffled to RAIN_SHELTER. Stopped, not left
+// decoding at volume 0, once it has been silent RAIN_STOP_SECONDS.
+#define RAIN_SHELTER 0.3f
+#define RAIN_STOP_SECONDS 3.0f
+static float rainvolume=0,raintarget=0,rainsilent=0;
+static bool rainplaying=false;
+static float rainWanted(bool playmusic){
+    World* w=World::getWorld;
+    if(!playmusic||w->game_mode!=GAME_MODE_PLAY||!Weather::active())return 0;
+    Vector eye,at;
+    w->cam->viewPoints(&eye,&at);
+    if(Weather::precipAt(eye.x,eye.z,eye.y)!=Weather::PRECIP_RAIN)return 0;
+    float v=Weather::precipAmount();
+    const int t=Precip::top((int)floorf(eye.x),(int)floorf(eye.z));
+    if(t>(int)floorf(eye.y))v*=RAIN_SHELTER;
+    return v;
+}
 #define NS_BURN 1000
 static float burnin[NS_BURN]={};
 static int sidx=0;
@@ -1041,6 +1072,8 @@ void Resources::stopMenuTune(){
      portalwanted=false;portalvolume=portaltargetvolume=0;
      if(treasureplaying){audio->stopAmbience(3);treasureplaying=false;}
      treasurewanted=false;treasurevolume=treasuretargetvolume=0;
+     if(rainplaying){audio->stopAmbience(4);rainplaying=false;}
+     rainvolume=raintarget=rainsilent=0;
 
 }
 void Resources::loadMenuTextures(){
@@ -1810,6 +1843,35 @@ void Resources::update(float etime){
             treasureplaying=false;
         }
 
+        // AT.2d: the rain bed (layer 4). Same FADE_SPEED ramp as the other layers.
+        raintarget=rainWanted(playmusic);
+        // AT.11: also when it "plays" but the engine has no such stream (it was started while audio was off: the
+        // play was a no-op), so turning sound on mid-shower brings the rain in (and --weather-selftest's order).
+        // At most one retry every 60 frames, so a stream that cannot start (a missing file) is not reopened every frame.
+        static int rainretry=0;
+        if(rainretry>0)rainretry--;
+        if(raintarget>0&&(!rainplaying||(rainretry==0&&!audio->isAmbiencePlaying(4)))){
+            audio->playAmbience(4,"rain_ambience.mp3",true);
+            rainplaying=true;
+            rainretry=60;
+        }
+        if(rainvolume<raintarget){
+            rainvolume+=FADE_SPEED;
+            if(rainvolume>raintarget)rainvolume=raintarget;
+        }else if(rainvolume>raintarget){
+            rainvolume-=FADE_SPEED;
+            if(rainvolume<raintarget)rainvolume=raintarget;
+        }
+        if(rainplaying){
+            audio->setAmbienceFade(4,rainvolume);
+            if(rainvolume==0&&raintarget==0)rainsilent+=etime;else rainsilent=0;
+            if(rainsilent>=RAIN_STOP_SECONDS){
+                audio->stopAmbience(4);
+                rainplaying=false;
+                rainsilent=0;
+            }
+        }
+
     }
     // printg("volume:%f\n",[[SimpleAudioEngine sharedEngine] backgroundMusicVolume]);
     //fadetimer+=etime;
@@ -1913,3 +1975,43 @@ Resources::~Resources(){
 
 
 
+
+// K.2-4: mod tiles (see Resources.h). Two 32x4096 RGBA strips are 512 KiB each, decoded once, and only
+// when a mod pack places a tile; a world with no mod tiles never decodes them.
+void Resources::setModTiles(const std::vector<AtlasTile>& tiles){
+    const char* const files[2]={"atlas.png","atlas2.png"};
+    const Texture2DPixelFormat fmt[2]={kTexture2DPixelFormat_RGB565,kTexture2DPixelFormat_RGBA8888};
+    Texture2D* const tex[2]={atlas,atlas2};
+    const size_t tileBytes=32*32*4;
+    for(int a=0;a<2;a++){
+        bool any=false;
+        for(const AtlasTile& t:tiles) if(t.atlas==a+1) any=true;
+        if(!any&&modAtlasPx[a].empty())continue;   // stock, and stock is what is uploaded
+        if(stockAtlasPx[a].empty()){
+            EdenImage* img=eden_image_load_file(eden_bundle_path(files[a]).c_str());
+            if(!img||img->width!=32||img->height!=32*ATLAS_TILES){
+                fprintf(stderr,"[pack] %s did not decode as 32x%d: mod tiles are not drawn\n",files[a],32*ATLAS_TILES);
+                eden_image_free(img);
+                continue;
+            }
+            stockAtlasPx[a].assign(img->rgba,img->rgba+(size_t)32*32*ATLAS_TILES*4);
+            eden_image_free(img);
+        }
+        std::vector<uint8_t> want;
+        if(any){
+            want=stockAtlasPx[a];
+            for(const AtlasTile& t:tiles)
+                if(t.atlas==a+1&&t.index>=0&&t.index<ATLAS_TILES)memcpy(&want[(size_t)t.index*tileBytes],t.rgba,tileBytes);
+        }
+        if(want==modAtlasPx[a])continue;
+        const std::vector<uint8_t>& px=any?want:stockAtlasPx[a];
+        unsigned char* copy=(unsigned char*)malloc(px.size());
+        if(!copy)continue;
+        memcpy(copy,px.data(),px.size());
+        EdenImage* img=eden_image_create_rgba(copy,32,32*ATLAS_TILES,a==1);
+        if(tex[a])tex[a]->replaceFromImage(img,true,fmt[a],true);   // the constructors' arguments (above)
+        eden_image_free(img);
+        modAtlasPx[a].swap(want);
+        atlasUploadCount[a]++;
+    }
+}

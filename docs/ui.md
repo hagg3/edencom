@@ -271,12 +271,27 @@ Responsibilities:
   `eden_ui_force_legacy(1)` at startup, so it is always true and the panel always draws.
   Note that only the PANEL is suppressible — the corner open-menu icon always draws, since
   it is what opens the thing.
+- **Mods page (K.2-5, D13).** After the two stock pages, one page per 35 loaded mod blocks whose pack says
+  `"picker": true` (`ContentPack::modReport().blocks`, load order); `Hud::pickerPageCount/pickerCellCount/pickerCell`
+  are dynamic, the page dots follow, and a multiplayer session (or no pack) shows only the two stock pages. A mod
+  cell is `HUD_MOD_BASE (2000) + index into modReport().blocks`: never a table index (`hud_picker_is_tool` is true
+  for it, `hud_picker_is_mod` tells it from SIGN/CMD), drawn by `mod_icon` straight from its `BlockDef` (a
+  `missingTexture` block shows the magenta tile). Selecting one stores the **name** (`Hud::modSelection`), never a
+  palette id: the id is taken at the first placement by `Hud::resolveModBlock` (called from `Player::processInput`
+  before the tool branch), which turns `blocktype` into the world's real id (`BlockRegistry::acquire`; failure text
+  such as "palette full" is a status toast). In an unflagged world the first placement asks once per world
+  ("Use a mod block?": Place it / Cancel; Cancel places nothing and leaves the file untouched). `worldLoaded()`
+  re-points a stale sentinel or resolved id by name (else brick), and the hotbar never keeps a mod block.
+  Gate: `--packs-selftest` (pages, tap-select, resolve, re-point, confirm Cancel/OK, session = 2 pages).
 - **Block picker** (`renderBlockScreen` / `handlePickBlock`): `NUM_DISPLAY_BLOCKS 35`
   tiles; picking a second block for ramps (`pickSecondBlock`). Sets `blocktype`.
-  **Two pages since D.2p (2026-10-10).** Page 1 is the stock 35 (`hudBlocks[]`); page 2
+  **Two pages since D.2p (2026-10-10).** Since K.2-3 both pages (and `hudBlocksMap`, each cell's BT second
+  block) are data: the stock pack's `"picker_pages"` and each block's `"bt"` (`media/packs/eden/pack.json`,
+  [content-packs.md](content-packs.md); `Hud::setPickerPages` at boot), and `picker_page_of` finds a block's
+  page by searching page 2. Page 1 is the stock 35 (`hudBlocks[]`); page 2
   (`hudBlocks2[]`, 20 cells in the first 20 `blockBounds[]` slots) is ids 112…127 in **id order**
   (the 2026 game shows 113 first; the user chose id order), then the 1.x flower block `TYPE_GRASS3` (12; H.14, no BT
-  variant, `picker_page_of` sends it to page 2), then weeds `TYPE_GRASS2` (11; FT.1; no BT variant; its HUD icon is tinted by `blockColor` like the world mesh), then the tools `HUD_TOOL_SIGN` (1000)
+  variant, so it opens on page 2), then weeds `TYPE_GRASS2` (11; FT.1; no BT variant; its HUD icon is tinted by `blockColor` like the world mesh), then the tools `HUD_TOOL_SIGN` (1000)
   and `HUD_TOOL_CMD` (1001). The tools are **sentinels, not block ids** — `hud_picker_is_tool()`
   guards every table read (`picker_bt()` for `hudBlocksMap`), they draw as pictured cells, and
   `Hud::pickerToolEnabled()` keeps a tool veiled (a tap is consumed, picks nothing) until its row
@@ -528,7 +543,7 @@ Settings › Interface › Crosshair (`eden_get_crosshair()`) is on (default ON 
   Keys · Video · Experiments · Saves; `kTabs[]` in the .mm, a tab with no native rows is a disabled tile); the
   tab's rows as `GLW::TwoLineRow`s (title + hint) on one CONTENT surface in a variable-height, row-snapped
   `GLW::ScrollView` (wheel, content drag, scrollbar); a row with a `parent` is indented 14u and **muted while that
-  toggle is off** — display-only, it still works. Control column: the 104×34u toggle, a 200u slider + readout, a
+  toggle is off** — display-only, it still works (SX.2: toggle, slider readout, stepper and text/page button all grey their label or value via `setMuted`; `Button::setMuted`/`Stepper::setMuted` leave chrome and hit-testing alone). Slider readouts print 2 decimals when the step is < 1 or the default is fractional. Control column: the 104×34u toggle, a 200u slider + readout, a
   168u `<` value `>` stepper; on the touch profile a toggle's hit box is the whole row. Labels are built on a tab
   switch or a `u()` change, never per frame. **Keys has no settings rows**: its content is the embedded
   `KeybindsMenu` (U.4, above) and its titlebar gains Defaults. The pages, the pager, `fit()`'s pointer/touch pitch split and the group headings are
@@ -537,7 +552,45 @@ Settings › Interface › Crosshair (`eden_get_crosshair()`) is on (default ON 
   model consumes Escape as "cancel"). It used to arrive as a synthetic tap on
   the HUD's menu button, which this screen claimed as one of its own touches and dropped ("Escape inside in-game
   Settings is swallowed"). Harness: `tabCount()/showTab()/tabName()/tabRowCount()` and `showRow(key, &rect)`
-  (switches tab, scrolls the row into view). *History:* **Stage 5.4 (2026-10-04) reskinned it onto `GLWidgets`**: a WINDOW panel with a
+  (switches tab, scrolls the row into view).
+  **Sub-pages (SX.1, 2026-11-06; `WORKING/settings-ux-audit-2026-11-06.md` §4.1)** are data: `kPages[]` in
+  `SettingsMenu.cpp` (`{id, title, parent tab, shot, reset}`), no rail tile. A `KIND_PAGE` row (kind 5, an "Open"
+  button; its `options` is the page id) opens one; the rail keeps the parent selected, the title reads
+  "*Parent* > *Page*" (ASCII: the fonts lack U+203A), and **the titlebar Back and Escape go up to the parent tab**,
+  scrolled to the opening row (`upLevel()`); only on a tab do they close the screen. A page's `reset` is its
+  titlebar **Defaults** action (as on Keys). A row lands on a page by the trailing `Setting::page` field, which is
+  **display placement only**: the console name stays `lower(group).key`, so moving a row never renames its cvar.
+  `page` may also name another tab's group. `KIND_HEADING` (kind 6) is a label-only, muted, control-less row for
+  sections. Neither kind holds a value, persists or becomes a cvar (`bridgeSettings` skips kind >= 4). Views are
+  indexed tabs first, then pages: `tabCount()` = 7 + pages, `railTabCount()` = 7, `currentTab()`, and a page's
+  `tabName()` is `<tab>-<page>` (`--shot` writes `settings-experiments-srclike`, `-experiments-online`, `-video-atmosphere`, `-world-weather`).
+  **SX.4 layout** (audit `WORKING/settings-ux-audit-2026-11-06.md` §3): rail = Gameplay, Audio, Controls, Keys, Video,
+  Experiments, **World** (was Saves; day/night, weather and the three save rows, `page "World"`, under *All worlds* / *Saves*
+  headings). Video has *Quality* / *View* / *Comfort* headings. Gameplay keeps Allow fly, the four fly sliders and the new *Noclip speed* (`NOCLIP_SPEED`, cvar `gameplay.noclip_speed`) inline (no page: they fit). Pages: Experiments > *Srclike settings*
+  (`srclike`: auto-bhop, Srclike sensitivity, the SRC.8b sliders; renamed from Movement tuning) and Experiments > *Online sources*
+  (`online`: Matchmakers, Get Mods catalogue). *Crouch mode* is on Gameplay and *Camera view* on Experiments by `page` (cvars
+  `experiments.crouch`, `video.camera_view` unchanged). The *Mods* row is gone (the home menu has the button). Gate: `--ui-selftest`
+  (Srclike settings legs: sliders, Defaults, Back/Escape up a level).
+  **SX.6 (2026-11-07; audit §4.2–4.3): cvar rows, scope, This world.** A `KIND_CVAR` row (kind 7; `options` = a console
+  variable's name) shows a value owned elsewhere: `SettingsMenu`'s `sm_*` wrappers draw it as the cvar's own kind (toggle,
+  range, enum) with the cvar's range/options and read/write through its `get`/`set` (`Console::init()` on first use;
+  an unregistered name draws as a heading and logs once). Its shown values are re-read every frame (the clock runs);
+  `refreshValue` re-rasters a readout only when its text changed (`m_valueText`). It holds no value, never persists and is
+  never re-bridged (`bridgeSettings` skips kind >= 4). **The rule:** a value that persists in `eden_prefs` is an ordinary
+  row whose cvar is derived from it (`eden_settings_cvar(i)`: `lower(group).key`, or `move.<key less move_>` for group
+  "Movement tuning"; `bridgeSettings` and `--console-selftest` gate 3 both use it); a value saved elsewhere (the world's
+  `.emod`) is a cvar shown by a `KIND_CVAR` row. Trailing `Setting::scope`: 0 always, 1 = only with a world in play
+  (`terrain->loaded`), 2 = only without; `build()` filters by it and `layout()` rebuilds when the world opens/closes or a
+  multiplayer session starts/ends. World tab: *All worlds* gains *Weather tuning* (page `weathertune`: `snowline`,
+  `mistheight`, group `Weather` = cvars `weather.snowline`/`weather.mistheight`, now persisted for all worlds; titlebar
+  Defaults `eden_weather_tuning_reset`). Beside it, *Weather frequency* (Rare/Normal/Often) and *Storms* (Off/Rare/Normal/Often): group `Weather` enums = cvars `weather.frequency`/`weather.storms`, applied through `Weather::setFrequency`/`setStorms` (SX.9), muted under the *Weather* toggle. *This world* (scope 1): *Time of day* (`world.time`, readout a 24-hour clock),
+  *Lock time of day* (`world.locktime`, muted under Day/night cycle), *Weather now* (`weather.now`: Clear, Overcast, Rain,
+  Storm, Snow) and *Lock weather* (`weather.lock`), both muted under Weather; saved with the world at its next save
+  (`SKY_CLOCK`, `WEATHER`). On the title screen a scope-2 heading says "Open a world to change its time and weather". In a
+  multiplayer session (U3) the section stays and its heading's hint becomes "Temporary: this device only..." (`sm_hint`;
+  the rows write local state only). `rowHint(key)` is the harness accessor. Gate: `--ui-selftest` (title-screen scope;
+  in a world: time, weather, both locks through the controls, quit, reopen, read back via the cvars; the badge with
+  `fm->sessionWorld` set). *History:* **Stage 5.4 (2026-10-04) reskinned it onto `GLWidgets`**: a WINDOW panel with a
   titlebar (Back · "Settings" · Controls), CONTENT strips in a centred column, and per row a
   `GLW::Toggle`, a draggable `GLW::Slider` with a readout (KIND_RANGE; percentages for 0–1 ranges)
   or a `GLW::Stepper` with `<` `>` (KIND_ENUM). A group heading takes a slot of its own, every page
@@ -580,7 +633,7 @@ Settings › Interface › Crosshair (`eden_get_crosshair()`) is on (default ON 
   `emod::ImportJob`, `DL_CONVERT`; no inflated `.eden` is written; an uncompressed payload must
   describe itself, `WorldFileHeader::directory_offset` inside the file). The world lands as
   `<id>.emod` or `<id>-N.emod` (never replacing a world the player already has; 64z worlds upgrade
-  per Settings › Saves `upgrade_256z`, no prompt), is named from its own header, added as a
+  per Settings › World › Saves `upgrade_256z`, no prompt), is named from its own header, added as a
   `WorldNode` and selected, the download is deleted, and the browser hands back to the menu. Ids that are not
   `[A-Za-z0-9_-]` drop their entry (they become paths); names are UTF-8-cleaned before they become
   textures. Back cancels an in-flight download. Each source keeps its list, scroll, selection and
@@ -605,8 +658,9 @@ Settings › Interface › Crosshair (`eden_get_crosshair()`) is on (default ON 
 `Classes/ConsoleMenu` is the one screen that runs over a **running** world: it is `Menu::console` /
 `showconsole`, updated first in `World::update`'s play step and drawn after the HUD, and it claims every
 touch while the play step goes on. Its layout is two: the `railFrame()` panel (Console / Variables / Help
-tiles, `UIICON_TERMINAL` is the Console tile) and a top-docked strip. The pause menu's Console button shows
-`ART_CONSOLE` (console_button.png) and Settings shows `ICO_OPEN_MENU` (the HUD's top-left gears), drawn like Save /
+tiles, `UIICON_TERMINAL` is the Console tile) and a top-docked strip. The singleplayer HUD console button (`Hud::rcons`, beside the gear where chat sits in a session; shown only with
+Settings › Experiments › *Allow developer console*, `DEV_CONSOLE_ALLOWED`, default off) shows
+`ART_CONSOLE` (console_button.png); the pause menu has no Console entry (its `PM_CONSOLE` slot is always hidden). Settings shows `ICO_OPEN_MENU` (the HUD's top-left gears), drawn like Save /
 Home / Photo / Quit's stock icons (2026-10-27; Console had the `UIICON_TERMINAL` glyph before). The
 pause menu has seven buttons now (`PM_CONSOLE` before Quit); I.4: when one column exceeds the safe rect (a phone) `Hud::layoutPauseMenu` lays out Resume full-width then pairs. See [console.md](console.md) for the
 behaviour, the routing (`eden_console_menu_*`, `eden_ui_captures_keys`) and the cost notes.
@@ -620,6 +674,34 @@ Console tab over `ChatFeed`'s lines (`srcLines()`; the label cache is flushed wh
 **MP.8 / the home screen:** the home **Multiplayer** tile wears an amber **BETA** pill straddling its top-right corner (`Menu::renderHome`,
 `MenuKit::betaTag`). The server list's titlebar swaps its title for a `TabRail` (My servers · Matchmakers) when Experiments › Matchmakers
 has addresses ([networking.md](networking.md) "Matchmakers"). `SettingsMenu` draws a `KIND_TEXT` row as a button that opens a prompt.
+
+### The Mods screen (K.3-5 / K.3-6)
+
+`Classes/ModsMenu` (`Menu::mods` / `showmods`, `Menu::openMods()`; updated and drawn in the slot of `showbrowser`, touch claim id 20) is
+WorldBrowser's shape: Back, title, an optional `TabRail`, list + scrollbar, detail pane, two action rows. Opened by the home screen's small
+**Mods** button (home window, row under Multiplayer|Settings, paired with About; control key `home.mods`) and by Settings > Experiments > *Mods* (a `KIND_TEXT` row `mods_open` that closes
+Settings and opens the screen; in a world it only explains that mods change from the main menu). Escape = `eden_mods_menu_back`
+(`port/src/seam/Menu.cpp`, in the chain in `Input_native.cpp`). No text input anywhere on it, so the touch keyboard cannot cover anything.
+
+- **Installed** (always): `ContentPack::scanPacks(documents, &lines)` on open and after every change, one row per pack folder (name, else id,
+  else folder; right-hand word On / Off / Refused / Skipped). Row 1 buttons act on the selection: *Turn off/on* (`setPackEnabled`), *Up*/*Down*
+  (`movePack`; `--packs=` rows are fixed and the detail pane says so), *Remove* (`removePackFolder` behind a `GLDialog` naming `Packs/<folder>`);
+  a Refused pack has Remove only. Row 2: *Install from file...* (desktop only: `eden_pick_zip_*`, SDL's open-file dialog in `Input_native.cpp`;
+  iOS/Android report it unavailable and the button is not drawn; the result goes to `PackInstall::installZip(path, docs, "")`) and the footer,
+  "Changes apply when a world opens" until an action replaces it with its outcome. The detail pane: id/version, folder, state + block count,
+  the loader's `why` (amber), requires/conflicts, then the validator lines (errors red, `warning:` grey).
+- **Get Mods** (K.3-6): the tab rail exists only while the setting `mods_catalogue_url` (Settings > Experiments > *Get Mods catalogue*, a
+  `KIND_TEXT` row; http/https only) is non-empty. The catalogue is `eden_net_fetch(url, NULL)` on first show / *Refresh*, parsed by
+  `PackInstall::parseCatalogue`; rows say "Installed" by id and the detail pane "installed vX". *Install* downloads to
+  `Packs/.download.partial` (progress bar, polled per frame, *Cancel* in place), then `installZip(partial, docs, entry.sha256)`; the partial is
+  always deleted and a failure shows `error` plus the validator lines. No catalogue host exists yet.
+- **World entry notice**: `World::modsNoticePending` (set where `loadMods` runs, never in a session) is consumed on the first non-wait frame;
+  any `ContentPack::worldMods` entry that is not loaded makes one status toast "This world uses mods that are off or missing: a, b".
+- **Multiplayer**: `EdenMpServerRow::usesMods` (INFO `mods=` present; `modsCompatible(info, "")` false) makes the server row read "Uses mods"
+  and `ServerListMenu::join` refuse with the toast "This server uses mods (not supported yet)" before any connection.
+- Gates: `--ui-selftest` (`mods_ui_checks` in `mode_ui.cpp`: open, select, toggle, move, remove with confirm, install from file, tab hidden /
+  shown, catalogue bytes via `ModsMenu::feedCatalogue`, failed download leaves no partial); `--shot` pages `mods`, `mods-skipped`,
+  `mods-refused`, `mods-get` (`TESTERS/k3/`: desktop 1280x800, iPad `--window=1024x768 --touch-profile`, phone `--window=844x390 --touch-profile`).
 
 ## Dead/auxiliary UI code
 - `Classes/Toolbar.cpp` and `Classes/Gamepad.cpp` — compiled, but each file's body is one `/* … */`
@@ -710,11 +792,18 @@ button shows the `blocktoggle` icon (`ICO_SIZETOGGLE2` small→big, `ICO_SIZETOG
 skipping the whole brush if it would pass the world top, spending one golden cube at most, with one sound per
 tap; the player-box test (`Player::test(...,2)`) was already in place.
 
+**Atmosphere settings (Stage AT.1a).** Gameplay › *Weather* (`weather`, default off; `eden_weather_enabled()`), Video › *Atmosphere* Off/Low/High/Custom
+(`atmosphere`; default High, seeded Off once on Air 2-class iOS; a fourth knob of the Graphics preset: Low Off, Default the device default, High High)
+and Video › *Reduce flashing* (`reduce_flashing`). A tier change writes nine element rows (group `Atmo`, drawn on the Video › *Atmosphere details* page (SX.5, `kPages[]` id `atmosphere`), cvars `atmo.precip`, `splash`, `clouds`,
+`cloud_shadows`, `height_fog`, `ambient`, `water_tint`, `glint`, `halos`) from `kAtmoTier[]` in `Settings.cpp`; the renderer reads `eden_atmo_element(e)`,
+which is 0 whenever the tier is Off. SX.5: editing an element row so the nine match no tier sets the tier to *Custom* (3; `eden_atmo_tier()` clamps it to 2 so Custom gates like High and the rows decide); restoring a tier's rows snaps it back (`eden_atmo_sync`). Custom drops the Graphics preset to Custom. `--atmo=off|low|high` and `--weather=off|clear|overcast|rain|snow|storm` override for one run (not stored);
+High leaves cloud shadows off (opt-in). `--stage1`, `--scene-shot` and `--sky-shot` force both off unless given. Gate: `--weather-selftest=settings`.
+
 **Day/night cycle (Stage DN).** Experiments › *Day/night cycle* (`day_night_cycle`, default off) and *Day length*
 (`day_length`, 10/20/40/60 min, default 20; `Settings.cpp`). While on, the sky brush shows a status-bar toast
 (*"The day/night cycle is on: it sets the sky…"*, `Player.cpp`) and paints nothing. World Properties › World has
 *Lock time of day* (Emod worlds; `WorldProps.skyLocked`/`skyT`, written as `SKY_CLOCK` in the Save batch; the live
-clock if that world is open). Look and clock: `docs/lighting-liquids-effects.md`.
+clock if that world is open). AT.1c adds *Lock weather* the same way (`WorldProps.weatherLocked`, `WEATHER` flag bit 0, `WP_WROTE_WEATHER`). Look and clock: `docs/lighting-liquids-effects.md`.
 
 **Camera view (H.12).** Experiments › *Camera view* (`camera_view`, enum First person / Third person /
 Third person (front), default first) and a native-only `kKeybinds[]` row **F5** `cameraView` (Interface)

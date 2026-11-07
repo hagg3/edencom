@@ -1,0 +1,17 @@
+{
+  "format": 1, "id": "eden",
+  "tiles": {
+    "stone": {"atlas": 1, "index": 5},
+    "stone_again": {"atlas": 1, "index": 5},
+    "Bad-Name": {"atlas": 1, "index": 6},
+    "big": {"atlas": 3, "index": 0},
+    "far": {"atlas": 1, "index": 128},
+    "extra": {"atlas": 1, "index": 7, "png": "x.png"},
+    "glass": {"atlas": 2, "index": 0, "particle_art": true, "unpainted": "stone"},
+    "grass_top": {"atlas": 1, "index": 0},
+    "brick": {"atlas": 1, "index": 20, "unpainted": "nope"},
+    "dirt": {"atlas": 1, "index": 3, "unpainted": "grass_top", "particle_art": 1}
+  },
+  "sound_sets": {"generic": {"build": "build_generic", "break": "break_generic", "tnt": "other"}},
+  "blocks": [], "picker_pages": [[], []]
+}

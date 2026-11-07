@@ -20,6 +20,8 @@
 #include "WorldTrailer.h"
 #include "Renderer.h"   // G.5b-4: the name tags' 2D bracket
 #include "SkyCycle.h"   // DN.2: the session-local clock
+#include "Weather.h"    // AT.1b: session-local weather, never saved
+#include "ModScript.h"  // K.4: the player's edits are mod-script events
 
 #include <algorithm>
 #include <chrono>
@@ -171,6 +173,7 @@ void beginSession(const char* host, int port, const char* displayName) {
     w->fm->sessionWorld = true;
     w->fm->trailer()->clear();
     SkyCycle::reset();   // DN.2 (plan D9): a session-local clock from 0.30, kept across its warps, never saved
+    Weather::reset();    // AT.1b (A13): session-local weather, kept across its warps, never saved
     // E11: no creatures (Model.mm paints blocks nobody else would see), no H.8 fire rules.
     if (!g_creaturesKnown) { g_creaturesWanted = CREATURES_ON; g_creaturesKnown = true; }
     CREATURES_ON = false;
@@ -1275,7 +1278,12 @@ struct Intent {
 }  // namespace
 
 void intentBuild(int x, int z, int y) {
-    if (!active()) { World::getWorld->terrain->buildBlock(x, z, y); return; }
+    if (!active()) {
+        const int before = World::getWorld->terrain->getLand(x, z, y);
+        World::getWorld->terrain->buildBlock(x, z, y);
+        ModScript::noteEdit(ModScript::EV_BUILD, x, z, y, before);   // K.4: mod scripts' "build" event
+        return;
+    }
     if (World::getWorld->hud->blocktype > STOCK_BLOCK_MAX) return;   // K.1-3 (D7): refused before the edit
     Intent in(x, z, y);
     World::getWorld->terrain->buildBlock(x, z, y);
@@ -1283,14 +1291,23 @@ void intentBuild(int x, int z, int y) {
 }
 
 void intentMine(int x, int z, int y) {
-    if (!active()) { World::getWorld->terrain->destroyBlock(x, z, y); return; }
+    if (!active()) {
+        const int before = World::getWorld->terrain->getLand(x, z, y);
+        World::getWorld->terrain->destroyBlock(x, z, y);
+        ModScript::noteEdit(ModScript::EV_MINE, x, z, y, before);   // K.4
+        return;
+    }
     Intent in(x, z, y);
     World::getWorld->terrain->destroyBlock(x, z, y);
     in.send();
 }
 
 void intentPaint(int x, int z, int y, int color) {
-    if (!active()) { World::getWorld->terrain->paintBlock(x, z, y, color); return; }
+    if (!active()) {
+        World::getWorld->terrain->paintBlock(x, z, y, color);
+        ModScript::noteEdit(ModScript::EV_PAINT, x, z, y, World::getWorld->terrain->getLand(x, z, y));   // K.4
+        return;
+    }
     Intent in(x, z, y);
     World::getWorld->terrain->paintBlock(x, z, y, color);
     in.send();
@@ -1300,6 +1317,7 @@ void intentBurn(int x, int z, int y) {
     Terrain* ter = World::getWorld->terrain;
     const int type = ter->getLand(x, z, y);
     ter->burnBlock(x, z, y, false);
+    if (!active()) ModScript::noteEdit(ModScript::EV_BURN, x, z, y, type);   // K.4
     // E10: the server deletes whatever it is told to burn; the game burns only flammables.
     if (!active() || type <= 0 || !(blockinfo[type] & IS_FLAMMABLE)) return;
     bool lit = false;

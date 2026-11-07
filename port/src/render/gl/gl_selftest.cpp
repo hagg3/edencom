@@ -151,6 +151,134 @@ void worldCheck(R::Tex tex) {
     }
 }
 
+// ---- AT.5 height fog ------------------------------------------------------------------------------------
+// The world quad untextured, the linear fog 100..200 (f = 1, no fog), the height fog with plane eye.y = world y,
+// top 2 (the quad's y <= 1.2 is >= 0.8 below it), 1 / thickness 1.25 (so h = 1 at the centre), 1 / distance 1
+// (eye distance 3.4: full), strength 0.5: the centre is half fog. Off, or with the fog off: exactly the quad.
+void heightFogCheck() {
+    const float fogColor[4] = {0.2f, 0.4f, 0.9f, 1.0f};
+    const WV q[4] = {{{-1.2f, -1.2f, 0}, {200, 150, 100, 255}, {0, 0}}, {{1.2f, -1.2f, 0}, {200, 150, 100, 255}, {1, 0}},
+                     {{1.2f, 1.2f, 0}, {200, 150, 100, 255}, {1, 1}}, {{-1.2f, 1.2f, 0}, {200, 150, 100, 255}, {0, 1}}};
+    static const R::VertexFormat kFmtWV = {sizeof(WV), {R::A_F32, 3, 0}, {R::A_U8N, 4, 12}, {R::A_F32, 2, 16},
+                                           {R::A_NONE, 0, 0}, {R::A_NONE, 0, 0}, {R::A_NONE, 0, 0}, {R::A_NONE, 0, 0}};
+    const R::Geometry g = {&kFmtWV, 0, q, 0, kQuadIdx, R::I_U16, 0, 6, R::TRIANGLES};
+    const float plane[4] = {0.0f, 1.0f, 0.0f, 0.0f}, params[4] = {2.0f, 1.25f, 1.0f, 0.5f};
+    const float c[3] = {200 / 255.0f, 150 / 255.0f, 100 / 255.0f};
+    Pixels shots[3];
+    for (int mode = 0; mode < 3; ++mode) {   // 0 height fog on, 1 off, 2 on with the fog off
+        baseline(); clear(); ortho2();
+        R::setState(kOpaque);
+        if (mode != 2) R::setFog({fogColor[0], fogColor[1], fogColor[2], fogColor[3]}, 100.0f, 200.0f);
+        if (mode != 1) R::setHeightFog(plane, params); else R::heightFogOff();
+        R::drawWorld(g, 0, {1, 1, 1, 1}, -1.0f);
+        R::heightFogOff();
+        shots[mode] = grab();
+    }
+    float want[4] = {0, 0, 0, 1};
+    for (int i = 0; i < 3; ++i) want[i] = fogColor[i] * 0.5f + c[i] * 0.5f;
+    expect("height fog (AT.5 twin: half fog below the mist top)", shots[0], 32, 32, want, 2, false);
+    for (int i = 0; i < 3; ++i) want[i] = c[i];
+    expect("height fog off (the plain program)", shots[1], 32, 32, want, 1, false);
+    same("height fog on with the fog off = off", shots[1], shots[2]);
+}
+
+// ---- AT.8 water tint ------------------------------------------------------------------------------------
+// A quad of vertex alpha 145 (the mesher's water mark) is pulled halfway to the tint; alpha 255 is untouched;
+// the twin off = the plain program. The glint adds only where the mirrored view ray meets the sun.
+void waterTintCheck() {
+    struct WV { float pos[3]; uint8_t col[4]; float uv[2]; };
+    static const R::VertexFormat kFmtWV = {sizeof(WV), {R::A_F32, 3, 0}, {R::A_U8N, 4, 12}, {R::A_F32, 2, 16},
+                                           {R::A_NONE, 0, 0}, {R::A_NONE, 0, 0}, {R::A_NONE, 0, 0}, {R::A_NONE, 0, 0}};
+    const float tint[4] = {0.0f, 0.0f, 1.0f, 0.5f}, sun[4] = {0, 0, 1, 0}, up[4] = {0, 1, 0, 0};
+    Pixels shots[3];
+    for (int mode = 0; mode < 3; ++mode) {   // 0 water alpha + tint, 1 other alpha + tint, 2 water alpha, tint off
+        const uint8_t a = mode == 1 ? 255 : 145;
+        const WV q[4] = {{{-1.2f, -1.2f, 0}, {200, 100, 0, a}, {0, 0}}, {{1.2f, -1.2f, 0}, {200, 100, 0, a}, {1, 0}},
+                         {{1.2f, 1.2f, 0}, {200, 100, 0, a}, {1, 1}}, {{-1.2f, 1.2f, 0}, {200, 100, 0, a}, {0, 1}}};
+        const R::Geometry g = {&kFmtWV, 0, q, 0, kQuadIdx, R::I_U16, 0, 6, R::TRIANGLES};
+        baseline(); clear(); ortho2();
+        R::setState(kOpaque);
+        if (mode != 2) R::setWaterTint(tint, sun, up); else R::waterTintOff();
+        R::drawWorld(g, 0, {1, 1, 1, 1}, -1.0f);
+        R::waterTintOff();
+        shots[mode] = grab();
+    }
+    float want[4] = {100 / 255.0f, 50 / 255.0f, 0.5f, 1};
+    expect("water tint (AT.8 twin: alpha-145 vertices move halfway to the tint)", shots[0], 32, 32, want, 2, false);
+    want[0] = 200 / 255.0f; want[1] = 100 / 255.0f; want[2] = 0;
+    expect("water tint leaves other alphas alone", shots[1], 32, 32, want, 2, false);
+    expect("water tint off = the plain program", shots[2], 32, 32, want, 2, false);
+    // AT.11: the glint twin (sun strength > 0) with the sun below the surface: no sheen, no sparkle, only the tint.
+    {
+        const float sunBelow[4] = {0, -1, 0, 0.55f}, upClock[4] = {0, 1, 0, 3.0f};
+        const WV q[4] = {{{-1.2f, -1.2f, 0}, {200, 100, 0, 145}, {0, 0}}, {{1.2f, -1.2f, 0}, {200, 100, 0, 145}, {1, 0}},
+                         {{1.2f, 1.2f, 0}, {200, 100, 0, 145}, {1, 1}}, {{-1.2f, 1.2f, 0}, {200, 100, 0, 145}, {0, 1}}};
+        const R::Geometry g = {&kFmtWV, 0, q, 0, kQuadIdx, R::I_U16, 0, 6, R::TRIANGLES};
+        baseline(); clear(); ortho2();
+        R::setState(kOpaque);
+        R::setWaterTint(tint, sunBelow, upClock);
+        R::drawWorld(g, 0, {1, 1, 1, 1}, -1.0f);
+        R::waterTintOff();
+        Pixels gs = grab();
+        float wg[4] = {100 / 255.0f, 50 / 255.0f, 0.5f, 1};
+        expect("water glint twin (AT.11): no glint away from the mirror direction = the tint alone", gs, 32, 32, wg, 2, false);
+        note(rgl::built(rgl::P_WORLD_OPAQUE_WG), "the glint twin was the program drawn (sun strength > 0)");
+    }
+}
+
+// ---- AT.6 clouds -----------------------------------------------------------------------------------------
+// A 4x4 L8 map of 255 (all cloud above any threshold < 1). The layer: every ray straight up, the plane 10 above,
+// threshold 0.5, so the texel is 1.0 and the colour is the shade at lit.a 0.5 over the clear colour; every ray
+// straight down misses (t < 0): the clear colour. Cloud shadows: the world quad with the map stated on unit 1,
+// strength 0.5 halves it; a threshold above every texel multiplies by exactly 1 (= off).
+R::Tex cloudMap() {
+    unsigned char t[16];
+    std::memset(t, 255, sizeof t);
+    const R::TexDesc d = {4, 4, R::TF_L8, false, false, false, false, "selftest-clouds"};
+    return R::texCreate(d, t);
+}
+void cloudsCheck(R::Tex map) {
+    static const float quad[8] = {-1, -1, 1, -1, 1, 1, -1, 1};
+    const R::Geometry g = {&R::kFmtClouds, 0, quad, 0, nullptr, R::I_NONE, 0, 4, R::TRIANGLE_FAN};
+    R::CloudParams p = {};
+    p.depth = 0.5f; p.height = 10.0f; p.period = 100.0f; p.threshold = 0.5f; p.fade[0] = 1000.0f; p.fade[1] = 2000.0f;
+    p.lit = {1, 1, 1, 0.5f}; p.shade = {0.2f, 0.4f, 0.6f, 1.0f}; p.tex = map;
+    Pixels shots[2];
+    for (int dir = 0; dir < 2; ++dir) {
+        baseline(); clear();
+        R::setState(R::State{R::B_ALPHA, true, false, false, 0.0f, 0.0f});
+        p.ray0[0] = 0; p.ray0[1] = dir ? -1.0f : 1.0f; p.ray0[2] = 0;
+        R::drawClouds(g, p);
+        shots[dir] = grab();
+    }
+    float want[4] = {0, 0, 0, 1};
+    const float sh[3] = {0.2f, 0.4f, 0.6f};
+    for (int i = 0; i < 3; ++i) want[i] = sh[i] * 0.5f + kClear[i] * 0.5f;
+    expect("clouds (AT.6: a ray up hits the plane, a full texel is the shade at lit.a)", shots[0], 32, 32, want, 2, false);
+    note(isClear(px(shots[1], 32, 32)) && isClear(px(shots[1], 5, 60)), "clouds: a ray down misses the plane (clear)");
+
+    const WV q[4] = {{{-1.2f, -1.2f, 0}, {200, 150, 100, 255}, {0, 0}}, {{1.2f, -1.2f, 0}, {200, 150, 100, 255}, {1, 0}},
+                     {{1.2f, 1.2f, 0}, {200, 150, 100, 255}, {1, 1}}, {{-1.2f, 1.2f, 0}, {200, 150, 100, 255}, {0, 1}}};
+    static const R::VertexFormat kFmtWV = {sizeof(WV), {R::A_F32, 3, 0}, {R::A_U8N, 4, 12}, {R::A_F32, 2, 16},
+                                           {R::A_NONE, 0, 0}, {R::A_NONE, 0, 0}, {R::A_NONE, 0, 0}, {R::A_NONE, 0, 0}};
+    const R::Geometry wg = {&kFmtWV, 0, q, 0, kQuadIdx, R::I_U16, 0, 6, R::TRIANGLES};
+    const float u[4] = {0, 0, 0, 0.5f}, v[4] = {0, 0, 0, 0.5f};
+    Pixels ws[3];
+    for (int mode = 0; mode < 3; ++mode) {   // 0 shadow 0.5, 1 off, 2 on with a threshold no texel reaches
+        baseline(); clear(); ortho2();
+        R::setState(kOpaque);
+        const float params[4] = {mode == 2 ? 1.01f : 0.5f, 0.5f, 0, 0};
+        if (mode != 1) R::setCloudShadow(map, u, v, params); else R::cloudShadowOff();
+        R::drawWorld(wg, 0, {1, 1, 1, 1}, -1.0f);
+        R::cloudShadowOff();
+        ws[mode] = grab();
+    }
+    const float c[3] = {200 / 255.0f, 150 / 255.0f, 100 / 255.0f};
+    for (int i = 0; i < 3; ++i) want[i] = c[i] * 0.5f;
+    expect("cloud shadow (AT.6 twin: strength 0.5 under a cloud texel)", ws[0], 32, 32, want, 2, false);
+    same("cloud shadow with no texel over the threshold = off", ws[1], ws[2]);
+}
+
 // ---- ui --------------------------------------------------------------------------------------------
 void uiCheck(R::Tex tex) {
     struct UV { float pos[2]; float uv[2]; };
@@ -359,7 +487,7 @@ int selftest(std::string* log) {
     g_fails = 0;
     std::string clog;
     const int linked = rgl::compileAll(&clog);
-    note(linked == rgl::P_PROG_COUNT, "the programs compile and link (%d/9: the five + lit-flat + three discard-free twins)%s%s", linked,
+    note(linked == rgl::P_PROG_COUNT, "the programs compile and link (%d/%d: the five + lit-flat + three discard-free twins + AT.2b precip + AT.5's two height-fog twins + AT.6 clouds + four cloud-shadow twins + AT.8's four water-tint twins + AT.11's four glint twins)%s%s", linked, (int)rgl::P_PROG_COUNT,
          clog.empty() ? "" : ": ", clog.c_str());
     GLint prevFbo = 0, prevRb = 0, vp[4];
     GLfloat cc[4];
@@ -384,6 +512,9 @@ int selftest(std::string* log) {
         R::beginFrame();
         const R::Tex tex = checker();
         worldCheck(tex);
+        heightFogCheck();
+        waterTintCheck();
+        { const R::Tex cm = cloudMap(); cloudsCheck(cm); R::texDestroy(cm); }
         uiCheck(tex);
         spriteCheck();
         skinnedCheck(tex);

@@ -3,13 +3,14 @@
 //  Emod — K.1-3 (WORKING/block-registry-plan-2026-10-31.md §4): block names and the world's palette.
 //
 //  Type bytes 0..127 are the stock blocks, fixed forever (rule 4); each has a canonical name
-//  `eden:<enum minus TYPE_, lowercased>` and some have console aliases (`lamp`, `oresand`, ...). Bytes
+//  `eden:<enum minus TYPE_, lowercased>` and some have console aliases (`lamp`, `oresand`, ...); since K.2-3
+//  both come from the stock pack (media/packs/eden/pack.json, Classes/ContentPack). Bytes
 //  128..255 are world-local: the world's BLOCK_PALETTE record (docs/emod-file-format.md) maps each to a
 //  `namespace:path` name. A byte is never rewritten on load (D11): rows 128..255 of the per-type tables
-//  (blockinfo, blockColor, blockTypeFaces, hudBlocksMap, blockTntMap, the shadow casters) are rebuilt
-//  from the palette at every world load, from the definition registered under each name, or the
-//  "missing" placeholder rows when there is none (D4/D10/D12: solid, breakable like stone, unpainted,
-//  magenta/black). Main thread, or the world-load pthread while it loads (nothing else runs then).
+//  (blockinfo, blockColor, blockTypeFaces, hudBlocksMap, blockTntMap, blockSoundSet, blockPaintArt, the
+//  shadow casters) are rebuilt from the palette at every world load, from the definition registered under
+//  each name, or the "missing" placeholder rows when there is none (D4/D10/D12: solid, breakable like
+//  stone, unpainted, magenta/black). Main thread, or the world-load pthread while it loads (nothing else runs then).
 //
 //  K.1 registers no definitions in the game: only --registry-selftest's `emod:test_*` pack (D18). K.2
 //  fills the registry from data.
@@ -19,14 +20,16 @@
 
 #include <stdint.h>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace BlockRegistry {
 
 enum { FIRST_LOCAL = 128, LOCAL_IDS = 128 };
 
-// ---- stock half
-// `eden:stone_ramp1` for 0..127, NULL otherwise.
+// ---- stock half (K.2-3: a view of the `eden` pack, filled by ContentPack::commitStock at boot)
+void setStock(const std::vector<std::string>& names, const std::vector<std::pair<std::string, int>>& aliases);
+// `eden:stone_ramp1` for 0..127, NULL otherwise (and before the stock pack loads).
 const char* stockName(int id);
 // A lower-case canonical `eden:` name or a console alias (`stone`, `lamp`) -> 0..127; -1 otherwise.
 int stockByName(const std::string& lowerName);
@@ -42,6 +45,8 @@ struct BlockDef {
     int faces[6];                // blockTypeFaces row (atlas tiles)
     uint8_t color[3];            // blockColor row
     int hudMap, tntMap;          // hudBlocksMap / blockTntMap rows
+    uint8_t soundSet;            // K.2-2: blockSoundSet row (an index into blockSoundSets)
+    uint8_t paintArt;            // K.2-2: blockPaintArt row (ART_* sites; a mod block's `paint_art` is ART_ALL)
 };
 // A definition with every row copied from stock block `like` (the test pack's shape).
 BlockDef defLike(const std::string& name, int like, int fallbackPaint = 0);

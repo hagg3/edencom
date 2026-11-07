@@ -27,6 +27,12 @@
 
 #include "VKeyboard.h"
 #include "SkyCycle.h"   // DN.2
+#include "Weather.h"    // AT.1b
+#include "Precip.h"
+#include "Ambient.h"     // AT.7
+#include "Clouds.h"     // AT.6
+#include "ContentPack.h"   // K.2-4: mod packs at world entry
+#include "ModScript.h"     // K.4: mod scripts
 
 // Web port hook (port/src/seam/LoadFailure.cpp), same cross-TU-call convention FileManager.cpp
 // already uses for eden_report_load_failure -- see the doneLoading==2 check in World::loadWorld
@@ -388,6 +394,13 @@ void World::loadWorld(const std::string& nameIn){
             }
         }
         doneLoading=1;
+        // K.2-4 (data-driven-content plan D6): mod packs load at world entry, here on the main thread before
+        // the load pthread starts (FileManager::loadWorld resolves the palette against their definitions; the
+        // atlas re-upload is GL). Adding or removing a pack takes effect at the next world load. A
+        // multiplayer session gets stock only (K.1 D7).
+        ContentPack::loadMods(fm->documents,fm->sessionWorld);
+        modsNoticePending=!fm->sessionWorld;   // K.3-6: said once the world is in (below)
+        ModScript::worldEntered(fm->sessionWorld);   // K.4: the packs' scripts start on the first frame of play
         Resources::getResources->stopMenuTune();
         // The world's HEIGHT has to be known before allocateMemory() sizes blockarray/lightarray
         // and the chunk table, and the only place it is written down is the save file's header.
@@ -658,6 +671,17 @@ bool World::update(float etime){
         return false;
     }
     realtime=etime;
+    if(modsNoticePending){   // K.3-6: the world is in; its palette names the mods it uses
+        modsNoticePending=false;
+        std::string off;
+        int n=0;
+        for(const ContentPack::WorldMod& wm:ContentPack::worldMods(fm->documents)){
+            if(wm.state==ContentPack::WMOD_LOADED) continue;
+            if(n++) off+=", ";
+            off+=wm.id;
+        }
+        if(n) hud->sb->setStatus("This world uses mods that are off or missing: "+off,6);
+    }
    // NSLog(@"Hi");
 	if(menu->is_sharing!=1){
 	/*if([UIDevice currentDevice].orientation==UIDeviceOrientationLandscapeRight){
@@ -710,6 +734,10 @@ bool World::update(float etime){
 		// input. Unlike Settings it freezes nothing.
 		if(menu->showconsole) menu->console->update(etime);
         SkyCycle::update(etime,hud->inmenu);   // DN.2: the day/night clock (stops under the pause menu)
+        Weather::update(etime,hud->inmenu);    // AT.1b: returns at once while Gameplay > Weather is off
+        Precip::update(etime,hud->inmenu);     // AT.2b: the rain's motion clock (nothing while it is off)
+        Clouds::update(etime,hud->inmenu);     // AT.6: the wind (nothing while the clouds are off)
+        Ambient::update(etime,hud->inmenu);    // AT.7: ambient particles (the pool empties while they are off)
         cam->update(etime);
 		
         pass_begin(P_U_TERRAIN);
@@ -733,6 +761,7 @@ bool World::update(float etime){
          if(!player->dead)
 		effects->update(etime);
         CmdScript::update(etime); //D.4c: command-block scripts edit before this frame's meshing
+        ModScript::update(etime); //K.4: mod scripts after the blocks, sharing their WORK_PER_FRAME, before meshing
         MpWorld::update(etime);   //MP.3b step 5c: remote edits after this frame's local ones, before meshing
         pass_end(P_U_EFFECTS);
         
@@ -838,6 +867,8 @@ void World::renderFrame(bool draw){
         }
 				
          R::mv().pop();
+        if(!pexp(EDEN_PEXP_NOEFFECTS)) Precip::render();   // AT.2b: rain, one draw, render-local coordinates
+        if(!pexp(EDEN_PEXP_NOEFFECTS)) { Ambient::render(); Ambient::renderHalos(); }   // AT.7: one point batch, render-local coordinates; AT.8: lamp halos
         pass_end(P_R_EFFECTS);
         pass_begin(P_R_UPSCALE);
         R::endScene(); //composite the 3D pass into the window; the hud draws at full resolution

@@ -253,7 +253,7 @@ from the directory alone, with no extra I/O:
 ### When saves happen
 - **Evict-save** (B.5b-1b): a modified column is saved as the streaming ring evicts it
   (`saveWorldKeepDynamics`). Stock instead saved the whole window at every streaming boundary.
-- **Autosave** every `g_autosave_seconds` (default 60) while edits are pending — Settings › Saves ›
+- **Autosave** every `g_autosave_seconds` (default 60) while edits are pending — Settings › World › Saves ›
   Autosave (Off / 1 / 2 / 5 min; `Terrain::update`). Off still saves on exit and warp.
 - `warpToPoint`/`warpToHome` (portal travel, home warp) — save-with-warp then reload; also the bulk
   reload.
@@ -327,6 +327,9 @@ The port's second world container: an append-only log of per-column zstd records
   warp always commit, so they keep the time with no edits; the autosave still needs an edit. The load
   reads it (`SkyCycle::load`; none or malformed → `SkyCycle::reset`, t 0.30); `FileManager::loadWorld`
   resets first, except in a session, whose clock `MpWorld::beginSession` resets once.
+  **AT.1b:** `WEATHER` (record 12) follows the same rules through `Weather::needsSave()` / `saved()` /
+  `load()` / `reset()`, with coarse steps (kind or flags, ≥ 30 s left, ≥ 0.1 intensity) so a running storm
+  adds nothing between real saves; it never marks the world dirty, and a `--weather=KIND` run never stages it.
 
 **K.1-3 (block palette):** `loadWorld` calls `BlockRegistry::resetWorld()` before any branch; `loadEmodWorld`
 reads a flagged file's `BLOCK_PALETTE` and resolves rows 128–255 before the first column read (an unreadable
@@ -578,7 +581,7 @@ The native entry point installs both (`port/src/harness/`).
   is no honest place to hang the shim's deferred-until-first-write guard. Both call the same
   implementation, `port/src/shim/foundation/save_backup.cpp`, which is where the rules live
   (skip a missing/zero-length source, skip at or above `g_save_inplace_threshold`, delete a
-  partial `.bak`, skip if Settings › Saves › "Keep a save backup" (`save_backup` in `kSettings[]`,
+  partial `.bak`, skip if Settings › World › Saves › "Keep a save backup" (`save_backup` in `kSettings[]`,
   `Settings.cpp`) is off). (The Linux/Windows Foundation shim's `NSFileHandle` writer also called
   them until G.2b-4/G.3 removed it.) The `.emod` store writes through `FILE*`, not `NSFileHandle`, so the toggle has no
   effect on a world save today. The `.bak` was what `eden_load_restore_backup()` (web recovery

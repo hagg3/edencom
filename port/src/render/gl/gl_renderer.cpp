@@ -203,14 +203,32 @@ void endFrame() {}
 
 // ---- draws ---------------------------------------------------------------------------------------
 void drawWorld(const R::Geometry& g, R::Tex t, const R::Rgba& tint, float alphaRef) {
-    Program* p = begin(alphaVariant(P_WORLD, alphaRef), t);
+    const rcore::DrawState& d = rcore::ds();
+    const bool hfog = d.fogOn && d.hfogOn;   // AT.5: the twin only while R::setHeightFog is on
+    const bool cs = d.csOn && d.csTex;       // AT.6: and the cloud-shadow twin while R::setCloudShadow is
+    ProgId id = alphaVariant(P_WORLD, alphaRef);
+    if (hfog) id = heightFogVariant(id);
+    if (cs) id = cloudShadowVariant(id);
+    const bool wt = d.wtOn && alphaRef < 0.0f;   // AT.8: only the discard-free draws (the transparent chunk pass)
+    if (wt) id = waterTintVariant(id);
+    if (wt && d.wtSun[3] > 0.0f) id = waterGlintVariant(id);   // AT.11: the glint twin only while it shows
+    Program* p = begin(id, t);
     if (!p) return;
+    if (wt) { set4f(*p, U_WTINT, d.wtTint); set4f(*p, U_WSUN, d.wtSun); set4f(*p, U_WUP, d.wtUp); }
+    if (cs) {
+        bindTexture1((GLuint)d.csTex);
+        set1i(*p, U_CLOUDTEX, 1);
+        set4f(*p, U_CSU, d.csU);
+        set4f(*p, U_CSV, d.csV);
+        set4f(*p, U_CSHADOW, d.csParams);
+    }
     setMat4(*p, U_MVP, mvp());
     setMat4(*p, U_MV, R::mv().top().m);
     uvUniform(*p);
     fogUniforms(*p);
     set1f(*p, U_ALPHAREF, alphaRef);
-    set3f(*p, U_WORLDLIGHT, rcore::ds().worldLight);
+    set3f(*p, U_WORLDLIGHT, d.worldLight);
+    if (hfog) { set4f(*p, U_HFOGPLANE, d.hfogPlane); set4f(*p, U_HFOG, d.hfogParams); }
     submit(g, tint, 1.0f);
 }
 
@@ -278,6 +296,49 @@ void drawLit(const R::Geometry& g, R::Tex t, const R::Rgba& tint) {
     set3f(*p, U_AMBSUM, amb);
     set1f(*p, U_SHININESS, L.shininess);
     submit(g, tint, 1.0f);
+}
+
+// AT.2b: the precipitation draw. Its own program and the column-top map on unit 0; everything else is
+// uniforms (R::PrecipParams).
+void drawPrecip(const R::Geometry& g, const R::PrecipParams& pp) {
+    Program* p = begin(P_PRECIP, pp.tops);
+    if (!p) return;
+    setMat4(*p, U_MV, R::mv().top().m);
+    setMat4(*p, U_PROJ, R::proj().top().m);
+    const float b0[4] = {pp.origin[0], pp.origin[1], pp.origin[2], pp.fade[0]};
+    const float b1[4] = {pp.size[0], pp.size[1], pp.size[2], pp.fade[1]};
+    const float mv[4] = {pp.offset[0], pp.offset[1], pp.offset[2], pp.length};
+    const float sl[4] = {pp.slant[0], pp.slant[1], pp.width, pp.widthPerDist};
+    const float co[4] = {pp.color.r, pp.color.g, pp.color.b, pp.color.a};
+    const float tp[4] = {(float)pp.topsShift[0], (float)pp.topsShift[1], (float)pp.topsN, pp.splash ? 1.0f : (pp.snow ? 2.0f : 0.0f)};
+    set4f(*p, U_PBOX0, b0);
+    set4f(*p, U_PBOX1, b1);
+    set4f(*p, U_PMOVE, mv);
+    set4f(*p, U_PSLANT, sl);
+    set4f(*p, U_PCOLOR, co);
+    set4f(*p, U_PTOPS, tp);
+    submit(g, pp.color, 1.0f);
+}
+
+// AT.6: the cloud layer. Its own program, the cloud map on unit 0, everything else uniforms (R::CloudParams).
+void drawClouds(const R::Geometry& g, const R::CloudParams& cp) {
+    Program* p = begin(P_CLOUDS, cp.tex);
+    if (!p) return;
+    const float r0[4] = {cp.ray0[0], cp.ray0[1], cp.ray0[2], cp.depth};
+    const float r1[4] = {cp.ray1[0], cp.ray1[1], cp.ray1[2], 0.0f};
+    const float r2[4] = {cp.ray2[0], cp.ray2[1], cp.ray2[2], 0.0f};
+    const float pos[4] = {cp.eyeXZ[0], cp.eyeXZ[1], cp.height, cp.period > 0 ? 1.0f / cp.period : 0.0f};
+    const float par[4] = {cp.threshold, cp.fade[0], cp.fade[1], 0.0f};
+    const float lit[4] = {cp.lit.r, cp.lit.g, cp.lit.b, cp.lit.a};
+    const float sh[4] = {cp.shade.r, cp.shade.g, cp.shade.b, 1.0f};
+    set4f(*p, U_CRAY0, r0);
+    set4f(*p, U_CRAY1, r1);
+    set4f(*p, U_CRAY2, r2);
+    set4f(*p, U_CPOS, pos);
+    set4f(*p, U_CPARAM, par);
+    set4f(*p, U_CCOLOR, lit);
+    set4f(*p, U_CSHADE, sh);
+    submit(g, cp.lit, 1.0f);
 }
 
 bool readPixels(int x, int y, int w, int h, void* rgba) {

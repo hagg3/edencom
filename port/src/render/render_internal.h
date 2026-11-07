@@ -18,6 +18,13 @@ struct DrawState {
     float       fogStart = 0.0f, fogEnd = 1.0f;
     R::LightSet lights = {};
     float       worldLight[3] = {1.0f, 1.0f, 1.0f};   // DN.5: R::setWorldLight (program 1's u_worldLight)
+    bool        hfogOn = false;                        // AT.5: R::setHeightFog (the EDEN_HEIGHT_FOG twins)
+    float       hfogPlane[4] = {0, 0, 0, 0}, hfogParams[4] = {0, 0, 0, 0};
+    bool        wtOn = false;                          // AT.8: R::setWaterTint (the EDEN_WATER_TINT twins)
+    float       wtTint[4] = {0, 0, 0, 0}, wtSun[4] = {0, 0, 0, 0}, wtUp[4] = {0, 1, 0, 0};
+    bool        csOn = false;                          // AT.6: R::setCloudShadow (the EDEN_CLOUD_SHADOW twins)
+    R::Tex      csTex = 0;
+    float       csU[4] = {0, 0, 0, 0}, csV[4] = {0, 0, 0, 0}, csParams[4] = {0, 0, 0, 0};
 };
 DrawState& ds();
 
@@ -60,12 +67,14 @@ void   drawSprites(const R::Geometry& g, R::Tex t, const R::SpriteParams& p);
 void   drawSkinned(const R::Geometry& g, R::Tex t, const R::Rgba& tint, const float* palette, int nmat,
                    int bonesPerVertex);
 void   drawLit(const R::Geometry& g, R::Tex t, const R::Rgba& tint);
+void   drawPrecip(const R::Geometry& g, const R::PrecipParams& p);   // AT.2b: program P_PRECIP
+void   drawClouds(const R::Geometry& g, const R::CloudParams& p);    // AT.6: program P_CLOUDS
 bool   readPixels(int x, int y, int w, int h, void* rgba);
 void   texSampling(R::Tex t, const R::TexDesc& d);
 void   clear(bool color, bool depth, const R::Rgba& c);
 unsigned takeError();
 const char* driverString(int which);      // R::DriverString
-int    compileAll(std::string* log);      // the programs (five + lit-flat); returns how many linked
+int    compileAll(std::string* log);      // the programs (five + lit-flat + twins + precip); returns how many linked
 int    selftest(std::string* log);        // --render-selftest-gl's unit checks (gl_selftest.cpp); failures
 int    litOracle(const char* outDir);     // --lit-oracle (gl_selftest.cpp): failures; -1 = no legacy GL
 void   invalidateAll();                   // the context went away: every cache, ring, program, the white texture

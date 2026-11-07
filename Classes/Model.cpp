@@ -24,6 +24,7 @@
 #include "Resources.h"
 #include "TerrainGen2.h"
 #include "SkyCycle.h"
+#include "BlockTraits.h"   // K.2-1: per-type behaviour
 
 int compare_creatures2 (const void *a, const void *b);
 #define START_LIFE 5
@@ -1167,7 +1168,7 @@ bool CheckCollision(Entity* e){
     if(collided){        
         
         if(minminTranDist.y>0){
-            if(collided==TYPE_ICE||(collided>=TYPE_ICE_RAMP1&&collided<=TYPE_ICE_RAMP4)||(collided>=TYPE_ICE_SIDE1&&collided<=TYPE_ICE_SIDE4)){
+            if(trait_slippery(collided)){   // K.2-1
                 e->onIce=true;
             }
         }
@@ -1199,7 +1200,7 @@ bool CheckCollision(Entity* e){
                 e->jumping=false;
             }
         }
-        if(collided==TYPE_TRAMPOLINE){
+        if(trait_bouncy(collided)){   // K.2-1
             n*=2;
           //  [[Resources getResources] playSound:SOUND_BOUNCE];	
            // NSLog(@"n:%f vel.y:%f",n,vel.y);
@@ -1316,7 +1317,7 @@ void Move(Entity* e,float etime){
             int y=min[e->model_type].y*scale+vpos.y+.01;
             int type=getLandc(x,z,y );
             if(!e->onIce){
-            if(type!=TYPE_NONE&&type!=TYPE_FLOWER&&type!=TYPE_LADDER&&type!=TYPE_VINE&&type!=TYPE_LAVA&&type>0&&!(type>=TYPE_STONE_RAMP1&&type<=TYPE_ICE_SIDE4)&&!(blockinfo[type]&IS_WATER)&&getLandc(x,z,y+1)<=0){
+            if(type!=TYPE_NONE&&type!=TYPE_FLOWER&&!trait_climbable(type)&&type!=TYPE_LAVA&&type>0&&!(type>=TYPE_STONE_RAMP1&&type<=TYPE_ICE_SIDE4)&&!(blockinfo[type]&IS_WATER)&&getLandc(x,z,y+1)<=0){   // K.2-2: climbables
                 
                 if(getLandc(x,z,y+2)<=0&&getLandc(vpos.x,vpos.z,vpos.y+2)<=0){
                     e->vel.y=jump_speed;

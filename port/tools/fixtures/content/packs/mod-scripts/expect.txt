@@ -1,0 +1,9 @@
+# K.4 mod pack: "scripts" (a bad entry refuses the pack; bytecode, paths, duplicates, unreadable files)
+mod-scripts@72: script "../outside.lua": must be a relative path inside the pack ending in .lua
+mod-scripts@90: script "scripts/ok.lua": listed twice
+mod-scripts@108: script "scripts/missing.lua": cannot read it
+mod-scripts@131: script "scripts/bc.lua": precompiled Lua (only source scripts load)
+mod-scripts@149: script "?": must be a relative path inside the pack ending in .lua
+mod-scripts@152: script "scripts/notes.txt": must be a relative path inside the pack ending in .lua
+mod-scripts@173: script ".lua": must be a relative path inside the pack ending in .lua
+= refused

@@ -1,0 +1,8 @@
+# K.3 mod pack: requires / conflicts (a bad list refuses the pack)
+mod-deps@141: "requires" entry "Bad": must be <id> or <id>>=<version> (digits and dots)
+mod-deps@148: "requires" entry "x>=1..2": must be <id> or <id>>=<version> (digits and dots)
+mod-deps@159: "requires" entry "y>=": must be <id> or <id>>=<version> (digits and dots)
+mod-deps@166: "requires" entry "?": must be <id> or <id>>=<version> (digits and dots)
+mod-deps@169: "requires" names the pack itself
+mod-deps@192: "conflicts" must be an array of pack ids
+= refused

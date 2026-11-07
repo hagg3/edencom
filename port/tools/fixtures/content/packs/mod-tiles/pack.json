@@ -1,0 +1,20 @@
+{"format": 1, "id": "tiles_test",
+ "tiles": {
+  "Bad": {"png": "good.png"},
+  "notobj": 5,
+  "extra": {"png": "good.png", "atlas": 1},
+  "nopng": {},
+  "escape": {"png": "../good.png"},
+  "absent": {"png": "absent.png"},
+  "text": {"png": "notpng.png"},
+  "small": {"png": "small.png"},
+  "broken": {"png": "broken.png"},
+  "good": {"png": "good.png", "unpainted": "small"},
+  "fine": {"png": "good.png", "unpainted": "extra"}
+ },
+ "blocks": [
+  {"id": "uses_good", "faces": {"all": "good"}, "color": [1, 2, 3], "fallback": "eden:stone"},
+  {"id": "uses_fine", "faces": {"all": "tiles_test:fine"}, "color": [1, 2, 3], "fallback": "eden:stone"},
+  {"id": "uses_broken", "faces": {"sides": "fine", "top": "broken", "bottom": "fine"}, "color": [1, 2, 3], "fallback": "eden:stone"},
+  {"id": "uses_extra", "faces": {"all": "extra"}, "color": [1, 2, 3], "fallback": "eden:stone"}
+ ]}

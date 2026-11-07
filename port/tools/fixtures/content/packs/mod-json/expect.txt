@@ -1,0 +1,3 @@
+# K.2-4 mod pack (folder name mod-*): every line, in order, then how much of it loads
+mod-json@49: JSON: trailing comma
+= refused

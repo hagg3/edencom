@@ -1,0 +1,10 @@
+{
+  "format": 1, "id": "eden", "tiles": {},
+  "sound_sets": {
+    "generic": {"build": "build_generic", "break": "break_generic", "tnt": "other"},
+    "loud": {"build": "kaboom", "break": "break_stone", "land": 4, "tnt": "metal"},
+    "quiet": {"break": "break_stone", "step": null, "tnt": "dirt", "volume": 1},
+    "silent": {"build": null, "break": "break_stone", "tnt": "dirt"}
+  },
+  "blocks": [], "picker_pages": [[], []]
+}

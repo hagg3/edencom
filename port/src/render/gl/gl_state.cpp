@@ -51,6 +51,17 @@ void activeTexture0() {
     stat_issued();
 }
 
+static GLuint g_unit1_tex = 0xFFFFFFFFu;   // AT.6: unknown
+void bindTexture1(GLuint t) {
+    if (g_unit1_tex == t) { stat_elided(); return; }
+    glActiveTexture(GL_TEXTURE1);
+    g_active_texture = GL_TEXTURE1;
+    glBindTexture(GL_TEXTURE_2D, t);
+    g_unit1_tex = t;
+    stat_issued();
+    activeTexture0();
+}
+
 void bindPathArray(GLuint buf) {
     if (g_path_array_buffer == buf) { stat_elided(); return; }
     glBindBuffer(GL_ARRAY_BUFFER, buf);
@@ -238,11 +249,13 @@ void applyRenderer(const R::State& s, GLuint tex) {
 void forgetTexture(GLuint name) {
     if (name == 0) return;
     if (g_actual.tex2d == name) g_actual.tex2d = 0;
+    if (g_unit1_tex == name) g_unit1_tex = 0;   // AT.6
 }
 
 void invalidate() {
     g_bound_program = 0;
     g_active_texture = 0;
+    g_unit1_tex = 0xFFFFFFFFu;   // AT.6
     for (int i = 0; i < ATTR_COUNT; ++i) { g_attrCache[i] = AttrCache(); g_constKnown[i] = false; }
     g_path_array_buffer = 0;
     g_path_ebo_dirty = false;

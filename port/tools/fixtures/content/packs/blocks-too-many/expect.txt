@@ -1,0 +1,4 @@
+# pack.py validate / --pack-selftest: every line, in order (K.2-3)
+eden@142: "blocks" has 513 blocks (at most 512)
+eden@2213: picker page 0 must have 35 cells (the stock grid)
+eden@2217: picker page 1 must have 20 cells (the stock grid)

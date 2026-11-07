@@ -11,6 +11,13 @@
 #include "Globals.h"
 #include "Terrain.h"
 #include "VectorUtil.h"
+#include "BlockTraits.h"   // K.2-1: per-type behaviour
+#include "SkyCycle.h"
+#include "Weather.h"     // AT.2a: overcast greys the stock fog colour
+#include "Clouds.h"      // AT.6: cloud shadows on the terrain passes
+#include "Ambient.h"     // AT.11: the water sparkle clock
+#include "World.h"       // AT.8: the camera in a liquid (Hud::underLiquid)
+#include "Hud.h"
 
 #define M_SQRT3 1.732050808
 //static UIFont* thefont=NULL;//move this to resources sometime
@@ -267,9 +274,101 @@ void Graphics::initGraphics()
 void Graphics::setFogColor(const float clr[4]){
     s_fogColor.r=clr[0]; s_fogColor.g=clr[1]; s_fogColor.b=clr[2]; s_fogColor.a=clr[3];
 }
+extern "C" int eden_atmo_tier(void);      // port/src/seam/Settings.cpp (AT.1a): 0 Off, 1 Low, 2 High
+extern "C" int eden_atmo_element(int e);  // 4 = atmo.height_fog, 6 = atmo.water_tint, 7 = atmo.glint
+// AT.8: the camera is in a liquid and Video > Atmosphere is on (Off = the stock look: only the HUD fill).
+static const float UNDERWATER_FOG_END=24.0f;   // AT.11: 24 (was 28)
+static float clampf(float x,float a,float b){return x<a?a:x>b?b:x;}
+static bool underwaterFog(){
+    World* w=World::getWorld;
+    return eden_atmo_tier()>0&&w&&w->hud&&w->hud->underLiquid;
+}
+void Graphics::worldFogRange(float* start,float* end){
+    float s0=P_ZFAR-P_ZFAR/1.6f, e0=P_ZFAR-30;
+    if(underwaterFog()){ *start=1.0f; *end=UNDERWATER_FOG_END<e0?UNDERWATER_FOG_END:e0; return; }
+    const float s=Weather::fogScale();
+    if(s!=1.0f){ s0*=s; e0*=s; }
+    *start=s0; *end=e0;
+}
 void Graphics::applyWorldFog(){
-    const float start=P_ZFAR-P_ZFAR/1.6f, end=P_ZFAR-30;
+    float start,end;
+    worldFogRange(&start,&end);
+    if(underwaterFog()){
+        // AT.8: fog is new under water (stock only tinted the screen): the liquid's own colour (in the day's light),
+        // thick: nothing past UNDERWATER_FOG_END shows. Terrain past it is not culled (the sky behind would show).
+        // AT.11: 0.7 of the liquid colour, so open water reads deep rather than as a flat bright tint.
+        const Vector lc=World::getWorld->hud->liquidColor;
+        float L[3]={1,1,1};
+        if(SkyCycle::lightActive())SkyCycle::worldLight(false,L);
+        const R::Rgba c={0.7f*lc.x*L[0],0.7f*lc.y*L[1],0.7f*lc.z*L[2],1.0f};
+        R::setFog(c, start, end);
+        return;
+    }
+    // AT.5: mist pulls both in (every tier; uniforms only; worldFogRange). The colour stays the sky's, so a chunk
+    // culled past the pulled-in end (mistCullDistance) looks as the stock far-plane cut does. 1.0 = untouched.
+    // AT.2a: with the cycle off, overcast greys the stock/painted fog colour here (the cycle's
+    // SkyLook::fogColor is already greyed). Weather off or clear: the colour as set, exactly.
+    if(Weather::active()&&!SkyCycle::enabled()){
+        float rgb[3]={s_fogColor.r,s_fogColor.g,s_fogColor.b};
+        Weather::greySky(rgb);
+        const R::Rgba c={rgb[0],rgb[1],rgb[2],s_fogColor.a};
+        R::setFog(c, start, end);
+        return;
+    }
     R::setFog(s_fogColor, start, end);
+}
+void Graphics::applyHeightFog(){
+    float params[4];
+    if(underwaterFog()||eden_atmo_tier()<2||!eden_atmo_element(4)||!Weather::heightFog(params)){ R::heightFogOff(); return; }
+    // world y of an eye-space point: the view is a rotation (x a uniform scale) and a translation, so
+    // y = (column 1 of its 3x3) . (eye - t) / |column 1|^2, t the view's translation (column-major m).
+    const float* m=R::mv().top().m;
+    const float cx=m[4],cy=m[5],cz=m[6];
+    const float n2=cx*cx+cy*cy+cz*cz;
+    if(!(n2>1e-12f)){ R::heightFogOff(); return; }
+    const float plane[4]={cx/n2,cy/n2,cz/n2,-(cx*m[12]+cy*m[13]+cz*m[14])/n2};
+    R::setHeightFog(plane,params);
+}
+// AT.8: water's colour pulled toward the sky/fog colour by the day and the weather (Low and High), plus the High
+// tier's sun glint (AT.11: texel sparkles along the sun's path, the EDEN_WATER_GLINT twins), as R::setWaterTint on the transparent chunk draws. Call with the camera's view on the stack
+// (before the blocks' x0.25 push). Off under water (the fog covers it) and with the element off.
+void Graphics::applyWaterTint(){
+    if(!eden_atmo_element(6)||underwaterFog()){ R::waterTintOff(); return; }
+    const float* m=R::mv().top().m;
+    float up[3]={m[4],m[5],m[6]};
+    const float un=sqrtf(up[0]*up[0]+up[1]*up[1]+up[2]*up[2]);
+    if(!(un>1e-6f)){ R::waterTintOff(); return; }
+    float rgb[3]={s_fogColor.r,s_fogColor.g,s_fogColor.b};
+    if(Weather::active()&&!SkyCycle::enabled())Weather::greySky(rgb);
+    const float tint[4]={rgb[0],rgb[1],rgb[2],0.30f};
+    float sun[4]={0,0,0,0};
+    if(eden_atmo_tier()>=2&&eden_atmo_element(7)){
+        Vector s;
+        float day;
+        if(SkyCycle::enabled()){
+            const float t=clampf((SkyCycle::sunElevationDeg()-2.0f)/13.0f,0.0f,1.0f);
+            day=t*t*(3.0f-2.0f*t);
+            s=SkyCycle::sunDir();
+        }else{
+            day=sky_isNight()?0.0f:1.0f;
+            s=MakeVector(0.28f,0.94f,0.18f);
+        }
+        const float strength=0.55f*day*Weather::clearSky();
+        if(strength>0.01f){
+            // world -> eye: the view's 3x3 (column-major m), then unit length
+            float e[3];
+            for(int i=0;i<3;i++)e[i]=m[0*4+i]*s.x+m[1*4+i]*s.y+m[2*4+i]*s.z;
+            const float en=sqrtf(e[0]*e[0]+e[1]*e[1]+e[2]*e[2]);
+            if(en>1e-6f){ sun[0]=e[0]/en; sun[1]=e[1]/en; sun[2]=e[2]/en; sun[3]=strength; }
+        }
+    }
+    const float upv[4]={up[0]/un,up[1]/un,up[2]/un,sun[3]>0?Ambient::clock()*0.7f:0.0f};   // AT.11: w = the sparkle clock
+    R::setWaterTint(tint,sun,upv);
+}
+float Graphics::mistCullDistance(){
+    const float s=Weather::fogScale();
+    if(!(s<1.0f))return 0.0f;
+    return (P_ZFAR-30)*s;
 }
 void Graphics::setCameraFog(float zfar){
      zfar=190;
@@ -361,6 +460,8 @@ void Graphics::beginTerrain(){
     R::setState(st);
     changedFog=false;
     applyWorldFog();
+    applyHeightFog();   // AT.5: before the x0.25 below (the plane is the camera's view)
+    Clouds::applyShadow();   // AT.6: likewise (R::setCloudShadow maps eye space through the camera's view)
 	R::mv().push();
 	R::mv().scale(.25f,.25f,.25f);
     //glDisable(GL_DEPTH_TEST); 
@@ -375,6 +476,9 @@ void Graphics::endTerrain(){
 	//glDisable(GL_ALPHA_TEST);
     R::mv().pop();
     R::fogOff();
+    R::heightFogOff();   // AT.5
+    R::cloudShadowOff(); // AT.6
+    R::waterTintOff();   // AT.8
     Pen::blend(false);
 	
 }
@@ -700,7 +804,7 @@ void Graphics::drawCube(float x,float y,float z,int type,int buildsize){
 	1, 0 	//1  L back*/
     Resources* res=Resources::getResources;
 	bool coloring=false;
-    if(type==TYPE_GRASS||type==TYPE_GRASS2||type==TYPE_GRASS3||type==TYPE_TNT||type==TYPE_BRICK||type==TYPE_VINE||type==TYPE_FIREWORK||(type>=TYPE_ORE_SAND&&type<=TYPE_ALGAE)){
+    if(trait_paintArtCursor(type)){   // K.2-1
         if(!World::getWorld->hud->block_paintcolor)
         coloring=true;
     }
@@ -726,16 +830,7 @@ void Graphics::drawCube(float x,float y,float z,int type,int buildsize){
         if(coloring){
             
             
-            if(bf==TEX_GRASS_SIDE)
-                bf=TEX_GRASS_SIDE_COLOR;
-            else if(bf==TEX_TNT_SIDE)
-                bf=TEX_TNT_SIDE_COLOR;
-            else if(bf==TEX_TNT_TOP)
-                bf=TEX_TNT_TOP_COLOR;
-            else if(bf==TEX_BRICK)
-                bf=TEX_BRICK_COLOR;
-            else if(IS_NEWBLOCK_TEX(bf))
-                bf=NEWBLOCK_COLOR_TEX(bf);   // D.2t
+            bf=trait_unpaintedTwin(bf);   // K.2-1
             
             
         }

@@ -1,0 +1,5 @@
+{
+  "format": 1,
+  "id": "scripts_bad",
+  "scripts": ["scripts/ok.lua", "../outside.lua", "scripts/ok.lua", "scripts/missing.lua", "scripts/bc.lua", 5, "scripts/notes.txt", ".lua"]
+}

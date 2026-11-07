@@ -110,13 +110,16 @@ Every voxel is two bytes:
   entry 0 is white, then 54 entries = 9 hues × 6 shades via HSV (hue column 8 is the
   grayscale ramp). `NUM_COLORS` is 54.
 
-Per-type static properties live in `Globals.cpp`:
+Per-type static properties are tables in `Globals.cpp` whose stock rows 0..127 come from the **stock content pack**
+`media/packs/eden/pack.json` since K.2-3 (loaded at boot by `Classes/ContentPack`, before any mode; schema and
+rules in [content-packs.md](content-packs.md); the C initialisers are gone, `pristine-engine` keeps them):
 - `blockinfo[BLOCK_IDS]` — bit flags (`IS_FLAMMABLE`, `IS_NOTSOLID`, `IS_RAMP`,
   `IS_ATLAS2` = drawn in transparent pass, `IS_LIQUID`, `IS_WATER/IS_LAVA`,
   `IS_OBJECT` = rendered as a mesh object not a cube, `IS_DOOR`, `IS_PORTAL`,
-  `IS_HARD`, `IS_BLOCKTNT`, …). **This table is the single source of truth for block
-  behaviour**; adding a block type means adding rows here, in `blockTypeFaces`
-  (face→texture mapping) and `blockColor` (default RGB).
+  `IS_HARD`, `IS_BLOCKTNT`, …; K.2-2's behaviour traits `IS_CLIMB` … `IS_NOSHADOW` are bits 18–23, see
+  "Per-type behaviour" below). **This table is the single source of truth for block
+  behaviour**; a stock row is a block's `traits`/`flags` in the pack, and a new block is a
+  definition (K.2-4 mod packs), never a new enum entry (the stock id space is full).
 - `blockTypeFaces[type][6]` — which atlas tile each of the 6 faces uses.
 - `blockColor[type][3]` — intrinsic tint.
 
@@ -144,8 +147,9 @@ that used to borrow `block8` (`TerrainGen2` `elevation`/`biomez`, `TerrainGenera
 `Classes/BlockRegistry.{h,cpp}`; plan `WORKING/block-registry-plan-2026-10-31.md` §4. Type bytes 0–127 are
 the stock ids, fixed forever; each has a canonical name, the enum minus `TYPE_`, lowercased, under
 `eden:` (`TYPE_STONE_RAMP1` → `eden:stone_ramp1`, `TYPE_BTGRASS` → `eden:btgrass`). The console's short
-names (`stone`, `lamp`, `oresand`, …: `kAliases`, moved there from `CmdScript`) are aliases; an
-unqualified name resolves to aliases only. Bytes **128–255 are world-local**: the world's `BLOCK_PALETTE`
+names (`stone`, `lamp`, `oresand`, …, moved from `CmdScript` in K.1-3) are aliases; an unqualified name
+resolves to aliases only. Since K.2-3 both are a view of the stock pack (its block ids and `"aliases"`,
+`BlockRegistry::setStock` at boot); `stockName()` is NULL before it loads. Bytes **128–255 are world-local**: the world's `BLOCK_PALETTE`
 record ([emod-file-format.md](emod-file-format.md)) maps each to a `namespace:path` name, at most 128 a
 world, never freed (D8).
 - **Load never rewrites a voxel (D11).** `FileManager::loadWorld` calls `BlockRegistry::resetWorld()` first
@@ -157,11 +161,14 @@ world, never freed (D8).
   placeholder rows (`eden_set_missing_block_row`, `Globals.cpp`; static init fills all 128 with them):
   `blockinfo` = `IS_HARD | IS_MISSING` (solid, breakable like stone, not flammable), every face
   `TEX_MISSING` (atlas tile 65, a magenta/black checker), `blockColor` magenta (particles), `hudBlocksMap`
-  −1, `blockTntMap` 0. `IS_MISSING` (bit 17, runtime only) makes the fill pass draw it unpainted; its
+  −1, `blockTntMap` 0, `blockSoundSet` 0 (`eden:generic`), `blockPaintArt` 0. `IS_MISSING` (bit 17, runtime only) makes the fill pass draw it unpainted; its
   paint byte is kept. Toggling a mod off and on loses nothing.
-- **Definitions** (`BlockDef`: name, fallback stock type + paint, the five table rows) are keyed by name.
-  K.1 registers none in the game; `--registry-selftest` registers `emod:test_0…128` (D18). K.2 loads them
-  from data.
+- **Definitions** (`BlockDef`: name, fallback stock type + paint, the table rows; K.2-2 added `soundSet` and `paintArt`) are keyed by name.
+  Since K.2-4 the game registers them from **mod packs** at every world entry (`ContentPack::loadMods`,
+  `World::loadWorld`, before the load pthread; `docs/content-packs.md` "Mod packs"): one definition per valid
+  block, named `<pack id>:<block id>`, kind `cube` + traits, and the previous load's are unregistered first
+  (only the ones the loader registered: `--registry-selftest`'s programmatic `emod:test_0…128`, D18, stay).
+  `--packs-selftest` is the end-to-end gate with the bundled example pack.
 - **Allocation** happens only when the console or a command block first places a name whose definition is
   loaded (`BlockRegistry::acquire`; `CmdScript` parses it as `TYPE_BY_NAME` so parsing never uses a slot).
   On an unflagged world it first runs `FileManager::preparePaletteAllocation`: the **flag compaction**
@@ -178,6 +185,68 @@ world, never freed (D8).
 
 Gates: `--registry-selftest` (CI, every leg) and `--newblocks-selftest` (manual; it also checks the
 missing-block rows with no world open).
+
+### Per-type behaviour: traits as tables (`Classes/BlockTraits.{h,cpp}`, K.2-1 + K.2-2, 2026-11-01)
+Plan `WORKING/data-driven-content-plan-2026-11-01.md` (D8, D9, D11). Each per-type decision a mod block could
+share is one inline function in `BlockTraits.h` (K.2-1 extracted them verbatim from their sites), and since
+K.2-2 each is a **table read**. The stock rows were generated from K.2-1's oracle, so they answer exactly what
+the old `type==TYPE_X` chains did (quirks included); a mod definition (K.2-4) carries the same rows. Every
+function bounds its argument (callers pass −1, Model's 999999 sentinel, HUD tool cells ≥ 1000): out of range
+is "no trait" and sound set 0.
+
+| Function | Reads | Sites (all callers) | Notes |
+|---|---|---|---|
+| `trait_buildSound` / `breakSound` / `landSound` / `stepSound` / `tntGroup` | `blockSoundSets[blockSoundSet[t]]` | `Player::processInput` ×2 build + mine, `Player::vertc` landing, `Player::move` footsteps, `Terrain::tntSoundForBlast` | 25 `eden:` sets (below); land/step −1 = silent; the landing site still skips ice |
+| `trait_climbable` | `IS_CLIMB` (bit 18) | `Player::vertc` ×2, Player autojump, `Player::boxBlocked`, creature autojump (`Model.cpp`) | ladder, vine. `horizc`'s copy is inside a comment |
+| `trait_bouncy` | `IS_BOUNCY` (19) | `Player::vertc`, `Model.cpp` | trampoline |
+| `trait_slippery` | `IS_SLIPPERY` (20) | `Player::vertc`, `Model.cpp` | ice + ice ramps/sides; `IS_ICE` still means "melts" |
+| `trait_blastproof` | `IS_BLASTPROOF` (21) | `Terrain::explode` ×2 | bedrock, steel |
+| `trait_unbreakable` | `IS_UNBREAKABLE` (22) | mine path, `Terrain::destroyBlock`, `CmdScript` `explode` | bedrock, golden cube |
+| `trait_noShadow` | `IS_NOSHADOW` (23) | `shadow_buildCasterTable` | cloud, glass, weave |
+| `trait_paintArt{Chunk,Batch,Cursor,Icon,Picker}`, `trait_paintArtParticle(t, tile)` | `blockPaintArt[t]` (`ART_*` site mask), `tileParticleArt[tile]` | `TerrainChunk` chunk/batch paths, `Graphics::drawCube`, `Hud` icon + picker, `BlockBreak` ×2 | the six old lists disagreed, so the trait is a per-site mask; a mod block's `paint_art` is `ART_ALL` |
+| `trait_hasUnpaintedTwin` / `trait_unpaintedTwin` | `tileTwin[tile]` (0 = none) | `TerrainChunk` ×2 swap chains, `Graphics` cursor | grass side, TNT side/top, brick, 112–127 greyscale → colour; indexes `atlas.png` tiles |
+
+**Sound sets** (`blockSoundSets[]`, `{name, build, brk, land, step, tnt}`, in order of the first stock type
+using each): `generic` (0: air, trampoline, cloud, shingle, gradient, golden cube, portals, 112–127, the
+missing block), `bedrock`, `stone` (stone, dark stone, cobblestone), `dirt` (dirt, grass ×3), `sand`, `leaves`,
+`tree` (+ wood ramps), `wood` (+ ladder, wood sides), `tnt` (+ firework), `brick`, `ice`, `crystal`, `water`
+(×4), `weave`, `vine`, `lava` (×4), `stone_shaped` (stone ramps + sides), `shingle_ramp`, `ice_shaped`,
+`shingle_side`, `glass`, `flammable` (doors + the block-TNT family), `lightbox`, `flower`, `steel`. The old
+chains were per-event, so a set is a tuple, not a material (brick builds as stone but mixes into a blast as
+"other"; sand builds generic and breaks as dirt). **D9, deliberate:** the chains tested `IS_FLAMMABLE` live, so
+with *Fire melts ice* on ice built and broke as wood; the tables do not (`--content-dump` fails if a fire toggle
+moves a sound).
+
+Rows 128–255: `BlockRegistry::BlockDef` carries `soundSet` and `paintArt` beside `info` (so the new bits travel
+with it), `resolve()` writes them, and `eden_set_missing_block_row` sets set 0 / no art. Since K.2-3 every stock
+row of these tables (sets, per-type set and art mask, tile twins) is data in the `eden` pack
+([content-packs.md](content-packs.md)): `"sound_sets"`, each block's `"sounds"`/`"paint_art_sites"`/`paint_art`
+trait, each tile's `"unpainted"`/`"particle_art"`.
+
+**What still names a `TYPE_*` (K.2-2 audit, `grep TYPE_` by file, comments excluded):**
+
+| Where | Lines | Verdict |
+|---|---|---|
+| `TerrainGen2`, `TerrainGenerator`, `MpWorld` (stock worldgen, the wire's default column) | 166 + 58 + 17 | stock ids by design: worldgen is K.2-W |
+| `Hud.cpp` | 172 | the stock picker pages + `hudBlocksMap` (pack data since K.2-3; `picker_page_of` reads the pages); the icon/picker tile picks (TNT side, firework, brick colour, ladder face 3, ramp shape) and the object icons (flower, golden cube, door, portal) are bespoke kinds; cloud + held creature is the creature tool |
+| `Terrain.cpp` | 132 | kinds: TNT/firework/block TNT, doors, portals, golden cube, lightbox light, liquids, ramps (ice ramp melt), fire (`FIRE_CHARS_VINES` vine → dark stone, ice melt), `blockTntMap` (data) |
+| `Player.cpp` | 72 | kinds: liquids (water/lava physics), ramps/sides (`vertc`'s ramp + ice-ramp ranges), golden cube pickup, portals, firework/lightbox placement, cloud = creature preview. **Stock-only on purpose:** the climb sound (`collided==TYPE_VINE` → `S_VINE`, else `S_LADDER`: a mod climbable sounds like a ladder; a climb sound per set is K.2-A) |
+| `TerrainChunk.cpp` | 53 | kinds: ramp/side meshes, custom, lightbox, objects, liquids; the paint-art branch's `type!=TYPE_VINE` (vine keeps white with no twin: a mod gets that by naming a tile as its own twin) and grass-top / dirt tints stay |
+| `Liquids`, root `Lighting.cpp`, `Firework`, `Resources`, `Util`, `SrclikeTrace`, `Graphics` (ramp shapes, cloud alpha), `BlockBreak` (cloud = generic debris tile, firework, dirt tint) | 38 + 6 + 2 + 11 + 6 + 3 + 14 + 9 | kinds (liquid levels, light emitters = K.2-L, shapes = K.2-S) |
+| `Model.cpp` | 14 | ramps/ice-ramp ranges (kinds); creature spawn refuses leaves (stock-only: creatures, K.2-C); creature grass recolour |
+| `CmdScript.cpp` | 12 | `set`/`fill` refuse bedrock only (the world floor; a mod `unbreakable` block stays settable, as the golden cube is); `explode` skips TNT and relights a lightbox (kinds) |
+| `FileManager`, `FileManagerHelper`, `SignTool`, `Input`, `EdenWorldStore.h`, `WorldProps*` | small | file conversion, the sign tool's steel post, `TYPE_NORMAL`/`TYPE_FLAT` are world types, not blocks |
+
+**`--content-dump`** prints every per-type table (`blockinfo`, `blockColor`, `blockTypeFaces`, `hudBlocksMap`,
+`blockTntMap`, `g_shadow_caster`, the stock names), the console aliases, both picker pages, the oracle (each
+function above over all 256 type values, the twins over every atlas tile, fire toggles off), and since K.2-2
+the `## sound sets` and `## traits` (per-type set name + art mask) sections, then its SHA-256 and the D9 fire-toggle
+check. `.github/scripts/check-content-dump.py` (CI, every leg incl. the iOS simulator) pins the SHA, diffs
+against `port/tools/fixtures/content/stock-dump.txt`, and separately pins the `## oracle` + `## tiles` text
+(`ORACLE_PINNED`, K.2-1's, never moves in K.2). A deliberate behaviour or table change re-pins `PINNED` and the
+fixture in the same commit. Since K.2-3 this text is what the `eden` pack compiles to: the engine prints it
+from the tables `loadStock` filled, and `port/tools/pack.py compile media/packs/eden` must print the same
+bytes (CI, linux).
 
 ## The toroidal resident window
 
@@ -248,7 +317,9 @@ Write path — always go through these, never poke arrays directly:
   `[y−23, y−1]`; docs/lighting-liquids-effects.md "Baked shadows"). Every runtime edit comes
   through here; the landing paths (`readColumn`, `fmh_publishColumnFromDefault`, TerrainGenerator)
   do not, and are covered by `addChunk`'s per-column flag and `shadow_syncLandedColumns()`, which
-  runs unconditionally right before the mesh pass.
+  runs unconditionally right before the mesh pass. AT.2b: `Precip::onSetLand` / `Precip::onLanded` (from
+  `addChunk`) keep the rain's column-top cache current the same way (no-ops while rain is off;
+  docs/lighting-liquids-effects.md "Weather" › Rain).
 - `Terrain::updateChunks(x,z,y,type)` — the standard "place a
   block" primitive: clears color if erasing, calls `setLand`, then marks the chunk
   and all 6 face-neighbouring chunks dirty via `addToUpdateList2`. **Modified from stock
@@ -548,8 +619,8 @@ useless, now just iterates through chunk list" (`Terrain::renderTree`).
   supported it.
 
 ## Safe vs. risky to modify
-- **Safe:** block property tables in `Globals.cpp`/`Constants.h` (append, don't renumber
-  — saved worlds store raw type bytes), explosion radii, burn times, new gameplay ops
+- **Safe:** stock block properties in `media/packs/eden/pack.json` (K.2-3; never renumber a `stock_id`
+  — saved worlds store raw type bytes — and re-pin `--content-dump`), explosion radii, burn times, new gameplay ops
   built from `updateChunks`/`setColor`.
 - **Caution:** anything touching `GBLOCKIDX`/`threeToOne` indexing, `T_HEIGHT`
   (changes save format column size! `SIZEOF_COLUMN` depends on it), `T_SIZE` (runtime since B.5b-2;

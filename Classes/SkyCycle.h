@@ -24,7 +24,7 @@ namespace SkyCycle {
     enum { RECORD_BYTES = 16, FLAG_LOCKED = 1 };
     const double DEFAULT_TIME = 0.30;   // a world with no SKY_CLOCK record starts in the morning
 
-    // Experiments > Day/night cycle, and Day length (minutes of real time per full day).
+    // Gameplay > Day/night cycle, and Day length (minutes of real time per full day).
     void setEnabled(bool on);
     bool enabled();
     void setDayLengthMinutes(int minutes);
@@ -66,8 +66,12 @@ namespace SkyCycle {
     // R::setWorldLight for a mesh baked with that night bit: L (day) or L / 0.35 (night), times the
     // time-of-day colour (warm near the horizon, cool at night). A day-baked chunk and a night-baked one
     // then look the same away from lamps, so the flip's re-mesh streams in without a patchwork.
-    // (1,1,1) while the cycle is off.
+    // (1,1,1) while the cycle is off. AT.2a: times Weather::lightMul() while Gameplay > Weather is on
+    // (exactly 1.0 in clear weather), so with the cycle off it is (1,1,1) x the weather.
     void worldLight(bool bakedNight, float out[3]);
+    // AT.2a: whether the world-light uniform is in use at all (the dnLight gate in Terrain.cpp): the
+    // cycle or the weather is on. Both off: never set, (1,1,1), exactly stock.
+    bool lightActive();
     // A stock day/night light pair (door, golden cube, creature LightSets) for the clock: blended from
     // day to night as L falls to 0.35, then night scaled by L / 0.35, times the colour. Cycle off: the
     // stock pick (night when !LOW_MEM_DEVICE && sky_isNight()). rgb only.

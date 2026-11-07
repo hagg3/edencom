@@ -175,6 +175,7 @@ std::string formatCache(const ServerInfo& c) {
     if (c.max >= 0) put("max", std::to_string(c.max));
     put("locked", c.locked < 0 ? "?" : std::to_string(c.locked));
     if (!c.flags.empty()) put("flags", c.flags);
+    if (!c.mods.empty()) put("mods", c.mods);
     if (!c.motd.empty()) put("motd", c.motd);
     if (c.seen > 0) put("seen", std::to_string((long long)c.seen));
     for (const auto& kv : c.extra) put(kv.first.c_str(), kv.second);
@@ -197,6 +198,7 @@ void parseCache(const std::string& s, ServerInfo& c) {
         else if (k == "max") { if (parseInt(v, n)) c.max = n; }
         else if (k == "locked") c.locked = v == "1" ? 1 : (v == "0" ? 0 : -1);
         else if (k == "flags") c.flags = v;
+        else if (k == "mods") c.mods = modsHashOk(v) ? v : std::string("?");
         else if (k == "motd") c.motd = v;
         else if (k == "seen") c.seen = std::atoll(v.c_str());
         else c.extra.push_back(std::make_pair(k, v));
@@ -305,6 +307,16 @@ std::string cleanRemote(const std::string& s, size_t cap) {
 
 }  // namespace
 
+bool modsHashOk(const std::string& v) {
+    if (v.size() != 64) return false;
+    for (char c : v) if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+    return true;
+}
+
+bool modsCompatible(const ServerInfo& info, const std::string& localHash) {
+    return info.mods.empty() || info.mods == localHash;
+}
+
 bool parseInfoLine(const std::string& line, ServerInfo& out) {
     if (line.compare(0, 5, "INFO:") != 0) return false;
     ServerInfo r;
@@ -324,6 +336,7 @@ bool parseInfoLine(const std::string& line, ServerInfo& out) {
         else if (k == "max") { if (parseInt(v, n) && n >= 0) r.max = n; }
         else if (k == "locked") r.locked = v == "1" ? 1 : 0;
         else if (k == "flags") r.flags = cleanRemote(v, 16);
+        else if (k == "mods") r.mods = modsHashOk(v) ? v : std::string("?");   // K.3: "?" = present but unreadable
     }
     out = r;
     return true;

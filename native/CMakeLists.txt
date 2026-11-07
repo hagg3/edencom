@@ -208,7 +208,7 @@ set(EDEN_SHARED_OTHER
 # ---------------------------------------------------------------------------------------------
 # G.4: the --*-selftest harness, one file per mode group (port/src/harness/harness.h)
 set(EDEN_HARNESS_SOURCES main core mode_boot mode_shots mode_world mode_props mode_cmds mode_light mode_mp
-  mode_look power mode_display mode_input mode_ui mode_browser mode_session mode_render mode_folders mode_registry)
+  mode_look power mode_display mode_input mode_ui mode_browser mode_session mode_render mode_folders mode_registry mode_content mode_packs mode_mods mode_lua mode_weather)
 list(TRANSFORM EDEN_HARNESS_SOURCES PREPEND "${EDEN_PORT_DIR}/src/harness/")
 list(TRANSFORM EDEN_HARNESS_SOURCES APPEND ".cpp")
 set(EDEN_NATIVE_SOURCES
@@ -740,6 +740,26 @@ foreach(asset IN LISTS EDEN_ASSET_GLOBS)
          "if(NOT EXISTS \"\${DEST}/${base}\")\n  file(CREATE_LINK \"${asset}\" \"\${DEST}/${base}\" SYMBOLIC COPY_ON_ERROR)\nendif()\n")
   endif()
 endforeach()
+# K.2-3: content packs are TREES, not flat assets. media/packs/<id>/** lands at <bundle>/packs/<id>/** with
+# its relative paths kept (a pack's pack.json names its PNGs by relative path, and two packs may both have
+# a `textures/stone.png`). Same link/copy rules as above; the directories are made first. The stock pack
+# media/packs/eden/pack.json is what the engine loads at boot (Classes/ContentPack): without it the
+# game refuses to start, so every packaging step in native.yml copies `packs/` too.
+file(GLOB_RECURSE EDEN_PACK_FILES CONFIGURE_DEPENDS RELATIVE "${EDEN_PARENT_DIR}/media/packs" "${EDEN_PARENT_DIR}/media/packs/*")
+list(FILTER EDEN_PACK_FILES EXCLUDE REGEX "(^|/)\\.")   # no .DS_Store and friends
+list(LENGTH EDEN_PACK_FILES EDEN_PACK_COUNT)
+foreach(rel IN LISTS EDEN_PACK_FILES)
+  get_filename_component(reldir "${rel}" DIRECTORY)
+  set(src "${EDEN_PARENT_DIR}/media/packs/${rel}")
+  file(APPEND "${EDEN_LINK_SCRIPT}" "file(MAKE_DIRECTORY \"\${DEST}/packs/${reldir}\")\n")
+  if(IOS)
+    file(APPEND "${EDEN_LINK_SCRIPT}"
+         "if(NOT EXISTS \"\${DEST}/packs/${rel}\")\n  file(COPY_FILE \"${src}\" \"\${DEST}/packs/${rel}\")\nendif()\n")
+  else()
+    file(APPEND "${EDEN_LINK_SCRIPT}"
+         "if(NOT EXISTS \"\${DEST}/packs/${rel}\")\n  file(CREATE_LINK \"${src}\" \"\${DEST}/packs/${rel}\" SYMBOLIC COPY_ON_ERROR)\nendif()\n")
+  endif()
+endforeach()
 add_custom_command(TARGET eden_native POST_BUILD
   COMMAND ${CMAKE_COMMAND} -DDEST=${EDEN_BUNDLE_DIR} -P "${EDEN_LINK_SCRIPT}"
   COMMENT "Eden native: linking ${EDEN_ASSET_COUNT} bundle assets beside the executable")
@@ -756,4 +776,4 @@ if(WIN32)
     COMMENT "Eden native: copying imported-target DLLs beside the executable")
 endif()
 
-message(STATUS "Eden native: SDL3 ${SDL3_VERSION}, diagnostics=${EDEN_DIAGNOSTICS}, build=${CMAKE_BUILD_TYPE}, ${EDEN_ASSET_COUNT} bundle assets")
+message(STATUS "Eden native: SDL3 ${SDL3_VERSION}, diagnostics=${EDEN_DIAGNOSTICS}, build=${CMAKE_BUILD_TYPE}, ${EDEN_ASSET_COUNT} bundle assets, ${EDEN_PACK_COUNT} pack files")

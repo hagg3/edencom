@@ -11,9 +11,14 @@
 #include "../../../Classes/SpecialEffects.h"
 #include "../../../Classes/Firework.h"
 #include "../../../Classes/SkyCycle.h"
+#include "../../../Classes/Weather.h"
+#include "../../../Classes/Precip.h"
+#include "../../../Classes/Clouds.h"
+#include "../../../Classes/Ambient.h"
 
 extern "C" void eden_gl_trace_begin(FILE* f);   // render_core.cpp
 extern "C" void eden_gl_trace_end(void);
+extern "C" int eden_atmo_tier(void);            // Settings.cpp (AT.1a)
 extern "C" void eden_gl_stats_frame_boundary(void);
 extern "C" const char* eden_debug_model_state(void);   // port/src/seam/DebugState.cpp
 
@@ -276,11 +281,243 @@ int run_sky_shot() {
     std::printf("[eden-sky] night flips requested: %d (want 2)\n", SkyCycle::nightFlips() - flips0);
     SkyCycle::setLocked(false);
     SkyCycle::setEnabled(false);
+    // AT.2a: with --weather=KIND (not off/clear) also the cycle-off sky (the stock/painted sky greyed by
+    // Weather::greySky), both poses: nocycle-<pose>.
+    int extra = 0;
+    if (eden_weather_override() >= 2) {
+        for (int p = 0; p < 2; ++p) {
+            hold_pose(site, poses[p], 60);
+            char label[64];
+            std::snprintf(label, sizeof label, "nocycle-%s", names[p]);
+            if (shot(label, EDEN_RC_ALL)) ++written;
+            ++extra;
+        }
+    }
+    // AT.2b: with --weather=rain and an --atmo= tier on, rain at noon from the level pose (snowline lifted so
+    // the 64z site rains): rain-open, then under a 7x7 stone roof three blocks above the eye (rain-roof: no
+    // streaks below it), then the roof removed.
+    if (eden_weather_override() == 3 && eden_atmo_tier() > 0) {
+        const float snow0 = Weather::snowline();
+        Weather::setSnowline(1.0f);
+        SkyCycle::setEnabled(true);
+        SkyCycle::setLocked(true);
+        SkyCycle::setTime(0.5);
+        hold_pose(site, poses[0], 60);
+        if (shot("rain-open", EDEN_RC_ALL)) ++written;
+        ++extra;
+        const int ry = site.g + 7;
+        int was[7][7];
+        for (int i = 0; i < 7; ++i)
+            for (int j = 0; j < 7; ++j) {
+                was[i][j] = T()->getLand(site.x0 + 1 + i, site.z0 + 3 + j, ry);
+                T()->setLand(site.x0 + 1 + i, site.z0 + 3 + j, ry, TYPE_STONE, true);
+            }
+        hold_pose(site, poses[0], 60);
+        std::printf("[eden-sky] rain: %d streaks, roof top %d at (%d,%d)\n", Precip::drawn(), Precip::top(site.x0 + 4, site.z0 + 6),
+                    site.x0 + 4, site.z0 + 6);
+        if (shot("rain-roof", EDEN_RC_ALL)) ++written;
+        ++extra;
+        for (int i = 0; i < 7; ++i)
+            for (int j = 0; j < 7; ++j) T()->setLand(site.x0 + 1 + i, site.z0 + 3 + j, ry, was[i][j], true);
+        hold_pose(site, poses[0], 2);
+        SkyCycle::setLocked(false);
+        SkyCycle::setEnabled(false);
+        Weather::setSnowline(snow0);
+    }
+    // AT.3: with --weather=snow and an --atmo= tier on, the flakes at noon from the level pose (snowline
+    // is irrelevant: `weather snow` forces snow everywhere).
+    if (eden_weather_override() == 4 && eden_atmo_tier() > 0) {
+        SkyCycle::setEnabled(true);
+        SkyCycle::setLocked(true);
+        SkyCycle::setTime(0.5);
+        hold_pose(site, poses[0], 60);
+        std::printf("[eden-sky] snow: %d flakes\n", Precip::drawn());
+        if (shot("snow-open", EDEN_RC_ALL)) ++written;
+        ++extra;
+        SkyCycle::setLocked(false);
+        SkyCycle::setEnabled(false);
+    }
     g_app->setFixedEtime(0.0f);
     eden_rng_unpin();
     g_ignoreUserInput = false;
     std::printf("[eden-sky] %d captures, prefix %s\n", written, g_opt.shot.c_str());
-    return written == (int)times.size() * 2 + 8 ? 0 : 1;
+    return written == (int)times.size() * 2 + 8 + extra ? 0 : 1;
+}
+
+// AT.11: --atmo-shot. The scene-shot site plus an annex east of it (an 8x8 pool 4 deep, a grass strip with
+// flowers under a leaf canopy, three lamps), then one frame per atmosphere effect: clouds and their shadows
+// over the day, overcast, rain (High, Low, a splash close-up), storm, snow, dawn mist and valley fog, water
+// tint and glint toward a low sun, under water, ambient particles (leaves, motes, embers, fireflies, bubbles)
+// and lamp halos near and far. Each frame forces its own weather kind (--weather= values) and tier, so the
+// command line needs neither; a weather-off / atmosphere-off baseline of the site and the pool comes first.
+// The clock is held (SkyCycle locked), etime fixed, the RNG pinned: a frame is a pure function of the build.
+int run_atmo_shot() {
+    SDL_GL_SetSwapInterval(0);
+    if (g_opt.shot.empty()) g_opt.shot = "atmo";
+    const std::string name = g_opt.world.empty() ? "atmo-shot" : g_opt.world;
+    for (int i = 0, n = eden_menu_world_count(); i < n; ++i)
+        if (name == eden_menu_world_name(i)) { eden_menu_delete_at(i); break; }
+    g_ignoreUserInput = true;
+    g_app->setFixedEtime(1.0f / 60.0f);
+    eden_rng_seed(1);
+    eden_atmo_set_override(0);
+    eden_weather_set_override(0);
+    if (!open_world(name.c_str(), g_opt.height)) return 1;
+    if (!g_opt.haveAt) { g_opt.at[0] = 65536.5f; g_opt.at[1] = 60.0f; g_opt.at[2] = 65536.5f; }
+    eden_console_teleport(g_opt.at[0], g_opt.at[1], g_opt.at[2]);
+    tick(g_opt.frames);
+    const Site site = build_site(player_state());
+    // The annex: x0+13 .. x0+26, z0-1 .. z0+12, floor at G.
+    const int G = site.g, ax = site.x0 + 13, z0 = site.z0;
+    // setCellState, not the console setblock: a cell keeps its old paint byte otherwise (the dirt's brown).
+    auto cell = [](int x, int z, int y, int t) { T()->setCellState(x, z, y, t, 0); };
+    for (int x = ax; x <= ax + 13; ++x)
+        for (int z = z0 - 1; z <= z0 + 12; ++z) {
+            for (int y = g_world_height - 1; y > G; --y)
+                if (T()->getLand(x, z, y) != TYPE_NONE) cell(x, z, y, TYPE_NONE);
+            for (int y = G - 5; y <= G; ++y) cell(x, z, y, TYPE_STONE);
+        }
+    tick(4);
+    for (int x = ax + 1; x <= ax + 8; ++x)          // the pool, 4 deep
+        for (int z = z0 + 1; z <= z0 + 8; ++z)
+            for (int y = G - 3; y <= G; ++y) cell(x, z, y, TYPE_WATER);
+    for (int x = ax; x <= ax + 13; ++x)             // grass + flowers along the south edge
+        for (int z = z0 + 10; z <= z0 + 12; ++z) {
+            cell(x, z, G, TYPE_GRASS);
+            if ((x + z) % 3 == 0) cell(x, z, G + 1, TYPE_FLOWER);
+        }
+    for (int y = G + 1; y <= G + 4; ++y) cell(ax + 2, z0 + 11, y, TYPE_TREE);   // a trunk and its canopy
+    for (int x = ax; x <= ax + 5; ++x)
+        for (int z = z0 + 9; z <= z0 + 12; ++z) cell(x, z, G + 5, TYPE_LEAVES);
+    cell(ax + 11, z0 + 4, G + 1, TYPE_STONE);       // lamps: two on the floor, one on a post
+    cell(ax + 11, z0 + 1, G + 1, TYPE_LIGHTBOX);
+    cell(ax + 11, z0 + 4, G + 2, TYPE_LIGHTBOX);
+    cell(ax + 11, z0 + 7, G + 1, TYPE_LIGHTBOX);
+    tick(30);
+    Weather::setSnowline(1.0f);   // the 64z site rains, not snows (snow is forced by its own frame)
+    SkyCycle::setEnabled(true);
+    SkyCycle::setLocked(true);
+
+    struct Frame { const char* label; int tier, weather; double t; Pose pose; int settle; };
+    const float sitePool = 13.0f;   // pose offsets are relative to (x0, G, z0)
+    // A yaw (degrees, the camera's: forward = (cos, sin) in x/z) toward the sun at clock time t.
+    auto sunYaw = [](double t) {
+        SkyCycle::setTime(t);
+        const Vector s = SkyCycle::sunDir();
+        return (float)(std::atan2(s.z, s.x) * 180.0 / 3.14159265358979);
+    };
+    const float yaw30 = sunYaw(0.30), yaw70 = sunYaw(0.70);
+    const Pose level = {-4.0f, 4.0f, 6.0f, 0.0f, 3.0f}, up = {-4.0f, 4.0f, 6.0f, 0.0f, 40.0f};
+    const Pose splash = {5.0f, 3.0f, 6.0f, 0.0f, -55.0f}, high = {-4.0f, 26.0f, 6.0f, 0.0f, -6.0f};
+    const Pose pool = {sitePool - 2.0f, 3.0f, 4.5f, 0.0f, -14.0f};
+    const Pose pool30 = {sitePool + 4.5f - 6.0f * std::cos(yaw30 * 0.01745329f), 2.5f,
+                         4.5f - 6.0f * std::sin(yaw30 * 0.01745329f), yaw30, -12.0f};
+    const Pose pool70 = {sitePool + 4.5f - 6.0f * std::cos(yaw70 * 0.01745329f), 2.5f,
+                         4.5f - 6.0f * std::sin(yaw70 * 0.01745329f), yaw70, -12.0f};
+    const Pose under = {sitePool + 2.0f, -3.0f, 4.5f, 0.0f, 0.0f};
+    const Pose canopy = {sitePool + 1.0f, 1.0f, 7.0f, 60.0f, 12.0f};
+    const Pose lava = {-2.5f, 3.0f, 5.0f, 0.0f, -30.0f};
+    const Pose grass = {sitePool + 3.0f, 2.5f, 5.5f, 90.0f, -12.0f};
+    const Pose lampsNear = {sitePool + 3.0f, 2.5f, 4.5f, 0.0f, -4.0f};
+    const Pose lampsFar = {-3.0f, 4.0f, 4.5f, 0.0f, -4.0f};
+    const Frame frames[] = {
+        {"base-site",        0, 0, 0.50, level,     60},
+        {"base-pool",        0, 0, 0.50, pool,      30},
+        {"clear-noon-level", 2, 1, 0.50, level,     60},
+        {"clear-noon-up",    2, 1, 0.50, up,        20},
+        {"clear-dawn-level", 2, 1, 0.27, level,     30},
+        {"clear-dusk-up",    2, 1, 0.73, up,        30},
+        {"clear-night-up",   2, 1, 0.00, up,        30},
+        {"low-noon-up",      1, 1, 0.50, up,        30},
+        {"overcast-noon",    2, 2, 0.50, level,     60},
+        {"rain-noon",        2, 3, 0.50, level,     60},
+        {"rain-splash",      2, 3, 0.50, splash,    60},
+        {"rain-low",         1, 3, 0.50, level,     30},
+        {"rain-night",       2, 3, 0.00, level,     30},
+        {"storm-noon",       2, 5, 0.50, level,     60},
+        {"snow-noon",        2, 4, 0.50, level,     60},
+        {"mist-dawn-rain",   2, 3, 0.27, high,      60},
+        {"mist-dawn-clear",  2, 1, 0.27, high,      30},
+        {"water-noon",       2, 1, 0.50, pool,      30},
+        {"water-t0.30",      2, 1, 0.30, pool30,    30},
+        {"water-t0.70",      2, 1, 0.70, pool70,    30},
+        {"water-low",        1, 1, 0.50, pool,      30},
+        {"water-overcast",   2, 2, 0.50, pool,      30},
+        {"base-under",       0, 0, 0.50, under,     30},
+        {"under-noon",       2, 1, 0.50, under,    300},
+        {"ambient-canopy",   2, 1, 0.50, canopy,   480},
+        {"ambient-lava",     2, 1, 0.50, lava,     240},
+        {"ambient-fireflies",2, 1, 0.00, grass,    720},
+        {"halos-near",       2, 1, 0.00, lampsNear, 60},
+        {"halos-far",        2, 1, 0.00, lampsFar,  60},
+        {"halos-storm-dusk", 2, 5, 0.76, lampsNear, 60},
+    };
+    int written = 0;
+    const int count = (int)(sizeof frames / sizeof frames[0]);
+    for (const Frame& f : frames) {
+        eden_atmo_set_override(f.tier);
+        eden_weather_set_override(f.weather);
+        SkyCycle::setTime(f.t);
+        hold_pose(site, f.pose, f.settle);
+        Weather::lightningReset();   // a frame never catches a flash (the flash is AT.4's selftest)
+        if (shot(f.label, EDEN_RC_ALL)) ++written;
+        std::printf("[eden-atmo] %-18s precip %d splashes %d clouds %d cover %.2f ambient %d (f%d l%d m%d e%d b%d) halos %d "
+                    "under %d lc %.2f,%.2f,%.2f\n", f.label, Precip::drawn(), Precip::splashes(), Clouds::drawn() ? 1 : 0, Clouds::coverage(),
+                    Ambient::count(), Ambient::count(Ambient::FIREFLY), Ambient::count(Ambient::LEAF),
+                    Ambient::count(Ambient::MOTE), Ambient::count(Ambient::EMBER), Ambient::count(Ambient::BUBBLE),
+                    Ambient::halosDrawn(), W()->hud->underLiquid ? 1 : 0, W()->hud->liquidColor.x,
+                    W()->hud->liquidColor.y, W()->hud->liquidColor.z);
+    }
+    // AT.11b: two edited scenes after the list. halos-wall: a stone wall hides the far floor lamp (its halo must
+    // go, not show through). ambient-lava-green: the site's lava painted green ("acid") gives green embers.
+    int extra = 0;
+    eden_atmo_set_override(2);
+    eden_weather_set_override(1);
+    SkyCycle::setTime(0.0);
+    for (int z = z0 + 6; z <= z0 + 8; ++z)
+        for (int y = G + 1; y <= G + 3; ++y) cell(ax + 9, z, y, TYPE_STONE);
+    hold_pose(site, lampsNear, 60);
+    Weather::lightningReset();
+    if (shot("halos-wall", EDEN_RC_ALL)) ++written;
+    ++extra;
+    std::printf("[eden-atmo] %-18s halos %d (3 lamps, one walled off)\n", "halos-wall", Ambient::halosDrawn());
+    {
+        int green = 1;
+        float best = 1e9f;
+        for (int i = 1; i < 256; ++i) {
+            const Vector& c = colorTable[i];
+            const float e = (c.x - 0.25f) * (c.x - 0.25f) + (c.y - 0.95f) * (c.y - 0.95f) + (c.z - 0.20f) * (c.z - 0.20f);
+            if (e < best) { best = e; green = i; }
+        }
+        int painted = 0;
+        for (int x = site.x0 - 2; x <= site.x0 + 12; ++x)
+            for (int z = site.z0 - 2; z <= site.z0 + 12; ++z)
+                for (int y = G - 6; y <= G + 2; ++y) {
+                    const int b = T()->getLand(x, z, y);
+                    if (b == TYPE_LAVA || b == TYPE_LAVA1 || b == TYPE_LAVA2 || b == TYPE_LAVA3) {
+                        T()->setCellState(x, z, y, b, green);
+                        ++painted;
+                    }
+                }
+        Ambient::reset();
+        SkyCycle::setTime(0.5);
+        hold_pose(site, lava, 240);
+        // Embers are sparse now (a pop every few seconds a cell): wait (fixed etime, deterministic) for three up.
+        for (int k = 0; k < 40 && Ambient::count(Ambient::EMBER) < 3; ++k) hold_pose(site, lava, 15);
+        if (shot("ambient-lava-green", EDEN_RC_ALL)) ++written;
+        ++extra;
+        std::printf("[eden-atmo] %-18s painted %d lava cells colour %d, embers %d\n", "ambient-lava-green", painted, green,
+                    Ambient::count(Ambient::EMBER));
+    }
+    SkyCycle::setLocked(false);
+    SkyCycle::setEnabled(false);
+    eden_atmo_set_override(0);
+    eden_weather_set_override(0);
+    g_app->setFixedEtime(0.0f);
+    eden_rng_unpin();
+    g_ignoreUserInput = false;
+    std::printf("[eden-atmo] %d/%d captures, prefix %s\n", written, count + extra, g_opt.shot.c_str());
+    return written == count + extra ? 0 : 1;
 }
 
 }  // namespace g_render

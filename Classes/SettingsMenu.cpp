@@ -42,6 +42,10 @@
 #include "MpWorld.h"   // MP.3a: the creature gate
 #include "MpServers.h"   // MP.8: eden_mp_matchmakers_validate
 #include "GLDialog.h"
+#include "Menu.h"   // K.3-5: Settings > Mods opens the manager
+#include "Console.h"   // SX.6: KIND_CVAR rows read and write a console variable
+#include "Terrain.h"   // SX.6: world-scoped rows need a world in play
+#include <string>
 #include "eden_prefs.h"   // G.2b-1: one flat prefs file on every target (de-ObjC plan D7)
 
 #include <algorithm>
@@ -57,12 +61,15 @@ extern "C" {
     const char* eden_settings_label(int i);
     const char* eden_settings_key(int i);
     const char* eden_settings_group(int i);
+    const char* eden_settings_page(int i);          // SX.1: display placement, "" = the group's tab
+    const char* eden_settings_page_target(int i);   // SX.1: KIND_PAGE's page id
     const char* eden_settings_hint(int i);
     int         eden_settings_parent(int i);        // U.2: the toggle row this one depends on, or -1
     int         eden_settings_kind(int i);          // 0 toggle, 1 range, 2 enum
     float       eden_settings_min(int i);
     float       eden_settings_max(int i);
     float       eden_settings_step(int i);
+    float       eden_settings_def(int i);   // SX.2
     int         eden_settings_enum_count(int i);
     const char* eden_settings_enum_label(int i, int j);
     int         eden_settings_native_hidden(int i);
@@ -71,12 +78,99 @@ extern "C" {
     float       eden_settings_toggle(int i);
     const char* eden_settings_text(int i);
     void        eden_settings_set_text(int i, const char* text);
+    void        eden_move_tuning_reset(void);   // SRC.8b
+    void        eden_weather_tuning_reset(void);   // SX.6
+    const char* eden_settings_cvar(int i);          // SX.6: KIND_CVAR's variable name
+    int         eden_settings_scope(int i);         // SX.6: 0 always, 1 world in play, 2 no world
     int         eden_settings_loaded(void);
     void        eden_settings_menu_close(void);
     void        eden_keybind_reset_all(void);
 }
 
-enum { SM_KIND_TOGGLE = 0, SM_KIND_RANGE = 1, SM_KIND_ENUM = 2, SM_KIND_TEXT = 4 };
+enum { SM_KIND_TOGGLE = 0, SM_KIND_RANGE = 1, SM_KIND_ENUM = 2, SM_KIND_TEXT = 4, SM_KIND_PAGE = 5, SM_KIND_HEADING = 6, SM_KIND_CVAR = 7 };
+enum { SM_SCOPE_ALWAYS = 0, SM_SCOPE_WORLD = 1, SM_SCOPE_NO_WORLD = 2 };
+
+// ---------------------------------------------------------------------------------------------
+// SX.6 (WORKING/settings-ux-audit-2026-11-06.md §4.2): a KIND_CVAR row shows a console variable owned
+// elsewhere (world.time, weather.now...). It draws as the cvar's own kind (toggle / range / enum) with the
+// cvar's range and options, and reads and writes through the cvar's get/set. Every row access below goes
+// through these sm_* wrappers, which pass an ordinary row straight to eden_settings_*. A missing cvar
+// draws as a heading (no control) and says so once on stderr.
+// ---------------------------------------------------------------------------------------------
+static const Console::Cvar* sm_cvar(int si){
+    if(eden_settings_kind(si)!=SM_KIND_CVAR) return NULL;
+    Console::init();   // idempotent; the registry is otherwise built on the console's first open
+    static std::vector<int> idx;   // per row: cvar index + 1, 0 = not looked up yet
+    if(idx.empty()) idx.assign(eden_settings_count(),0);
+    if(si<0||si>=(int)idx.size()) return NULL;
+    if(idx[si]==0){
+        const int ci=Console::cvarIndex(eden_settings_cvar(si));
+        idx[si]=ci>=0?ci+1:-1;   // -1 = a miss, not looked up again
+        if(ci<0){ std::fprintf(stderr,"[eden-settings] row '%s' shows cvar '%s', which is not registered\n",
+                                         eden_settings_key(si),eden_settings_cvar(si)); }
+    }
+    return idx[si]>0?Console::cvarAt(idx[si]-1):NULL;
+}
+static int sm_kind(int si){
+    const int k=eden_settings_kind(si);
+    if(k!=SM_KIND_CVAR) return k;
+    const Console::Cvar* c=sm_cvar(si);
+    return (c&&c->kind<=SM_KIND_ENUM)?c->kind:SM_KIND_HEADING;
+}
+static float sm_min(int si){ const Console::Cvar* c=sm_cvar(si); return c?c->min:eden_settings_min(si); }
+static float sm_max(int si){ const Console::Cvar* c=sm_cvar(si); return c?c->max:eden_settings_max(si); }
+static float sm_step(int si){ const Console::Cvar* c=sm_cvar(si); return c?c->step:eden_settings_step(si); }
+static float sm_def(int si){ const Console::Cvar* c=sm_cvar(si); return c?c->def:eden_settings_def(si); }
+static float sm_get(int si){
+    if(eden_settings_kind(si)!=SM_KIND_CVAR) return eden_settings_get(si);
+    const Console::Cvar* c=sm_cvar(si);
+    return (c&&c->get)?c->get(c->tag):0.0f;
+}
+static void sm_set(int si,float v){
+    if(eden_settings_kind(si)!=SM_KIND_CVAR){ eden_settings_set(si,v); return; }
+    const Console::Cvar* c=sm_cvar(si);
+    if(!c||!c->set||c->apply==Console::APPLY_READONLY) return;
+    if(v<c->min) v=c->min;
+    if(v>c->max) v=c->max;
+    c->set(c->tag,v);
+}
+static void sm_toggle(int si){
+    if(eden_settings_kind(si)!=SM_KIND_CVAR){ eden_settings_toggle(si); return; }
+    sm_set(si,sm_get(si)!=0.0f?0.0f:1.0f);
+}
+static int sm_enum_count(int si){
+    const Console::Cvar* c=sm_cvar(si);
+    if(!c) return eden_settings_enum_count(si);
+    if(!c->options||!c->options[0]) return 0;
+    int n=1;
+    for(const char* p=c->options;*p;p++) if(*p==',') n++;
+    return n;
+}
+static const char* sm_enum_label(int si,int j){
+    const Console::Cvar* c=sm_cvar(si);
+    if(!c) return eden_settings_enum_label(si,j);
+    static std::string lab;
+    lab.clear();
+    const char* p=c->options?c->options:"";
+    for(int k=0;*p&&k<j;p++) if(*p==',') k++;
+    while(*p&&*p!=',') lab+=*p++;
+    return lab.c_str();
+}
+// SX.6: is a world in play (the scope of the This world rows)? The same test the console's world() makes.
+static bool sm_world_open(){
+    World* w=World::getWorld;
+    return w&&w->terrain&&w->terrain->loaded&&w->fm;
+}
+static bool sm_row_in_scope(int si,bool worldOpen){
+    const int sc=eden_settings_scope(si);
+    return sc==SM_SCOPE_ALWAYS||(sc==SM_SCOPE_WORLD)==worldOpen;
+}
+// U3: in a multiplayer session the This world rows stay, and their heading says why they are temporary.
+static const char* sm_hint(int si){
+    if(eden_settings_kind(si)==SM_KIND_HEADING&&eden_settings_scope(si)==SM_SCOPE_WORLD&&MpWorld::active())
+        return "Temporary: this device only. Not shared with the server or saved.";
+    return eden_settings_hint(si);
+}
 
 enum  {
 
@@ -123,6 +217,8 @@ SettingsMenu::SettingsMenu(){
     }
 
     m_built=false;
+    m_builtWorld=-1;
+    m_builtMp=-1;
     m_seeded=false;
     m_tab=0;
     m_builtTab=-1;
@@ -160,9 +256,32 @@ static const SMTab kTabs[]={
     { "Keys",        NULL,          UIICON_KEYBOARD,      "keys"        },
     { "Video",       "Video",       UIICON_MONITOR,       "video"       },
     { "Experiments", "Experiments", UIICON_FLASK_CONICAL, "experiments" },
-    { "Saves",       "Saves",       UIICON_HARD_DRIVE,    "saves"       },
+    { "World",       "World",       UIICON_TREES,         "world"       },
 };
-enum { SM_TABS=(int)(sizeof(kTabs)/sizeof(kTabs[0])), SM_TAB_KEYS=3 };
+enum { SM_TABS=(int)(sizeof(kTabs)/sizeof(kTabs[0])), SM_TAB_GAMEPLAY=0, SM_TAB_KEYS=3, SM_TAB_VIDEO=4, SM_TAB_EXPERIMENTS=5, SM_TAB_WORLD=6 };
+
+// SX.1 (WORKING/settings-ux-audit-2026-11-06.md §4.1): sub-pages as data. A page has no rail tile: a
+// KIND_PAGE row on its parent tab opens it (the row's `options` is the page `id`), the rail keeps the parent
+// selected, the title reads "Parent > Page", and the titlebar Back and Escape go up to the parent (any rail
+// tile also leaves). Rows land on a page by their `page` field, which is display placement only: the console
+// name still comes from `group`, so moving a row onto a page never renames its cvar. `reset` (or NULL) is the
+// page's titlebar Defaults action, as the Keys tab has. Views are indexed tabs first, then pages.
+struct SMPage { const char* id; const char* title; int parent; const char* shot; void (*reset)(void); };
+static const SMPage kPages[]={
+    { "srclike",  "Srclike settings", SM_TAB_EXPERIMENTS, "experiments-srclike", eden_move_tuning_reset },   // SRC.8b, renamed SX.4
+    { "atmosphere", "Atmosphere details", SM_TAB_VIDEO, "video-atmosphere", NULL },                           // SX.5
+    { "online",   "Online sources",  SM_TAB_EXPERIMENTS, "experiments-online",   NULL },                      // SX.4
+    { "weathertune", "Weather tuning", SM_TAB_WORLD,     "world-weather",        eden_weather_tuning_reset },  // SX.6
+};
+enum { SM_PAGES=(int)(sizeof(kPages)/sizeof(kPages[0])), SM_VIEWS=SM_TABS+SM_PAGES };
+
+static const SMPage* sm_page(int v){ return (v>=SM_TABS&&v<SM_VIEWS)?&kPages[v-SM_TABS]:NULL; }
+static int sm_parent_tab(int v){ const SMPage* p=sm_page(v); return p?p->parent:v; }
+
+static int sm_page_view(const char* id){
+    for(int p=0;p<SM_PAGES;p++) if(std::strcmp(kPages[p].id,id)==0) return SM_TABS+p;
+    return -1;
+}
 
 static int sm_tab_of_group(const char* g){
     if(std::strcmp(g,"Interface")==0) g="Video";
@@ -171,14 +290,33 @@ static int sm_tab_of_group(const char* g){
     return -1;
 }
 
+// Where row i is drawn: its `page` (a page id, or another tab's group) when set, else its group's tab.
+static int sm_view_of_row(int i){
+    const char* pg=eden_settings_page(i);
+    if(pg[0]){
+        int v=sm_page_view(pg);
+        if(v<0) v=sm_tab_of_group(pg);
+        if(v>=0) return v;
+        std::fprintf(stderr,"[eden-settings] row '%s': page '%s' is unknown; shown on its group's tab\n",
+                     eden_settings_key(i),pg);
+    }
+    return sm_tab_of_group(eden_settings_group(i));
+}
+
 void SettingsMenu::build(){
     if(m_built) return;
     m_built=true;
-    m_tabRows.assign(SM_TABS,std::vector<int>());
+    m_builtWorld=sm_world_open()?1:0;
+    m_builtMp=MpWorld::active()?1:0;
+    m_tabRows.assign(SM_VIEWS,std::vector<int>());
     const int count=eden_settings_count();
     for(int i=0;i<count;i++){
         if(eden_settings_native_hidden(i)) continue;
-        int t=sm_tab_of_group(eden_settings_group(i));
+        if(!sm_row_in_scope(i,m_builtWorld!=0)) continue;   // SX.6: This world rows only with a world in play
+        if(sm_kind(i)==SM_KIND_PAGE&&sm_page_view(eden_settings_page_target(i))<0)
+            std::fprintf(stderr,"[eden-settings] row '%s' opens page '%s', which kPages[] lacks\n",
+                         eden_settings_key(i),eden_settings_page_target(i));
+        int t=sm_view_of_row(i);
         if(t<0){
             // A new group string with no tab: shown (on Gameplay) rather than silently dropped.
             std::fprintf(stderr,"[eden-settings] group '%s' has no tab; row '%s' shown on Gameplay\n",
@@ -187,7 +325,7 @@ void SettingsMenu::build(){
         }
         if((int)m_tabRows[t].size()>=SM_MAX_ROWS){
             std::fprintf(stderr,"[eden-settings] tab '%s' is over SM_MAX_ROWS; row '%s' dropped\n",
-                         kTabs[t].title,eden_settings_key(i));
+                         sm_page(t)?sm_page(t)->title:kTabs[t].title,eden_settings_key(i));
             continue;
         }
         m_tabRows[t].push_back(i);
@@ -196,13 +334,13 @@ void SettingsMenu::build(){
     for(int t=0;t<SM_TABS;t++) icons[t]=kTabs[t].icon;
     m_rail.setTiles(icons,SM_TABS);
     for(int t=0;t<SM_TABS;t++) m_rail.setEnabled(t,t==SM_TAB_KEYS||!m_tabRows[t].empty());
-    if(m_tab<0||m_tab>=SM_TABS||(m_tab!=SM_TAB_KEYS&&m_tabRows[m_tab].empty())) m_tab=0;
+    if(m_tab<0||m_tab>=SM_VIEWS||(m_tab!=SM_TAB_KEYS&&m_tabRows[m_tab].empty())) m_tab=0;
     m_builtTab=-1;
 }
 
 void SettingsMenu::selectTab(int t){
     build();
-    if(t<0||t>=SM_TABS||(t!=SM_TAB_KEYS&&m_tabRows[t].empty())) return;
+    if(t<0||t>=SM_VIEWS||(t!=SM_TAB_KEYS&&m_tabRows[t].empty())) return;
     if(t!=m_tab){
         if(m_keys) m_keys->cancelCapture();
         m_tab=t;
@@ -210,24 +348,44 @@ void SettingsMenu::selectTab(int t){
         if(m_keys) m_keys->scroll().setFirst(0);
         m_builtTab=-1;
     }
-    m_rail.ensureVisible(t);
+    m_rail.ensureVisible(sm_parent_tab(t));
+}
+
+// SX.1: titlebar Back / Escape on a page: back to the parent tab, scrolled to the row that opened it.
+bool SettingsMenu::upLevel(){
+    const SMPage* pg=sm_page(m_tab);
+    if(!pg) return false;
+    if(m_keys) m_keys->cancelCapture();
+    const int parent=pg->parent;
+    selectTab(parent);
+    layout();
+    const std::vector<int>& rows=m_tabRows[parent];
+    for(int k=0;k<(int)rows.size();k++)
+        if(sm_kind(rows[k])==SM_KIND_PAGE&&!std::strcmp(eden_settings_page_target(rows[k]),pg->id)){
+            m_scroll.ensureVisible(k);
+            layout();
+            break;
+        }
+    return true;
 }
 
 // The control column a row reserves (plan §3.1): the 104x34u toggle, a ~200u slider with its 40u
 // readout beside it, or a stepper of two 29u buttons around a 110u well.
 void SettingsMenu::controlSize(int si,float* w,float* h) const{
     using namespace GLW;
-    switch(eden_settings_kind(si)){
+    switch(sm_kind(si)){
     case SM_KIND_TOGGLE: *w=Toggle::designW(); *h=Toggle::designH(); break;
     case SM_KIND_ENUM:   *w=du(29)*2.0f+du(110); *h=du(29); break;
-    case SM_KIND_TEXT:   *w=du(190); *h=du(29); break;
+    case SM_KIND_TEXT:
+    case SM_KIND_PAGE:   *w=du(190); *h=du(29); break;
+    case SM_KIND_HEADING: *w=0.0f; *h=0.0f; break;
     default:             *w=du(200)+du(48); *h=du(29); break;
     }
 }
 
 bool SettingsMenu::rowMuted(int k) const{
     const int p=eden_settings_parent(m_si[k]);
-    return p>=0&&eden_settings_get(p)==0.0f;
+    return p>=0&&sm_get(p)==0.0f;
 }
 
 bool SettingsMenu::rowShown(int k) const{
@@ -238,20 +396,28 @@ void SettingsMenu::refreshValue(int k){
     if(k<0||k>=m_nRows) return;
     const int si=m_si[k];
     char buf[64];
-    switch(eden_settings_kind(si)){
+    switch(sm_kind(si)){
     case SM_KIND_TOGGLE:
-        m_toggle[k].setOn(eden_settings_get(si)!=0.0f);
+        m_toggle[k].setOn(sm_get(si)!=0.0f);
         break;
     case SM_KIND_ENUM:{
-        int idx=(int)lroundf(eden_settings_get(si));
-        int n=eden_settings_enum_count(si);
+        int idx=(int)lroundf(sm_get(si));
+        int n=sm_enum_count(si);
         if(idx<0) idx=0; if(n>0&&idx>=n) idx=n-1;
-        m_stepper[k].setValueText(eden_settings_enum_label(si,idx), GLW::du(20));
+        const char* lab=sm_enum_label(si,idx);
+        if(m_valueText[k]!=lab){ m_valueText[k]=lab; m_stepper[k].setValueText(lab, GLW::du(20)); }
         break;
     }
+    case SM_KIND_PAGE:    // SX.1: opens a sub-page
+        m_textBtn[k].setLabel("Open", GLW::du(18));
+        break;
+    case SM_KIND_HEADING:
+        break;
     case SM_KIND_TEXT:{   // "None, Add" / "2 addresses, Edit" (the native raster is ASCII: no middle dot)
         int n=0;
         const char* t=eden_settings_text(si);
+        const char* key=eden_settings_key(si);
+        if(!std::strcmp(key,"mods_catalogue_url")){ std::snprintf(buf,sizeof(buf),*t?"Set, Edit":"None, Add"); m_textBtn[k].setLabel(buf, GLW::du(18)); break; }   // K.3-6
         for(bool word=false;*t;t++){ if(*t==','){ word=false; } else if(*t!=' '&&!word){ word=true; n++; } }
         if(n==0) std::snprintf(buf,sizeof(buf),"None, Add");
         else std::snprintf(buf,sizeof(buf),"%d address%s, Edit",n,n==1?"":"es");
@@ -259,17 +425,23 @@ void SettingsMenu::refreshValue(int k){
         break;
     }
     default:{
-        const float v=eden_settings_get(si);
+        const float v=sm_get(si);
         if(!m_slider[k].dragging()) m_slider[k].setValue(v);
         // A 0..1 range is a volume and reads as a percentage; anything else is a multiplier or a
-        // count, printed in the precision its step implies.
-        if(eden_settings_min(si)==0.0f&&eden_settings_max(si)==1.0f)
+        // count, printed in the precision its step implies. SX.6: world.time reads as a 24-hour clock.
+        if(eden_settings_kind(si)==SM_KIND_CVAR&&!std::strcmp(eden_settings_cvar(si),"world.time")){
+            const int mins=((int)lroundf(v*1440.0f))%1440;
+            std::snprintf(buf,sizeof(buf),"%02d:%02d",mins/60,mins%60);
+        }else if(sm_min(si)==0.0f&&sm_max(si)==1.0f)
             std::snprintf(buf,sizeof(buf),"%d%%",(int)lroundf(v*100.0f));
-        else
-            std::snprintf(buf,sizeof(buf),(eden_settings_step(si)>=1.0f?"%.0f":"%.2f"),v);
+        else{   // SX.2: 2 decimals when the step is fractional OR the default is (66.67 would read "67")
+            const float d=sm_def(si);
+            const bool frac=sm_step(si)<1.0f||d!=floorf(d);
+            std::snprintf(buf,sizeof(buf),frac?"%.2f":"%.0f",v);
+        }
         // LEFT-aligned beside the track, not right-aligned in a box: Label aligns inside its POT
         // texture, which is wider than the box, so "right" printed past the row's edge.
-        m_valueLabel[k].set(buf, GLW::du(20), UITextAlignmentLeft);
+        if(m_valueText[k]!=buf){ m_valueText[k]=buf; m_valueLabel[k].set(buf, GLW::du(20), UITextAlignmentLeft); }
         break;
     }
     }
@@ -285,7 +457,10 @@ void SettingsMenu::buildRows(){
     m_dragSlot=-1;
     m_dragTouch=-1;
     char buf[64];
-    std::snprintf(buf,sizeof(buf),"%s Settings",kTabs[m_tab].title);
+    if(const SMPage* pg=sm_page(m_tab))   // SX.1: "Parent > Page" (ASCII: the UI fonts have no U+203A)
+        std::snprintf(buf,sizeof(buf),"%s > %s",kTabs[pg->parent].title,pg->title);
+    else
+        std::snprintf(buf,sizeof(buf),"%s Settings",kTabs[m_tab].title);
     m_title.set(buf, du(32), UITextAlignmentCenter);
     m_back.setLabel("Back", du(20));
     m_back.sizeToFit();
@@ -296,13 +471,14 @@ void SettingsMenu::buildRows(){
     m_nRows=(int)rows.size();       // 0 on Keys: its rows are KeybindsMenu's
     for(int k=0;k<SM_MAX_ROWS;k++){
         m_valueLabel[k].clear();
+        m_valueText[k].clear();
         m_slider[k].endDrag();
         m_si[k]=k<m_nRows?rows[k]:-1;
         if(k>=m_nRows) continue;
         const int si=m_si[k];
-        const int kind=eden_settings_kind(si);
+        const int kind=sm_kind(si);
         if(kind==SM_KIND_RANGE)
-            m_slider[k].setRange(eden_settings_min(si),eden_settings_max(si),eden_settings_step(si));
+            m_slider[k].setRange(sm_min(si),sm_max(si),sm_step(si));
         else if(kind==SM_KIND_ENUM)
             m_stepper[k].setGlyphs("<",">");
         refreshValue(k);
@@ -312,6 +488,12 @@ void SettingsMenu::buildRows(){
 void SettingsMenu::layout(){
     using namespace GLW;
     if(!m_seeded&&eden_settings_loaded()){ m_seeded=true; m_builtTab=-1; }
+    // SX.6: a world opened or closed under the screen (Settings is reachable from both) re-sorts the rows by
+    // scope; entering or leaving a session re-labels them (the This world heading's badge).
+    if(m_built&&(m_builtWorld!=(sm_world_open()?1:0)||m_builtMp!=(MpWorld::active()?1:0))){
+        m_built=false;
+        build();
+    }
     if(m_builtTab!=m_tab||m_builtU!=u()) buildRows();
 
     // THE PANEL IS FIXED (plan D3, §3.1): the 783x587u design frame less a 12u margin, centred, the
@@ -332,7 +514,7 @@ void SettingsMenu::layout(){
 
     // Body: rail | content | scrollbar, 6u apart.
     m_rail.setRect(f.rail);
-    m_rail.setSelected(m_tab);
+    m_rail.setSelected(sm_parent_tab(m_tab));
     const CGRect barRect=f.bar;
     m_scroll.setBarRect(barRect);
     m_content=f.content;
@@ -350,7 +532,7 @@ void SettingsMenu::layout(){
         float cw,ch;
         controlSize(si,&cw,&ch);
         const float indent=eden_settings_parent(si)>=0?du(14):0.0f;
-        m_row[k].build(eden_settings_label(si),eden_settings_hint(si),C.size.width,cw,ch,indent);
+        m_row[k].build(eden_settings_label(si),sm_hint(si),C.size.width,cw,ch,indent);
         m_row[k].setLast(k==m_nRows-1);
         heights[k]=m_row[k].height();
     }
@@ -367,7 +549,7 @@ void SettingsMenu::layout(){
         const CGRect cr=m_row[k].controlRect(cw,ch);
         // The CONTROLS stay compact at any profile; on touch the hit box grows to the row
         // (design-system.md, "Touch floor": the floor raises the hit box, not the art).
-        switch(eden_settings_kind(si)){
+        switch(sm_kind(si)){
         case SM_KIND_TOGGLE:
             m_toggle[k].setRect(cr);
             m_toggle[k].setHitRect(touch?rr:CGRectMake(0,0,0,0));
@@ -377,8 +559,11 @@ void SettingsMenu::layout(){
             m_stepper[k].setHitRect(CGRectMake(cr.origin.x,rr.origin.y,cr.size.width,rr.size.height));
             break;
         case SM_KIND_TEXT:
+        case SM_KIND_PAGE:
             m_textBtn[k].setRect(cr);
             m_textBtn[k].setHitRect(touch?CGRectMake(cr.origin.x,rr.origin.y,cr.size.width,rr.size.height):CGRectMake(0,0,0,0));
+            break;
+        case SM_KIND_HEADING:
             break;
         default:{
             const CGRect sr=CGRectMake(cr.origin.x,cr.origin.y,du(200),cr.size.height);
@@ -391,24 +576,24 @@ void SettingsMenu::layout(){
 }
 
 void SettingsMenu::commitSlider(int k){
-    eden_settings_set(m_si[k],m_slider[k].value());   // set() clamps + commits + side effects
+    sm_set(m_si[k],m_slider[k].value());   // set() clamps + commits + side effects
     refreshValue(k);
 }
 
 void SettingsMenu::stepRow(int k,int dir){
     const int si=m_si[k];
-    int kind=eden_settings_kind(si);
+    int kind=sm_kind(si);
     if(kind==SM_KIND_ENUM){
-        int n=eden_settings_enum_count(si); if(n<1) n=1;
-        int idx=(int)lroundf(eden_settings_get(si))+dir;
+        int n=sm_enum_count(si); if(n<1) n=1;
+        int idx=(int)lroundf(sm_get(si))+dir;
         if(idx<0) idx=n-1; if(idx>=n) idx=0;
-        eden_settings_set(si,(float)idx);
+        sm_set(si,(float)idx);
     }else{
-        float st=eden_settings_step(si); if(st<=0.0f) st=0.05f;
-        eden_settings_set(si, eden_settings_get(si)+dir*st);   // set() clamps to [min,max]
+        float st=sm_step(si); if(st<=0.0f) st=0.05f;
+        sm_set(si, sm_get(si)+dir*st);   // set() clamps to [min,max]
     }
     // An enum can drive others (the graphics preset sets view distance): refresh the whole tab.
-    for(int j=0;j<m_nRows;j++) if(j==k||eden_settings_kind(m_si[j])!=SM_KIND_TOGGLE) refreshValue(j);
+    for(int j=0;j<m_nRows;j++) if(j==k||sm_kind(m_si[j])!=SM_KIND_TOGGLE) refreshValue(j);
 }
 
 // MP.8: Experiments > Matchmakers. A prompt over the current string; Save validates the whole list
@@ -419,10 +604,21 @@ static int s_textRow=-1;
 static void sm_noop(int){}
 
 void SettingsMenu::editText(int k){
+    const char* key=eden_settings_key(m_si[k]);
+    if(sm_kind(m_si[k])==SM_KIND_PAGE){   // SX.1
+        const int v=sm_page_view(eden_settings_page_target(m_si[k]));
+        if(v>=0) selectTab(v);
+        return;
+    }
     if(!GLDialog::textEntryAvailable()) return;
     s_textOwner=this;
     s_textRow=k;
     static const char* const kBtn[]={"Save","Cancel"};
+    if(!std::strcmp(key,"mods_catalogue_url")){   // K.3-6
+        GLDialog::prompt("Get Mods catalogue","Address of a mod catalogue (http or https). Empty turns Get Mods off.",
+                         eden_settings_text(m_si[k]),512,kBtn,2,textPromptCb);
+        return;
+    }
     GLDialog::prompt("Matchmakers","Addresses of matchmakers, separated by commas (host or host:port, default port 27020). Empty turns it off.",
                      eden_settings_text(m_si[k]),512,kBtn,2,textPromptCb);
 }
@@ -430,6 +626,19 @@ void SettingsMenu::editText(int k){
 void SettingsMenu::textPromptCb(int chosen,const char* text){
     SettingsMenu* s=s_textOwner;
     if(!s||chosen!=0||s_textRow<0||s_textRow>=s->m_nRows) return;
+    if(!std::strcmp(eden_settings_key(s->m_si[s_textRow]),"mods_catalogue_url")){
+        std::string u=text?text:"";
+        while(!u.empty()&&u.back()==' ') u.pop_back();
+        while(!u.empty()&&u[0]==' ') u.erase(0,1);
+        if(!u.empty()&&u.compare(0,7,"http://")!=0&&u.compare(0,8,"https://")!=0){
+            static const char* const kOk[]={"OK"};
+            GLDialog::show("Get Mods catalogue","The address must start with http:// or https://.",kOk,1,sm_noop);
+            return;
+        }
+        eden_settings_set_text(s->m_si[s_textRow],u.c_str());
+        s->refreshValue(s_textRow);
+        return;
+    }
     char clean[600], err[160];
     if(!eden_mp_matchmakers_validate(text?text:"",clean,sizeof(clean),err,sizeof(err))){
         static const char* const kOk[]={"OK"};
@@ -453,10 +662,16 @@ void SettingsMenu::update(float etime){
     // Letting the tap that gets you out of "press a key" also act on what is under it would rebind
     // (or Back out of) whatever you happened to hit.
     const bool capturing=keysTab&&m_keys->capturing();
+    const SMPage* page=sm_page(m_tab);
+    const bool hasDefaults=keysTab||(page&&page->reset);   // the titlebar's Defaults action
 
     // The wheel scrolls the rows (wheel away = earlier rows). The settings rail fits its seven
     // tiles at any u (plan §3.1), so it has no wheel of its own here.
     if(int wheel=eden_ui_take_wheel()) if(!capturing) scroll.scrollBy(-wheel);
+
+    // SX.6: a KIND_CVAR row's value moves on its own (the clock runs, a weather spell ends): re-read the shown
+    // ones each frame. refreshValue only re-rasters a readout whose text changed.
+    for(int k=0;k<m_nRows;k++) if(rowShown(k)&&eden_settings_kind(m_si[k])==SM_KIND_CVAR) refreshValue(k);
 
     Input* input=Input::getInput();
     itouch* touches=input->getTouches();
@@ -467,7 +682,7 @@ void SettingsMenu::update(float etime){
             if(capturing) continue;
             const float mx=touches[i].mx, my=touches[i].my;
             m_back.setPressed(m_back.hit(mx,my));
-            if(keysTab) m_defaults.setPressed(m_defaults.hit(mx,my));
+            if(hasDefaults) m_defaults.setPressed(m_defaults.hit(mx,my));
             if(m_rail.hitRail(mx,my)&&m_railTouch<0){
                 m_railTouch=i;
                 m_rail.setHeld(m_rail.hit(mx,my));
@@ -485,14 +700,14 @@ void SettingsMenu::update(float etime){
             bool grabbed=false;
             for(int k=0;k<m_nRows&&!grabbed;k++){
                 if(!rowShown(k)) continue;
-                const int kind=eden_settings_kind(m_si[k]);
+                const int kind=sm_kind(m_si[k]);
                 if(kind==SM_KIND_RANGE&&m_dragSlot<0&&m_slider[k].hit(mx,my)){
                     // The down edge already moves the thumb — a tap on the track is a jump there.
                     m_dragSlot=k; m_dragTouch=i; grabbed=true;
                     if(m_slider[k].beginDrag(mx)) commitSlider(k);
                 }else if(kind==SM_KIND_ENUM){
                     m_stepper[k].setPressed(m_stepper[k].hitDec(mx,my),m_stepper[k].hitInc(mx,my));
-                }else if(kind==SM_KIND_TEXT){
+                }else if(kind==SM_KIND_TEXT||kind==SM_KIND_PAGE){
                     m_textBtn[k].setPressed(m_textBtn[k].hit(mx,my));
                 }
             }
@@ -557,6 +772,7 @@ void SettingsMenu::update(float etime){
                 continue;
             }
             if(m_back.hit(mx,my)){
+                if(upLevel()) return;         // SX.1: on a page, Back goes up one level
                 // save() + showsettings=FALSE, plus the two things a bare save() misses: it
                 // re-applies the port settings load() stomps (invertcam, use_joystick — harmless
                 // on the title screen, wrong in a world since Stage 5.5 opens this in-game) and
@@ -564,6 +780,7 @@ void SettingsMenu::update(float etime){
                 eden_settings_menu_close();
                 return;
             }
+            if(page&&page->reset&&m_defaults.hit(mx,my)){ page->reset(); m_builtTab=-1; continue; }   // SX.1
             if(keysTab){
                 if(m_defaults.hit(mx,my)){ eden_keybind_reset_all(); m_keys->refresh(); continue; }
                 m_keys->up(mx,my);
@@ -574,13 +791,13 @@ void SettingsMenu::update(float etime){
             for(int k=0;k<m_nRows;k++){
                 if(!rowShown(k)) continue;
                 const int si=m_si[k];
-                const int kind=eden_settings_kind(si);
+                const int kind=sm_kind(si);
                 if(kind==SM_KIND_TOGGLE){
-                    if(m_toggle[k].hit(mx,my)){ eden_settings_toggle(si); refreshValue(k); break; }
+                    if(m_toggle[k].hit(mx,my)){ sm_toggle(si); refreshValue(k); break; }
                 }else if(kind==SM_KIND_ENUM){
                     if(m_stepper[k].hitDec(mx,my))      { stepRow(k,-1); break; }
                     else if(m_stepper[k].hitInc(mx,my)) { stepRow(k,+1); break; }
-                }else if(kind==SM_KIND_TEXT){
+                }else if(kind==SM_KIND_TEXT||kind==SM_KIND_PAGE){
                     if(m_textBtn[k].hit(mx,my)){ editText(k); break; }
                 }
             }
@@ -642,25 +859,32 @@ void SettingsMenu::resetView(){
 // U.3: Escape (Input_native.cpp, through eden_settings_menu_back). It used to arrive as a tap on the
 // HUD's menu button, which this screen claimed as one of its own touches and dropped — the
 // "Escape inside in-game Settings is swallowed" bug. Since U.4 Keys is a tab, so Escape is Back on
-// every tab. (Escape during a key capture never gets here: the keybind model consumes it.)
+// every tab. (Escape during a key capture never gets here: the keybind model consumes it.) SX.1: on a
+// sub-page it goes up to the parent tab, as the titlebar Back does.
 void SettingsMenu::back(){
     if(m_keys&&m_keys->capturing()){ m_keys->cancelCapture(); return; }
+    if(upLevel()) return;
     eden_settings_menu_close();
 }
 
 // --shot / --ui-selftest entry points (see the header). They lay the tab out immediately so a
 // caller can read rects back without waiting a frame.
 int SettingsMenu::tabCount() const{
-    return SM_TABS;
+    return SM_VIEWS;   // SX.1: the rail's tabs, then the sub-pages
 }
 
 const char* SettingsMenu::tabName(int t) const{
+    if(const SMPage* pg=sm_page(t)) return pg->shot;   // "<tab>-<page>"
     return (t>=0&&t<SM_TABS)?kTabs[t].shot:"";
 }
 
 int SettingsMenu::tabRowCount(int t){
     build();
-    return (t>=0&&t<SM_TABS)?(int)m_tabRows[t].size():0;
+    return (t>=0&&t<SM_VIEWS)?(int)m_tabRows[t].size():0;
+}
+
+int SettingsMenu::railTabCount() const{
+    return SM_TABS;
 }
 
 void SettingsMenu::showTab(int t){
@@ -677,7 +901,7 @@ bool SettingsMenu::keyRect(int keybind,CGRect* r){
 bool SettingsMenu::showRow(const char* key,CGRect* control){
     build();
     if(!key) return false;
-    for(int t=0;t<SM_TABS;t++){
+    for(int t=0;t<SM_VIEWS;t++){
         for(int k=0;k<(int)m_tabRows[t].size();k++){
             const int si=m_tabRows[t][k];
             if(std::strcmp(eden_settings_key(si),key)!=0) continue;
@@ -686,10 +910,12 @@ bool SettingsMenu::showRow(const char* key,CGRect* control){
             m_scroll.ensureVisible(k);
             layout();
             if(control){
-                switch(eden_settings_kind(si)){
+                switch(sm_kind(si)){
                 case SM_KIND_TOGGLE: *control=m_toggle[k].rect(); break;
                 case SM_KIND_ENUM:   *control=m_stepper[k].rect(); break;
-                case SM_KIND_TEXT:   *control=m_textBtn[k].rect(); break;
+                case SM_KIND_TEXT:
+                case SM_KIND_PAGE:   *control=m_textBtn[k].rect(); break;
+                case SM_KIND_HEADING: *control=m_row[k].rect(); break;
                 default:             *control=m_slider[k].rect(); break;
                 }
             }
@@ -697,6 +923,16 @@ bool SettingsMenu::showRow(const char* key,CGRect* control){
         }
     }
     return false;
+}
+
+const char* SettingsMenu::rowHint(const char* key){
+    build();
+    layout();   // applies a pending scope change first
+    if(!key) return NULL;
+    for(int t=0;t<SM_VIEWS;t++)
+        for(int k=0;k<(int)m_tabRows[t].size();k++)
+            if(!std::strcmp(eden_settings_key(m_tabRows[t][k]),key)) return sm_hint(m_tabRows[t][k]);
+    return NULL;
 }
 
 std::string SettingsMenu::getNewWorldName(){
@@ -723,6 +959,7 @@ void SettingsMenu::render(){
 
     // One CONTENT surface; the rows are hairline-separated on it, no box per row.
     bevel(m_content, BEVEL_CONTENT);
+    if(const SMPage* pg=sm_page(m_tab)) if(pg->reset) m_defaults.render();   // SX.1
     if(m_tab==SM_TAB_KEYS&&m_keys){
         m_defaults.render();
         m_keys->render();
@@ -730,16 +967,18 @@ void SettingsMenu::render(){
     }
     for(int k=0;k<m_nRows;k++){
         if(!rowShown(k)) continue;
-        const bool muted=rowMuted(k);
+        const bool muted=rowMuted(k)||sm_kind(m_si[k])==SM_KIND_HEADING;   // SX.1: a heading is drawn muted
         m_row[k].setMuted(muted);
         m_row[k].render();
-        switch(eden_settings_kind(m_si[k])){
+        switch(sm_kind(m_si[k])){
         case SM_KIND_TOGGLE:
             m_toggle[k].setMuted(muted);
             m_toggle[k].render();
             break;
-        case SM_KIND_ENUM: m_stepper[k].render(); break;
-        case SM_KIND_TEXT: m_textBtn[k].render(); break;
+        case SM_KIND_ENUM: m_stepper[k].setMuted(muted); m_stepper[k].render(); break;
+        case SM_KIND_TEXT:
+        case SM_KIND_PAGE: m_textBtn[k].setMuted(muted); m_textBtn[k].render(); break;
+        case SM_KIND_HEADING: break;
         default:{
             m_slider[k].render();
             const CGRect sr=m_slider[k].rect();

@@ -27,6 +27,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <unordered_map>
+#include "BlockTraits.h"   // K.2-2: trait_unbreakable
 
 void addlight(int xx, int zz, int yy, float brightness, Vector color);
 extern Vector colorTable[256];
@@ -460,7 +461,7 @@ void refuse(CmdScript::Sink* sink, const std::string& msg) {
 
 // A console job's "N cells set, M refused" since its last report.
 void reportCells(Inst* in) {
-    if (!in->sink || (!in->cells && !in->refused)) return;
+    if (!in->sink || (!in->cells && !in->refused) || in->source == CmdScript::SRC_LUA) return;   // K.4: runNow returns them
     char b[96];
     std::snprintf(b, sizeof(b), "%d cell%s set, %d refused", in->cells, in->cells == 1 ? "" : "s", in->refused);
     in->sink->line(CmdScript::Sink::OUT, b);
@@ -588,6 +589,7 @@ int start(const TrailerPos& block, int depth, CmdScript::Sink* from = NULL) {
 
 void finish(Inst* in) {
     in->live = false;
+    if (in->source == CmdScript::SRC_LUA) return;   // K.4: runNow's own instance, never a job or a block
     g_stats.finished++;
     if (in->source != CmdScript::SRC_BLOCK) {
         reportCells(in);
@@ -690,7 +692,7 @@ void execute(Inst* in) {
         case CS::OP_EXPLODE:
             if (resident(x, y, z)) {
                 const int cur = ter->getLand(x, z, y);
-                if (cur >= 0 && cur != TYPE_BEDROCK && cur != TYPE_GOLDEN_CUBE && !(blockinfo[cur] & (IS_DOOR | IS_PORTAL))) {
+                if (cur >= 0 && !trait_unbreakable(cur) && !(blockinfo[cur] & (IS_DOOR | IS_PORTAL))) {   // K.2-2
                     if (cur != TYPE_TNT) {
                         if (blockinfo[cur] & IS_LIQUID) ter->liquids->removeSource(x, z, y, cur);
                         if (cur == TYPE_LIGHTBOX) {
@@ -827,7 +829,7 @@ int CmdScript::runLine(const char* src, int ax, int ay, int az, int source, Sink
                     return RUN_BAD;
                 case OP_TIME: case OP_TIMEFREEZE:
                     if (SkyCycle::enabled()) break;   // DN.6 (D9): with the cycle on these move the session-local clock only
-                    if (sink) sink->line(Sink::ERR, "Not in a multiplayer world unless the Day/night cycle is on (Settings > Experiments): time would be a world edit");
+                    if (sink) sink->line(Sink::ERR, "Not in a multiplayer world unless the Day/night cycle is on (Settings > Gameplay): time would be a world edit");
                     return RUN_BAD;
                 default: break;
             }
@@ -863,6 +865,30 @@ int CmdScript::runLine(const char* src, int ax, int ay, int az, int source, Sink
         sink->line(Sink::JOB, b);
     }
     return in->job;
+}
+
+bool CmdScript::residentCell(int ex, int ey, int ez) { return resident(ex, ey, ez); }
+
+bool CmdScript::runNow(const std::shared_ptr<const Program>& prog, size_t* pc, int ax, int ay, int az, Sink* sink,
+                       int* cells, int* refused) {
+    World* w = World::getWorld;
+    if (!prog || !w || !w->terrain || !w->terrain->loaded || !w->fm) return true;
+    Inst in;   // on the stack: execute() never keeps it (finish() returns at once for SRC_LUA)
+    in.prog = prog;
+    in.pc = *pc;
+    in.wait = 0;
+    in.depth = 0;   // a `run` chains 8 deep, as from a block
+    in.live = true;
+    in.source = SRC_LUA;
+    in.ax = ax; in.ay = ay; in.az = az;
+    in.sink = sink;
+    const int st0 = g_stats.statements;
+    execute(&in);
+    g_stats.luaStatements += g_stats.statements - st0;
+    *pc = in.pc;
+    if (cells) *cells += in.cells;
+    if (refused) *refused += in.refused;
+    return !in.live || in.pc >= prog->stmts.size();
 }
 
 std::vector<CmdScript::JobInfo> CmdScript::jobs() {

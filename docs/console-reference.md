@@ -138,12 +138,18 @@ meaning can never change.
 | `reset` | `VARIABLE \| GROUP \| all` | Back to the default. `reset all yes` resets every setting and key. | - |
 | `clear` | - | Empties the scrollback. | - |
 | `history` | - | The lines you ran last. | - |
+| `weather` | `[clear\|overcast\|rain\|storm\|snow] [SECS]` | Shows the weather, or starts that kind now (for SECS seconds; else a drawn length). Needs Gameplay > Weather. | a world |
+| `weatherlock` | `on\|off` | On: the current weather never ends. Saved with the world. | a world |
 | `echo` | `[TEXT]` | Prints TEXT here only (say also toasts). | - |
 | `where` | - | Your cell, the anchor and the cell you look at, with their offsets. | a world |
 | `anchor` | `[me \| look \| X Y Z]` | What 0 0 0 means: the cell under you (me), the cell you look at, or a fixed cell. | a world |
 | `jobs` | - | The lines still waiting on a `wait`. | - |
 | `stop` | `[JOB \| all]` | Stops one job, every job, or all (blocks too). | - |
 | `save` | - | Saves the world (the pause menu's Save). | a world |
+| `packs` | `[PACK \| on PACK \| off PACK]` | The mod packs this world loaded, with every problem; or the blocks of one PACK; on/off switches a pack for the next world load. | - |
+| `lua` | `CODE` | Runs Lua in the console's own sandboxed state (an expression prints its value). One line, no ';'. | a world |
+| `scripts` | `[reload]` | The mod packs' Lua scripts: memory, CPU, errors; reload restarts them. | - |
+| `mod` | `[NAME ARGS...]` | Lists the commands mod scripts added, or runs one. | a world |
 | `getblock` | `X Y Z` | The raw type:colour of a cell. | a world, a diagnostics build |
 | `cmdtrace` | `[0\|1]` | Prints every statement a script runs. | a diagnostics build |
 | `stats` | - | The command interpreter's counters. | a diagnostics build |
@@ -183,25 +189,59 @@ A variable is `group.name`. **`NAME`** prints it, **`NAME VALUE`** sets it. Name
 | `gameplay.fly_max_speed` | 0 to 100 | 0 | at once | Blocks per second. 0 is unlimited. |
 | `gameplay.fly_braking` | 0 to 1 | 0 | at once | Higher stops sooner when you let go. |
 | `gameplay.fly_vertical` | 0.05 to 1 | 1 | at once | Fly rise/fall speed |
+| `gameplay.noclip_speed` | 10 to 100 | 60 | at once | Blocks per second while noclipping. |
+| `gameplay.day_night_cycle` | on / off | off | at once | The sky and light follow a clock. Overrides sky painting. |
+| `gameplay.day_length` | 10 min, 20 min, 40 min, 60 min | 20 min | at once | Real minutes per full day. |
+| `gameplay.weather` | on / off | off | at once | Rain, snow, storms and mist come and go. |
+
+#### `experiments.`
+
+| Variable | Values | Default | Applies | What |
+|---|---|---|---|---|
+| `experiments.crouch` | on / off | off | at once | Adds a crouch key for 1-block gaps. |
+| `experiments.srclike_movement` | on / off | off | at once | Strafing, bunnyhopping and surfing. Keyboard and mouse. |
+| `experiments.fps_normalize` | on / off | on | at once | Same walk speed at any refresh rate. |
+| `experiments.srclike_autobhop` | on / off | off | at once | Holding jump hops again on landing. Off: time each hop. |
+| `experiments.srclike_sens` | 0 to 10 | 0 | at once | Counter-Strike value (degrees per count = value x 0.022). 0 = use Mouse sensitivity. |
+| `experiments.fire_melts_ice` | on / off | off | at once | Burning ice turns to water. |
+| `experiments.fire_chars_vines` | on / off | off | at once | Burning vines turn to dark stone. |
+| `experiments.dev_console` | on / off | off | at once | Adds a console button next to the settings icon in singleplayer. |
+| `experiments.double_brush` | on / off | off | at once | A key builds 2x2x2 blocks at a time. |
+
+#### `weather.`
+
+| Variable | Values | Default | Applies | What |
+|---|---|---|---|---|
+| `weather.frequency` | Rare, Normal, Often | Normal | at once | How often it rains or snows. Normal is about 4 days in 10 overcast or wet. |
+| `weather.storms` | Off, Rare, Normal, Often | Normal | at once | How often rain turns into a thunderstorm. |
+| `weather.snowline` | 0 to 1 | 0.75 | at once | Snow falls at and above this share of the world height. The default map's snow mountain always snows. |
+| `weather.mistheight` | 0 to 1 | 0.4 | at once | Top of the valley mist at dawn and in rain, as a share of the world height. Atmosphere High only. |
+| `weather.now` | Clear, Overcast, Rain, Storm, Snow | Clear | at once | The weather here now; setting it starts that kind (a drawn length). Needs Gameplay > Weather. |
+| `weather.lock` | on / off | off | at once | On: the current weather never ends. Saved with the world. Needs Gameplay > Weather. |
 
 #### `audio.`
 
 | Variable | Values | Default | Applies | What |
 |---|---|---|---|---|
+| `audio.master_volume` | 0 to 1 | 1 | at once | Overall loudness, on top of the sliders below. |
+| `audio.mute_in_background` | on / off | off | at once | Silence the game while its window is not in focus. |
 | `audio.music` | on / off | on | at once | Music |
-| `audio.sound` | on / off | on | at once | Sound effects |
 | `audio.music_volume` | 0 to 1 | 1 | at once | Music volume |
 | `audio.ambience_volume` | 0 to 1 | 1 | at once | Ambience volume |
+| `audio.night_ambience` | on / off | off | at once | Night sounds; needs the day/night cycle. |
+| `audio.sound` | on / off | on | at once | Sound effects |
 | `audio.effects_volume` | 0 to 1 | 1 | at once | Effects volume |
+| `audio.creature_walk_voices` | on / off | off | at once | Creatures call out as they start walking. |
+| `audio.touch_controls_sound` | on / off | off | at once | Touch controls sound (diagnostics builds) |
 
 #### `controls.`
 
 | Variable | Values | Default | Applies | What |
 |---|---|---|---|---|
-| `controls.input_mode` | Auto, Touch, Keyboard+Mouse | Auto | at once | Force one if Auto guesses wrong. (diagnostics builds) |
+| `controls.input_mode` | Auto, Touch, Keyboard+Mouse | Auto | at once | Force one if Auto guesses wrong. Menus work in every mode. |
 | `controls.hold_to_act` | on / off | on | at once | Repeat while the button is held. |
 | `controls.mouse_sensitivity` | 0.25 to 3 | 1 | at once | Mouse sensitivity |
-| `controls.mouse_sensitivity_y` | 0.25 to 3 | 1 | at once | Mouse sensitivity (Y) |
+| `controls.mouse_sensitivity_y` | 0.25 to 3 | 1 | at once | Vertical, separate from horizontal. |
 | `controls.invert_look` | on / off | off | at once | Invert look |
 | `controls.touch_look_speed` | 0.25 to 3 | 1 | at once | Drag camera, left-right. (diagnostics builds) |
 | `controls.touch_look_speed_y` | 0.25 to 3 | 1 | at once | Drag camera, up-down. (diagnostics builds) |
@@ -215,18 +255,21 @@ A variable is `group.name`. **`NAME`** prints it, **`NAME VALUE`** sets it. Name
 
 | Variable | Values | Default | Applies | What |
 |---|---|---|---|---|
-| `video.graphics_preset` | Custom, Low, Default, High | Default | at once | Graphics preset |
-| `video.fov` | 60 to 110 | 80 | at once | 80 is the original. |
-| `video.view_distance` | Auto, 4, 5, 6, 7, 8, 9 | Auto | at once | View distance |
+| `video.graphics_preset` | Custom, Low, Default, High | Default | at once | Sets view distance, render scale and atmosphere. |
+| `video.view_distance` | Auto, 4, 5, 6, 7, 8, 9 | Auto | at once | How far terrain is drawn. Lower is faster. |
 | `video.render_radius` | 4, 5, 6, 7, 8, 9, 10, 12, 16 | 9 | when a world opens | Applies when a world opens. |
-| `video.shadows` | Off, Classic, Smooth | Classic | at once | Shadows |
-| `video.original_lighting` | on / off | on | at once | Light debris and fireworks as Eden 2.1 did. |
+| `video.render_scale` | 50%, 75%, 100%, 125% | 100% | at once | Below 100% is softer but cooler and faster. |
+| `video.shadows` | Off, Classic, Smooth | Classic | at once | Soft shading under overhangs. Smooth costs a little more meshing. |
+| `video.atmosphere` | Off, Low, High, Custom | High | at once | Clouds, precipitation and ambient particles. |
+| `video.fps_cap` | Uncapped, 30, 45, 60 | Uncapped | at once | 30 or 60 saves battery and heat. |
+| `video.original_lighting` | on / off | on | at once | Shading on debris and fireworks, as in Eden 2.1. |
+| `video.fov` | 60 to 110 | 80 | at once | 80 is the original. |
+| `video.ui_scale` | Auto, 100%, 125%, 150%, 200% | Auto | at once | Size of menus and HUD. Auto picks for this device. |
+| `video.reduce_flashing` | on / off | off | at once | Lightning dims the sky gently instead of flashing. |
 | `video.display_mode` | Fixed, Fit window, Fullscreen | Fixed | at once | Display (diagnostics builds) |
-| `video.ui_scale` | Auto, 100%, 125%, 150%, 200% | Auto | at once | UI scale (diagnostics builds) |
 | `video.display_layout` | Auto, Classic 16:9, Adaptive | Auto | at once | Layout aspect (diagnostics builds) |
-| `video.render_scale` | 50%, 75%, 100%, 125% | 100% | at once | Render scale |
 | `video.dpr_cap` | 1x, 1.5x, 2x | 2x | at once | Max pixel ratio (diagnostics builds) |
-| `video.fps_cap` | Uncapped, 30, 45, 60 | Uncapped | at once | Frame rate cap |
+| `video.camera_view` | First person, Third person, Third person (front) | First person | at once | Third person shows your body. F5 cycles. |
 
 #### `interface.`
 
@@ -236,29 +279,39 @@ A variable is `group.name`. **`NAME`** prints it, **`NAME VALUE`** sets it. Name
 | `interface.block_preview` | on / off | off | at once | Shows where the next block goes. |
 | `interface.legacy_menu` | on / off | off | at once | The original 2010 menus. (diagnostics builds) |
 
-#### `experiments.`
+#### `atmo.`
 
 | Variable | Values | Default | Applies | What |
 |---|---|---|---|---|
-| `experiments.fps_normalize` | on / off | on | at once | Same walk speed at any refresh rate. |
-| `experiments.crouch` | on / off | off | at once | Adds a crouch key for 1-block gaps. |
-| `experiments.fire_melts_ice` | on / off | off | at once | Burning ice turns to water. |
-| `experiments.fire_chars_vines` | on / off | off | at once | Burning vines turn to dark stone. |
-| `experiments.night_ambience` | on / off | off | at once | Night ambience |
-| `experiments.touch_controls_sound` | on / off | off | at once | Touch controls sound |
-| `experiments.creature_walk_voices` | on / off | off | at once | Creatures call out as they start walking. |
-| `experiments.double_brush` | on / off | off | at once | A key builds 2x2x2 blocks at a time. |
-| `experiments.camera_view` | First person, Third person, Third person (front) | First person | at once | Third person shows your body. F5 cycles. |
-| `experiments.day_night_cycle` | on / off | off | at once | The sky and light follow a clock. Overrides sky painting. (diagnostics builds) |
-| `experiments.day_length` | 10 min, 20 min, 40 min, 60 min | 20 min | at once | Real minutes per full day. (diagnostics builds) |
+| `atmo.precip` | on / off | on | at once | Rain and snow |
+| `atmo.splash` | on / off | on | at once | Rain splashes |
+| `atmo.clouds` | on / off | on | at once | Clouds |
+| `atmo.cloud_shadows` | on / off | off | at once | Cloud shadows |
+| `atmo.height_fog` | on / off | on | at once | Height fog |
+| `atmo.ambient` | on / off | on | at once | Ambient particles |
+| `atmo.water_tint` | on / off | on | at once | Water tint |
+| `atmo.glint` | on / off | on | at once | Water glint |
+| `atmo.halos` | on / off | on | at once | Lamp halos |
+
+#### `move.`
+
+| Variable | Values | Default | Applies | What |
+|---|---|---|---|---|
+| `move.accelerate` | 1 to 20 | 5 | at once | How fast you reach walking speed (sv_accelerate). |
+| `move.airaccelerate` | 1 to 1000 | 100 | at once | Air steering. 100 is the surf/bhop value. |
+| `move.friction` | 0 to 20 | 4 | at once | How fast you slow on the ground. |
+| `move.stopspeed` | 0 to 300 | 75 | at once | Below this speed, friction stops you at a fixed rate. |
+| `move.gravity` | 100 to 2000 | 800 | at once | Units/s^2. 800 is stock. |
+| `move.maxvelocity` | 500 to 10000 | 3500 | at once | Speed cap per axis. |
+| `move.tickrate` | 30 to 128 | 66.67 | at once | Movement ticks per second. 66.67 is CS:S. |
 
 #### `saves.`
 
 | Variable | Values | Default | Applies | What |
 |---|---|---|---|---|
-| `saves.save_backup` | on / off | off | at once | Keep the previous save as a .bak. |
 | `saves.autosave` | Off, 1 min, 2 min, 5 min | 5 min | at once | Off still saves on exit and warp. |
-| `saves.upgrade_256z` | on / off | on | at the next conversion | Room to build up to y 255. Uses more memory. |
+| `saves.save_backup` | on / off | off | at once | Keep the previous save as a .bak. |
+| `saves.upgrade_256z` | on / off | on | at the next conversion | Upgrade 64z worlds to 256z when converting: room to build up to y 255. Uses more memory. |
 
 #### `keys.`
 
@@ -308,7 +361,8 @@ A variable is `group.name`. **`NAME`** prints it, **`NAME VALUE`** sets it. Name
 | `world.signs` | text | - | read-only in game | Signs |
 | `world.cmdblocks` | text | - | read-only in game | Command blocks |
 | `world.gold` | 0 to 999 | 0 | at once | The purse (0..999). |
-| `world.time` | 0 to 1 | 0.3 | at once | 0 midnight, 0.25 sunrise, 0.5 noon, 0.75 sunset. The clock runs with Experiments > Day/night cycle. |
+| `world.time` | 0 to 1 | 0.3 | at once | 0 midnight, 0.25 sunrise, 0.5 noon, 0.75 sunset. The clock runs with Gameplay > Day/night cycle. |
+| `world.locktime` | on / off | off | at once | Keeps this world's clock still (the day/night cycle's time does not move). Saved with the world. |
 
 #### `gen.`
 

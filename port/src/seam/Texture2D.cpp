@@ -144,6 +144,31 @@ Texture2D::~Texture2D() {
     if (name) R::texDestroy(name);
 }
 
+void Texture2D::replaceFromImage(const EdenImage* image, bool sizeToFit, Texture2DPixelFormat pixelFormat, bool genMips) {
+    if (name) R::texDestroy(name);
+    name = 0;
+    initFromImage(image, sizeToFit, pixelFormat, genMips);
+}
+
+EdenImage* eden_image_decode(const void* data, size_t len) {
+    if (!data || !len || len > 0x7fffffff) return nullptr;
+    int w = 0, h = 0, comp = 0;
+    unsigned char* px = stbi_load_from_memory((const stbi_uc*)data, (int)len, &w, &h, &comp, 4);
+    if (!px) return nullptr;
+    // stb's buffer is malloc'd (STBI_MALLOC default), so EdenImage can own it.
+    return eden_image_create_rgba(px, w, h, comp == 4 || comp == 2);
+}
+
+EdenImage* eden_image_load_file(const char* path) {
+    std::vector<uint8_t> bytes;
+    if (EdenFile* f = path && *path ? EdenFile::openRead(path) : nullptr) {
+        const long long n = f->seekEnd();
+        if (n > 0 && n < 0x7fffffff && f->seek(0)) bytes = f->read((size_t)n);
+        delete f;
+    }
+    return bytes.empty() ? nullptr : eden_image_decode(bytes.data(), bytes.size());
+}
+
 std::string Texture2D::description() {
     char buf[128];
     snprintf(buf, sizeof(buf), "< Texture2D| Name = %i | Dimensions = %ix%i | Coordinates = (%.2f, %.2f)>",

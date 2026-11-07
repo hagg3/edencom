@@ -14,9 +14,12 @@
 #include "SignTool.h"
 #include "CmdScript.h"
 #include "SkyCycle.h"
+#include "SrclikeMove.h"   // SRC.2/SRC.4: Srclike movement (jump latch, the tick)
 #include "MpWorld.h"   // MP.3a: session gates; MP.4: the intent sites
 #include "TouchLook.h"   // Stage L: the touch drag camera
 #include "Renderer.h"    // G.5b-4: Player::render's cube bracket
+#include "BlockTraits.h"   // K.2-1: per-type behaviour
+#include "Weather.h"       // AT.1b: eden_default_region
 #define MOVE_SPEED 35.0f
 #define CLIMB_SPEED 3.0f
 #define SPEED_M 4.5f
@@ -291,32 +294,7 @@ void Player::processInput(float etime){
                 
                 int type=World::getWorld->hud->blocktype;
                 
-                if(type==TYPE_STONE||type==TYPE_DARK_STONE||type==TYPE_COBBLESTONE||type==TYPE_BRICK||type==TYPE_VINE){
-                    
-                    Resources::getResources->playSound(S_BUILD_STONE);
-                }else if(type==TYPE_LEAVES||type==TYPE_FLOWER){
-                    Resources::getResources->playSound(S_BUILD_LEAVES);	 
-                }else if(type==TYPE_LIGHTBOX){
-                    
-                    Resources::getResources->playSound(S_BUILD_LIGHT);
-                }else if(type==TYPE_STEEL){
-                    
-                    Resources::getResources->playSound(S_BUILD_METAL);
-                }else if(blockinfo[type]&IS_LAVA){
-                    Resources::getResources->playSound(S_BUILD_LAVA);	 
-                }else if(blockinfo[type]&IS_WATER){							 
-                    Resources::getResources->playSound(S_BUILD_WATER);	 
-                }else if(blockinfo[type]&IS_FLAMMABLE&&type!=TYPE_WEAVE&&type!=TYPE_WEAVE&&type!=TYPE_TNT&&type!=TYPE_FIREWORK){
-                    Resources::getResources->playSound(S_BUILD_WOOD);	 
-                }else if(type==TYPE_GLASS){
-                    Resources::getResources->playSound(S_BUILD_GLASS);	
-                }else if(blockinfo[type]&IS_GRASS||type==TYPE_DIRT){
-                    Resources::getResources->playSound(S_BUILD_DIRT);	
-                }
-                    
-                        else{
-                    Resources::getResources->playSound(S_BUILD_GENERIC);
-                }
+                Resources::getResources->playSound(trait_buildSound(type));   // K.2-1
                 if(World::getWorld->hud->build_size==0){
                    // [World::getWorld->terrain buildCustom:buildpoint.x:buildpoint.z:buildpoint.y);
                 } else if(World::getWorld->hud->build_size==2){
@@ -433,6 +411,9 @@ void Player::processInput(float etime){
 			}
 			if(mode==MODE_MINE||mode==MODE_BUILD||mode==MODE_BURN||mode==MODE_PAINT){
 				if(touches[i].placeBlock){
+                    // K.2-5: a mod block chosen in the picker takes its palette id at this first placement.
+                    if(mode==MODE_BUILD&&hud_picker_is_mod(World::getWorld->hud->blocktype)&&!World::getWorld->hud->resolveModBlock())
+                        continue;
                     if(mode==MODE_BUILD&&hud_picker_is_tool(World::getWorld->hud->blocktype)){
                         // D.3c: a tool armed in the picker, never a block (and never a table index).
                         if(World::getWorld->hud->blocktype==HUD_TOOL_SIGN)
@@ -502,7 +483,7 @@ void Player::processInput(float etime){
                     
 					if(point.x==-1&&fwc_result==-1){
                         if(mode==MODE_PAINT&&SkyCycle::enabled()){   // DN.6 (U4): the clock owns the sky; region colours stay saved
-                            World::getWorld->hud->sb->setStatus("The day/night cycle is on: it sets the sky. Turn it off in Settings > Experiments to paint it.",3);
+                            World::getWorld->hud->sb->setStatus("The day/night cycle is on: it sets the sky. Turn it off in Settings > Gameplay to paint it.",3);
                         }else
                         if(mode==MODE_PAINT&&!MpWorld::active()){   // MP.3a: no sky paint in a session (no wire form)
                             
@@ -552,31 +533,7 @@ void Player::processInput(float etime){
                                 
 							if(!collidesWithPlayer){
                                 int type=World::getWorld->hud->blocktype;
-                                if(type==TYPE_STONE||type==TYPE_DARK_STONE||type==TYPE_COBBLESTONE||type==TYPE_BRICK||type==TYPE_VINE){
-                                    
-                                    Resources::getResources->playSound(S_BUILD_STONE);
-                                }else if(type==TYPE_LIGHTBOX){
-                                    
-                                    Resources::getResources->playSound(S_BUILD_LIGHT);
-                                }else if(type==TYPE_STEEL){
-                                    
-                                    Resources::getResources->playSound(S_BUILD_METAL);
-                                }else if(type==TYPE_LEAVES||type==TYPE_FLOWER){
-                                    Resources::getResources->playSound(S_BUILD_LEAVES);	 
-                                }else if(blockinfo[type]&IS_LAVA){							 
-                                    Resources::getResources->playSound(S_BUILD_LAVA);	 
-                                }else if(blockinfo[type]&IS_WATER){							 
-                                    Resources::getResources->playSound(S_BUILD_WATER);	 
-                                }else if(blockinfo[type]&IS_FLAMMABLE&&type!=TYPE_WEAVE&&type!=TYPE_TNT&&type!=TYPE_FIREWORK){							 
-                                    Resources::getResources->playSound(S_BUILD_WOOD);	 
-                                }else if(type==TYPE_GLASS){
-                                    Resources::getResources->playSound(S_BUILD_GLASS);	
-                                }else if(blockinfo[type]&IS_GRASS||type==TYPE_DIRT){
-                                    Resources::getResources->playSound(S_BUILD_DIRT);	
-                                }else{
-                                    Resources::getResources->playSound(S_BUILD_GENERIC);	
-                                    
-                                }
+                                Resources::getResources->playSound(trait_buildSound(type));   // K.2-1
                               //  printg("building: %d,%d,%d\n",point.x,point.y,point.z);
                                 if(World::getWorld->hud->build_size==1){
 								MpWorld::intentBuild(point.x,point.z,point.y);   // MP.4: an intent site
@@ -620,28 +577,8 @@ void Player::processInput(float etime){
                         }
 					}else if(mode==MODE_MINE){
                        
-						if(type!=TYPE_BEDROCK&&type!=TYPE_GOLDEN_CUBE){
-							if(type==TYPE_STONE||type==TYPE_DARK_STONE||type==TYPE_COBBLESTONE||type==TYPE_BRICK||type==TYPE_VINE||(type>=TYPE_STONE_RAMP1&&type<=TYPE_STONE_RAMP4)||
-                               
-                               (type>=TYPE_STONE_SIDE1&&type<=TYPE_STONE_SIDE4)){
-								
-								Resources::getResources->playSound(S_BREAK_STONE);
-                            }else if(type==TYPE_STEEL){
-                                Resources::getResources->playSound(S_METAL_DESTROY);
-                            }else if(type==TYPE_LEAVES||type==TYPE_FLOWER){
-								Resources::getResources->playSound(S_BREAK_LEAVES);	 
-							}else if(blockinfo[type]&IS_LAVA){							 
-								Resources::getResources->playSound(S_BREAK_LAVA);	 
-							}else if(blockinfo[type]&IS_WATER){							 
-								Resources::getResources->playSound(S_BREAK_WATER);	 
-							}else if(blockinfo[type]&IS_FLAMMABLE){							 
-								Resources::getResources->playSound(S_BREAK_WOOD);	 
-							}else if(type==TYPE_GLASS||type==TYPE_LIGHTBOX){
-                                Resources::getResources->playSound(S_BREAK_GLASS);	
-                            }else if(blockinfo[type]&IS_GRASS||type==TYPE_DIRT||type==TYPE_SAND){
-                                 Resources::getResources->playSound(S_BREAK_DIRT);	
-                            }else 
-                                 Resources::getResources->playSound(S_BREAK_GENERIC);	
+						if(!trait_unbreakable(type)){   // K.2-1
+							Resources::getResources->playSound(trait_breakSound(type));
 							//NSLog(@"point: %d %d %d %d",point.x,point.z,point.y,type);
                             if(hitCustom){
                                //[World::getWorld->terrain destroyCustom:point.x:point.z:point.y];
@@ -910,7 +847,7 @@ bool Player::preupdate(float etime){
     // full-height box into the ceiling block — the old instant-toggle version popped the player
     // through the world here. Shrinking (crouching down) never collides with anything the player
     // wasn't already standing clear of, so it's never gated.
-    bool wantCrouch=CROUCH_ENABLED&&(CROUCH_HELD||World::getWorld->hud->m_crouch);
+    bool wantCrouch=(CROUCH_ENABLED||SrclikeMove::enabled())&&(CROUCH_HELD||World::getWorld->hud->m_crouch);
     float targetHeight=wantCrouch?CROUCH_BOX_HEIGHT:STAND_BOX_HEIGHT;
     if(boxheight!=targetHeight){
         float maxDelta=(STAND_BOX_HEIGHT-CROUCH_BOX_HEIGHT)*etime/CROUCH_ANIM_TIME;
@@ -948,7 +885,136 @@ bool Player::preupdate(float etime){
     }
 }
 
+// SRC.8: the side effects Player::move()/vertc() own that the Srclike path (SrclikeMove::frame) does not
+// run: footsteps, landing sound, golden-cube pickup, lava burn, portal entry and the out-of-world pop.
+// Liquids (splash, underLiquid, swim) and ladders are SRC.6. Called once per frame after frame() wrote
+// pos/vel; anything it moves (portal, respawn) is re-seeded by the frame driver next frame.
+extern Vector colorTable[256];
+void Player::srclikeEffects(float etime,bool wasOnground,float preVelY){
+    Terrain* ter=World::getWorld->terrain;
+    // Footsteps: same cadence as move().
+    if(onground){
+        if(absf(vel.x)>.1f||absf(vel.z)>.1f)walkCount+=etime;
+        const float vv2=sqrtf(vel.x*vel.x+vel.z*vel.z);
+        if(walkCount>.35+(6.0f-vv2)/12.0f){
+            const int collided=getLandc2((int)pos.x,(int)pos.z,(int)(pos.y-boxheight/2+.01)-1);
+            const int stepSound=trait_stepSound(collided);
+            if(stepSound>=0)Resources::getResources->playSound(stepSound);
+            walkCount=0;
+        }
+    }
+    // Landing: air -> ground having fallen (vertc: jumping||vel.y<-1).
+    if(onground&&!wasOnground&&(jumping||preVelY<-1.0f)){
+        const int under=getLandc2((int)pos.x,(int)pos.z,(int)(pos.y-boxheight/2-.05f));
+        const int landSound=under>0?trait_landSound(under):-1;
+        if(landSound>=0)Resources::getResources->playSound(landSound);
+        jumping=false;
+    }
+    // Splash (stock: entering water from above with vel.y < -5), ladder creak and the trampoline boing.
+    {
+        static int lastLevel=0;
+        static float ladderT=0;
+        const SrclikeMove::PmState& st=SrclikeMove::state();
+        if(st.watertype==1&&st.waterlevel>=1&&lastLevel==0&&preVelY<-5.0f)
+            Resources::getResources->playSound(preVelY<-8.0f?S_SPLASH_BIG:S_SPLASH_SMALL);
+        lastLevel=st.watertype==1?st.waterlevel:0;
+        if(st.bounced)Resources::getResources->playSound(S_BOUNCE);
+        if(st.onLadder&&absf(vel.y)>.1f){
+            ladderT+=etime;
+            if(ladderT>=.4f){
+                ladderT=0;
+                Resources::getResources->playSound(S_LADDER);
+            }
+        }else ladderT=0;
+    }
+    // Hull overlap: golden cubes (pickup) and lava (burn), the blocks the trace walks through.
+    const float left=pos.x-boxbase/2,right=pos.x+boxbase/2,front=pos.z-boxbase/2,back=pos.z+boxbase/2;
+    const float bot=pos.y-boxheight/2,top=pos.y+boxheight/2;
+    bool burned=false;
+    for(int x=(int)floorf(left);x<=(int)floorf(right);x++)
+        for(int z=(int)floorf(front);z<=(int)floorf(back);z++)
+            for(int y=(int)floorf(bot);y<=(int)floorf(top);y++){
+                const int type=getLandc2(x,z,y);
+                if(type<=0)continue;
+                if(type==TYPE_GOLDEN_CUBE){
+                    if(MpWorld::active())continue;   // MP.3a: scenery in a session
+                    Hud* hud=World::getWorld->hud;
+                    hud->goldencubes++;
+                    hud->flash=.95f;
+                    Resources::getResources->playSound(S_TREASURE_PICKUP);
+                    const int coli=ter->getColor(x,z,y);
+                    if(coli==0)hud->flashcolor=MakeVector(blockColor[TYPE_GOLDEN_CUBE][0]/255.0f,blockColor[TYPE_GOLDEN_CUBE][1]/255.0f,blockColor[TYPE_GOLDEN_CUBE][2]/255.0f);
+                    else hud->flashcolor=colorTable[coli];
+                    ter->updateChunks(x,z,y,TYPE_NONE);
+                }else if(blockinfo[type]&IS_LAVA){
+                    if(bot<y+getLevel(type)/4.0f)burned=true;   // below the lava's surface
+                }
+            }
+    if(burned){
+        takeDamage(.08f,DEATH_LAVA);
+        Resources::getResources->playSound(S_LAVA_BURN);
+        jumping=false;
+    }
+    // Portal entry: the same probe move() uses (a step ahead along the heading, at hull-centre height).
+    float cosYaw=cos(D2R(yaw)),sinYaw=sin(D2R(yaw));
+    if((vel.x>0&&cosYaw<0)||(vel.x<0&&cosYaw>0)){
+        cosYaw=cos(D2R(yaw+180));
+        sinYaw=sin(D2R(yaw+180));
+    }
+    const int ptype=ter->getLand(pos.x+cosYaw/5.3f,pos.z+sinYaw/5.3f,pos.y+boxbase/2);
+    if(ptype==TYPE_PORTAL_TOP){
+        if(!inPortal){
+            pos.x+=cosYaw/5.3f;
+            pos.z+=sinYaw/5.3f;
+            inPortal=true;
+            Resources::getResources->playSound(S_ENTER_PORTAL);
+            Vector2 ret=ter->portals->enterPortal(pos.x,pos.y+boxbase/2,pos.z,vel);
+            World::getWorld->hud->flash=1;
+            const int color=ter->getColor(pos.x,pos.z,pos.y+boxbase/2);
+            World::getWorld->hud->flashcolor=color==0?MakeVector(1.0,1.0,1.0):colorTable[color];
+            pos.x=ret.x;pos.y=ret.y;pos.z=ret.z;
+            vel.x=ret.x2;vel.y=ret.y2;vel.z=ret.z2;
+            MpWorld::intentMine(pos.x,pos.z,pos.y);
+            MpWorld::intentMine(pos.x,pos.z,pos.y-1);
+        }
+    }else inPortal=false;
+    // Out of the world.
+    if(pos.y<-10){pos.y=T_HEIGHT+3;vel.y=0;}
+    else if(pos.y>T_HEIGHT*3){if(vel.y>0)vel.y=0;}
+}
+
 bool Player::update(float etime){
+    // SRC.4 (plan D1): Srclike movement owns the whole step, before the substep clamp below (its fixed
+    // tick replaces it). Off, or flying/noclip, the stock path runs unchanged.
+    if(SrclikeMove::enabled()&&!FLY_MODE){
+        this->processInput(etime);
+        if(yaw>=360)yaw-=360;
+        if(yaw<=-360)yaw+=360;
+        if(pitch<=-SrclikeMove::kPitchLimit)pitch=-SrclikeMove::kPitchLimit;   // SRC.7 C5
+        if(pitch>=SrclikeMove::kPitchLimit)pitch=SrclikeMove::kPitchLimit;
+        Hud* hud=World::getWorld->hud;
+        bool jumped=false;
+        lpos=pos;
+        const bool wasOnground=onground;
+        const float preVelY=vel.y;
+        onground=SrclikeMove::frame(this,etime,hud->m_jump,CROUCH_HELD||hud->m_crouch,&jumped);
+        onramp=false;
+        {   // SRC.6: the tick's liquid / ladder / ice state, for the sounds and the screen tint
+            const SrclikeMove::PmState& st=SrclikeMove::state();
+            inLiquid=st.waterlevel>=1;
+            climbing=st.onLadder;
+            onIce=onground&&st.groundType>=0&&trait_slippery(st.groundType);
+        }
+        hud->underLiquid=false;
+        jumping=onground?false:(jumping||jumped);
+        lastjump=jumping;
+        if(jumped)Resources::getResources->playSound(S_JUMP);
+        accel=MakeVector(0,0,0);
+        speed=hspeed=vspeed=0;
+        srclikeEffects(etime,wasOnground,preVelY);   // SRC.8
+        return postMove(etime);
+    }
+    SrclikeMove::invalidate();
  
 	//if(etime>1.0f/30.0f)etime=1.0f/30.0f;
     float displacement=etime*sqrt(v_length2(vel));
@@ -1090,7 +1156,8 @@ bool Player::update(float etime){
         int z=pos.z+sinYaw*1.25f;
         int y=pos.y-boxheight/2+.01;
         int type=getLandc2(x,z,y);
-        if(autojump_option&&onground&&!jumping&&!World::getWorld->hud->m_jump&&type!=TYPE_NONE&&type!=TYPE_LADDER&&type!=TYPE_FLOWER&&type!=TYPE_VINE&&type!=TYPE_LAVA&&type!=TYPE_GOLDEN_CUBE&&type>0&&!(type>=TYPE_STONE_RAMP1&&type<=TYPE_ICE_SIDE4)&&!(blockinfo[type]&IS_WATER)&&getLandc2(x,z,y+1)<=0){
+        if(autojump_option&&!SrclikeMove::enabled()&&onground&&!jumping&&!World::getWorld->hud->m_jump&&type!=TYPE_NONE&&!trait_climbable(type)&&type!=TYPE_FLOWER&&type!=TYPE_LAVA&&type!=TYPE_GOLDEN_CUBE&&type>0&&!(type>=TYPE_STONE_RAMP1&&type<=TYPE_ICE_SIDE4)&&!(blockinfo[type]&IS_WATER)&&getLandc2(x,z,y+1)<=0){
+            // K.2-2: climbables (ladder, vine) never trigger an autojump
             
             if(getLandc2(x,z,y+2)<=0&&getLandc2(pos.x,pos.z,pos.y+2)<=0&&speed>18){
                hud->m_jump=true;
@@ -1269,7 +1336,7 @@ bool Player::postMove(float etime){
 	
 	Camera* cam=world->cam;
 	cam->px=pos.x;
-	cam->py=pos.y+3*boxheight/10;
+	cam->py=(SrclikeMove::enabled()&&!FLY_MODE)?SrclikeMove::eyeY(this):pos.y+3*boxheight/10;   // SRC.7 C2/C4
 	cam->pz=pos.z;
 	cam->yaw=yaw;
 	cam->pitch=pitch;
@@ -1397,14 +1464,8 @@ bool Player::postMove(float etime){
             v.y=6;
             Resources::getResources->soundEventBed(AMBIENT_CAVE,v);
         }else{
-            int ppx=pos.x-4096*CHUNK_SIZE+GSIZE/2;
-            int ppz=pos.z-4096*CHUNK_SIZE+GSIZE/2;
-            ppx=ppx/(GSIZE/4);
-            ppz=ppz/(GSIZE/4);
-            if(ppx>4)ppx=4;
-            if(ppz>4)ppz=4;
-            if(ppx<0)ppx=0;
-            if(ppz<0)ppz=0;
+            int ppx,ppz;
+            eden_default_region(pos.x,pos.z,&ppx,&ppz);   // AT.1b: shared with Weather::precipAt (Weather.cpp)
 /*#define AMBIENT_GRASSLANDS 6
 #define AMBIENT_BEACH 7
 #define AMBIENT_GRASSBADLANDS 8
@@ -1486,8 +1547,7 @@ bool Player::vertc(){
                 for(int y=(int)(bot);y<=(int)(top+.5f);y++){
                     int type=getLandc2(x,z,y);
                     if(type<=0)continue;
-                    if(type==TYPE_LADDER||
-                       type==TYPE_VINE){
+                    if(trait_climbable(type)){   // K.2-1
                         ladderExists=true;
                         
                     }
@@ -1561,7 +1621,7 @@ bool Player::vertc(){
                 fabs(bp.z) <= (boxbase/2 + .5f))*/
                 
                 if(collidePolyhedra(pbox,pbox2)){
-                    if(type==TYPE_LADDER||type==TYPE_VINE){
+                    if(trait_climbable(type)){   // K.2-1
                         if(accel.x!=0||vspeed!=0||accel.z!=0){
                         
                         
@@ -1655,7 +1715,7 @@ bool Player::vertc(){
        
         
         if(minminTranDist.y>0){
-            if(collided==TYPE_ICE||(collided>=TYPE_ICE_RAMP1&&collided<=TYPE_ICE_RAMP4)||(collided>=TYPE_ICE_SIDE1&&collided<=TYPE_ICE_SIDE4)){
+            if(trait_slippery(collided)){   // K.2-1
                 onIce=true;
             }
         }
@@ -1689,7 +1749,7 @@ bool Player::vertc(){
                 jumping=false;
             }
         }
-        if(collided==TYPE_TRAMPOLINE){
+        if(trait_bouncy(collided)){   // K.2-1
             n*=2;
               Resources::getResources->playSound(S_BOUNCE);
             printg(@"n:%f vel.y:%f",n,vel.y);
@@ -1745,21 +1805,9 @@ bool Player::vertc(){
      
              
             if((jumping||vel.y<-1.0f)){
-                if(collided==TYPE_STONE||collided==TYPE_DARK_STONE||
-                   collided==TYPE_WOOD||collided==TYPE_LADDER||
-                   collided==TYPE_VINE||collided==TYPE_CRYSTAL||
-                   collided==TYPE_COBBLESTONE||collided==TYPE_BRICK||
-                   collided==TYPE_TREE||collided==TYPE_TNT||
-                   collided==TYPE_FIREWORK||collided==TYPE_BEDROCK||
-                   (blockinfo[collided]&IS_RAMPORSIDE)) {
-                    if((blockinfo[collided]&IS_HARD)){
-                        if(!onIce)
-              Resources::getResources->playSound(S_LAND_HARD);
-                    }else{
-                        if(!onIce)
-                     Resources::getResources->playSound(S_LAND_SOFT);
-                    }
-                }
+                const int landSound=trait_landSound(collided);   // K.2-1
+                if(landSound>=0&&!onIce)
+                    Resources::getResources->playSound(landSound);
               jumping=false;
             }
         }
@@ -2120,7 +2168,7 @@ bool Player::boxBlocked(){
                 int type=getLandc2(x,z,y);
                 if(type<=0)continue;
                 if(blockinfo[type]&(IS_LIQUID|IS_DOOR|IS_PORTAL))continue;
-                if(type==TYPE_FLOWER||type==TYPE_GOLDEN_CUBE||type==TYPE_LADDER||type==TYPE_VINE)continue;
+                if(type==TYPE_FLOWER||type==TYPE_GOLDEN_CUBE||trait_climbable(type))continue;   // K.2-2: climbables pass
                 return true;
             }
         }
@@ -2130,13 +2178,17 @@ bool Player::boxBlocked(){
 // FM.2: leaving noclip inside solid pops straight up to air. Not groundPlayer(): its first loop
 // drops the player to the floor, which would snap a mid-air exit down.
 void Player::unstick(){
+    bool moved=false;
     while(boxBlocked()&&pos.y<=T_HEIGHT+36){
         pos.y+=1;
+        moved=true;
     }
-    vel=MakeVector(0,0,0);
-    lpos=pos;
+    if(moved){   // SRC.0: momentum survives leaving noclip/fly; only a real unstick stops the player
+        vel=MakeVector(0,0,0);
+        lpos=pos;
+    }
 }
-// FM.2: Source-style noclip. Velocity approaches the 3D wish direction (look pitch included)
+// FM.2: Srclike noclip. Velocity approaches the 3D wish direction (look pitch included)
 // exponentially, so it is frame-rate independent and stops crisply when input stops.
 void Player::noclipUpdate(float etime){
     if(yaw>=360)yaw-=360;
@@ -2239,17 +2291,9 @@ void Player::move(float etime){
             int y=pos.y-boxheight/2+.01;
             int collided=getLandc2(x,z,y-1);
             
-            if(collided==TYPE_STONE||collided==TYPE_DARK_STONE||
-               collided==TYPE_WOOD||collided==TYPE_LADDER||
-               collided==TYPE_VINE||collided==TYPE_CRYSTAL||
-               collided==TYPE_COBBLESTONE||collided==TYPE_BRICK||collided==TYPE_LEAVES||
-               collided==TYPE_TREE||collided==TYPE_TNT||collided==TYPE_FIREWORK||collided==TYPE_BEDROCK||(blockinfo[collided]&IS_RAMPORSIDE))    {
-                if((blockinfo[collided]&IS_HARD))
-                    Resources::getResources->playSound(S_FOOTSTEPS_HARD);
-                else
-                    Resources::getResources->playSound(S_FOOTSTEPS_SOFT);
-                
-            }
+            const int stepSound=trait_stepSound(collided);   // K.2-1
+            if(stepSound>=0)
+                Resources::getResources->playSound(stepSound);
            
             walkCount=0;
 

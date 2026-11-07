@@ -46,6 +46,7 @@ public:
 	int game_mode;
 	//BOOL FLIPPED;
     int doneLoading;
+    bool modsNoticePending=false;   // K.3-6: say which of the world's mods are off/missing, once, after entry
     float realtime;
     bool bestGraphics;
     bool sanityCheck;

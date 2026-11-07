@@ -163,7 +163,7 @@ void ServerListMenu::buildRow(int slot,int index){
     std::string sub;
     if(m_tab==1) sub=std::string(hp)+"  -  "+r.motd;   // MP.8: where it is, and who listed it
     else if(r.status==EDEN_MP_ST_ONLINE||r.status==EDEN_MP_ST_CACHED||r.status==EDEN_MP_ST_PROBING)
-        sub=r.motd[0]?r.motd:hp;
+        sub=r.usesMods?std::string("Uses mods")+(r.motd[0]?std::string("  -  ")+r.motd:std::string()):(r.motd[0]?r.motd:hp);
     else sub=sl_statusWord(r.status);
     char players[32]="-", ping[16]="-";
     if(r.players>=0&&r.max>=0) std::snprintf(players,sizeof(players),"%d/%d",r.players,r.max);
@@ -357,6 +357,10 @@ void ServerListMenu::join(int row){
     if(row<0||row>=(int)m_rows.size()||m_connecting) return;
     const EdenMpServerRow& r=m_rows[row];
     if(r.status==EDEN_MP_ST_UNKNOWN_HOST) return;
+    if(r.usesMods){   // K.3-6 (plan M8): a session loads no packs yet, so a modded server cannot be joined
+        World::getWorld->menu->sbar->setStatus("This server uses mods (not supported yet)",4);
+        return;
+    }
     Pending p;
     p.row=row;
     p.host=r.host;

@@ -30,6 +30,7 @@
 #include "../../../Classes/WorldPropertiesMenu.h"   // H.15: eden_world_props_menu_back
 #include "../../../Classes/ConsoleMenu.h"           // C.3: eden_console_menu_*
 #include "../../../Classes/ServerListMenu.h"        // MP.6: eden_server_list_back
+#include "../../../Classes/ModsMenu.h"              // K.3-5: eden_mods_menu_back
 #include "../../../Classes/FileManager.h"
 #include "../../../Classes/Hud.h"       // eden_hud_draw_menu_screen_hook
 #include "../../../Classes/MpWorld.h"    // MP.7: eden_chat_open needs a session
@@ -290,7 +291,7 @@ int eden_menu_home_back(void) {
     Menu* m = menu_ptr();
     if (!w || !m || w->game_mode != GAME_MODE_MENU) return 0;
     if (m->showhome || m->loading || GLDialog::active()) return 0;
-    if (m->showsettings || m->shownewworld || m->showprops || m->showbrowser || m->showlistscreen ||
+    if (m->showsettings || m->shownewworld || m->showprops || m->showbrowser || m->showmods || m->showlistscreen ||
         m->is_sharing || m->showservers) return 0;
     m->showHome(true);
     return 1;
@@ -306,6 +307,16 @@ int eden_server_list_back(void) {
     const int r = m->servers->back() ? 1 : 0;
     if (!m->servers->isOpen()) m->showservers = false;
     return r;
+}
+
+// K.3-5: Escape over the Mods screen closes it (back to where it was opened from).
+int eden_mods_menu_back(void) {
+    Menu* m = menu_ptr();
+    if (!m || !m->showmods || !m->mods) return 0;
+    if (GLDialog::active()) return 0;
+    m->mods->back();
+    m->showmods = false;
+    return 1;
 }
 
 // H.15: the same for the World Properties screen (Back discards, as its button does).
@@ -348,7 +359,15 @@ int eden_console_menu_toggle(void) {
 // `slash` opens with "/" already typed. 1 = opened (the key handler then drops the key's character).
 int eden_chat_open(int slash) {
     Menu* m = menu_ptr();
-    if (!m || !m->console || !MpWorld::active() || !World::getWorld || World::getWorld->game_mode != GAME_MODE_PLAY) return 0;
+    if (!m || !m->console || !World::getWorld || World::getWorld->game_mode != GAME_MODE_PLAY) return 0;
+    if (!MpWorld::active()) {   // singleplayer: the chat key opens the plain Console, if the developer console is allowed
+        extern bool DEV_CONSOLE_ALLOWED;
+        if (slash || !DEV_CONSOLE_ALLOWED || m->console->isOpen()) return 0;
+        if (m->showsettings || GLDialog::active() || eden_hud_in_menu()) return 0;
+        m->showconsole = true;
+        m->console->open();
+        return 1;
+    }
     if (!m->console->isOpen() && (m->showsettings || GLDialog::active() || eden_hud_in_menu())) return 0;
     m->showconsole = true;
     m->console->openChat(slash ? "/" : "");

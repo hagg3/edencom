@@ -66,6 +66,7 @@ void eden_apply_look_delta(float dx, float dy);
 void eden_click_begin(int isBuild);
 void eden_click_end(int isBuild);
 void eden_hotbar_scroll(int dir);
+void eden_wheel_action(int dir);   // SRC.2: jump pulse in Srclike movement, else the hotbar
 void eden_select_hotbar_slot(int slot);
 int  eden_pick_block_at_crosshair(void);
 void eden_tap_hud_button_begin(int which);
@@ -75,6 +76,7 @@ int  eden_settings_menu_back(void);      // Settings.cpp (U.3): Escape over the 
 int  eden_new_world_menu_back(void);     // Menu.cpp (U.5): Escape over the New World screen
 int  eden_world_props_menu_back(void);   // Menu.cpp (H.15): Escape over World Properties
 int  eden_console_menu_back(void);       // Menu.cpp (C.3): Escape over the Console (blur, then close)
+int  eden_mods_menu_back(void);          // Menu.cpp (K.3-5)
 int  eden_menu_home_back(void);         // Menu.cpp (I.7): Escape on the world list -> the home screen
 int  eden_server_list_back(void);       // Menu.cpp (MP.6): Escape over the Multiplayer screen
 int  eden_chat_open(int slash);          // Menu.cpp (MP.7): the Console screen on its Chat tile, in a session
@@ -954,7 +956,7 @@ void eden_native_input_handle_event(const SDL_Event& e) {
                 // 2=colours, 7=fire/burn.
                 // U.3: over the settings screen the menu key is its Back, not a HUD tap (which
                 // the screen claimed as a touch of its own and dropped). U.5: likewise New World.
-                if      (mi == g_miMenu)         { if (!eden_console_menu_back() && !eden_settings_menu_back() && !eden_new_world_menu_back() && !eden_world_props_menu_back() && !eden_server_list_back() && !eden_menu_home_back()) hud_tap(0); }
+                if      (mi == g_miMenu)         { if (!eden_console_menu_back() && !eden_settings_menu_back() && !eden_new_world_menu_back() && !eden_world_props_menu_back() && !eden_server_list_back() && !eden_mods_menu_back() && !eden_menu_home_back()) hud_tap(0); }
                 else if (mi == g_miConsole)      { if (eden_console_menu_toggle() && eden_ui_captures_keys()) g_dropGrave = true; }
                 else if (mi == g_miChat)         { if (eden_chat_open(0)) g_dropChat = 't'; }
                 else if (mi == g_miChatCmd)      { if (eden_chat_open(1)) g_dropChat = '/'; }
@@ -1116,7 +1118,7 @@ void eden_native_input_handle_event(const SDL_Event& e) {
             // platform flips it ("natural" scrolling), which SDL reports in `direction`.
             if (is_synthetic_mouse(e.wheel.which)) return;
             if (g_relativeMouse) {
-                if (e.wheel.y != 0) eden_hotbar_scroll(e.wheel.y > 0 ? 1 : -1);
+                if (e.wheel.y != 0) eden_wheel_action(e.wheel.y > 0 ? 1 : -1);
             } else {
                 g_uiWheel += (e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) ? -e.wheel.y : e.wheel.y;
             }
@@ -1169,4 +1171,56 @@ void eden_native_input_tick() {
 
     // Last, because it reads the mode eden_ui_tick() may just have changed.
     sync_mouse_capture();
+}
+
+// ---------------------------------------------------------------------------------------------
+// K.3-6: "Install from file..." -- the desktop's native open dialog for a mod pack's .zip.
+// The dialog is asynchronous (its callback may run on another thread): the callback parks the
+// chosen path under a mutex and the Mods screen takes it on a later frame. iOS and Android have no
+// such dialog (players unzip into Packs/ with the Files app), so they report it unavailable.
+// ---------------------------------------------------------------------------------------------
+#include <mutex>
+#include <string>
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+namespace {
+std::mutex g_pickMu;
+std::string g_pickPath;
+bool g_pickOpen = false;
+void SDLCALL pick_cb(void*, const char* const* list, int) {
+    std::lock_guard<std::mutex> lk(g_pickMu);
+    g_pickOpen = false;
+    if (list && list[0]) g_pickPath = list[0];
+}
+}  // namespace
+extern "C" int eden_pick_zip_available(void) {
+#if (defined(__APPLE__) && TARGET_OS_IPHONE) || defined(__ANDROID__)
+    return 0;
+#else
+    return g_window != nullptr;
+#endif
+}
+extern "C" void eden_pick_zip_begin(void) {
+    if (!eden_pick_zip_available()) return;
+    {
+        std::lock_guard<std::mutex> lk(g_pickMu);
+        if (g_pickOpen) return;
+        g_pickOpen = true;
+        g_pickPath.clear();
+    }
+    static const SDL_DialogFileFilter filters[] = {{"Mod pack (.zip)", "zip"}, {"All files", "*"}};
+    SDL_ShowOpenFileDialog(pick_cb, nullptr, g_window, filters, 2, nullptr, false);
+}
+// The chosen path (once), or "" while the dialog is open / cancelled.
+extern "C" const char* eden_pick_zip_take(void) {
+    static std::string out;
+    std::lock_guard<std::mutex> lk(g_pickMu);
+    out = g_pickPath;
+    g_pickPath.clear();
+    return out.c_str();
+}
+extern "C" int eden_pick_zip_busy(void) {
+    std::lock_guard<std::mutex> lk(g_pickMu);
+    return g_pickOpen ? 1 : 0;
 }

@@ -8,6 +8,7 @@
 #include "EdenWorldStore.h"   // emod::palette_* (the record's one codec)
 #include "MpWorld.h"          // D7: no mod blocks in a session
 #include "Shadow.h"
+#include "BlockTraits.h"   // K.2-2: blockSoundSet, blockPaintArt
 #include "World.h"
 #include "FileManager.h"
 
@@ -16,63 +17,15 @@
 namespace BlockRegistry {
 namespace {
 
-// D15: the enum minus TYPE_, lowercased. Never reordered (rule 4: the index is the saved byte).
-const char* const kStock[128] = {
-    "eden:none", "eden:bedrock", "eden:stone", "eden:dirt",  // 0-3
-    "eden:sand", "eden:leaves", "eden:tree", "eden:wood",  // 4-7
-    "eden:grass", "eden:tnt", "eden:dark_stone", "eden:grass2",  // 8-11
-    "eden:grass3", "eden:brick", "eden:cobblestone", "eden:ice",  // 12-15
-    "eden:crystal", "eden:trampoline", "eden:ladder", "eden:cloud",  // 16-19
-    "eden:water", "eden:weave", "eden:vine", "eden:lava",  // 20-23
-    "eden:stone_ramp1", "eden:stone_ramp2", "eden:stone_ramp3", "eden:stone_ramp4",  // 24-27
-    "eden:wood_ramp1", "eden:wood_ramp2", "eden:wood_ramp3", "eden:wood_ramp4",  // 28-31
-    "eden:shingle_ramp1", "eden:shingle_ramp2", "eden:shingle_ramp3", "eden:shingle_ramp4",  // 32-35
-    "eden:ice_ramp1", "eden:ice_ramp2", "eden:ice_ramp3", "eden:ice_ramp4",  // 36-39
-    "eden:stone_side1", "eden:stone_side2", "eden:stone_side3", "eden:stone_side4",  // 40-43
-    "eden:wood_side1", "eden:wood_side2", "eden:wood_side3", "eden:wood_side4",  // 44-47
-    "eden:shingle_side1", "eden:shingle_side2", "eden:shingle_side3", "eden:shingle_side4",  // 48-51
-    "eden:ice_side1", "eden:ice_side2", "eden:ice_side3", "eden:ice_side4",  // 52-55
-    "eden:shingle", "eden:gradient", "eden:glass", "eden:water3",  // 56-59
-    "eden:water2", "eden:water1", "eden:lava3", "eden:lava2",  // 60-63
-    "eden:lava1", "eden:firework", "eden:door1", "eden:door2",  // 64-67
-    "eden:door3", "eden:door4", "eden:door_top", "eden:golden_cube",  // 68-71
-    "eden:lightbox", "eden:flower", "eden:steel", "eden:portal1",  // 72-75
-    "eden:portal2", "eden:portal3", "eden:portal4", "eden:portal_top",  // 76-79
-    "eden:custom", "eden:block_tnt", "eden:btgrass", "eden:btdarkstone",  // 80-83
-    "eden:btstone", "eden:btdirt", "eden:btsand", "eden:bttnt",  // 84-87
-    "eden:btwood", "eden:btshingle", "eden:btglass", "eden:btgradient",  // 88-91
-    "eden:bttree", "eden:btleaves", "eden:btbrick", "eden:btcobblestone",  // 92-95
-    "eden:btvines", "eden:btladder", "eden:btice", "eden:btcrystal",  // 96-99
-    "eden:bttrampoline", "eden:btcloud", "eden:btstoneside", "eden:btwoodside",  // 100-103
-    "eden:bticeside", "eden:btshingleside", "eden:btfence", "eden:btwater",  // 104-107
-    "eden:btlava", "eden:btfirework", "eden:btlightbox", "eden:btsteel",  // 108-111
-    "eden:ore_sand", "eden:space_stone", "eden:carpet", "eden:snakeskin",  // 112-115
-    "eden:obsidian", "eden:cheese", "eden:space_dirt", "eden:space_grass",  // 116-119
-    "eden:moss", "eden:dark_matter", "eden:space_sand", "eden:snow",  // 120-123
-    "eden:moonrock", "eden:basalt", "eden:dark_tile", "eden:algae",  // 124-127
+// The stock half (K.2-3): names 0..127 and the console aliases come from the `eden` pack
+// (media/packs/eden/pack.json, ContentPack::loadStock at boot). The names are the enum minus TYPE_,
+// lowercased (D15), and never change meaning (rule 4: the index is the saved byte). The aliases are the
+// console's short names (moved from CmdScript's kBlocks in K.1-3), in the pack's order.
+struct StockNames {
+    std::string names[STOCK_BLOCK_MAX + 1];
+    std::vector<std::pair<std::string, int>> aliases;
 };
-
-// The console's short names (moved from CmdScript's kBlocks, K.1-3). cmd.html's names; voidstone, sky,
-// pillar, jungle, future, tech and lavafield are the 2026 game's names for blocks Emod cannot identify (no
-// list maps them onto 112-127): unknown here, on purpose.
-struct Alias { const char* name; int id; };
-const Alias kAliases[] = {
-    {"air", TYPE_NONE}, {"stone", TYPE_STONE}, {"dirt", TYPE_DIRT}, {"grass", TYPE_GRASS},
-    {"sand", TYPE_SAND}, {"wood", TYPE_WOOD}, {"tree", TYPE_TREE}, {"leaves", TYPE_LEAVES},
-    {"glass", TYPE_GLASS}, {"water", TYPE_WATER}, {"lava", TYPE_LAVA}, {"tnt", TYPE_TNT},
-    {"lamp", TYPE_LIGHTBOX}, {"brick", TYPE_BRICK}, {"cobble", TYPE_COBBLESTONE}, {"ice", TYPE_ICE},
-    {"snow", TYPE_SNOW}, {"crystal", TYPE_CRYSTAL}, {"trampoline", TYPE_TRAMPOLINE},
-    {"ladder", TYPE_LADDER}, {"cloud", TYPE_CLOUD}, {"weave", TYPE_WEAVE}, {"vine", TYPE_VINE},
-    {"shingle", TYPE_SHINGLE}, {"gradient", TYPE_GRADIENT}, {"firework", TYPE_FIREWORK},
-    {"gold", TYPE_GOLDEN_CUBE}, {"steel", TYPE_STEEL}, {"darkstone", TYPE_DARK_STONE},
-    {"flower", TYPE_FLOWER},
-    // Emod's own names for the 2026 blocks (docs/world-and-terrain.md), so they can be named at all.
-    {"oresand", TYPE_ORE_SAND}, {"spacestone", TYPE_SPACE_STONE}, {"carpet", TYPE_CARPET},
-    {"snakeskin", TYPE_SNAKESKIN}, {"obsidian", TYPE_OBSIDIAN}, {"cheese", TYPE_CHEESE},
-    {"spacedirt", TYPE_SPACE_DIRT}, {"spacegrass", TYPE_SPACE_GRASS}, {"moss", TYPE_MOSS},
-    {"darkmatter", TYPE_DARK_MATTER}, {"spacesand", TYPE_SPACE_SAND}, {"moonrock", TYPE_MOONROCK},
-    {"basalt", TYPE_BASALT}, {"darktile", TYPE_DARK_TILE}, {"algae", TYPE_ALGAE},
-};
+StockNames& stock() { static StockNames s; return s; }
 
 struct Slot { bool used; uint8_t fbType, fbPaint; std::string name; };
 // Function-local statics: Globals.cpp's static init fills the tables before any of this exists.
@@ -98,20 +51,30 @@ void clearSlots() {
 
 }  // namespace
 
-const char* stockName(int id) { return id >= 0 && id <= STOCK_BLOCK_MAX ? kStock[id] : NULL; }
+void setStock(const std::vector<std::string>& names, const std::vector<std::pair<std::string, int>>& aliases) {
+    StockNames& s = stock();
+    for (int i = 0; i <= STOCK_BLOCK_MAX; ++i) s.names[i] = i < (int)names.size() ? names[i] : std::string();
+    s.aliases = aliases;
+}
+
+const char* stockName(int id) {
+    if (id < 0 || id > STOCK_BLOCK_MAX || stock().names[id].empty()) return NULL;
+    return stock().names[id].c_str();
+}
 
 int stockByName(const std::string& t) {
+    const StockNames& s = stock();
     if (t.compare(0, 5, "eden:") == 0) {
-        for (int i = 0; i <= STOCK_BLOCK_MAX; ++i) if (t == kStock[i]) return i;
+        for (int i = 0; i <= STOCK_BLOCK_MAX; ++i) if (t == s.names[i]) return i;
         return -1;
     }
-    for (const Alias& a : kAliases) if (t == a.name) return a.id;
+    for (const auto& a : s.aliases) if (t == a.first) return a.second;
     return -1;
 }
 
 std::vector<std::string> aliasNames() {
     std::vector<std::string> r;
-    for (const Alias& a : kAliases) r.push_back(a.name);
+    for (const auto& a : stock().aliases) r.push_back(a.first);
     return r;
 }
 
@@ -125,6 +88,8 @@ BlockDef defLike(const std::string& name, int like, int fallbackPaint) {
     for (int i = 0; i < 3; ++i) d.color[i] = blockColor[like][i];
     d.hudMap = hudBlocksMap[like];
     d.tntMap = blockTntMap[like];
+    d.soundSet = blockSoundSet[like];
+    d.paintArt = blockPaintArt[like];
     return d;
 }
 
@@ -260,6 +225,8 @@ void resolve() {
         for (int k = 0; k < 3; ++k) blockColor[t][k] = d->color[k];
         hudBlocksMap[t] = d->hudMap;
         blockTntMap[t] = d->tntMap;
+        blockSoundSet[t] = d->soundSet < blockSoundSetCount ? d->soundSet : 0;
+        blockPaintArt[t] = d->paintArt;
     }
     shadow_buildCasterTable();
     s.resolves++;

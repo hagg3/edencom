@@ -117,7 +117,8 @@ the version S.2 vendors. Offline artefacts (the bundled map) may use level 19.
 | 9 | `GENERATOR` | singleton | 28 bytes (below) | **0** | H.4 (2026-10-15): which runtime generator fills the world's unsaved columns; World Properties (H.15) may append a newer one. Taken from the reserved range, so a reader that predates it ignores it, as this table always required. |
 | 10 | `BLOCK_PALETTE` | singleton | 8 + count × 68 bytes (below) | **0** | K.1-2 (2026-10-31): what type bytes 128–255 mean. Only in a file with `flags` bit 0. A pre-K.1-2 reader never sees one (it refuses flagged files). |
 | 11 | `SKY_CLOCK` | singleton | 16 bytes (below) | **0** | DN.2 (2026-10-31): the day/night cycle's time of day and lock. Taken from the reserved range, so a reader that predates it ignores it. |
-| 12–255 | reserved | — | — | — | a reader treats one as a member of its batch and otherwise ignores it; `verify` reports it |
+| 12 | `WEATHER` | singleton | 32 bytes (below) | **0** | AT.1b (2026-11-05): the weather's state, schedule RNG and lock. Taken from the reserved range, so a reader that predates it ignores it. |
+| 13–255 | reserved | — | — | — | a reader treats one as a member of its batch and otherwise ignores it; `verify` reports it |
 
 ### BLOCK_PALETTE (K.1-2)
 
@@ -288,7 +289,7 @@ the `.eden` header's `reserved[]` as the `EMG1` mirror ([eden-file-format.md](ed
 
 The day/night cycle's clock (`Classes/SkyCycle.{h,cpp}`; plan `WORKING/day-night-cycle-plan-2026-10-31.md`
 D3/D7). Written by the engine's save, in any batch, whenever the time or the lock changed since the world
-was loaded or the record last committed: the clock runs only while Experiments › *Day/night cycle* is on,
+was loaded or the record last committed: the clock runs only while World › *Day/night cycle* is on,
 so a world nobody ran the cycle in (or used `timefreeze` in) never gets one. Exit and warp always commit a
 batch, so the time is kept with no edits. Like every singleton the newest committed version counts.
 Never written by conversion or by a multiplayer session (whose clock is session-local). Codec 0.
@@ -305,6 +306,33 @@ in [0, 1) (NaN included), is ignored: the world starts at **t = 0.30**, unlocked
 `GENERATOR`). Not in the state digest (nor is `GENERATOR`). Not exported to `.eden` (v1); a pre-DN build
 keeps it live through its own saves but drops it if it compacts (the time then resets to 0.30), and a
 pre-DN `emod.py verify` reports it as a reserved type.
+
+### WEATHER (32 bytes, AT.1b)
+
+The weather (`Classes/Weather.{h,cpp}`; plan `WORKING/atmosphere-plan-2026-11-05.md` §10.3). Written by the
+engine's save only into a batch that commits anyway (exit, warp, an edit's save): weather never marks the world
+dirty or wakes autosave, so it cannot grow the log by itself. Staged only when the kind or the flags changed,
+or seconds left moved ≥ 30 s, or the intensity ≥ 0.1, since the load or the last commit. The weather runs only
+while Gameplay › *Weather* is on, so a world nobody ran weather in never gets one; a `--weather=KIND` run
+never writes it. Never written by conversion or a multiplayer session (session-local weather). Codec 0.
+
+| offset | type | field |
+|---|---|---|
+| 0 | u8 | kind of the current spell (its target): 0 clear, 1 overcast, 2 rain, 3 storm |
+| 1 | u8 | flags: bit 0 locked (the spell never ends), bit 1 snow everywhere until the spell ends; other bits 0 |
+| 2 | u16 | 0 |
+| 4 | f32 | intensity now, [0, 1]; eases toward the kind's target (0 / 0.4 / 0.7 / 1) at 1/45 per second |
+| 8 | f32 | seconds left in the spell (game seconds, finite, > 0) |
+| 12 | u32 | spells since the world got weather (debug aid; wraps) |
+| 16 | u64 | schedule RNG state (splitmix64) |
+| 24 | `u8[8]` | 0 |
+
+A reader ignores the other flag bits and the zero bytes. A record that is not 32 bytes, has kind > 3, an
+intensity outside [0, 1] (NaN included) or seconds left that are not finite and > 0 is ignored, as is no
+record: the world starts **clear**, intensity 0, the RNG seeded from `LEVEL_SEED ^ 0x57454154` ("WEAT"), the
+first spell clear. `verify` reports a wrong length or codec; `dump` decodes it. Compaction copies it raw after
+`SKY_CLOCK`. Not in the state digest, not exported to `.eden`. A pre-AT build keeps it live through its own
+saves but drops it if it compacts (the weather then starts clear again).
 
 ## Batches and commits — writing
 
@@ -323,7 +351,7 @@ A world's first batch contains at least `WORLD_HEADER`, `CREATURES` and `SUMMARY
 batch (seq 1) of the live records, then `fsync`s and renames over the old one. Ords are kept as
 they are, so they may be sparse.
 - `EdenWorldStore` writes them in conversion's order (`WORLD_HEADER`, `CREATURES`, a non-empty
-  `SIGN_TRAILER`, `PROVENANCE`, then H.4's `GENERATOR`, DN.2's `SKY_CLOCK`, `COLUMN`s by (ord, x, z),
+  `SIGN_TRAILER`, `PROVENANCE`, then H.4's `GENERATOR`, DN.2's `SKY_CLOCK`, AT.1b's `WEATHER`, `COLUMN`s by (ord, x, z),
   K.1-2's `BLOCK_PALETTE`, `SUMMARY`, `COMMIT`); reserved types are dropped, and so is a stray
   `BLOCK_PALETTE` in an unflagged file. The palette comes after the columns so the flag compaction
   learns the latent bytes ≥ 128 in the same decode pass. The file header keeps `flags`, or sets bit 0

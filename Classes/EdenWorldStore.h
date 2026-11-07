@@ -46,6 +46,7 @@ enum : uint32_t {
     TRAILER_MAX = 1u << 20,
     GENERATOR_LEN = 28,          // H.4: the GENERATOR record (TerrainGenerator.h CLASSIC_RECORD_BYTES)
     SKY_CLOCK_LEN = 16,          // DN.2: the SKY_CLOCK record (Classes/SkyCycle.h)
+    WEATHER_LEN = 32,            // AT.1b: the WEATHER record (Classes/Weather.h)
     // K.1-2 (WORKING/block-registry-plan-2026-10-31.md §3): FileHeader flags bit 0 = type bytes 128-255 are
     // defined by the live BLOCK_PALETTE. Any other bit is still "written by a newer build".
     FH_FLAG_BLOCK_PALETTE = 1,
@@ -62,9 +63,10 @@ enum RecordType : uint8_t {
     T_GENERATOR = 9,             // H.4: Classic generator settings, 28 B, written once (TerrainGenerator.h)
     T_BLOCK_PALETTE = 10,        // K.1-2: the world's palette for type bytes 128-255, codec 0 (needs flags bit 0)
     T_SKY_CLOCK = 11,            // DN.2: the day/night clock, 16 B, codec 0 (Classes/SkyCycle.h)
+    T_WEATHER = 12,              // AT.1b: the weather state, 32 B, codec 0 (Classes/Weather.h)
 };
 // A type this build reads (the rest of 1..255 is reserved: a member of its batch, otherwise ignored).
-inline bool known_record_type(int t) { return t >= 1 && t <= T_SKY_CLOCK; }
+inline bool known_record_type(int t) { return t >= 1 && t <= T_WEATHER; }
 enum Codec : uint8_t { C_NONE = 0, C_ZSTD = 1, C_ZLIB = 2 };
 
 uint32_t crc32_of(const void* p, size_t n, uint32_t crc = 0);
@@ -258,7 +260,7 @@ public:
 
     // ---- writing (append-only; docs/emod-file-format.md "Batches and commits")
     // Columns are full-stride (bands() * 8192 bytes). A rewritten column keeps its ord; a new one
-    // takes SUMMARY.next_ord. Singletons: WORLD_HEADER, GENERATOR, SKY_CLOCK, BLOCK_PALETTE and
+    // takes SUMMARY.next_ord. Singletons: WORLD_HEADER, GENERATOR, SKY_CLOCK, WEATHER, BLOCK_PALETTE and
     // SUMMARY are stored raw, the rest compressed with the store's codec. Nothing reaches the file
     // until commitBatch(). A BLOCK_PALETTE is refused unless the file is flagged (compact(true)
     // first: D14), it obeys palette_parse, and it keeps every entry of the live one (D8).
@@ -278,7 +280,7 @@ public:
     // reopens. Refused when damaged() (the bad bytes must never be the only copy destroyed),
     // when read-only, or mid-batch. zstd payloads are copied verbatim after a successful decode;
     // other codecs are re-encoded with the store's codec. Order: WORLD_HEADER, CREATURES,
-    // SIGN_TRAILER (if non-empty), PROVENANCE, GENERATOR, SKY_CLOCK, COLUMNs by ord,
+    // SIGN_TRAILER (if non-empty), PROVENANCE, GENERATOR, SKY_CLOCK, WEATHER, COLUMNs by ord,
     // BLOCK_PALETTE, SUMMARY, COMMIT — conversion's order, so compacting a fresh conversion
     // reproduces it byte for byte. emod.py `compact` is the reference, byte for byte.
     //

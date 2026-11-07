@@ -1,0 +1,131 @@
+// Wonder Blocks: Emod's example mod pack. Everything it adds works from the block picker, no console needed.
+// README.md (beside this file) is the player's guide and the mod maker's tour of this folder.
+//
+// Emod copies this folder into every player's Packs folder on first start (ContentPack::seedBundledPacks), so
+// it is in the Mods list out of the box. To reinstall it, copy it into Packs (macOS ~/Library/Application
+// Support/Emod/Packs/, iOS Files > Emod > Packs), then open a world. The blocks are on the Mods page of
+// the block picker (after the two stock pages). Place the blue "i" Guide Stone for a tour.
+//
+// What this file shows (docs/content-packs.md): own 32x32 tiles, one tile on all faces, sides/top/bottom,
+// a paintable tile with its unpainted twin (paint_brick), a tile tinted by "color" (slick_ice, bounce_pad),
+// stock tiles reused at no atlas cost (vine_ladder), transparent blocks, walk-through blocks (no "solid"),
+// and every trait. The scripts listed below give the wonder blocks their behaviour (docs/scripting.md).
+// Textures: Kenney's CC0 Voxel Pack plus icons drawn by port/tools/wonders-pack-art.py (CREDITS.txt).
+{
+  "format": 1,
+  "id": "wonders",
+  "name": "Wonder Blocks",
+  "version": "1.0.0",
+  // Run in this order, sharing one sandbox: lib.lua's helpers are globals the other files use.
+  "scripts": [
+    "scripts/lib.lua",
+    "scripts/welcome.lua",
+    "scripts/guide.lua",
+    "scripts/cabin_kit.lua",
+    "scripts/bridge_kit.lua",
+    "scripts/sapling.lua",
+    "scripts/warp_pads.lua",
+    "scripts/lucky_block.lua",
+    "scripts/sky_stones.lua",
+    "scripts/gold_ore.lua",
+    "scripts/creature_egg.lua",
+    "scripts/first_aid.lua",
+    "scripts/bounce_pad.lua"
+  ],
+  "tiles": {
+    "guide": {"png": "textures/guide.png"},
+    "crate": {"png": "textures/crate.png"},
+    "house_kit": {"png": "textures/house_kit.png"},
+    "bridge_kit": {"png": "textures/bridge_kit.png"},
+    "sapling": {"png": "textures/sapling.png"},
+    "warp_top": {"png": "textures/warp_top.png"},
+    "warp_side": {"png": "textures/warp_side.png"},
+    "lucky": {"png": "textures/lucky.png"},
+    "sun_stone": {"png": "textures/sun_stone.png"},
+    "moon_stone": {"png": "textures/moon_stone.png"},
+    "rain_stone": {"png": "textures/rain_stone.png"},
+    "gold_ore": {"png": "textures/gold_ore.png"},
+    "egg": {"png": "textures/egg.png"},
+    "first_aid": {"png": "textures/first_aid.png"},
+    "bounce": {"png": "textures/bounce.png"},
+    "pine_log": {"png": "textures/pine_log.png"},
+    "pine_log_top": {"png": "textures/pine_log_top.png"},
+    "pine_planks": {"png": "textures/pine_planks.png"},
+    "pine_needles": {"png": "textures/pine_needles.png"},
+    // Grey art that paint tints; unpainted, the block swaps to its full-colour twin (needs "paint_art").
+    "paint_brick": {"png": "textures/paint_brick.png", "unpainted": "paint_brick_color"},
+    "paint_brick_color": {"png": "textures/paint_brick_color.png"},
+    "sandstone_bricks": {"png": "textures/sandstone_bricks.png"},
+    "stone_bricks": {"png": "textures/stone_bricks.png"},
+    "obsidian_bricks": {"png": "textures/obsidian_bricks.png"},
+    "ice": {"png": "textures/ice.png"},
+    "framed_glass": {"png": "textures/framed_glass.png"}
+  },
+  "blocks": [
+    // ---- Wonder blocks: a script gives each one its behaviour (the file named in the comment). ----
+    // guide.lua: place it for a tour of the pack.
+    {"id": "guide_stone", "faces": {"all": "guide"}, "color": [255, 255, 255],
+     "traits": ["solid", "hard"], "sounds": "eden:stone", "fallback": "eden:stone"},
+    // cabin_kit.lua: builds a furnished cabin on the spot, facing you. Sides show the icon, top and bottom
+    // the plain crate.
+    {"id": "cabin_kit", "faces": {"sides": "house_kit", "top": "crate", "bottom": "crate"}, "color": [255, 255, 255],
+     "traits": ["solid"], "sounds": "eden:wood", "fallback": "eden:wood"},
+    // bridge_kit.lua: lays a bridge away from you until it reaches land.
+    {"id": "bridge_kit", "faces": {"sides": "bridge_kit", "top": "crate", "bottom": "crate"}, "color": [255, 255, 255],
+     "traits": ["solid"], "sounds": "eden:wood", "fallback": "eden:wood"},
+    // sapling.lua: grows into a pine tree (faster in the rain). Walk-through: no "solid".
+    {"id": "sapling", "faces": {"all": "sapling"}, "color": [255, 255, 255],
+     "traits": ["transparent", "no_shadow", "flammable"], "sounds": "eden:flower", "fallback": "eden:flower"},
+    // warp_pads.lua: step on one to warp to another pad of the same paint colour.
+    {"id": "warp_pad", "faces": {"top": "warp_top", "sides": "warp_side", "bottom": "warp_side"},
+     "color": [190, 150, 255], "traits": ["solid", "hard"], "sounds": "eden:stone", "fallback": "eden:stone"},
+    // lucky_block.lua: mine it for a surprise.
+    {"id": "lucky_block", "faces": {"all": "lucky"}, "color": [255, 255, 255],
+     "traits": ["solid"], "sounds": "eden:generic", "fallback": "eden:sand", "fallback_paint": 21},
+    // sky_stones.lua: the sun stone brings midday, the moon stone midnight, the rain stone the next weather.
+    {"id": "sun_stone", "faces": {"all": "sun_stone"}, "color": [255, 255, 255],
+     "traits": ["solid", "hard"], "sounds": "eden:stone", "fallback": "eden:stone"},
+    {"id": "moon_stone", "faces": {"all": "moon_stone"}, "color": [255, 255, 255],
+     "traits": ["solid", "hard"], "sounds": "eden:stone", "fallback": "eden:stone"},
+    {"id": "rain_stone", "faces": {"all": "rain_stone"}, "color": [255, 255, 255],
+     "traits": ["solid", "hard"], "sounds": "eden:stone", "fallback": "eden:stone"},
+    // gold_ore.lua: mining it pays golden cubes.
+    {"id": "gold_ore", "faces": {"all": "gold_ore"}, "color": [255, 255, 255],
+     "traits": ["solid", "hard"], "sounds": "eden:stone", "fallback": "eden:stone"},
+    // creature_egg.lua: hatches a creature. Walk-through, drawn in the transparent pass.
+    {"id": "creature_egg", "faces": {"all": "egg"}, "color": [255, 255, 255],
+     "traits": ["transparent", "no_shadow"], "sounds": "eden:leaves", "fallback": "eden:snow"},
+    // first_aid.lua: stand on it to heal (with Settings > Gameplay > Health on).
+    {"id": "first_aid", "faces": {"all": "first_aid"}, "color": [255, 255, 255],
+     "traits": ["solid"], "sounds": "eden:generic", "fallback": "eden:snow"},
+    // bounce_pad.lua: bouncy; paint one and the colour ripples through every pad touching it. The grey tile
+    // is tinted green by "color" until painted.
+    {"id": "bounce_pad", "faces": {"all": "bounce"}, "color": [120, 225, 120],
+     "traits": ["solid", "bouncy"], "sounds": "eden:leaves", "fallback": "eden:trampoline"},
+
+    // ---- Building blocks: data only, no script. Between them they use every trait. ----
+    {"id": "pine_log", "faces": {"sides": "pine_log", "top": "pine_log_top", "bottom": "pine_log_top"},
+     "color": [255, 255, 255], "traits": ["solid", "flammable"], "sounds": "eden:tree", "fallback": "eden:tree"},
+    {"id": "pine_planks", "faces": {"all": "pine_planks"}, "color": [255, 255, 255],
+     "traits": ["solid", "flammable"], "sounds": "eden:wood", "fallback": "eden:wood"},
+    {"id": "pine_needles", "faces": {"all": "pine_needles"}, "color": [255, 255, 255],
+     "traits": ["solid", "transparent", "flammable", "no_shadow"], "sounds": "eden:leaves", "fallback": "eden:leaves"},
+    {"id": "paint_brick", "faces": {"all": "paint_brick"}, "color": [200, 110, 80],
+     "traits": ["solid", "hard", "paint_art"], "sounds": "eden:brick", "fallback": "eden:brick"},
+    {"id": "sandstone_bricks", "faces": {"all": "sandstone_bricks"}, "color": [255, 255, 255],
+     "traits": ["solid", "hard"], "sounds": "eden:stone", "fallback": "eden:sand"},
+    {"id": "stone_bricks", "faces": {"all": "stone_bricks"}, "color": [255, 255, 255],
+     "traits": ["solid", "hard"], "sounds": "eden:stone", "fallback": "eden:cobblestone"},
+    // TNT can't hurt it and nothing can mine it except the console's set/fill.
+    {"id": "obsidian_bricks", "faces": {"all": "obsidian_bricks"}, "color": [255, 255, 255],
+     "traits": ["solid", "hard", "blastproof", "unbreakable"], "sounds": "eden:steel", "fallback": "eden:obsidian"},
+    // Full-colour ice art, darkened and blued by "color": slide on it.
+    {"id": "slick_ice", "faces": {"all": "ice"}, "color": [150, 175, 235],
+     "traits": ["solid", "hard", "slippery"], "sounds": "eden:ice", "fallback": "eden:ice"},
+    {"id": "framed_glass", "faces": {"all": "framed_glass"}, "color": [255, 255, 255],
+     "traits": ["hard", "transparent", "no_shadow"], "sounds": "eden:glass", "fallback": "eden:glass"},
+    // Stock tiles only (no atlas slot used): the eden:ladder art, tinted green by "color".
+    {"id": "vine_ladder", "faces": {"sides": "eden:ladder", "top": "eden:leaves", "bottom": "eden:leaves"},
+     "color": [120, 200, 110], "traits": ["solid", "flammable", "climbable"], "sounds": "eden:vine", "fallback": "eden:ladder"}
+  ]
+}

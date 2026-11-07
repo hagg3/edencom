@@ -1,0 +1,192 @@
+# srclike-pm-ref.py vectors (SRC.1). Units: u = Source unit, 1 block = 38.9189 u, tick 66.667 Hz.
+
+## constants
+tick_interval           0.015 s            [TICK PLAN] D2: fixed 66.67 Hz tick
+gravity                   800 u/s^2        [SDK-movevars] DEFAULT_GRAVITY_STRING; = 20.56 b/s^2 (Eden 20)
+accelerate                  5 1/s          [KZ PLAN] CS:S/CS 1.6 server default 5; SDK file says 10 (HL2); cvar move.accelerate
+airaccelerate             100 1/s          [PLAN] U1 surf/bhop value; CS:S default is 10 (SDK-movevars)
+air_wish_cap               30 u/s          [SDK-gm.h QW] GetAirSpeedCap()
+friction                    4 1/s          [VDC-friction SDK-movevars]
+stopspeed                  75 u/s          [KZ PLAN] CS:S/CS 1.6 75; SDK file says 100 (HL2); cvar move.stopspeed
+maxvelocity              3500 u/s per axis [SDK-movevars]
+stepsize                   18 u            [SDK-movevars] = 0.4625 block
+bounce                      0              [SDK-movevars] sv_bounce 0 -> overbounce 1.0
+standable_nz              0.7              [SDK-gm.cpp] ground if plane normal z >= 0.7 (Eden ramps 0.7071: see surf rule)
+non_jump_vel              140 u/s          [SDK-gm.cpp] vz above this is never on ground
+ground_probe                2 u            [SDK-gm.cpp] categorize-position trace distance
+dist_epsilon          0.03125 u            [SDK-gm.cpp] trace back-off, Quake lineage
+max_bumps                   4              [SDK-gm.cpp] slide-move iterations
+max_clip_planes             5              [SDK-gm.cpp]
+jump_impulse          268.328 u/s          [SDK-gm.cpp KZ] 268.328 = sqrt(2*800*45), 45 u apex
+duck_time                 0.4 s            [SDK-defs] TIME_TO_DUCK (non-TF)
+unduck_time               0.2 s            [SDK-defs] TIME_TO_UNDUCK
+duck_move_mult       0.333333              [SDK-gm.cpp] base 0.33333; CS:S community figure 0.34 (unpinned)
+walk_mult                0.52              [PLAN] shift-walk, CS:S community figure (unpinned); optional per SRC.2
+water_wish_mult           0.8              [SDK-gm.cpp] wishspeed x0.8 in water
+water_friction              4 1/s          [SDK-gm.cpp] water move uses sv_friction (no stopspeed); sv_waterfriction is a surface scale, sv_wateraccelerate unused by base water move
+swim_up_vel               100 u/s          [SDK-gm.cpp] jump held at water level >= 2 sets vz=100 each tick
+swim_sink_wish             60 u/s          [SDK-gm.cpp] no input in water: wish z -= 60
+waterjump_vz              256 u/s          [SDK-gm.cpp] water-jump push up, 2 s window
+waterjump_probe             8 u            [SDK-defs] WATERJUMP_HEIGHT
+max_climb_speed           200 u/s          [SDK-defs] ladder
+hull_width            25.9459 u            [EDEN] Eden boxbase 2/3 block = 25.95 u (Source 32 u = 0.82 b)
+hull_stand                 72 u            [SDK-rules EDEN] = 1.85 blocks
+hull_duck                  36 u            [EDEN PLAN] D5b: 36.0 u = 0.925 block (HL2 36, CS:S larger)
+eye_stand                  64 u            [SDK-rules VDC-hull] C2: 1.644 blocks (Eden today 0.8 x 1.85 = 1.48)
+eye_duck                   28 u            [SDK-rules PLAN] HL2 ratio 28/36 of the duck hull = 28.0 u = 0.719 block
+maxspeed              227.676 u/s          [EDEN PLAN] U1: Eden walk SPEED_M*1.3 = 5.85 b/s = 227.7 u/s
+
+## units
+u_per_block = 38.9189
+tick_hz = 66.667
+maxspeed_u_s = 227.676
+
+## ground_accel
+distance_after_67_ticks_u = 195.626
+ticks_to_50pct = 9
+ticks_to_90pct = 22
+ticks_to_99pct = 27
+ticks_to_100pct = 27
+speed_after_1_ticks = 17.076
+speed_after_2_ticks = 29.651
+speed_after_5_ticks = 67.378
+speed_after_10_ticks = 124.822
+speed_after_20_ticks = 198.539
+speed_after_33_ticks = 227.676
+speed_after_67_ticks = 227.676
+top_speed_u_s = 227.676
+
+## stop_from_maxspeed
+from_u_s = 227.676
+ticks_to_stop = 35
+time_s = 0.525
+distance_u = 44.698
+distance_blocks = 1.148
+
+## stop_from_400
+from_u_s = 400.0
+ticks_to_stop = 44
+time_s = 0.66
+distance_u = 85.193
+distance_blocks = 2.189
+
+## jump
+impulse_u_s = 268.328
+analytic_apex_u = 45.0
+model_apex_u = 45.02
+model_apex_blocks = 1.157
+airtime_ticks = 45
+airtime_s = 0.675
+duck_jump_reach_u = 81.02
+two_block_ledge_u = 77.838
+duck_jump_margin_u = 3.182
+stand_jump_clears_1_block = true
+stand_jump_clears_2_blocks = false
+
+## air_strafe_open_aa100
+airaccelerate = 100.0
+v0_u_s = 250.0
+ticks = 67
+v_after_u_s = 350.428
+closed_form_sqrt(v0^2+900n) = 350.428
+first_tick_turn_deg = 6.843
+turn_rate_at_250_deg_s = 456.2
+
+## air_strafe_open_aa10
+airaccelerate = 10.0
+v0_u_s = 250.0
+ticks = 67
+v_after_u_s = 350.428
+closed_form_sqrt(v0^2+900n) = 350.428
+first_tick_turn_deg = 6.843
+turn_rate_at_250_deg_s = 456.2
+
+## strafe_hops_aa100
+airaccelerate = 100.0
+v0_u_s = 227.676
+landing_speeds_u_s = [303.869, 364.467, 416.337, 462.424, 504.318, 542.988, 579.082, 613.055, 645.241, 675.897]
+ticks_per_hop = 45.0
+ground_friction_ticks = 0
+closed_form_after_10_hops = 675.897
+
+## bhop_retention_perfect
+v0_u_s = 400.0
+late_ticks = 0
+landing_speeds_u_s = [400.0, 400.0, 400.0, 400.0, 400.0]
+retention_per_hop = 1.0
+closed_form_0.94^late = 1.0
+
+## bhop_retention_1_late
+v0_u_s = 400.0
+late_ticks = 1
+landing_speeds_u_s = [376.0, 353.44, 332.234, 312.3, 293.562]
+retention_per_hop = 0.94
+closed_form_0.94^late = 0.94
+
+## bhop_retention_3_late
+v0_u_s = 400.0
+late_ticks = 3
+landing_speeds_u_s = [332.234, 275.948, 229.198, 190.368, 158.117]
+retention_per_hop = 0.8306
+closed_form_0.94^late = 0.8306
+
+## surf_no_input
+hold_into_ramp = false
+v0_along_ramp_u_s = 800.0
+ticks = 67
+vx_after_u_s = 800.0
+height_change_u = -202.033
+downslope_speed_u_s = 568.53
+analytic_no_input_drop_u = 202.005
+ticks_on_ground = 0
+
+## surf_hold_into_ramp
+hold_into_ramp = true
+v0_along_ramp_u_s = 800.0
+ticks = 67
+vx_after_u_s = 800.0
+height_change_u = 17.882
+downslope_speed_u_s = -21.633
+analytic_no_input_drop_u = 202.005
+ticks_on_ground = 0
+
+## ramp_walk_up
+direction = "up"
+ticks = 150
+ticks_on_ground = 150
+final_height_u = 155.707
+ramp_top_u = 155.676
+min_hspeed_on_ramp_u_s = 227.676
+mean_hspeed_on_ramp_u_s = 227.676
+
+## ramp_walk_down
+direction = "down"
+ticks = 150
+ticks_on_ground = 150
+final_height_u = 0.031
+ramp_top_u = 155.676
+min_hspeed_on_ramp_u_s = 227.676
+mean_hspeed_on_ramp_u_s = 227.676
+
+## land_on_ramp_fast_along
+v0 = [600.0, 0.0, -100.0]
+ticks = 30
+ticks_on_ground = 0
+first_ground_tick = null
+
+## land_on_ramp_slow
+v0 = [100.0, 0.0, -100.0]
+ticks = 30
+ticks_on_ground = 15
+first_ground_tick = 16
+
+## land_on_ramp_fast_uphill
+v0 = [0.0, 400.0, -100.0]
+ticks = 30
+ticks_on_ground = 25
+first_ground_tick = 6
+
+## swim_up
+steady_rise_u_s = 107.661
+steady_rise_blocks_s = 2.766
+rise_3_blocks_s_at_steady = 1.084

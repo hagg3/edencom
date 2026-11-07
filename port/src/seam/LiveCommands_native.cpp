@@ -112,9 +112,11 @@ void set_block(int x, int y, int z, int type, int color) {
 
 void open_world(const char* name) {
     int idx = -1;
+    int flat = 0;
+    if (!std::strncmp(name, "flat:", 5)) { flat = 1; name += 5; }
     for (int i = 0; i < eden_menu_world_count(); ++i)
         if (!std::strcmp(eden_menu_world_name(i), name)) { idx = i; break; }
-    eden_menu_set_pending_world_type(0);
+    eden_menu_set_pending_world_type(flat);
     eden_menu_set_pending_world_height(64);
     if (idx < 0) {
         std::snprintf(eden_menu_name_buffer(), 128, "%s", name);

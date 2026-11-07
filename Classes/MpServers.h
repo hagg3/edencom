@@ -31,6 +31,7 @@ typedef struct EdenMpServerRow {
     int  status;               // EDEN_MP_ST_*
     int  pingMs;               // -1 = unknown
     int  fromCache;            // name/players/motd are the cache's, not this visit's probe
+    int  usesMods;             // K.3-6: INFO `mods=` is present and this (vanilla-in-session) client cannot match it
 } EdenMpServerRow;
 
 // The join's progress (UI plan §6). Stages in order; FAILED carries the error.

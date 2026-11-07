@@ -1,0 +1,2 @@
+# pack.py validate / --pack-selftest: every line, in order (K.2-3)
+eden@28: JSON: duplicate key

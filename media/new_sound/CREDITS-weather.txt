@@ -1,0 +1,7 @@
+rain_ambience.mp3
+  Source: "Rain (loopable)" by Ylmir, https://opengameart.org/content/rain-loopable  (file 1.mp3 of "Rain MP3.zip")
+  Licence: CC0 1.0 (public domain dedication). Re-encoded to 96 kbit/s stereo MP3; otherwise unmodified.
+
+thunder_01.mp3, thunder_02.mp3, thunder_03.mp3
+  Source: generated in-house (AT.4) with ffmpeg: brown noise, low-passed, exponential decay + tremolo
+  (anoisesrc/lowpass/volume/tremolo). No third-party material; no licence needed. 01 close, 02 mid, 03 distant.

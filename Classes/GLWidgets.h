@@ -212,6 +212,8 @@ public:
     // controls": a translucent ghost reads as a rendering bug), greys its label, and never hits.
     void setEnabled(bool e)  { m_enabled = e; if (!e) m_pressed = false; }
     bool enabled() const     { return m_enabled; }
+    // SX.2: display-only greying (label in kTextMuted, chrome unchanged); a muted button still hits.
+    void setMuted(bool m)    { m_muted = m; }
     bool hit(float x, float y) const;
     // An optional larger box for hit(), so the art can stay compact while a touch target meets
     // touchFloor(). Zero-sized (the default) means "the drawn rect".
@@ -229,7 +231,7 @@ private:
     std::string m_text;
     CGRect      m_rect, m_hit;
     float       m_pt;
-    bool        m_pressed, m_enabled;
+    bool        m_pressed, m_enabled, m_muted;
     Tone        m_tone;
     int         m_icon;
     float       m_fitPad;                     // < 0: fixed width (the default); else sizeToFit's padX
@@ -352,6 +354,7 @@ public:
     bool hitDec(float x, float y) const { return m_dec.hit(x, y); }
     bool hitInc(float x, float y) const { return m_inc.hit(x, y); }
     void setPressed(bool dec, bool inc) { m_dec.setPressed(dec); m_inc.setPressed(inc); }
+    void setMuted(bool m)    { m_muted = m; m_dec.setMuted(m); m_inc.setMuted(m); }   // SX.2
 
     void render() const;
 
@@ -363,6 +366,7 @@ private:
     Label       m_value;
     std::string m_decGlyph, m_incGlyph;
     float       m_glyphPt;
+    bool        m_muted;
     CGRect      m_rect;
 };
 

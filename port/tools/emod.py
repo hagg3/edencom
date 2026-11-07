@@ -71,11 +71,14 @@ T_COLUMN, T_WORLD_HEADER, T_CREATURES, T_SIGN_TRAILER, T_PROVENANCE, T_SUMMARY, 
 T_GENERATOR = 9                  # H.4: Classic generator settings (docs/emod-file-format.md "GENERATOR")
 T_BLOCK_PALETTE = 10             # K.1-2: the world's block palette (docs/emod-file-format.md "BLOCK_PALETTE")
 T_SKY_CLOCK = 11                 # DN.2: the day/night clock (docs/emod-file-format.md "SKY_CLOCK")
+T_WEATHER = 12                   # AT.1b: the weather state (docs/emod-file-format.md "WEATHER")
 TYPE_NAMES = {1: 'COLUMN', 2: 'WORLD_HEADER', 3: 'CREATURES', 4: 'SIGN_TRAILER', 5: 'PROVENANCE',
-              6: 'SUMMARY', 7: 'COMMIT', 8: 'INDEX', 9: 'GENERATOR', 10: 'BLOCK_PALETTE', 11: 'SKY_CLOCK'}
+              6: 'SUMMARY', 7: 'COMMIT', 8: 'INDEX', 9: 'GENERATOR', 10: 'BLOCK_PALETTE', 11: 'SKY_CLOCK',
+              12: 'WEATHER'}
 GENERATOR_LEN = 28
 SKY_CLOCK_LEN = 16
-RAW_TYPES = (2, 9, 10, 11)       # WORLD_HEADER, GENERATOR, BLOCK_PALETTE, SKY_CLOCK: codec 0 by spec
+WEATHER_LEN = 32
+RAW_TYPES = (2, 9, 10, 11, 12)   # WORLD_HEADER, GENERATOR, BLOCK_PALETTE, SKY_CLOCK, WEATHER: codec 0 by spec
 # K.1-2: FileHeader.flags bit 0 -- type bytes 128-255 are defined by the live BLOCK_PALETTE. Any other bit
 # is still "written by a newer build".
 FH_FLAG_BLOCK_PALETTE = 1
@@ -1102,6 +1105,11 @@ class Store:
             errs.append('SKY_CLOCK raw length %d is not %d' % (sk.aux, SKY_CLOCK_LEN))
         if sk and sk.codec != C_NONE:
             errs.append('SKY_CLOCK must be codec 0')
+        we = self.live(T_WEATHER)
+        if we and we.aux != WEATHER_LEN:
+            errs.append('WEATHER raw length %d is not %d' % (we.aux, WEATHER_LEN))
+        if we and we.codec != C_NONE:
+            errs.append('WEATHER must be codec 0')
         bp = self.live(T_BLOCK_PALETTE)
         flagged = bool(self.flags & FH_FLAG_BLOCK_PALETTE)
         palette = None
@@ -1125,7 +1133,7 @@ class Store:
                     continue
                 if lost:
                     errs.append('BLOCK_PALETTE @%d is not a superset of @%d: %s' % (b.off, a.off, ', '.join(lost)))
-        for t in (T_CREATURES, T_SIGN_TRAILER, T_PROVENANCE, T_SUMMARY, T_GENERATOR, T_BLOCK_PALETTE, T_SKY_CLOCK):
+        for t in (T_CREATURES, T_SIGN_TRAILER, T_PROVENANCE, T_SUMMARY, T_GENERATOR, T_BLOCK_PALETTE, T_SKY_CLOCK, T_WEATHER):
             r = self.live(t)
             if r:
                 if r.mask or r.x or r.z:
@@ -1381,6 +1389,22 @@ def sky_clock_text(k):
     return 't=%.4f (%02d:%02d)%s' % (t, hm // 60, hm % 60, ' locked' if k[4] & 1 else '')
 
 
+WEATHER_KINDS = ('clear', 'overcast', 'rain', 'storm')
+
+
+def weather_text(w):
+    """The WEATHER record (Classes/Weather.cpp Weather::decode), for `dump`."""
+    if len(w) != WEATHER_LEN:
+        return '%d B (not %d): unreadable (the engine starts clear)' % (len(w), WEATHER_LEN)
+    kind, flags = w[0], w[1]
+    i, secs, spells, rng = struct.unpack_from('<ffIQ', w, 4)
+    if kind >= len(WEATHER_KINDS) or not (0.0 <= i <= 1.0) or not (0.0 < secs < 3.0e38):
+        return 'kind=%d intensity=%r seconds_left=%r: invalid, ignored (the engine starts clear)' % (kind, i, secs)
+    fl = [n for b, n in ((1, 'locked'), (2, 'snow')) if flags & b]
+    return '%s intensity=%.3f seconds_left=%.1f spells=%d rng=%#018x%s' % (
+        WEATHER_KINDS[kind], i, secs, spells, rng, (' ' + ' '.join(fl)) if fl else '')
+
+
 def generator_mirror(g):
     """The 36 B `.eden` mirror of a GENERATOR record: "EMG1" + record + CRC-32 of those 32 B."""
     b = GEN_MIRROR_MAGIC + bytes(g)
@@ -1427,6 +1451,9 @@ def dump(path, records=False):
     sk = st.live(T_SKY_CLOCK)
     if sk:
         print('sky clock: ' + sky_clock_text(st.decode(sk)))
+    we = st.live(T_WEATHER)
+    if we:
+        print('weather: ' + weather_text(st.decode(we)))
     bp = st.live(T_BLOCK_PALETTE)
     if bp:
         pal, perrs = parse_palette(st.decode(bp))
@@ -1653,7 +1680,7 @@ def append_batch(path, columns=None, creatures=None, header=None, codec=C_ZSTD, 
 def compact(path, set_palette_flag=False, palette=None, quiet=False):
     """EdenWorldStore::compact(setPaletteFlag, palette): the live state as one batch (seq 1) in `path`.compact,
     fsync, rename over `path`. Order: WORLD_HEADER, CREATURES, a non-empty SIGN_TRAILER, PROVENANCE, GENERATOR,
-    SKY_CLOCK, COLUMNs by (ord, x, z), BLOCK_PALETTE, SUMMARY, COMMIT. zstd payloads are copied verbatim after they
+    SKY_CLOCK, WEATHER, COLUMNs by (ord, x, z), BLOCK_PALETTE, SUMMARY, COMMIT. zstd payloads are copied verbatim after they
     decode; codec 0 is kept for the raw types and empty payloads; anything else is re-encoded at zstd-3.
     K.1-2 flag compaction (`set_palette_flag` on an unflagged file): FileHeader flags bit 0, and a BLOCK_PALETTE of
     `palette` (record bytes; None = no entries) plus an `emod:unknown_<id>` entry for every type byte >= 128 found in
@@ -1692,7 +1719,7 @@ def compact(path, set_palette_flag=False, palette=None, quiet=False):
                 codec, enc = w.encode(data, not raw)
                 w.rec_encoded(r.type, codec, enc, r.mask, r.x, r.z, r.aux)
             return data
-        for t in (T_WORLD_HEADER, T_CREATURES, T_SIGN_TRAILER, T_PROVENANCE, T_GENERATOR, T_SKY_CLOCK):
+        for t in (T_WORLD_HEADER, T_CREATURES, T_SIGN_TRAILER, T_PROVENANCE, T_GENERATOR, T_SKY_CLOCK, T_WEATHER):
             r = st.live(t)
             if r and not (t == T_SIGN_TRAILER and r.aux == 0):
                 copy(r)

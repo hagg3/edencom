@@ -35,5 +35,10 @@ static inline void eden_image_free(EdenImage *img) {
     free(img->rgba);
     free(img);
 }
+// K.2-4: decodes an image file's bytes (PNG; stb_image, port/src/seam/Texture2D.cpp) to RGBA8, top row
+// first. Null on failure. Free with eden_image_free.
+EdenImage *eden_image_decode(const void *data, size_t len);
+// The same for a file (a bundle path, or any path). Null when missing or undecodable.
+EdenImage *eden_image_load_file(const char *path);
 
 #endif

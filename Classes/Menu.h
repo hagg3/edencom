@@ -146,6 +146,11 @@ public:
     // can fetch (WorldBrowser::available(); never on web, whose DOM screen is its browser).
     WorldBrowser* browser;
     bool showbrowser;
+    // K.3-5/6: the mod manager (Classes/ModsMenu.h), opened by the home screen's Mods button and by
+    // Settings > Experiments > Mods. Main menu only.
+    class ModsMenu* mods;
+    bool showmods;
+    void openMods();
     bool browserOffered();
     void openBrowser();
 

@@ -11,6 +11,7 @@
 #include "Constants.h"
 #include "Renderer.h"
 #include "Camera.h"
+#include "Weather.h"
 
 extern Vector colorTable[256];
 extern bool* chunksToUpdate;
@@ -215,14 +216,17 @@ float skyLight(){
     return lightAt(elevationDeg());
 }
 
+bool lightActive(){return g_enabled||Weather::active();}
+
 void worldLight(bool bakedNight,float out[3]){
-    if(!g_enabled){out[0]=out[1]=out[2]=1.0f;return;}
+    const float w=Weather::active()?Weather::lightMul():1.0f;   // AT.2a: overcast/storm darken; clear 1.0
+    if(!g_enabled){out[0]=out[1]=out[2]=w;return;}
     const float e=elevationDeg();
     const float L=lightAt(e);
     const float k=bakedNight?L/NIGHT_SKYLIGHT:L;
     float tint[3];
     tintAt(e,tint);
-    for(int c=0;c<3;c++)out[c]=k*tint[c];
+    for(int c=0;c<3;c++)out[c]=k*tint[c]*w;
 }
 
 void blendLight(const float day[3],const float night[3],float out[3]){
@@ -264,7 +268,7 @@ extern float eden_fov_degrees;
 namespace SkyCycle {
 
 static void drawBody(Texture2D* tex, const Vector& d, const Vector& fwd, const Vector& right,
-                     const Vector& up, float u0, float u1, float cr, float cg, float cb){
+                     const Vector& up, float u0, float u1, float cr, float cg, float cb, float a){
     const float f=d.x*fwd.x+d.y*fwd.y+d.z*fwd.z;
     if(f<=0.05f) return;
     const double fovy=eden_fov_degrees>0.0f?eden_fov_degrees:80.0;
@@ -277,7 +281,7 @@ static void drawBody(Texture2D* tex, const Vector& d, const Vector& fwd, const V
     const float cx=floorf((sx*0.5f+0.5f)*(float)SCREEN_WIDTH+0.5f);
     const float cy=floorf((sy*0.5f+0.5f)*(float)SCREEN_HEIGHT+0.5f);
     if(cx<-size||cx>SCREEN_WIDTH+size||cy<-size||cy>SCREEN_HEIGHT+size) return;
-    tex->drawSkySprite(CGRectMake(cx-size*0.5f,cy-size*0.5f,size,size),-P_ZFAR/1.000008,u0,u1,cr,cg,cb,1.0f);
+    tex->drawSkySprite(CGRectMake(cx-size*0.5f,cy-size*0.5f,size,size),-P_ZFAR/1.000008,u0,u1,cr,cg,cb,a);
 }
 
 void drawSunMoon(){
@@ -292,15 +296,18 @@ void drawSunMoon(){
     Texture2D* tex=Resources::getResources->getArtTex(ART_SKY_SPRITES);
     if(!tex) return;
     const Vector s=sunDir();
+    // AT.2a: cloud cover hides the sun and moon (1.0 in clear weather or with Weather off).
+    const float a=Weather::active()?Weather::clearSky():1.0f;
+    if(a<=0.01f) return;
     if(s.y>-0.2f){
         // pale yellow at noon -> orange at the horizon
         float k=s.y/0.4f; if(k<0)k=0; if(k>1)k=1;
         drawBody(tex,s,fwd,right,up,0.0f,0.5f,
-                 0.94f+0.02f*k, 0.63f+0.28f*k, 0.31f+0.38f*k);
+                 0.94f+0.02f*k, 0.63f+0.28f*k, 0.31f+0.38f*k, a);
     }
     if(s.y<0.2f){
         Vector m={-s.x,-s.y,-s.z};
-        drawBody(tex,m,fwd,right,up,0.5f,1.0f,0.85f,0.88f,0.95f);
+        drawBody(tex,m,fwd,right,up,0.5f,1.0f,0.85f,0.88f,0.95f,a);
     }
 }
 

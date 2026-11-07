@@ -226,6 +226,9 @@ void beginFrame() {
     for (int i = 0; i < 3; ++i) g_frameDepth[i] = frame_mark_depth(i);
     g_open2D = 0;
     { float* w = ds().worldLight; w[0] = w[1] = w[2] = 1.0f; }   // DN.5: a frame starts unlit-by-the-clock
+    ds().hfogOn = false;                                          // AT.5: and without height fog
+    ds().csOn = false;                                            // AT.6: or cloud shadows
+    ds().wtOn = false;                                            // AT.8: or water tint
     if (eden_gl_have_context()) rgl::beginFrame();
 }
 
@@ -287,6 +290,25 @@ void setFog(const Rgba& c, float start, float end) {
 void fogOff() { ds().fogOn = false; }
 void setLights(const LightSet& l) { ds().lights = l; }
 void setWorldLight(float r, float g, float b) { float* w = ds().worldLight; w[0] = r; w[1] = g; w[2] = b; }
+void setHeightFog(const float plane[4], const float params[4]) {   // AT.5
+    DrawState& d = ds();
+    d.hfogOn = true;
+    for (int i = 0; i < 4; ++i) { d.hfogPlane[i] = plane[i]; d.hfogParams[i] = params[i]; }
+}
+void heightFogOff() { ds().hfogOn = false; }
+void setCloudShadow(Tex cloud, const float u[4], const float v[4], const float params[4]) {   // AT.6
+    DrawState& d = ds();
+    d.csOn = cloud != 0;
+    d.csTex = cloud;
+    for (int i = 0; i < 4; ++i) { d.csU[i] = u[i]; d.csV[i] = v[i]; d.csParams[i] = params[i]; }
+}
+void setWaterTint(const float tint[4], const float sun[4], const float up[4]) {   // AT.8
+    DrawState& d = ds();
+    d.wtOn = true;
+    for (int i = 0; i < 4; ++i) { d.wtTint[i] = tint[i]; d.wtSun[i] = sun[i]; d.wtUp[i] = up[i]; }
+}
+void waterTintOff() { ds().wtOn = false; }
+void cloudShadowOff() { ds().csOn = false; ds().csTex = 0; }
 
 bool originalLighting() { return g_originalLighting; }
 void setOriginalLighting(bool on) { g_originalLighting = on; }
@@ -334,8 +356,19 @@ static void traceDraw(void* site, const char* prog, const Geometry& g, Tex t, co
     const float* wl = d.worldLight;
     const bool wlOn = (!std::strcmp(prog, "world") || (!std::strcmp(prog, "lit") && !g_originalLighting)) &&
                       (wl[0] != 1.0f || wl[1] != 1.0f || wl[2] != 1.0f);
-    char wlb[48] = "";
+    char wlb[96] = "";
     if (wlOn) std::snprintf(wlb, sizeof wlb, " wlight=(%.3f,%.3f,%.3f)", wl[0], wl[1], wl[2]);
+    // AT.5: the height-fog twin only when it is selected, so a trace without it is unchanged.
+    if (!std::strcmp(prog, "world") && d.fogOn && d.hfogOn) {
+        const size_t n = std::strlen(wlb);
+        std::snprintf(wlb + n, sizeof wlb - n, " hfog=(%.1f,%.3f,%.4f,%.2f)", d.hfogParams[0], d.hfogParams[1],
+                      d.hfogParams[2], d.hfogParams[3]);
+    }
+    // AT.6: likewise the cloud-shadow twin.
+    if (!std::strcmp(prog, "world") && d.csOn) {
+        const size_t n = std::strlen(wlb);
+        std::snprintf(wlb + n, sizeof wlb - n, " cshadow=(%.2f,%.2f)", d.csParams[0], d.csParams[1]);
+    }
     if (!std::strcmp(prog, "lit")) {
         const LightSet& L = d.lights;
         std::snprintf(lit, sizeof lit, " lights=%d%d%s l0=(%.2f,%.2f,%.2f,%.0f a%.2f d%.2f) amb%.2f spec%.2f^%g",
@@ -387,6 +420,20 @@ void drawLit(const Geometry& g, Tex t, const Rgba& tint) {
     if (!eden_gl_have_context()) { rnull::draw(g); return; }
     if (g_originalLighting) rgl::drawLit(g, t, tint);
     else rgl::drawWorld(g, t, tint, -1.0f);   // R8: OFF is today's unlit draw
+}
+
+void drawPrecip(const Geometry& g, const PrecipParams& p) {   // AT.2b
+    if (!eden_render_draw_allowed()) return;
+    traceDraw(__builtin_return_address(0), "precip", g, p.tops, p.color, -1.0f);
+    noteDraw(true);
+    if (eden_gl_have_context()) rgl::drawPrecip(g, p); else rnull::draw(g);
+}
+
+void drawClouds(const Geometry& g, const CloudParams& p) {   // AT.6
+    if (!eden_render_draw_allowed()) return;
+    traceDraw(__builtin_return_address(0), "clouds", g, p.tex, p.lit, -1.0f);
+    noteDraw(true);
+    if (eden_gl_have_context()) rgl::drawClouds(g, p); else rnull::draw(g);
 }
 
 void pickViewport(int out[4]) {

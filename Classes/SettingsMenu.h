@@ -68,6 +68,13 @@ public:
     const char* tabName(int t) const;
     int  tabRowCount(int t);
     bool showRow(const char* key, CGRect* control);
+    // SX.1: tabCount() counts the rail's tabs THEN the sub-pages (kPages[]); views >= railTabCount()
+    // are pages, tabName() of a page is "<tab>-<page>". currentTab() is the shown view.
+    int  railTabCount() const;
+    int  currentTab() const { return m_tab; }
+    // SX.6: the hint a shown row draws (the This world heading's is the multiplayer badge in a session);
+    // NULL if the row is not on any view in the current scope (world rows on the title screen).
+    const char* rowHint(const char* key);
 
 	CGRect rect_settings;
 
@@ -84,6 +91,7 @@ public:
 private:
     void build();                      // kSettings[] rows -> tabs, once
     void selectTab(int t);             // switch tab: reset scroll, rebuild that tab's labels
+    bool upLevel();                    // SX.1: on a sub-page, go to its parent tab; false on a tab
     void buildRows();                  // the current tab's row labels + widget state
     void layout();                     // panel/rail/rows from SCREEN_* (per frame; labels only on change)
     void controlSize(int si, float* w, float* h) const;
@@ -96,20 +104,23 @@ private:
     bool rowShown(int k) const;        // inside the scroll window this frame
 
     bool m_built;
+    int  m_builtWorld;                 // SX.6: world in play when build() ran (-1 never); a change rebuilds
+    int  m_builtMp;                    // SX.6: MpWorld::active() then; a change rebuilds the labels (badge)
     bool m_seeded;                     // eden_settings_loaded() seen; rows live from then on
-    int  m_tab;                        // selected tab
+    int  m_tab;                        // selected view: a rail tab, or (SX.1) a sub-page after them
     int  m_builtTab;                   // the tab buildRows() last built, -1 = stale
-    std::vector<std::vector<int> > m_tabRows;   // per tab, kSettings[] indices in table order
+    std::vector<std::vector<int> > m_tabRows;   // per view (tab or page), kSettings[] indices in table order
 
     GLW::Label      m_title;
     GLW::Button     m_back;
-    GLW::Button     m_defaults;            // U.4: the Keys tab's titlebar action
+    GLW::Button     m_defaults;            // U.4: the Keys tab's titlebar action; SX.1: a page's reset too
     GLW::IconRail   m_rail;
     GLW::ScrollView m_scroll;
     int  m_nRows;                      // rows on the current tab
     int  m_si[SM_MAX_ROWS];
     GLW::TwoLineRow m_row[SM_MAX_ROWS];
     GLW::Label   m_valueLabel[SM_MAX_ROWS];   // a slider's readout
+    std::string  m_valueText[SM_MAX_ROWS];    // SX.6: the readout/stepper text last set, so a live refresh only re-rasters a change
     GLW::Toggle  m_toggle[SM_MAX_ROWS];
     GLW::Slider  m_slider[SM_MAX_ROWS];
     GLW::Stepper m_stepper[SM_MAX_ROWS];

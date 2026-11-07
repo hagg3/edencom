@@ -67,6 +67,17 @@ public:
     // G.5b-6: the world fog (colour from Terrain; start/end from P_ZFAR), stated with R::setFog.
     static void setFogColor(const float clr[4]);
     static void applyWorldFog();
+    // AT.11: the start/end applyWorldFog states (under water, mist), for an additive draw that fades itself on the
+    // CPU instead of taking the fog colour (Ambient's glows).
+    static void worldFogRange(float* start,float* end);
+    // AT.5: the High tier's valley mist on the terrain passes (R::setHeightFog from the current modelview, the
+    // camera's view: call before the blocks' x0.25 push), or off. endTerrain turns it off.
+    static void applyHeightFog();
+    // AT.8: water tint + sun glint on the transparent chunk draws (R::setWaterTint); same call rule as applyHeightFog.
+    static void applyWaterTint();
+    // AT.5 (plan S3): the eye distance past which the world fog is total, when the weather has pulled it in
+    // (< the stock end); 0 when it has not, so nothing is culled for it.
+    static float mistCullDistance();
     static void beginTerrain();
     static void endTerrain();
     static void beginHud();

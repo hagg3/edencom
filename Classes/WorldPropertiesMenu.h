@@ -53,6 +53,7 @@ public:
     bool saveEnabled() const;
     bool nameChanged() const;
     bool terrainChanged() const;
+    bool weatherLockChanged() const;   // AT.1c: Lock weather
     bool skyLockChanged() const;   // DN.6: Lock time of day
     void editedGenerator(ClassicGen* g) const;   // the Terrain tab's values over the world's record
     int  lastResult() const   { return m_lastResult; }   // the last applyWorldProperties() (-2 none)

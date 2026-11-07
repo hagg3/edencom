@@ -1,0 +1,8 @@
+# K.2-4 mod pack (folder name mod-*): every line, in order, then how much of it loads
+mod-head@142: warning: unknown key "sound_sets" (ignored)
+mod-head@87: "format" must be 1 (this build reads format 1)
+mod-head@96: the id "emod" is reserved
+mod-head@112: "name" must be a string
+mod-head@124: "tiles" must be an object
+mod-head@76: missing "blocks"
+= refused

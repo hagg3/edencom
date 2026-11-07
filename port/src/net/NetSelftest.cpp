@@ -650,6 +650,19 @@ void legServerList() {
     CHECK(parseInfoLine("INFO:rev=1:name=Castle:players=3:max=64:locked=0:flags=t:new=x:motd=Hi: all\x01", i));
     CHECK(i.name == "Castle" && i.players == 3 && i.max == 64 && i.locked == 0 && i.flags == "t" && i.motd == "Hi: all");
     CHECK(!parseInfoLine("[Server] hi", i));
+    // K.3: `mods=` (the server's mod-list hash); absent = vanilla, any client may join.
+    CHECK(i.mods.empty() && modsCompatible(i, ""));
+    const std::string mh(64, 'a');
+    CHECK(parseInfoLine("INFO:rev=2:name=M:mods=" + mh + ":motd=", i) && i.mods == mh);
+    CHECK(!modsCompatible(i, "") && modsCompatible(i, mh));
+    CHECK(parseInfoLine("INFO:rev=2:mods=XYZ:motd=", i) && i.mods == "?" && !modsCompatible(i, ""));
+    ServerFile mf;
+    ServerEntry me;
+    me.host = "m";
+    me.cache.mods = mh;
+    mf.add(me);
+    ServerFile mg;
+    CHECK(parseServers(formatServers(mf), mg) && mg.at(0)->cache.mods == mh);
 }
 
 void legProbe() {

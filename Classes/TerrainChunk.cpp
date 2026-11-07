@@ -14,6 +14,7 @@
 #include "Geometry.h"
 #include "SkyCycle.h"
 #include "Shadow.h"   // H.2 baked shadows
+#include "BlockTraits.h"   // K.2-1: per-type behaviour
 
 
 
@@ -69,6 +70,7 @@ void TerrainChunk::resetForReuse(){
     if(objects){free(objects);objects=NULL;}   // Q.1 F6
     num_objects=0;
     n_vertices=0;
+    num_lamps=0;   // AT.8
     typesEmpty=false;   // R.2: "not known" until Terrain::addChunk sees what lands in it
    
     
@@ -231,6 +233,7 @@ int TerrainChunk::rebuild2(){   //here be dragons//
     
     clearOldVerticesOnly=false;
     has_light=false;
+    num_lamps=0;
     
    
     v_idx=0;
@@ -275,6 +278,7 @@ int TerrainChunk::rebuild2(){   //here be dragons//
 				int type=pblocks[CC(x,z,y)];
                 if( type==TYPE_LIGHTBOX){
                     has_light=true;
+                    if(num_lamps<MAX_LAMPS){lamps[num_lamps][0]=x;lamps[num_lamps][1]=y;lamps[num_lamps][2]=z;num_lamps++;}   // AT.8
                     //[self setLand:x:z:y:TYPE_GRASS];
                     //type=TYPE_GRASS;
                 }
@@ -868,7 +872,7 @@ int TerrainChunk::rebuild2(){   //here be dragons//
                     }
                     
                     if(clr==0){
-                        if(type==TYPE_GRASS||type==TYPE_GRASS2||type==TYPE_GRASS3||type==TYPE_TNT||type==TYPE_FIREWORK||type==TYPE_BRICK||type==TYPE_VINE||type==TYPE_TRAMPOLINE||(type>=TYPE_ORE_SAND&&type<=TYPE_ALGAE)){
+                        if(trait_paintArtChunk(type)){   // K.2-1
                             coloring=TRUE;
                         }
                         for(int i=0;i<3;i++)
@@ -1042,16 +1046,8 @@ int TerrainChunk::rebuild2(){   //here be dragons//
                             else if(bf==TEX_GRASS_FLOWER){
                                 // H.14: full-colour art, drawn white (paint stays 1)
                             }
-                            else if(bf==TEX_GRASS_SIDE)
-                                bf=TEX_GRASS_SIDE_COLOR;
-                            else if(bf==TEX_TNT_SIDE)
-                                bf=TEX_TNT_SIDE_COLOR;
-                            else if(bf==TEX_TNT_TOP)
-                                bf=TEX_TNT_TOP_COLOR;
-                            else if(bf==TEX_BRICK)
-                                bf=TEX_BRICK_COLOR;
-                            else if(IS_NEWBLOCK_TEX(bf))
-                                bf=NEWBLOCK_COLOR_TEX(bf);   // D.2t
+                            else if(trait_hasUnpaintedTwin(bf))
+                                bf=trait_unpaintedTwin(bf);   // K.2-1 (D.2t's 112-127 twins too)
                             else if(bf==TEX_DIRT){
                                 for(int i=0;i<3;i++)
                                     paint[i]=(float)blockColor[TEX_DIRT][i]/255;
@@ -1220,7 +1216,7 @@ int TerrainChunk::rebuild2(){   //here be dragons//
         }
         
         if(clr==0){
-            if(type==TYPE_GRASS||type==TYPE_GRASS2||type==TYPE_GRASS3||type==TYPE_TNT||type==TYPE_FIREWORK||type==TYPE_BRICK||type==TYPE_VINE||type==TYPE_TRAMPOLINE||blockinfo[type]&IS_BLOCKTNT||(type>=TYPE_ORE_SAND&&type<=TYPE_ALGAE)){
+            if(trait_paintArtBatch(type)){   // K.2-1
                 coloring=true;
             }
             if(blockinfo[type]&IS_BLOCKTNT){
@@ -1406,18 +1402,10 @@ int TerrainChunk::rebuild2(){   //here be dragons//
                 }else if(bf==TEX_BLOCKTNT){
                     bf=TEX_BLOCKTNT;
                 }
-                else if(bf==TEX_GRASS_SIDE)
-                    bf=TEX_GRASS_SIDE_COLOR;
-                else if(bf==TEX_TNT_SIDE)
-                    bf=TEX_TNT_SIDE_COLOR;
-                else if(bf==TEX_TNT_TOP)
-                    bf=TEX_TNT_TOP_COLOR;
-                else if(bf==TEX_BRICK){
-                    bf=TEX_BRICK_COLOR;
+                else if(trait_hasUnpaintedTwin(bf)){
+                    bf=trait_unpaintedTwin(bf);   // K.2-1 (D.2t: the colour art, drawn white)
                 }else if(bf==TEX_GRASS_FLOWER){
                     // H.14: full-colour art, drawn white
-                }else if(IS_NEWBLOCK_TEX(bf)){
-                    bf=NEWBLOCK_COLOR_TEX(bf);   // D.2t: the colour art, drawn white
                 }else if(blockinfo[type]&IS_BLOCKTNT){
                     extern  int blockTntMap[BLOCK_IDS];
                     for(int i=0;i<3;i++){
@@ -1903,6 +1891,7 @@ void TerrainChunk::dropGeometry(){
     needsVBO=false;
     clearOldVerticesOnly=false;
     has_light=false;
+    num_lamps=0;
 }
 bool TerrainChunk::holdsGeometry() const{
     return n_vertices||n_vertices2||n_vertices||n_vertices2||needsVBO||indices||

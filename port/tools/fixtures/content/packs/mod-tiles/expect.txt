@@ -1,0 +1,14 @@
+# K.2-4 mod pack (folder name mod-*): every line, in order, then how much of it loads
+mod-tiles@55: tile "Bad": the name must match [a-z0-9_]{1,24}
+mod-tiles@88: tile "notobj": must be an object
+mod-tiles@131: warning: tile "extra": unknown key "atlas" (ignored)
+mod-tiles@146: tile "nopng": missing "png"
+mod-tiles@170: tile "escape": "png" must be a relative path inside the pack
+mod-tiles@206: tile "absent": cannot read "absent.png"
+mod-tiles@239: tile "text": "notpng.png" is not a PNG
+mod-tiles@273: tile "small": "small.png" is 16x16 (a tile is 32x32)
+mod-tiles@307: tile "broken": "broken.png" does not decode
+mod-tiles@365: tile "good": unknown unpainted tile "small"
+mod-tiles@483: block "uses_good": unknown tile "good"
+mod-tiles@703: block "uses_broken": unknown tile "broken"
+= blocks 2

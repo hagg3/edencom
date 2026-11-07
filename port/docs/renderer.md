@@ -76,6 +76,45 @@ large GPU cost, not yet measured: `WORKING/pw1-parity-audit-2026-10-30.md` G1.
 program. Pixel output is identical (−1 never discarded). `--power-exp=discard` (live `pexp discard`) restores
 the old path for the Air 2 A/B. Air 2 saving not yet measured (PW.2b leg 3).
 
+**AT.2b: `precip` (program 10).** `R::drawPrecip(g, PrecipParams)` draws rain streaks from a static
+`kFmtPrecip` buffer (u8 seed x/y/z + corner bits, read as 0..255 floats) with the column-top map
+(`PrecipParams::tops`, `TF_L8`) on unit 0 sampled in the **vertex** stage (`textureLod`, ES 3.0 / GL 3.3 have
+vertex texture fetch). Uniforms `u_pbox0/1`, `u_pmove`, `u_pslant`, `u_pcolor`, `u_ptops` (+ `u_mv`, `u_proj`).
+No discard, no fog. AT.2c: `PrecipParams::splash` (`u_ptops.w` = 1) switches the same program to flat splash quads on the column tops (`length` = the phase clock; `v_side` is a vec2 so the fragment stage fades both axes, streaks pass 0 for the second). Built on first use only; `compileAll` (`--render-selftest-gl`) checks 10/10. No new GL
+entry point. Engine side: `docs/lighting-liquids-effects.md` "Weather" › Rain.
+
+**AT.5: height-fog twins (programs 11, 12).** `world-hfog` and `world-opaque-hfog` are program 1 / its
+discard-free twin with `#define EDEN_HEIGHT_FOG`: the vertex stage adds `v_wy = dot(u_hfogPlane.xyz, eye) +
+u_hfogPlane.w` (world y), the fragment stage `f = min(f, 1 − u_hfog.w · clamp((u_hfog.x − v_wy) · u_hfog.y) ·
+clamp(v_eyedist · u_hfog.z))`. `R::setHeightFog(plane, params)` / `R::heightFogOff()` (DrawState `hfogOn`, cleared
+by `beginFrame`); `drawWorld` picks the twin (`rgl::heightFogVariant`) only while it is on **and** the fog is on,
+so without it every draw runs the plain programs (after preprocessing, the same source as before). Built on first
+use; `compileAll` checks 12/12, and `--render-selftest-gl` checks a half-fog pixel, off = plain and fog off =
+plain. `--state-trace` world lines gain `hfog=(top,1/thick,1/dist,strength)` only when selected. Engine side:
+`docs/lighting-liquids-effects.md` "Weather" › Mist.
+
+**AT.6: `clouds` (program 13) and the cloud-shadow twins (14–17).** `R::drawClouds(g, CloudParams)` draws the
+cloud layer as one viewport quad (`kFmtClouds`: two floats, the NDC corner; `gl_Position = (corner, u_cray0.w, 1)`,
+no matrices). The vertex stage interpolates the view ray `u_cray0 + x·u_cray1 + y·u_cray2` (exact: the ray is
+affine in NDC); the fragment stage (`precision highp`) intersects it with the plane `u_cpos.z` above the eye and
+samples the `TF_L8` map on unit 0 (`textureLod`, nearest, repeat) at `(u_cpos.xy + hit) · u_cpos.w`; `u_cparam`
+is threshold + fade, `u_ccolor`/`u_cshade` the colours. No discard, no fog. `world-cs`, `world-opaque-cs`,
+`world-hfog-cs`, `world-opaque-hfog-cs` are the four world programs with `#define EDEN_CLOUD_SHADOW`, a
+vertex-stage term only: `v_color.rgb *= 1 − u_cshadow.y · step(u_cshadow.x, textureLod(u_cloudTex, uv))` with
+`uv = (u_csU · eye + u_csU.w, u_csV · eye + u_csV.w)`. `R::setCloudShadow(tex, u, v, params)` /
+`R::cloudShadowOff()` (DrawState `csOn`/`csTex`, cleared by `beginFrame`); `drawWorld` picks the twin
+(`rgl::cloudShadowVariant`, after `heightFogVariant`) only while it is on. The map goes on **texture unit 1**
+through `rgl::bindTexture1` (gl_state's one second-unit binding: it caches unit 1, then makes unit 0 active again
+so every other bind stays a unit-0 bind; `forgetTexture` and `invalidate` clear it). No new GL entry point.
+
+**AT.8: the water-tint twins (18-21).** `world-opaque-wt`, `-hfog-wt`, `-cs-wt`, `-hfog-cs-wt` are the four discard-free world programs with `#define EDEN_WATER_TINT`: in the vertex stage, where `abs(a_color.a - 0.5686) < 0.004` the colour mixes toward `u_wtint.rgb` by `u_wtint.w`, then (until AT.11, see below) added `u_wsun.w * (reflect(normalize(eye), u_wup) . u_wsun)^32`. `R::setWaterTint(tint, sun, up)` / `R::waterTintOff()` (DrawState `wtOn`, cleared by `beginFrame`); `drawWorld` picks `rgl::waterTintVariant` only for `alphaRef < 0` draws while it is on. `--render-selftest-gl` checks alpha 145 tinted, other alphas and off untouched.
+
+**AT.11: the glint twins (22-25), and the tint twins lose the glint.** The per-vertex glint moved out of `EDEN_WATER_TINT` (which is now the tint alone: Low draws only that) into `#define EDEN_WATER_GLINT`: `world-opaque-wg`, `-hfog-wg`, `-cs-wg`, `-hfog-cs-wg` add, in the vertex stage, `v_sp = a_position.xz * 4` (1/16-block cells) and `v_glint = (r . sun)^16` on water (0 elsewhere) plus a faint `0.3 * u_wsun.w * (r . sun)^32` sheen, and in the fragment stage a hash of `floor(v_sp)` that lights the cell near white when it is in the top `0.1 * v_glint` and its twinkle phase `fract(h * 13.7 + u_wup.w)` is < 0.3 (`u_wup.w` is the clock). `drawWorld` picks `rgl::waterGlintVariant` on top of the tint twin only while `wtSun[3] > 0` (High, by day, clear sky). 25 programs; `--render-selftest-gl` adds "no glint away from the mirror direction = the tint alone" (sun below the surface) and that the glint twin was the one drawn. Ambient's glows (AT.11) are plain `drawWorld` with `B_ADD`, a 16 × 16 L8 texture and `fogOff()` (they fade on the CPU by `Graphics::worldFogRange`).
+`compileAll` checks 17/17; `--state-trace` world lines gain `cshadow=(threshold,strength)` only when selected.
+Engine side: `docs/lighting-liquids-effects.md` "Weather" › Clouds.
+
+
+
 ## Frame structure and invariants
 `EdenViewController::drawFrame` brackets `World::renderFrame` with `R::beginFrame/endFrame`; the scene
 bracket is `R::beginScene/endScene` since FT.16 (forwarding to `eden_scene_pass_begin/end`, which report to

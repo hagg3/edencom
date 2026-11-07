@@ -1,0 +1,13 @@
+Wonder Blocks (Emod example mod pack)
+
+Base textures: "Voxel Pack" by Kenney Vleugels (www.kenney.nl), Creative Commons Zero (CC0 1.0,
+http://creativecommons.org/publicdomain/zero/1.0/). Taken from the 48x48 PNGs mirrored at
+https://github.com/minetest-mods/voxelpack_by_kenney and scaled to 32x32 by port/tools/wonders-pack-art.py:
+default_pine_tree, default_pine_tree_top, default_pine_wood, default_pine_needles, default_brick,
+default_sandstone_brick, default_stone_brick, default_obsidian_brick, default_obsidian_block, default_ice,
+default_clay, default_glass, default_stone, default_stone_block, default_mineral_gold.
+Credit is not required by CC0, but given with thanks.
+
+The icons drawn on top of them (house, bridge, swirl, question mark, sun, moon, cloud, cross, "i", sapling,
+egg), the crate frame, the Lucky Block and First Aid backgrounds, pack.json, README.md and scripts/*.lua are
+part of Emod.

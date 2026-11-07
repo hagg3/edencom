@@ -62,7 +62,8 @@ not something to do now**.
 2. **Extract pure-C modules**: math/SAT out of `Util.cpp`; file-format arithmetic out
    of `FileManager` (keep NSFileHandle at the edges).
 3. **Data-drive the block tables**: generate `Constants.h`/`Globals.cpp` tables from a
-   single declarative source; eliminates the multi-file update trap.
+   single declarative source; eliminates the multi-file update trap. *(Port: done for the per-type tables in K.2-3: the
+   stock pack `media/packs/eden/pack.json` fills them at boot, [content-packs.md](content-packs.md).)*
 4. **De-globalize screen metrics** behind a `Display` struct passed to Graphics/UI. *(Port, partly:
    the metrics are still globals, but derived and re-laid-out — `Hud::layoutForScreen`,
    `port/src/seam/DisplayProfile.cpp`.)*

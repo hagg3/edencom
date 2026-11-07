@@ -153,7 +153,7 @@ public:
     static bool busy(const TrailerPos& block);   // has a live instance
 
     // ---- console lines (C.1)
-    enum Source { SRC_BLOCK = 0, SRC_CONSOLE, SRC_HARNESS };
+    enum Source { SRC_BLOCK = 0, SRC_CONSOLE, SRC_HARNESS, SRC_LUA };   // SRC_LUA: K.4, runNow
     // Parse `src` with consoleOptions(ext) and, if every statement parses, run it at once as a job
     // anchored at (ax, ay, az) (engine order) up to its first wait. Errors go to `sink`, one line per
     // bad statement ("1: Unknown block: glas"), then "line not run". Returns the job id (> 0) if it
@@ -164,6 +164,15 @@ public:
     static void playerAnchor(int* x, int* y, int* z);
     struct JobInfo { int id; float wait; size_t pc, count; std::string src; };
     static std::vector<JobInfo> jobs();  // console jobs still waiting, oldest first
+    // K.4 (WORKING/mod-scripting-plan-2026-11-03.md S8, S9): a mod script's statements (Classes/ModScript),
+    // parsed by parseLine(consoleOptions(NULL)) and run AT ONCE from statement *pc, anchored at (ax, ay, az):
+    // the block interpreter's own switch, so the same refusals, caps and toasts. Refusals go to `sink`
+    // (NULL: toasts, like a block). Never a job, never counted in liveCount(). The caller refuses `wait`
+    // (a script waits with a coroutine). Returns true when every statement ran; false when this frame's
+    // WORK_PER_FRAME ran out first: *pc is where to carry on next frame. *cells / *refused add up.
+    static bool residentCell(int ex, int ey, int ez);   // K.4: set/fill's "resident" test (engine order)
+    static bool runNow(const std::shared_ptr<const Program>& prog, size_t* pc, int ax, int ay, int az, Sink* sink,
+                       int* cells, int* refused);
     // job > 0: that job; STOP_JOBS: every console job; STOP_ALL: every job and every block instance.
     // Returns how many stopped.
     enum { STOP_JOBS = 0, STOP_ALL = -1 };
@@ -177,6 +186,7 @@ public:
         int live, started, finished, statements, cells, unknown, refusedDepth, refusedFull,
             refusedCells, triggers, presses, suspended, maxDepth;
         int lines, jobs;   // C.1: console lines run, console jobs waiting (not in describe())
+        int luaStatements; // K.4: statements runNow ran (also counted in `statements`)
     };
     static Stats stats();
     static const char* describe();       // one JSON line, for probes

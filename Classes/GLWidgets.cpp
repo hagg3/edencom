@@ -445,7 +445,7 @@ void Toast::render() const {
 }
 
 // --- Button --------------------------------------------------------------------------------
-Button::Button() : m_pt(15.0f), m_pressed(false), m_enabled(true), m_tone(TONE_DEFAULT), m_icon(-1),
+Button::Button() : m_pt(15.0f), m_pressed(false), m_enabled(true), m_muted(false), m_tone(TONE_DEFAULT), m_icon(-1),
                    m_fitPad(-1.0f), m_maxW(0.0f) {
     m_rect = CGRectMake(0, 0, 0, 0);
     m_hit = CGRectMake(0, 0, 0, 0);
@@ -579,7 +579,7 @@ void Button::render() const {
     // "Pressed == selected" inverts BOTH the label and its shadow — that inversion is the cue.
     if (!m_enabled) m_label.drawCentered(cx, yTop, kKeyline);
     else if (m_pressed) m_label.drawChrome(cx, yTop, m_tone == TONE_DANGER ? kWhite : kTextPressed, kBlack);
-    else           m_label.drawChrome(cx, yTop, kText,        kWhite);
+    else           m_label.drawChrome(cx, yTop, m_muted ? kTextMuted : kText, kWhite);
 }
 
 // --- Toggle --------------------------------------------------------------------------------
@@ -726,7 +726,7 @@ void Slider::render() const {
 }
 
 // --- Stepper -------------------------------------------------------------------------------
-Stepper::Stepper() : m_decGlyph("-"), m_incGlyph("+"), m_glyphPt(0.0f) { m_rect = CGRectMake(0, 0, 0, 0); }
+Stepper::Stepper() : m_decGlyph("-"), m_incGlyph("+"), m_glyphPt(0.0f), m_muted(false) { m_rect = CGRectMake(0, 0, 0, 0); }
 
 // The glyphs are sized from the buttons (setRect), so a compact stepper gets compact glyphs.
 void Stepper::setGlyphs(const char* dec, const char* inc) {
@@ -775,7 +775,7 @@ void Stepper::render() const {
     bevel(well, BEVEL_SUNKEN);
     if (!m_value.empty())
         m_value.drawCentered(well.origin.x + well.size.width * 0.5f,
-                             well.origin.y + (well.size.height + m_value.height()) * 0.5f, kText);
+                             well.origin.y + (well.size.height + m_value.height()) * 0.5f, m_muted ? kTextMuted : kText);
     m_dec.render();
     m_inc.render();
 }

@@ -41,7 +41,9 @@
 #include <cstdio>
 #include <cstring>
 #include <cmath>
+#include "../../../Classes/SrclikeMove.h"   // SRC.2: srclike_movement / srclike_autobhop
 #include "../../../Classes/SkyCycle.h"    // DN.2: day_night_cycle / day_length
+#include "../../../Classes/Weather.h"     // SX.6: snowline / mistheight
 #include "../../../Classes/TouchLook.h"   // Stage L: TOUCH_LOOK_* globals the touch_look_* rows write
 
 // Mirrors the anonymous enum at the top of Classes/SettingsMenu.mm. Those constants are file-local
@@ -67,7 +69,18 @@ enum {
 // KEYBINDS section near the bottom of this file for why a keybind is a parallel table.
 // MP.8: KIND_TEXT (4) is a string row (Experiments > Matchmakers): its value lives in g_text[], not
 // g_value[], persists as an NSString, and has no float meaning (min/max/step/def are unused).
-enum { KIND_TOGGLE = 0, KIND_RANGE = 1, KIND_ENUM = 2, KIND_KEY = 3, KIND_TEXT = 4 };
+// SX.1 (WORKING/settings-ux-audit-2026-11-06.md §4.1): KIND_PAGE (5) is an "Open" row that opens the
+// sub-page named in its `options` (SettingsMenu's kPages[]); KIND_HEADING (6) is a label-only section
+// heading. Neither has a value: never persisted, never a cvar (the console skips kind >= KIND_TEXT).
+// SX.6 (audit §4.2): KIND_CVAR (7) is a row that SHOWS a console variable owned elsewhere (`options` = its
+// name, e.g. "world.time"): the GL screen draws it as the cvar's own kind with the cvar's range, and reads and
+// writes through the cvar's get/set. No value here: never persisted (the owner saves it: world ones in the
+// .emod at the next commit), never re-bridged as a cvar. A value that persists in eden_prefs is an ordinary
+// row instead, and its cvar is derived from it (eden_settings_cvar): one table either way.
+enum { KIND_TOGGLE = 0, KIND_RANGE = 1, KIND_ENUM = 2, KIND_KEY = 3, KIND_TEXT = 4, KIND_PAGE = 5, KIND_HEADING = 6, KIND_CVAR = 7 };
+// SX.6: when the GL screen shows a row. SCOPE_WORLD rows need a world in play (in a multiplayer session they
+// stay, badged "temporary": U3); SCOPE_NO_WORLD rows stand in for them on the title screen's Settings.
+enum { SCOPE_ALWAYS = 0, SCOPE_WORLD = 1, SCOPE_NO_WORLD = 2 };
 
 struct Setting {
     const char* key;      // persistence key AND the JS-side id
@@ -78,9 +91,15 @@ struct Setting {
     float min, max, step;
     float def;
     const char* hint;     // one line of explanation, shown under the control
-    const char* options;  // KIND_ENUM only: comma-separated labels, e.g. "Auto,Touch,Keyboard+Mouse"
+    const char* options;  // KIND_ENUM: comma-separated labels, e.g. "Auto,Touch,Keyboard+Mouse". KIND_PAGE: the page id it opens
     const char* parent;   // key of a KIND_TOGGLE row this one depends on (muted while that is off), or NULL.
                           // TRAILING on purpose: positional init leaves it NULL for every row that omits it.
+    // SX.1: DISPLAY placement only, decoupled from `group`. `group` names the console variable
+    // (lower(group) + "." + key) and must never change for a shipped row; `page` says where the row is
+    // drawn: a sub-page id from SettingsMenu's kPages[] or another tab's group. NULL = the group's tab.
+    // Trailing, like `parent`, so rows that omit it are untouched.
+    const char* page;
+    int scope;            // SX.6: SCOPE_*; trailing, 0 = always shown
 };
 
 static const Setting kSettings[] = {
@@ -88,6 +107,7 @@ static const Setting kSettings[] = {
   { "health",            "Health",            "Gameplay",  KIND_TOGGLE, ENG_HEALTH,     0,   1,   1,   1,  "Falls, fire and creatures hurt.",                     NULL },
   { "autojump",          "Auto-jump",         "Gameplay",  KIND_TOGGLE, ENG_AUTOJUMP,   0,   1,   1,   1,  NULL,                            NULL },
   { "creatures",         "Creatures",         "Gameplay",  KIND_TOGGLE, ENG_CREATURES,  0,   1,   1,   1,  NULL,                       NULL },
+  { "crouch",            "Crouch mode",       "Experiments", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Adds a crouch key for 1-block gaps.", NULL, NULL, "Gameplay" },
   // Fly mode lives in Gameplay (was Experiments). The four sliders default to the original feel
   // (accel 10x walk, drag .995/frame, rise/fall JUMP_SPEED*3, no speed cap); see FLY_* in Classes/Player.mm.
   { "fly",               "Allow fly",         "Gameplay",  KIND_TOGGLE, -1,             0,   1,   1,   0,  NULL,                   NULL },
@@ -95,19 +115,48 @@ static const Setting kSettings[] = {
   { "fly_max_speed",     "Fly top speed",     "Gameplay",  KIND_RANGE,  -1,             0, 100,   1,   0,  "Blocks per second. 0 is unlimited.", NULL, "fly" },
   { "fly_braking",       "Fly braking",       "Gameplay",  KIND_RANGE,  -1,             0,   1, .05f,   0,  "Higher stops sooner when you let go.", NULL, "fly" },
   { "fly_vertical",      "Fly rise/fall speed", "Gameplay", KIND_RANGE, -1,          .05f,   1, .05f,   1,  NULL, NULL, "fly" },
+  { "noclip_speed",      "Noclip speed",      "Gameplay",  KIND_RANGE,  -1,            10, 100,   5,  60,  "Blocks per second while noclipping.", NULL, "fly" },
+  { "heading_world_all", "All worlds", "World", KIND_HEADING, -1, 0, 0, 0, 0, NULL, NULL },
+  { "day_night_cycle",   "Day/night cycle",   "Gameplay", KIND_TOGGLE, -1,           0,   1,   1,   0,  "The sky and light follow a clock. Overrides sky painting.", NULL, NULL, "World" },
+  { "day_length",        "Day length",        "Gameplay", KIND_ENUM,   -1,           0,   3,   1,   1,  "Real minutes per full day.", "10 min,20 min,40 min,60 min", "day_night_cycle", "World" },
+  // AT.1a (WORKING/atmosphere-plan-2026-11-05.md A6): random rain/snow/storms/mist. Works with the cycle off.
+  // Classes/Weather (AT.1b) reads eden_weather_enabled(); off = nothing runs, nothing is saved.
+  { "weather",           "Weather",           "Gameplay", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Rain, snow, storms and mist come and go.", NULL, NULL, "World" },
+  // SX.9: how often (clear spells' length) and how often storms follow rain; Normal = the plan's shares.
+  { "frequency",         "Weather frequency", "Weather", KIND_ENUM, -1,              0,   2,   1,   1,  "How often it rains or snows. Normal is about 4 days in 10 overcast or wet.", "Rare,Normal,Often", "weather", "World" },
+  { "storms",            "Storms",            "Weather", KIND_ENUM, -1,              0,   3,   1,   2,  "How often rain turns into a thunderstorm.", "Off,Rare,Normal,Often", "weather", "World" },
+  { "weather_tuning_open", "Weather tuning",  "World", KIND_PAGE, -1,                0,   0,   0,   0,  "Snowline and mist height.", "weathertune", "weather" },
+  // SX.6: the open world's own clock and weather (audit §4.3), through their cvars. Saved with the world at its
+  // next save (records SKY_CLOCK, WEATHER); in a multiplayer session they only change this device's view (U3).
+  { "heading_world_this", "This world", "World", KIND_HEADING, -1, 0, 0, 0, 0, "Saved with this world.", NULL, NULL, NULL, SCOPE_WORLD },
+  { "heading_world_none", "This world", "World", KIND_HEADING, -1, 0, 0, 0, 0, "Open a world to change its time and weather.", NULL, NULL, NULL, SCOPE_NO_WORLD },
+  { "world_time",        "Time of day",       "World", KIND_CVAR, -1,                0,   0,   0,   0,  "Sets this world's clock. Noon is 12:00.", "world.time", NULL, NULL, SCOPE_WORLD },
+  { "world_locktime",    "Lock time of day",  "World", KIND_CVAR, -1,                0,   0,   0,   0,  "Keeps this world's clock still.", "world.locktime", "day_night_cycle", NULL, SCOPE_WORLD },
+  { "weather_now",       "Weather now",       "World", KIND_CVAR, -1,                0,   0,   0,   0,  "Starts that weather here now.", "weather.now", "weather", NULL, SCOPE_WORLD },
+  { "weather_lock",      "Lock weather",      "World", KIND_CVAR, -1,                0,   0,   0,   0,  "The current weather never ends.", "weather.lock", "weather", NULL, SCOPE_WORLD },
+  // SX.6: World > Weather tuning. Group "Weather" makes them the weather.snowline / weather.mistheight cvars
+  // (they were hand-made cvars holding session values; now persisted like any setting, for all worlds).
+  { "snowline",          "Snowline",          "Weather", KIND_RANGE, -1,             0,   1, .05f, .75f, "Snow falls at and above this share of the world height. The default map's snow mountain always snows.", NULL, NULL, "weathertune" },
+  { "mistheight",        "Mist height",       "Weather", KIND_RANGE, -1,             0,   1, .05f, .40f, "Top of the valley mist at dawn and in rain, as a share of the world height. Atmosphere High only.", NULL, NULL, "weathertune" },
 
+  // SX.3: two clean trees. Ambience beds follow the Music toggle (Resources::soundEventBed), so they are Music children (U7).
+  { "master_volume",     "Master volume",     "Audio",     KIND_RANGE,  -1,             0,   1, .05f,  1,  "Overall loudness, on top of the sliders below.",                  NULL },
+  { "mute_in_background", "Mute in background", "Audio",   KIND_TOGGLE, -1,             0,   1,   1,   0,  "Silence the game while its window is not in focus.",            NULL },
   { "music",             "Music",             "Audio",     KIND_TOGGLE, ENG_MUSIC,      0,   1,   1,   1,  NULL,                                                               NULL },
-  { "sound",             "Sound effects",     "Audio",     KIND_TOGGLE, ENG_SOUND,      0,   1,   1,   1,  NULL,                                                               NULL },
   { "music_volume",      "Music volume",      "Audio",     KIND_RANGE,  -1,             0,   1, .05f,  1,  NULL,                                                               NULL, "music" },
-  { "ambience_volume",   "Ambience volume",   "Audio",     KIND_RANGE,  -1,             0,   1, .05f,  1,  NULL,                                                               NULL },
+  { "ambience_volume",   "Ambience volume",   "Audio",     KIND_RANGE,  -1,             0,   1, .05f,  1,  NULL,                                                               NULL, "music" },
+  { "night_ambience", "Night ambience", "Audio", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Night sounds; needs the day/night cycle.", NULL, "music" },
+  { "sound",             "Sound effects",     "Audio",     KIND_TOGGLE, ENG_SOUND,      0,   1,   1,   1,  NULL,                                                               NULL },
   { "effects_volume",    "Effects volume",    "Audio",     KIND_RANGE,  -1,             0,   1, .05f,  1,  NULL,                                                               NULL, "sound" },
+  { "creature_walk_voices", "Creature walking sounds", "Audio", KIND_TOGGLE, -1,  0,   1,   1,   0,  "Creatures call out as they start walking.", NULL, "sound" },
+  { "touch_controls_sound", "Touch controls sound", "Audio", KIND_TOGGLE, -1,           0,   1,   1,   0,  NULL, NULL },
 
   // input_mode: 0=Auto (matchMedia + first-input detection, see eden-st.html), 1=Touch,
   // 2=Keyboard+Mouse. Auto is the default so nothing changes for players who never open Settings.
-  { "input_mode",        "Input mode",        "Controls",  KIND_ENUM,   -1,             0,   2,   1,   0,  "Force one if Auto guesses wrong.", "Auto,Touch,Keyboard+Mouse" },
+  { "input_mode",        "Input mode",        "Controls",  KIND_ENUM,   -1,             0,   2,   1,   0,  "Force one if Auto guesses wrong. Menus work in every mode.", "Auto,Touch,Keyboard+Mouse" },
   { "hold_to_act",       "Hold to mine/build", "Controls",  KIND_TOGGLE, -1,            0,   1,   1,   1,  "Repeat while the button is held.", NULL },
   { "mouse_sensitivity", "Mouse sensitivity", "Controls",  KIND_RANGE,  -1,          .25f,  3, .05f,  1,  NULL,                         NULL },
-  { "mouse_sensitivity_y", "Mouse sensitivity (Y)", "Controls", KIND_RANGE, -1,      .25f,  3, .05f,  1,  NULL,  NULL },
+  { "mouse_sensitivity_y", "Mouse sensitivity (Y)", "Controls", KIND_RANGE, -1,      .25f,  3, .05f,  1,  "Vertical, separate from horizontal.",  NULL },
   { "invert_look",       "Invert look",       "Controls",  KIND_TOGGLE, -1,             0,   1,   1,   0,  NULL,                                                               NULL },
   // Stage L: touch drag-camera rows (Classes/TouchLook.h). Shown only with touch input; the mouse rows are
   // hidden then (eden_settings_native_hidden). Smoothing 0 = raw exactly. Glide is a half-life in seconds, 0 = off (default).
@@ -124,16 +173,16 @@ static const Setting kSettings[] = {
   { "gamepad_look_sensitivity", "Gamepad look speed", "Controls", KIND_RANGE, -1,     .25f,  3, .05f,  1,  NULL,        NULL, "gamepad" },
   { "gamepad_deadzone",  "Gamepad deadzone",  "Controls",  KIND_RANGE,  -1,          .05f, .5f, .05f, .15f, "Raise it if the camera drifts.", NULL, "gamepad" },
 
+  { "heading_video_quality", "Quality", "Video", KIND_HEADING, -1, 0, 0, 0, 0, NULL, NULL },
   // B.8: a shortcut over view_distance + render_scale (see kPresets[]). Stored like any row, but
   // moving either knob by hand drops it to Custom. Default reproduces the pre-B.8 look exactly.
 #if defined(EDEN_PLATFORM_IOS)
-  { "graphics_preset",   "Graphics preset",   "Video",     KIND_ENUM,   -1,             0,   3,   1,   2,  NULL, "Custom,Low,Default,High" },
+  { "graphics_preset",   "Graphics preset",   "Video",     KIND_ENUM,   -1,             0,   3,   1,   2,  "Sets view distance, render scale and atmosphere.", "Custom,Low,Default,High" },
 #else
-  { "graphics_preset",   "Graphics preset",   "Video",     KIND_ENUM,   -1,             0,   3,   1,   2,  NULL, "Custom,Low,Default,High" },
+  { "graphics_preset",   "Graphics preset",   "Video",     KIND_ENUM,   -1,             0,   3,   1,   2,  "Sets view distance, render scale and atmosphere.", "Custom,Low,Default,High" },
 #endif
-  { "fov",               "Field of view",     "Video",     KIND_RANGE,  -1,            60, 110,   1,  80,  "80 is the original.",                    NULL },
   // B.5a: draw-culling only (Graphics::setZFAR); a "less" knob for weak CPUs/GPUs. Auto = the per-device value.
-  { "view_distance",     "View distance",     "Video",     KIND_ENUM,   -1,             0,   6,   1,   0,  NULL, "Auto,4,5,6,7,8,9" },
+  { "view_distance",     "View distance",     "Video",     KIND_ENUM,   -1,             0,   6,   1,   0,  "How far terrain is drawn. Lower is faster.", "Auto,4,5,6,7,8,9" },
   // B.5b-2: the resident window's radius in chunks (kRenderRadius[] below), read once per world
   // entry by eden_window_radius_for_world() -- the arrays are sized from it, so it cannot change
   // under an open world. 9 is stock. iOS offers 12 at most, opt-in (P.4 decision 5): T.B16 measured
@@ -146,20 +195,6 @@ static const Setting kSettings[] = {
 #else
   { "render_radius",     "Render distance",   "Video",     KIND_ENUM,   -1,             0,   8,   1,   5,  "Applies when a world opens.", "4,5,6,7,8,9,10,12,16" },
 #endif
-  // H.2: baked top-face shadows (Classes/Shadow.h). CPU meshing only (< 1 % computed), so not in the
-  // presets. Default Off until the user's T look picks the shipped one (ROADMAP Stage H).
-  { "shadows",           "Shadows",           "Video",     KIND_ENUM,   -1,             0,   2,   1,   1,  NULL, "Off,Classic,Smooth" },
-  // G.5b-4 (renderer plan §7): ES 1.1 per-vertex lighting as 2.1 drew it. Off = the port's unlit look
-  // before G.5b-4. Read by the GL backend's drawLit (R8); creatures are lit either way. Not in the presets.
-  { "original_lighting", "Original lighting", "Video",     KIND_TOGGLE, -1,             0,   1,   1,   1,  "Light debris and fireworks as Eden 2.1 did.", NULL },
-  { "display_mode",      "Display",           "Video",     KIND_ENUM,   -1,             0,   2,   1,   0,  NULL,             "Fixed,Fit window,Fullscreen" },
-  // Audit rows D1 + D4 — the two knobs on the (now derived) engine POINT space. Both default to
-  // Auto, which defers to the active device profile (src/seam/DisplayProfile.cpp's kProfiles[]):
-  // desktop gets 125% + Adaptive, touch gets 200% + Classic, i.e. exactly the 568x320 layout this
-  // port shipped with. Leaving them on Auto is not the same as picking the profile's value by hand
-  // — Auto re-resolves if the input mode changes, an explicit choice does not.
-  { "ui_scale",          "UI scale",          "Video",     KIND_ENUM,   -1,             0,   4,   1,   0,  NULL, "Auto,100%,125%,150%,200%" },
-  { "display_layout",    "Layout aspect",     "Video",     KIND_ENUM,   -1,             0,   2,   1,   0,  NULL, "Auto,Classic 16:9,Adaptive" },
   // Audit item #6 (§4a/§4c.1-2): the drawable used to be pinned to 1136x640 with devicePixelRatio
   // never read at all, so on any modern display the game was a small buffer upscaled — permanently
   // blurry. These two rows are the knobs on the now-dynamic drawable that public/eden-st.html
@@ -172,11 +207,17 @@ static const Setting kSettings[] = {
   // eden_settings_set() clamp to 100%; eden_get_render_scale_pct() reads a stored 3 as 100%.
   // Hidden and read as 100% from N.4.12 until FT.16 (2026-10-28) replaced the blit with a quad.
   // The default is per device: 75% on Air 2-class hardware (eden_ios_air2_class), 100% elsewhere.
-  { "render_scale",      "Render scale",      "Video",     KIND_ENUM,   -1,             0,   2,   1,   2,  NULL, "50%,75%,100%" },
+  { "render_scale",      "Render scale",      "Video",     KIND_ENUM,   -1,             0,   2,   1,   2,  "Below 100% is softer but cooler and faster.", "50%,75%,100%" },
 #else
-  { "render_scale",      "Render scale",      "Video",     KIND_ENUM,   -1,             0,   3,   1,   2,  NULL, "50%,75%,100%,125%" },
+  { "render_scale",      "Render scale",      "Video",     KIND_ENUM,   -1,             0,   3,   1,   2,  "Below 100% is softer but cooler and faster.", "50%,75%,100%,125%" },
 #endif
-  { "dpr_cap",           "Max pixel ratio",   "Video",     KIND_ENUM,   -1,             0,   2,   1,   2,  NULL, "1x,1.5x,2x" },
+  // H.2: baked top-face shadows (Classes/Shadow.h). CPU meshing only (< 1 % computed), so not in the
+  // presets. Default Off until the user's T look picks the shipped one (ROADMAP Stage H).
+  { "shadows",           "Shadows",           "Video",     KIND_ENUM,   -1,             0,   2,   1,   1,  "Soft shading under overhangs. Smooth costs a little more meshing.", "Off,Classic,Smooth" },
+  // AT.1a: the Atmosphere tier (A7). Default High; eden_apply_profile_defaults seeds Off on Air 2-class iOS.
+  // A tier change writes the Atmo-group element rows below (P10); a preset knob (kPresets[].atmosphere).
+  { "atmosphere",        "Atmosphere",        "Video",     KIND_ENUM,   -1,             0,   3,   1,   2,  "Clouds, precipitation and ambient particles.", "Off,Low,High,Custom" },
+  { "atmosphere_details_open", "Atmosphere details", "Video", KIND_PAGE, -1,         0,   0,   0,   0,  "Switch each element on or off. Edits show as Custom.", "atmosphere" },
   // Row #14: an opt-in frame-rate ceiling, mainly for thermal/battery on touch devices (a voxel
   // game at an uncapped rAF is a thermal-throttle machine there — perf-audit §4b). Uncapped is the
   // default for everyone; eden_apply_input_profile() below sets it to 60 the first time a touch
@@ -185,13 +226,39 @@ static const Setting kSettings[] = {
   // P.14 (decision P.4-4): no 45 on iOS -- at vsync 1 on a 60 Hz panel it alternates 16.7 / 33.3 ms
   // frames. The list is 3 long here, so the stored index differs from the 4-entry list below:
   // eden_get_fps_cap() maps it, the profile seeder remaps, and eden_settings_init migrates once.
-  { "fps_cap",           "Frame rate cap",    "Video",     KIND_ENUM,   -1,             0,   2,   1,   0,  NULL, "Uncapped,30,60" },
+  { "fps_cap",           "Frame rate cap",    "Video",     KIND_ENUM,   -1,             0,   2,   1,   0,  "30 or 60 saves battery and heat.", "Uncapped,30,60" },
 #else
-  { "fps_cap",           "Frame rate cap",    "Video",     KIND_ENUM,   -1,             0,   3,   1,   0,  NULL, "Uncapped,30,45,60" },
+  { "fps_cap",           "Frame rate cap",    "Video",     KIND_ENUM,   -1,             0,   3,   1,   0,  "30 or 60 saves battery and heat.", "Uncapped,30,45,60" },
 #endif
-
+  // G.5b-4 (renderer plan §7): ES 1.1 per-vertex lighting as 2.1 drew it. Off = the port's unlit look
+  // before G.5b-4. Read by the GL backend's drawLit (R8); creatures are lit either way. Not in the presets.
+  { "original_lighting", "Original lighting", "Video",     KIND_TOGGLE, -1,             0,   1,   1,   1,  "Shading on debris and fireworks, as in Eden 2.1.", NULL },
+  { "heading_video_view", "View", "Video", KIND_HEADING, -1, 0, 0, 0, 0, NULL, NULL },
+  { "fov",               "Field of view",     "Video",     KIND_RANGE,  -1,            60, 110,   1,  80,  "80 is the original.",                    NULL },
   { "crosshair",         "Crosshair",         "Interface", KIND_TOGGLE, -1,             0,   1,   1,   1,  NULL,             NULL },
   { "block_preview",     "Block preview",     "Interface", KIND_TOGGLE, -1,             0,   1,   1,   0,  "Shows where the next block goes.",      NULL },
+  { "ui_scale",          "UI scale",          "Video",     KIND_ENUM,   -1,             0,   4,   1,   0,  "Size of menus and HUD. Auto picks for this device.", "Auto,100%,125%,150%,200%" },
+  { "heading_video_comfort", "Comfort", "Video", KIND_HEADING, -1, 0, 0, 0, 0, NULL, NULL },
+  { "reduce_flashing",   "Reduce flashing",   "Video",     KIND_TOGGLE, -1,             0,   1,   1,   0,  "Lightning dims the sky gently instead of flashing.", NULL },
+
+  // AT.1a P10: one switch per element, set by the tier above (kAtmoTier[]). Group Atmo = the atmo.* cvars; hidden from the panel.
+  { "precip",            "Rain and snow",       "Atmo",       KIND_TOGGLE, -1,             0,   1,   1,   1,  NULL, NULL, NULL, "atmosphere" },
+  { "splash",            "Rain splashes",       "Atmo",       KIND_TOGGLE, -1,             0,   1,   1,   1,  NULL, NULL, NULL, "atmosphere" },
+  { "clouds",            "Clouds",              "Atmo",       KIND_TOGGLE, -1,             0,   1,   1,   1,  NULL, NULL, NULL, "atmosphere" },
+  { "cloud_shadows",     "Cloud shadows",       "Atmo",       KIND_TOGGLE, -1,             0,   1,   1,   0,  NULL, NULL, NULL, "atmosphere" },
+  { "height_fog",        "Height fog",          "Atmo",       KIND_TOGGLE, -1,             0,   1,   1,   1,  NULL, NULL, NULL, "atmosphere" },
+  { "ambient",           "Ambient particles",   "Atmo",       KIND_TOGGLE, -1,             0,   1,   1,   1,  NULL, NULL, NULL, "atmosphere" },
+  { "water_tint",        "Water tint",          "Atmo",       KIND_TOGGLE, -1,             0,   1,   1,   1,  NULL, NULL, NULL, "atmosphere" },
+  { "glint",             "Water glint",         "Atmo",       KIND_TOGGLE, -1,             0,   1,   1,   1,  NULL, NULL, NULL, "atmosphere" },
+  { "halos",             "Lamp halos",          "Atmo",       KIND_TOGGLE, -1,             0,   1,   1,   1,  NULL, NULL, NULL, "atmosphere" },
+  { "display_mode",      "Display",           "Video",     KIND_ENUM,   -1,             0,   2,   1,   0,  NULL,             "Fixed,Fit window,Fullscreen" },
+  // Audit rows D1 + D4 — the two knobs on the (now derived) engine POINT space. Both default to
+  // Auto, which defers to the active device profile (src/seam/DisplayProfile.cpp's kProfiles[]):
+  // desktop gets 125% + Adaptive, touch gets 200% + Classic, i.e. exactly the 568x320 layout this
+  // port shipped with. Leaving them on Auto is not the same as picking the profile's value by hand
+  // — Auto re-resolves if the input mode changes, an explicit choice does not.
+  { "display_layout",    "Layout aspect",     "Video",     KIND_ENUM,   -1,             0,   2,   1,   0,  NULL, "Auto,Classic 16:9,Adaptive" },
+  { "dpr_cap",           "Max pixel ratio",   "Video",     KIND_ENUM,   -1,             0,   2,   1,   2,  NULL, "1x,1.5x,2x" },
   // The escape hatch for the rebuilt DOM UI (public/eden-menu.js + public/eden-pausemenu.js). ON =
   // the original 2010 GL menus, which are still compiled and still running underneath — for the
   // MAIN menu "legacy" is literally "stop drawing the overlay" and there is no second code path to
@@ -204,31 +271,47 @@ static const Setting kSettings[] = {
 
   // Experiments: opt-in, off by default (except fps_normalize, which keeps its pre-existing
   // default now that it has moved tabs — only its group changed, not its behavior).
+  { "srclike_movement",   "Srclike movement",   "Experiments", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Strafing, bunnyhopping and surfing. Keyboard and mouse.", NULL },
+  { "srclike_settings_open", "Srclike settings", "Experiments", KIND_PAGE, -1,      0,   0,   0,   0,  "Auto-bhop, sensitivity and the movement sliders.", "srclike", "srclike_movement" },
+  { "camera_view",       "Camera view",       "Video", KIND_ENUM,   -1,           0,   2,   1,   0,  "Third person shows your body. F5 cycles.", "First person,Third person,Third person (front)", NULL, "Experiments" },
   { "fps_normalize",     "Frame-rate normalize", "Experiments", KIND_TOGGLE, -1,        0,   1,   1,   1,  "Same walk speed at any refresh rate.",     NULL },
-  { "crouch",            "Crouch mode",       "Experiments", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Adds a crouch key for 1-block gaps.", NULL },
+  { "srclike_autobhop",   "Auto-bhop (hold jump)", "Experiments", KIND_TOGGLE, -1,       0,   1,   1,   0,  "Holding jump hops again on landing. Off: time each hop.", NULL, NULL, "srclike" },
+  { "srclike_sens",       "Srclike sensitivity", "Experiments", KIND_RANGE, -1,         0,  10, .05f,   0,  "Counter-Strike value (degrees per count = value x 0.022). 0 = use Mouse sensitivity.", NULL, NULL, "srclike" },
+  // SRC.8b: "Movement tuning" opens the Settings sub-page "movetune" (SX.1: a KIND_PAGE row; it was a hidden tab).
   { "fire_melts_ice",    "Fire melts ice",    "Experiments", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Burning ice turns to water.", NULL },
   { "fire_chars_vines",  "Fire chars vines",  "Experiments", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Burning vines turn to dark stone.", NULL },
-  { "night_ambience", "Night ambience", "Experiments", KIND_TOGGLE, -1,           0,   1,   1,   0,  NULL, NULL },
-  { "touch_controls_sound", "Touch controls sound", "Experiments", KIND_TOGGLE, -1,           0,   1,   1,   0,  NULL, NULL },
-  { "creature_walk_voices", "Creature walking sounds", "Experiments", KIND_TOGGLE, -1,  0,   1,   1,   0,  "Creatures call out as they start walking.", NULL },
+  { "dev_console",       "Allow developer console", "Experiments", KIND_TOGGLE, -1,       0,   1,   1,   0,  "Adds a console button next to the settings icon in singleplayer.", NULL },
   { "double_brush",      "Double-size build brush", "Experiments", KIND_TOGGLE, -1,      0,   1,   1,   0,  "A key builds 2x2x2 blocks at a time.", NULL },
-  { "camera_view",       "Camera view",       "Experiments", KIND_ENUM,   -1,           0,   2,   1,   0,  "Third person shows your body. F5 cycles.", "First person,Third person,Third person (front)" },
   // DN.2 (WORKING/day-night-cycle-plan-2026-10-31.md U1): the clock runs and is saved per world, but
-  // DN.6: both rows are in the panel; the Console reaches them as experiments.day_night_cycle.
-  { "day_night_cycle",   "Day/night cycle",   "Experiments", KIND_TOGGLE, -1,           0,   1,   1,   0,  "The sky and light follow a clock. Overrides sky painting.", NULL },
-  { "day_length",        "Day length",        "Experiments", KIND_ENUM,   -1,           0,   3,   1,   1,  "Real minutes per full day.", "10 min,20 min,40 min,60 min", "day_night_cycle" },
-  // MP.8: comma-separated matchmaker addresses (host[:port], default 27020); empty = no Matchmakers tab.
-  { "mp_matchmakers",    "Matchmakers",       "Experiments", KIND_TEXT,   -1,           0,   0,   0,   0,  "Lists other servers. Off when empty.", NULL },
+    // MP.8: comma-separated matchmaker addresses (host[:port], default 27020); empty = no Matchmakers tab.
+  { "online_sources_open", "Online sources", "Experiments", KIND_PAGE, -1,         0,   0,   0,   0,  "Matchmakers and the mod catalogue.", "online" },
+  { "mp_matchmakers",    "Matchmakers",       "Experiments", KIND_TEXT,   -1,           0,   0,   0,   0,  "Lists other servers. Off when empty.", NULL, NULL, "online" },
+  // K.3-5/6 (WORKING/mod-manager-plan-2026-11-01.md): "Mods" opens the manager (main menu only; the row's
+  // text is unused). The catalogue URL is the Get Mods tab's source (M7); empty = the tab is hidden.
+  { "mods_catalogue_url","Get Mods catalogue", "Experiments", KIND_TEXT,  -1,           0,   0,   0,   0,  "Address of a mod catalogue (http or https). Empty hides Get Mods.", NULL, NULL, "online" },
 
-  { "save_backup",       "Keep a save backup", "Saves",      KIND_TOGGLE, -1,           0,   1,   1,   0,  "Keep the previous save as a .bak.", NULL },
+  // SRC.8b: the move.* tunables as sliders. The values apply into SrclikeMove::tunables(). SX.6: these rows ARE
+  // the move.* cvars' one range table: group "Movement tuning" maps to the console name move.<key less "move_">
+  // (eden_settings_cvar), so Console.cpp bridges them like any row (its bridgeMove copy is gone). SX.1 places
+  // them on the "srclike" page by `page`; Back and Reset are the page's titlebar. Defaults = SrclikeMove::kDefaults.
+  { "move_accelerate",   "Ground acceleration", "Movement tuning", KIND_RANGE, -1,       1,  20, .5f,   5,  "How fast you reach walking speed (sv_accelerate).", NULL, NULL, "srclike" },
+  { "move_airaccelerate","Air acceleration",   "Movement tuning", KIND_RANGE, -1,        1, 1000,  1, 100,  "Air steering. 100 is the surf/bhop value.", NULL, NULL, "srclike" },
+  { "move_friction",     "Friction",           "Movement tuning", KIND_RANGE, -1,        0,  20, .5f,   4,  "How fast you slow on the ground.", NULL, NULL, "srclike" },
+  { "move_stopspeed",    "Stop speed",         "Movement tuning", KIND_RANGE, -1,        0, 300,   5,  75,  "Below this speed, friction stops you at a fixed rate.", NULL, NULL, "srclike" },
+  { "move_gravity",      "Gravity",            "Movement tuning", KIND_RANGE, -1,      100, 2000, 10, 800,  "Units/s^2. 800 is stock.", NULL, NULL, "srclike" },
+  { "move_maxvelocity",  "Max velocity",       "Movement tuning", KIND_RANGE, -1,      500, 10000, 100, 3500, "Speed cap per axis.", NULL, NULL, "srclike" },
+  { "move_tickrate",     "Tick rate",          "Movement tuning", KIND_RANGE, -1,       30, 128,   1, 66.67f, "Movement ticks per second. 66.67 is CS:S.", NULL, NULL, "srclike" },
+
   // B.5b-1b (2026-10-12): the periodic save that replaced the walk reload's. Off leaves saving to
   // the ring's evict-saves (a modified column leaving the window -- never optional, or the edit is
   // lost), warp, exit, the Save button and app background. Read as g_autosave_seconds (FileManager.h).
-  { "autosave",          "Autosave",          "Saves",       KIND_ENUM,   -1,           0,   3,   1,   3,  "Off still saves on exit and warp.", "Off,1 min,2 min,5 min" },
+  { "heading_world_saves", "Saves", "World", KIND_HEADING, -1, 0, 0, 0, 0, NULL, NULL },
+  { "autosave",          "Autosave",          "Saves",       KIND_ENUM,   -1,           0,   3,   1,   3,  "Off still saves on exit and warp.", "Off,1 min,2 min,5 min", NULL, "World" },
+  { "save_backup",       "Keep a save backup", "Saves",      KIND_TOGGLE, -1,           0,   1,   1,   0,  "Keep the previous save as a .bak.", NULL, NULL, "World" },
   // Stage S / S.5e (the user, 2026-10-10): every `.emod` is 256z by default. Read through
   // eden_get_upgrade_256z() by FileManager's convert-on-play, native Get Worlds and the web Storage
   // tab's import; the convert prompt's "Keep 64z" overrides it for one world.
-  { "upgrade_256z",      "Upgrade 64z worlds to 256z when converting", "Saves", KIND_TOGGLE, -1, 0, 1, 1, 1, "Room to build up to y 255. Uses more memory.", NULL },
+  { "upgrade_256z",      "Convert to 256 high", "Saves", KIND_TOGGLE, -1, 0, 1, 1, 1, "Upgrade 64z worlds to 256z when converting: room to build up to y 255. Uses more memory.", NULL, NULL, "World" },
 };
 static const int kSettingCount = (int)(sizeof(kSettings) / sizeof(kSettings[0]));
 
@@ -250,6 +333,7 @@ static int eden_setting_index(const char* key) {
 // Port-owned values the rest of the port reads. Declared in Input.cpp / consumed by the
 // gluPerspective wrap below.
 float eden_look_sensitivity = 1.0f;   // read by eden_apply_look_delta
+float eden_srclike_sens = 0.0f;       // SRC.7 C6: CS sensitivity, 0 = off (read by eden_apply_look_delta)
 float eden_fov_degrees      = 80.0f;  // read by Graphics::prepareScene
 float eden_view_distance    = 0.0f;   // enum index (0=Auto, 1..6 = 4..9 chunks), read by Graphics::viewDistanceZFAR
 float eden_render_distance  = 5.0f;   // B.5b-2: enum index into kRenderRadius[], read by eden_window_radius_for_world
@@ -298,6 +382,12 @@ float eden_upgrade_256z     = 1.0f;
 // through eden_set_detected_touch(); this file only arbitrates it against the user's explicit
 // override (`input_mode` != Auto).
 // ---------------------------------------------------------------------------------------------
+void eden_audio_set_master(float v);
+void eden_audio_set_bg_muted(int m);
+static bool g_muteInBackground = false;
+void eden_settings_focus_changed(int focused) {
+    eden_audio_set_bg_muted((g_muteInBackground && !focused) ? 1 : 0);
+}
 static int  g_inputMode = 0;         // mirrors g_value[idx of "input_mode"], kept as an int too
 static bool g_detectedTouch = false;
 
@@ -397,6 +487,30 @@ static int eden_device_render_scale_default(int profileIndex) {
 #endif
     return profileIndex;
 }
+static bool g_presetApplying = false;
+
+// AT.1a (WORKING/atmosphere-plan-2026-11-05.md A7, P10, P11): the Atmosphere tier and its element switches.
+// Air 2-class iOS defaults to Off, everything else to High. A tier change writes the nine Atmo-group rows from
+// kAtmoTier[] (Low: precip, clouds, ambient, water tint; High: all); an element row changed by hand stays
+// until the next tier change. --atmo= overrides the tier for one run (not stored), and the pinned harness
+// modes force Off unless it is given.
+enum { AT_PRECIP, AT_SPLASH, AT_CLOUDS, AT_CLOUD_SHADOWS, AT_HEIGHT_FOG, AT_AMBIENT, AT_WATER_TINT, AT_GLINT, AT_HALOS, AT_COUNT };
+static const char* const kAtmoKey[AT_COUNT] = { "precip", "splash", "clouds", "cloud_shadows", "height_fog",
+                                                "ambient", "water_tint", "glint", "halos" };
+static const unsigned char kAtmoTier[3][AT_COUNT] = {
+    {0, 0, 0, 0, 0, 0, 0, 0, 0},   // Off
+    {1, 0, 1, 0, 0, 1, 1, 0, 0},   // Low
+    {1, 1, 1, 0, 1, 1, 1, 1, 1},   // High (cloud shadows opt-in)
+};
+static void eden_atmo_sync(void);
+static int g_atmoOverride = -1;      // --atmo=: -1 none, else the tier
+static int g_weatherOverride = -1;   // --weather=: -1 none, 0 off, 1 clear, 2 overcast, 3 rain, 4 snow, 5 storm
+static int eden_atmo_device_default(void) {
+#if defined(EDEN_PLATFORM_IOS)
+    if (eden_ios_air2_class()) return 0;
+#endif
+    return 2;
+}
 static bool g_profileDefaultsApplied = false;
 static void eden_seed_profile_default(const char* key, int optionIndex) {
     int i = eden_setting_index(key);
@@ -424,6 +538,11 @@ static void eden_apply_profile_defaults(void) {
 #endif
     eden_seed_profile_default("fps_cap",      fps);
     eden_seed_profile_default("render_scale", eden_device_render_scale_default(rs));
+    if (eden_atmo_device_default() != 2) {   // AT.1a A7: Air 2-class starts Off (High is the row default); not a preset change
+        g_presetApplying = true;
+        eden_seed_profile_default("atmosphere", eden_atmo_device_default());
+        g_presetApplying = false;
+    }
     // FT.13: crosshair ON with keyboard+mouse, OFF on touch; seeded once from the profile resolved at first run.
     eden_seed_profile_default("crosshair", eden_profile_touch_chrome() ? 0 : 1);
 }
@@ -443,7 +562,7 @@ static void eden_apply_input_profile(void) {
 extern "C" void eden_keybind_reset_all(void);   // Stage 5.2, defined further down
 extern "C" void eden_set_block_preview(int on);
 extern "C" void eden_set_fly_allowed(int on);
-extern float FLY_ACCEL_MULT, FLY_MAX_SPEED, FLY_BRAKING, FLY_VERTICAL_MULT;
+extern float FLY_ACCEL_MULT, FLY_MAX_SPEED, FLY_BRAKING, FLY_VERTICAL_MULT, NOCLIP_SPEED;
 extern "C" void eden_set_crouch_enabled(int on);
 extern "C" void eden_set_fire_melts_ice(int on);
 extern "C" void eden_set_fire_chars_vines(int on);
@@ -474,19 +593,22 @@ static void eden_apply_port_settings(void);
 // device's default (eden_preset_render_scale), so an Air 2 at its seeded 50% still reads Default.
 // B.5b-2 adds render_distance (an index into kRenderRadius[]): High is radius 16 on desktop native,
 // and 10 on iOS (P.4 decision 6, after T.B16 measured R10 on the Air 2; R12 is opt-in only there).
-struct GfxPreset { int view_distance, render_scale, render_distance; };
+struct GfxPreset { int view_distance, render_scale, render_distance, atmosphere; };   // AT.1a: atmosphere -1 = the device default
 #if defined(EDEN_PLATFORM_IOS)
-static const GfxPreset kPresets[] = { {0, 0, 5}, {1, 0, 5}, {0, 2, 5}, {0, 2, 6} };   // Custom, Low, Default, High
+static const GfxPreset kPresets[] = { {0, 0, 5, 0}, {1, 0, 5, 0}, {0, 2, 5, -1}, {0, 2, 6, 2} };   // Custom, Low, Default, High
 #else
-static const GfxPreset kPresets[] = { {0, 0, 5}, {1, 1, 5}, {0, 2, 5}, {0, 2, 8} };
+static const GfxPreset kPresets[] = { {0, 0, 5, 0}, {1, 1, 5, 0}, {0, 2, 5, -1}, {0, 2, 8, 2} };
 #endif
 static const int kRenderRadius[] = { 4, 5, 6, 7, 8, 9, 10, 12, 16 };
 static int eden_preset_render_scale(int p) {
     return p == 2 ? eden_device_render_scale_default(kPresets[2].render_scale) : kPresets[p].render_scale;
 }
+static int eden_preset_atmosphere(int p) {
+    return kPresets[p].atmosphere < 0 ? eden_atmo_device_default() : kPresets[p].atmosphere;
+}
 static void eden_preset_sync(int changedKnob);
+static void eden_persist_setting(int i);
 extern "C" void eden_settings_set(int i, float v);
-static bool g_presetApplying = false;
 
 static void eden_apply_setting(int i, bool commitEngine) {
     if (i < 0 || i >= kSettingCount) return;
@@ -514,6 +636,9 @@ static void eden_apply_setting(int i, bool commitEngine) {
         eden_set_block_preview(v != 0.0f ? 1 : 0);
     } else if (std::strcmp(s.key, "fly") == 0) {
         eden_set_fly_allowed(v != 0.0f ? 1 : 0);
+    } else if (std::strcmp(s.key, "dev_console") == 0) {
+        extern bool DEV_CONSOLE_ALLOWED;
+        DEV_CONSOLE_ALLOWED = v != 0.0f;
     } else if (std::strcmp(s.key, "fly_accel") == 0) {
         FLY_ACCEL_MULT = v;
     } else if (std::strcmp(s.key, "fly_max_speed") == 0) {
@@ -522,8 +647,22 @@ static void eden_apply_setting(int i, bool commitEngine) {
         FLY_BRAKING = v;
     } else if (std::strcmp(s.key, "fly_vertical") == 0) {
         FLY_VERTICAL_MULT = v;
+    } else if (std::strcmp(s.key, "noclip_speed") == 0) {   // SX.4
+        NOCLIP_SPEED = v;
     } else if (std::strcmp(s.key, "crouch") == 0) {
         eden_set_crouch_enabled(v != 0.0f ? 1 : 0);
+    } else if (std::strcmp(s.key, "srclike_movement") == 0) {
+        SrclikeMove::setEnabled(v != 0.0f);
+    } else if (std::strcmp(s.key, "srclike_sens") == 0) {
+        eden_srclike_sens = v;
+    } else if (std::strncmp(s.key, "move_", 5) == 0 && s.kind == KIND_RANGE) {   // SRC.8b
+        SrclikeMove::Tunables& t = SrclikeMove::tunables();
+        float* f[] = {&t.accelerate, &t.airaccelerate, &t.friction, &t.stopspeed, &t.gravity, &t.maxvelocity, &t.tickrate};
+        static const char* const k[] = {"move_accelerate", "move_airaccelerate", "move_friction", "move_stopspeed",
+                                        "move_gravity", "move_maxvelocity", "move_tickrate"};
+        for (int j = 0; j < 7; ++j) if (std::strcmp(s.key, k[j]) == 0) *f[j] = v;
+    } else if (std::strcmp(s.key, "srclike_autobhop") == 0) {
+        SrclikeMove::setAutoBhop(v != 0.0f);
     } else if (std::strcmp(s.key, "fire_melts_ice") == 0) {
         eden_set_fire_melts_ice(v != 0.0f ? 1 : 0);
     } else if (std::strcmp(s.key, "fire_chars_vines") == 0) {
@@ -532,6 +671,14 @@ static void eden_apply_setting(int i, bool commitEngine) {
         CREATURE_WALK_VOICES = v != 0.0f;
     } else if (std::strcmp(s.key, "day_night_cycle") == 0) {
         SkyCycle::setEnabled(v != 0.0f);
+    } else if (std::strcmp(s.key, "snowline") == 0) {     // SX.6 (was the session-only weather.snowline)
+        Weather::setSnowline(v);
+    } else if (std::strcmp(s.key, "mistheight") == 0) {   // SX.6
+        Weather::setMistHeight(v);
+    } else if (std::strcmp(s.key, "frequency") == 0) {    // SX.9
+        Weather::setFrequency((int)lroundf(v));
+    } else if (std::strcmp(s.key, "storms") == 0) {
+        Weather::setStorms((int)lroundf(v));
     } else if (std::strcmp(s.key, "day_length") == 0) {
         static const int kMinutes[] = {10, 20, 40, 60};
         const int d = (int)lroundf(v);
@@ -561,10 +708,26 @@ static void eden_apply_setting(int i, bool commitEngine) {
             eden_settings_set(eden_setting_index("view_distance"), (float)kPresets[p].view_distance);
             eden_settings_set(eden_setting_index("render_radius"), (float)kPresets[p].render_distance);
             eden_settings_set(eden_setting_index("render_scale"), (float)eden_preset_render_scale(p));
+            eden_settings_set(eden_setting_index("atmosphere"), (float)eden_preset_atmosphere(p));
             g_presetApplying = false;
         }
     } else if (std::strcmp(s.key, "original_lighting") == 0) {
         R::setOriginalLighting(v != 0.0f);
+    } else if (std::strcmp(s.key, "atmosphere") == 0) {
+        // A deliberate change writes the element rows (the init/re-apply pass must not overwrite hand-set ones).
+        const int t = (int)lroundf(v);
+        if (commitEngine && t >= 0 && t <= 2) {
+            for (int e = 0; e < AT_COUNT; ++e) {
+                const int ei = eden_setting_index(kAtmoKey[e]);
+                if (ei < 0) continue;
+                g_value[ei] = (float)kAtmoTier[t][e];
+                g_hadStored[ei] = true;
+                eden_persist_setting(ei);
+            }
+        }
+        eden_preset_sync(i);
+    } else if (std::strcmp(s.group, "Atmo") == 0) {
+        if (commitEngine) eden_atmo_sync();
     } else if (std::strcmp(s.key, "shadows") == 0) {
         shadow_setSetting((int)lroundf(v));   // re-meshes the window if the mode changed
     } else if (std::strcmp(s.key, "autosave") == 0) {
@@ -620,6 +783,11 @@ static void eden_apply_setting(int i, bool commitEngine) {
     } else if (std::strcmp(s.key, "invert_look") == 0) {
         if (World::getWorld && World::getWorld->player)
             World::getWorld->player->invertcam = (v != 0.0f) ? true : false;
+    } else if (std::strcmp(s.key, "master_volume") == 0) {
+        eden_audio_set_master(v);
+    } else if (std::strcmp(s.key, "mute_in_background") == 0) {
+        g_muteInBackground = (v != 0.0f);
+        if (!g_muteInBackground) eden_audio_set_bg_muted(0);
     } else if (std::strcmp(s.key, "music_volume") == 0) {
         if (CocosDenshion::SimpleAudioEngine::sharedEngine())
             CocosDenshion::SimpleAudioEngine::sharedEngine()->setBackgroundMusicVolume(v);
@@ -647,6 +815,7 @@ static void eden_apply_port_settings(void) {
 // eden_prefs — one store, one lifetime.
 static void eden_persist_setting(int i) {
     if (kSettings[i].engine >= 0) return;   // owned by SettingsMenu::save()
+    if (kSettings[i].kind >= KIND_PAGE) return;   // SX.1: pages and headings hold no value
     const char* key = kSettings[i].key;
     if (kSettings[i].kind == KIND_TEXT) {
         eden_prefs_set_str(key, g_text[i].c_str());
@@ -660,6 +829,29 @@ static void eden_persist_setting(int i) {
 
 // A knob moved by hand (or by a profile seed): if it no longer matches the chosen preset, the
 // preset becomes Custom. Not called while a preset is applying its own knobs.
+// SX.5: the tier follows the element rows. Hand edits that match no tier read Custom (3); a Custom whose
+// rows match a tier again snaps back to it. Rows not yet seeded (no stored value) are left alone.
+static void eden_atmo_sync(void) {
+    if (g_presetApplying) return;
+    const int ai = eden_setting_index("atmosphere");
+    if (ai < 0) return;
+    int ei[AT_COUNT];
+    for (int e = 0; e < AT_COUNT; ++e) { ei[e] = eden_setting_index(kAtmoKey[e]); if (ei[e] < 0) return; }
+    int match = 3;
+    for (int t = 0; t < 3 && match == 3; ++t) {
+        bool m = true;
+        for (int e = 0; e < AT_COUNT; ++e) m = m && ((g_value[ei[e]] != 0.0f) == (kAtmoTier[t][e] != 0));
+        if (m) match = t;
+    }
+    const int cur = (int)lroundf(g_value[ai]);
+    if (match == cur || (match == 3 && cur == 3)) return;
+    if (cur != 3 && match != 3) return;   // tier row is authoritative until the elements differ
+    if (cur == 3 || match == 3) {
+        g_value[ai] = (float)match; g_hadStored[ai] = true; eden_persist_setting(ai);
+        eden_preset_sync(ai);
+    }
+}
+
 static void eden_preset_sync(int changedKnob) {
     (void)changedKnob;
     if (g_presetApplying) return;
@@ -671,6 +863,9 @@ static void eden_preset_sync(int changedKnob) {
     bool match = (int)lroundf(g_value[vi]) == kPresets[p].view_distance &&
                  (int)lroundf(g_value[di]) == kPresets[p].render_distance;
     match = match && (int)lroundf(g_value[ri]) == eden_preset_render_scale(p);
+    // AT.1a: a player who never touched the tier keeps the preset they had (the row's default is not a choice)
+    const int ai = eden_setting_index("atmosphere");
+    if (ai >= 0 && g_hadStored[ai]) match = match && (int)lroundf(g_value[ai]) == eden_preset_atmosphere(p);
     if (!match) { g_value[pi] = 0.0f; g_hadStored[pi] = true; eden_persist_setting(pi); }
 }
 
@@ -691,6 +886,7 @@ void eden_settings_init(void) {
         }
         g_value[i] = kSettings[i].def;
         const char* key = kSettings[i].key;
+        if (kSettings[i].kind >= KIND_PAGE) continue;   // SX.1: no value
         if (kSettings[i].kind == KIND_TEXT) {
             const char* t = eden_prefs_get_str(key);
             g_hadStored[i] = (t != nullptr);
@@ -741,6 +937,8 @@ void eden_settings_init(void) {
             bool isDefault = (int)lroundf(g_value[vi]) == kPresets[2].view_distance
                           && (int)lroundf(g_value[di]) == kPresets[2].render_distance
                           && (int)lroundf(g_value[ri]) == eden_preset_render_scale(2);
+            const int ai = eden_setting_index("atmosphere");
+            if (ai >= 0 && g_hadStored[ai]) isDefault = isDefault && (int)lroundf(g_value[ai]) == eden_preset_atmosphere(2);
             g_value[pi] = isDefault ? 2.0f : 0.0f;
         }
     }
@@ -761,7 +959,7 @@ const char* eden_settings_schema(void) {
     // eden-settings.js, and the ENTIRE settings panel silently fails to render. Adding one row with
     // a long hint is enough to do it: at 6144 the table had 210 bytes of slack left when the D1/D4
     // rows landed. The `truncated` guard below turns that failure into a visible one.
-    static char buf[12288];
+    static char buf[16384];
     int n = 0;
     n += snprintf(buf + n, sizeof(buf) - n, "[");
     for (int i = 0; i < kSettingCount && n < (int)sizeof(buf) - 1; ++i) {
@@ -791,10 +989,41 @@ float eden_settings_get(int i) {
     return g_value[i];
 }
 
+// AT.1a: what the renderer and Classes/Weather read. A tier of Off gates every element (Off = absent, G1).
+int eden_atmo_tier(void) {
+    if (g_atmoOverride >= 0) return g_atmoOverride;
+    const int ai = eden_setting_index("atmosphere");
+    const int t = ai < 0 ? 0 : (int)lroundf(g_value[ai]);
+    return t > 2 ? 2 : t;   // SX.5: Custom (3) gates like High; the element rows decide what is drawn
+}
+int eden_atmo_element(int e) {
+    if (e < 0 || e >= AT_COUNT) return 0;
+    const int t = eden_atmo_tier();
+    if (t <= 0) return 0;
+    if (g_atmoOverride >= 0) return kAtmoTier[t > 2 ? 2 : t][e];
+    static int idx[AT_COUNT];
+    static bool have = false;
+    if (!have) { for (int k = 0; k < AT_COUNT; ++k) idx[k] = eden_setting_index(kAtmoKey[k]); have = true; }
+    return idx[e] >= 0 && g_value[idx[e]] != 0.0f ? 1 : 0;
+}
+void eden_atmo_set_override(int tier) { g_atmoOverride = tier < 0 ? -1 : tier > 2 ? 2 : tier; }
+int eden_atmo_override(void) { return g_atmoOverride; }
+void eden_weather_set_override(int kind) { g_weatherOverride = kind < 0 ? -1 : kind > 5 ? 5 : kind; }
+int eden_weather_override(void) { return g_weatherOverride; }
+int eden_weather_enabled(void) {
+    if (g_weatherOverride >= 0) return g_weatherOverride > 0 ? 1 : 0;
+    const int wi = eden_setting_index("weather");
+    return wi >= 0 && g_value[wi] != 0.0f ? 1 : 0;
+}
+int eden_reduce_flashing(void) {
+    const int ri = eden_setting_index("reduce_flashing");
+    return ri >= 0 && g_value[ri] != 0.0f ? 1 : 0;
+}
+
 void eden_settings_set(int i, float v) {
     if (i < 0 || i >= kSettingCount) return;
     const Setting& s = kSettings[i];
-    if (s.kind == KIND_TEXT) return;   // strings go through eden_settings_set_text
+    if (s.kind == KIND_TEXT || s.kind >= KIND_PAGE) return;   // strings go through eden_settings_set_text; pages/headings hold nothing
     if (v < s.min) v = s.min;
     if (v > s.max) v = s.max;
     g_value[i] = v;
@@ -805,6 +1034,36 @@ void eden_settings_set(int i, float v) {
 
 // MP.8: a KIND_TEXT row's string. The setter stores whatever it is given (the caller validates:
 // SettingsMenu's Matchmakers prompt) and persists it as an NSString under the row's key.
+// K.3-6: the Get Mods catalogue address ("" = unset).
+const char* eden_mods_catalogue_url(void) {
+    for (int i = 0; i < kSettingCount; i++)
+        if (!std::strcmp(kSettings[i].key, "mods_catalogue_url")) return g_text[i].c_str();
+    return "";
+}
+
+// SRC.8b: set a range row by key (the console's move.* variables write through here so the slider, the
+// store and the persisted value stay one thing). Returns 0 for an unknown key.
+int eden_settings_set_by_key(const char* key, float v) {
+    const int i = eden_setting_index(key);
+    if (i < 0 || kSettings[i].kind != KIND_RANGE) return 0;
+    eden_settings_set(i, v);
+    return 1;
+}
+
+// SX.6: World > Weather tuning > Defaults (snowline, mist height).
+void eden_weather_tuning_reset(void) {
+    for (int i = 0; i < kSettingCount; ++i)
+        if (kSettings[i].page && !std::strcmp(kSettings[i].page, "weathertune") && kSettings[i].kind < KIND_TEXT)
+            eden_settings_set(i, kSettings[i].def);
+}
+
+// SRC.8b: Movement tuning > Reset to defaults.
+void eden_move_tuning_reset(void) {
+    for (int i = 0; i < kSettingCount; ++i)
+        if (std::strncmp(kSettings[i].key, "move_", 5) == 0 && kSettings[i].kind == KIND_RANGE)
+            eden_settings_set(i, kSettings[i].def);
+}
+
 const char* eden_settings_text(int i) {
     if (i < 0 || i >= kSettingCount || kSettings[i].kind != KIND_TEXT) return "";
     return g_text[i].c_str();
@@ -827,6 +1086,7 @@ void eden_settings_set_text(int i, const char* text) {
 void eden_settings_reset_all(void) {
     for (int i = 0; i < kSettingCount; ++i) {
         if (kSettings[i].kind == KIND_TEXT) { g_text[i].clear(); eden_persist_setting(i); continue; }
+        if (kSettings[i].kind >= KIND_PAGE) continue;
         eden_settings_set(i, kSettings[i].def);
     }
     eden_keybind_reset_all();   // Stage 5.2: keybinds moved into C, so "reset everything" means it
@@ -898,7 +1158,7 @@ int eden_get_display_mode(void) { return (int)lroundf(eden_display_mode); }
 // Not polled -- read once per save by save_backup.cpp (portable C++, no Settings.cpp include),
 // which is the actual reason this is a function and not a direct extern of the float above.
 int eden_get_save_backup(void) { return eden_save_backup != 0.0f; }
-// S.5e: "Upgrade 64z worlds to 256z when converting". EDEN_UPGRADE_256Z=0|1 wins over the setting:
+// S.5e: "Convert to 256 high". EDEN_UPGRADE_256Z=0|1 wins over the setting:
 // a harness pins the height so a gate does not depend on whatever the save directory's settings say
 // (port/src/harness/ sets it to 0 for every scripted mode unless --upgrade-256z is given).
 int eden_get_upgrade_256z(void) {
@@ -976,6 +1236,12 @@ static const Setting* eden_row(int i) {
 
 const char* eden_settings_label(int i) { const Setting* s = eden_row(i); return s ? s->label : ""; }
 const char* eden_settings_group(int i) { const Setting* s = eden_row(i); return s ? s->group : ""; }
+// SX.1: where the GL screen draws the row ("" = its group's tab); KIND_PAGE's target is eden_settings_page_target.
+const char* eden_settings_page(int i)  { const Setting* s = eden_row(i); return (s && s->page) ? s->page : ""; }
+const char* eden_settings_page_target(int i) {
+    const Setting* s = eden_row(i);
+    return (s && s->kind == KIND_PAGE && s->options) ? s->options : "";
+}
 const char* eden_settings_hint(int i)  { const Setting* s = eden_row(i); return (s && s->hint) ? s->hint : ""; }
 // Index of the toggle row `i` depends on (muted while it is off), or -1. A parent that is missing or
 // not a KIND_TOGGLE is a table bug (muting under a range/enum has no meaning): reported, then ignored.
@@ -990,6 +1256,26 @@ int eden_settings_parent(int i) {
     return p;
 }
 const char* eden_settings_key(int i)   { const Setting* s = eden_row(i); return s ? s->key   : ""; }
+// SX.6: the console variable a row is (a value row: lower(group) + "." + key; group "Movement tuning" is
+// "move." + the key less "move_") or shows (KIND_CVAR: its `options`). "" for text, page and heading rows.
+// Console.cpp's bridge and --console-selftest gate 3 both name cvars through this, so the rule is one place.
+const char* eden_settings_cvar(int i) {
+    const Setting* s = eden_row(i);
+    if (!s) return "";
+    if (s->kind == KIND_CVAR) return s->options ? s->options : "";
+    if (s->kind >= KIND_TEXT) return "";
+    static std::string name;
+    if (!std::strcmp(s->group, "Movement tuning") && !std::strncmp(s->key, "move_", 5)) {
+        name = std::string("move.") + (s->key + 5);
+        return name.c_str();
+    }
+    name.clear();
+    for (const char* g = s->group; *g; ++g) name += (char)((*g >= 'A' && *g <= 'Z') ? *g - 'A' + 'a' : *g);
+    name += ".";
+    name += s->key;
+    return name.c_str();
+}
+int eden_settings_scope(int i) { const Setting* s = eden_row(i); return s ? s->scope : SCOPE_ALWAYS; }
 int   eden_settings_kind(int i) { const Setting* s = eden_row(i); return s ? s->kind : KIND_TOGGLE; }
 float eden_settings_min(int i)  { const Setting* s = eden_row(i); return s ? s->min  : 0.0f; }
 float eden_settings_max(int i)  { const Setting* s = eden_row(i); return s ? s->max  : 1.0f; }
@@ -1047,12 +1333,13 @@ int eden_settings_native_hidden(int i) {
     const Setting* s = eden_row(i);
     if (!s) return 1;
     static const char* const kHidden[] = {
-        "dpr_cap", "display_mode", "ui_scale",
-        "display_layout", "input_mode", "legacy_menu",
+        "dpr_cap", "display_mode",
+        "display_layout", "legacy_menu",
     };
     for (const char* h : kHidden) if (std::strcmp(s->key, h) == 0) return 1;
     // Stage L: look rows follow the effective input device.
     const bool touch = eden_effective_input_is_touch() != 0;
+    if (std::strcmp(s->key, "touch_controls_sound") == 0) return touch ? 0 : 1;   // SX.3
     if (std::strncmp(s->key, "touch_look_", 11) == 0) return touch ? 0 : 1;
     if (std::strncmp(s->key, "mouse_sensitivity", 17) == 0) return touch ? 1 : 0;
     return 0;

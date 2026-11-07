@@ -299,6 +299,14 @@ enum BLOCK_TYPES{
 // K.1-3: the "missing" placeholder (BlockRegistry): a palette byte with no loaded definition, or a byte
 // >= 128 with no palette entry. Runtime only (blockinfo never reaches a file); the mesher draws it unpainted.
 #define IS_MISSING         0b00100000000000000000
+// K.2-2: behaviour traits a mod block can carry (WORKING/data-driven-content-plan-2026-11-01.md §3.3),
+// read through Classes/BlockTraits.h; each replaced a `type==TYPE_X` list at its sites.
+#define IS_CLIMB           (1<<18)   // ladder, vine: Player::vertc climbs it
+#define IS_BOUNCY          (1<<19)   // trampoline: a landing doubles the rebound
+#define IS_SLIPPERY        (1<<20)   // ice and its ramps/sides: standing on it sets onIce (IS_ICE keeps "melts")
+#define IS_BLASTPROOF      (1<<21)   // bedrock, steel: Terrain::explode leaves it
+#define IS_UNBREAKABLE     (1<<22)   // bedrock, golden cube: mining and destroyBlock refuse it
+#define IS_NOSHADOW        (1<<23)   // cloud, glass, weave: no baked-shadow caster (shadow_buildCasterTable)
 
 
 // Tiles per atlas strip (atlas.png and atlas2.png are both 32 x 32*ATLAS_TILES). Stock was 32, baked in

@@ -1,0 +1,7 @@
+# pack.py validate / --pack-selftest: every line, in order (K.2-3)
+eden@0: missing "format"
+eden@0: missing "id"
+eden@0: missing "tiles"
+eden@0: missing "sound_sets"
+eden@0: missing "blocks"
+eden@0: missing "picker_pages"

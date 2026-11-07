@@ -348,7 +348,7 @@ std::string documents_dir() { return World::getWorld->fm->documents; }
 // 4. The screen
 // ---------------------------------------------------------------------------------------------
 #define WB_MAX_ROWS 24
-#define WB_META 4
+#define WB_META 5
 
 namespace {
 struct SourceState {
@@ -861,12 +861,14 @@ static void wb_layout(BrowserImpl* d) {
         const int v = s.first + r;
         const Entry* re = v < (int)s.view.size() ? &s.all[(size_t)s.view[(size_t)v]] : NULL;
         const std::string t = re ? re->name : std::string();
-        const std::string key = re ? re->name + "\n" + re->date : std::string();   // I.5: date inline
+        std::string sub = re ? re->date : std::string();   // I.5: date inline
+        if (re && !re->author.empty()) sub += (sub.empty() ? "" : "  -  ") + re->author;
+        const std::string key = re ? re->name + "\n" + sub : std::string();
         if (!d->rowBuilt[r] || key != d->rowText[r]) {
             d->rowBuilt[r] = true;
             d->rowText[r] = key;
             d->rows[r].setTitle(t.c_str(), du(19));
-            d->rows[r].setDetail(re ? re->date.c_str() : "", du(14));
+            d->rows[r].setDetail(sub.c_str(), du(14));
         }
         d->rows[r].setSelected(v == s.selected && v < (int)s.view.size());
     }
@@ -886,6 +888,7 @@ static void wb_layout(BrowserImpl* d) {
             if (!e->date.empty())   lines[n++] = (d->official() ? "Shared " : "Published ") + e->date;
             if (!e->author.empty()) lines[n++] = "By " + e->author;
             if (!e->size.empty())   lines[n++] = e->size;
+            lines[n++] = "File: " + e->id + ".eden";
             if (!e->tags.empty())   lines[n++] = "Tags: " + e->tags;
             for (int k = 0; k < n; k++) d->meta[k].set(lines[k].c_str(), du(14), UITextAlignmentLeft, pwid, FACE_BODY);
         }

@@ -42,6 +42,7 @@ extern bool  NOCLIP_MUTATE_MOVE;                    // Classes/Player.mm (--fly-
 extern float NOCLIP_SPEED;                          // Classes/Player.mm (--fly-selftest, FM.2)
 #include "../../../Classes/ChatFeed.h"           // MP.7: --mp-replay leg 8
 #include "../../../Classes/ServerListMenu.h"     // MP.6: --ui-selftest, --shot, --mp-mock
+#include "../../../Classes/ModsMenu.h"            // K.3-5: --ui-selftest, --shot
 #include "../../../Classes/ServerFormMenu.h"
 #include "../../../port/src/net/MpSession.h"     // --mp-replay: the session's own line parser, fed from a file
 extern int g_classic_cave_votes_cells, g_classic_cave_votes_air;   // FileManager.cpp (H.4), --classic-selftest
@@ -143,6 +144,8 @@ int   eden_ui_wants_cursor(void);
 
 void  eden_settings_menu_open_now(void);
 void  eden_settings_menu_close(void);
+int   eden_settings_menu_open(void);   // SX.1: --ui-selftest sub-page leg
+int   eden_settings_menu_back(void);   // Escape over the settings screen
 
 int   eden_gl_stat(int which);
 int   eden_console_teleport(float x, float y, float z);
@@ -229,6 +232,10 @@ extern "C" void eden_display_set_viewport(int css_w, int css_h);   // DisplayPro
 extern "C" void eden_net_set_fixture_root(const char* dir);
 extern "C" void eden_display_refresh(void);
 extern "C" void eden_prefs_set_ephemeral(int on);    // Prefs_native.cpp (X.21)
+extern "C" void eden_atmo_set_override(int tier);     // Settings.cpp (AT.1a): --atmo=, the pins
+extern "C" int  eden_atmo_override(void);
+extern "C" void eden_weather_set_override(int kind); // Settings.cpp (AT.1a): --weather=, the pins
+extern "C" int  eden_weather_override(void);
 
 extern "C" int eden_settings_count(void);
 extern "C" const char* eden_settings_key(int i);
@@ -301,6 +308,8 @@ struct Options {
     std::string codecFile;               // --codec-file=PATH: the raw .eden --codec-bench samples
     std::string emodFixtures, emodWork, emodFile, emodRef;   // --emod-selftest's inputs
     std::string bundledEden, bundledEmod;                    // --bundled-map-selftest's inputs
+    std::string packFixtures;                                // K.2-3: --pack-selftest=DIR
+    std::vector<std::string> packs;                          // K.2-4: --packs=DIR (repeatable)
     bool emodQuick = false;
     std::string liveCmds;                // --live-cmds=FILE: see src/seam/LiveCommands_native.cpp
     std::string foldersPhase;            // --folders-phase=fixture|adopt|verify (K.0w-2 crash loop); "" = the full run
@@ -328,10 +337,13 @@ struct Options {
     bool passVsync = false;              // --pass-vsync: keep vsync on (the player's frame; present then holds the vsync wait)
     std::string convertAnswer;           // --convert-answer=upgrade|keep|cancel: --convert-prompt-selftest
     std::string classicFixture = "../port/tools/fixtures/classic/legacy-1315365413.bin.gz";   // --classic-fixture=
+    std::string sourceLeg;               // --srclike-selftest=<leg> (SRC): empty = every leg built so far
+    std::string srclikeVectors = "../port/tools/fixtures/srclike-pm/vectors.txt";   // --srclike-vectors= (SRC.4 leg move)
     std::string flyMutate;               // --fly-mutate=move: --fly-selftest's mutation leg (FM.4)
     std::string lookMutate;              // --look-mutate=<name>: --look-selftest's mutation legs (Stage L)
     std::string classicMutate;           // --classic-mutate=tables|trunc|noborder: --classic-selftest's mutation legs
     std::string propsMutate;             // --props-mutate=nogen: --props-selftest's mutation leg (H.15)
+    std::string luaMutate;               // --lua-mutate=hook|sandbox: --lua-selftest's mutation legs (K.4)
     std::string propsWorld;              // --props-world=FILE: --props-selftest times reading this world (gate 4)
     std::string classicNew;              // --classic=SEED[,SCALE4]: a world open_world() CREATES is Classic (ring-walk gate)
     std::string skyTimes;                // --sky-times=T,T,...: --sky-shot's clock times (DN.3)
@@ -397,6 +409,16 @@ namespace g_folders { int run_folders_selftest(); }
 using g_folders::run_folders_selftest;
 namespace g_registry { int run_registry_selftest(); }
 using g_registry::run_registry_selftest;
+namespace g_packs { int run_packs_selftest(); }
+namespace g_lua { int run_lua_selftest(); }   // K.4
+using g_lua::run_lua_selftest;
+using g_packs::run_packs_selftest;
+namespace g_mods { int run_mods_selftest(); std::string ui_pack_zip(const std::string& id, const std::string& version); }
+using g_mods::run_mods_selftest;
+namespace g_content { int run_content_dump(); int run_json_selftest(); int run_pack_selftest(const std::string& dir); }   // K.2-1, K.2-3
+using g_content::run_content_dump;
+using g_content::run_json_selftest;
+using g_content::run_pack_selftest;
 namespace g_props { int run_camera_selftest(); int run_props_selftest(); int run_signs_selftest(); int run_sign_shot(); }
 using g_props::run_camera_selftest;
 using g_props::run_props_selftest;
@@ -424,9 +446,10 @@ using g_display::run_display_selftest;
 using g_display::run_convert64_selftest;
 using g_display::run_audio_selftest;
 using g_display::run_leak_probe;
-namespace g_input { int run_fly_selftest(); int run_gamepad_selftest(); }
+namespace g_input { int run_fly_selftest(); int run_gamepad_selftest(); int run_srclike_selftest(); }
 using g_input::run_fly_selftest;
 using g_input::run_gamepad_selftest;
+using g_input::run_srclike_selftest;
 namespace g_ui { int run_menu_selftest(); int run_convert_prompt_selftest(); int run_picker_selftest(); int run_ui_selftest(); }
 using g_ui::run_menu_selftest;
 using g_ui::run_convert_prompt_selftest;
@@ -437,9 +460,12 @@ using g_browser::run_browser_selftest_body;
 using g_browser::run_browser_selftest;
 using g_browser::run_keybind_selftest;
 namespace g_session { int run_input_selftest(); int run_background_selftest(); int run_save_roundtrip(); }
-namespace g_render { int run_scene_shot(); int run_sky_shot(); int run_render_selftest(); int run_lit_oracle(); }
+namespace g_weather { int run_weather_selftest(); }   // AT.1a
+using g_weather::run_weather_selftest;
+namespace g_render { int run_scene_shot(); int run_sky_shot(); int run_atmo_shot(); int run_render_selftest(); int run_lit_oracle(); }
 using g_render::run_scene_shot;
 using g_render::run_sky_shot;
+using g_render::run_atmo_shot;
 using g_render::run_render_selftest;
 using g_render::run_lit_oracle;
 using g_session::run_input_selftest;

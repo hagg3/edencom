@@ -90,7 +90,7 @@ A block instance has no sink: everything behaves exactly as in D.4c.
 ## The time hook
 
 `OP_TIME` (`day/noon/night/midnight/time T`) calls `CmdScript::timeHook(t)`. The default is the region
-sky repaint (`CmdScript.h`: Eden has no clock). With Experiments › *Day/night cycle* on (Stage DN), the
+sky repaint (`CmdScript.h`: Eden has no clock). With World › *Day/night cycle* on (Stage DN), the
 default hook (`skyTime`) calls `SkyCycle::setTime` instead, so blocks and the console change together;
 `timefreeze on|off` (`OP_TIMEFREEZE`) holds or releases the clock, and `world.time` reads it.
 
@@ -153,7 +153,7 @@ and the line takes their common prefix.
 
 ## The screen (`Classes/ConsoleMenu.{h,mm}`, C.3)
 
-The player's way in. **Open**: the pause menu's *Console* button (closes the pause menu), or the
+The player's way in. **Open**: the singleplayer HUD console button beside the settings gear (only with Settings › Experiments › *Allow developer console*, default off; never in multiplayer, where the chat button opens the same screen; the chat key, T by default, does the same), or the
 `console` keybind (default `` ` ``, native only, a `keys.console` cvar; opens from play, and closes
 while the field is **not** focused, because a focused field owns every key, backquote included).
 **Close**: Back, the key, or Escape twice (the first blurs the field, the TextField rule). Closing

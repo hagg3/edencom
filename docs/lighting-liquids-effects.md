@@ -291,7 +291,7 @@ the whole gradient, looking down shows its pale bottom. Painting the sky (`paint
 player is in — a signature Eden feature. Night = palette entry 54 (dims skylight and
 GL lights for doors/creatures).
 
-### Day/night cycle (Stage DN, Experiments › *Day/night cycle*, default off)
+### Day/night cycle (Stage DN, World › *Day/night cycle*, default off)
 
 Cycle off, everything above is unchanged (`--scene-shot` 0/66, `--stage1` pins). On, the painted regions are
 ignored (they stay saved; the sky brush toasts that the clock owns the sky) and:
@@ -311,6 +311,219 @@ ignored (they stay saved; the sky brush toasts that the clock owns the sky) and:
   `Texture2D::drawSkySprite` after the sky and before terrain, so terrain occludes them.
 - **Light:** see the skylight paragraph above (`R::setWorldLight`, `bakedNight`, hysteresis, one re-mesh per
   flip, two flips a day). Harness: `--sky-shot[=PREFIX] [--sky-times=…]` renders frames at fixed clock times.
+
+## Weather (`Classes/Weather`, Stage AT)
+
+AT.1b is the state; AT.2a draws overcast, AT.2b rain, AT.3 snow, AT.4 lightning, AT.5 mist, AT.6 clouds (all below; splashes are AT.2c, in Rain; clouds need only Video › *Atmosphere*, not the weather). Off by default (Gameplay › *Weather*,
+`eden_weather_enabled()`, overridden for one run by `--weather=`): then `Weather::update` returns at once and
+nothing is saved. On (with or without the day/night cycle):
+- **State:** a spell's `kind` (clear / overcast / rain / storm), an `intensity` easing toward the kind's target
+  (0 / 0.4 / 0.7 / 1) at 1/45 per second (never a pop), seconds left, a lock and a "snow everywhere" flag.
+  `update` runs from `World::update` right after `SkyCycle::update` and stops under the pause menu.
+- **Schedule:** a Markov walk on clear – overcast – rain – storm (`g_next` in `Weather.cpp`: only neighbours,
+  repeats allowed), seeded per world from `LEVEL_SEED ^ "WEAT"` (splitmix64). Spell lengths are mean × [0.5, 1.5)
+  in-game **days** (×`SkyCycle` day length, 20 min with the cycle off), so any *Day length* gets the same weather
+  per day. Defaults give time shares 0.60 / 0.20 / 0.15 / 0.05 (`--weather-selftest=schedule` measures them). SX.9: Settings › World › *Weather frequency* scales clear spells (Rare ×2, Normal ×1, Often ×0.4) and *Storms* scales the rain → storm weight (Off ×0, Rare ×0.4, Normal ×1, Often ×2.5; the row is renormalised); Normal/Normal is the schedule above.
+- **Look inputs** (identity at intensity 0, so clear changes nothing): `lightMul()` 1 → 0.7 overcast → 0.55
+  storm; `skyGrey()`; `fogScale()`; `precipAmount()` (0 up to overcast's intensity, 1 in a full storm).
+- **What falls** (`precipAt(x, z, y)`, plan A5): on the default seed the bed picker's 4×4 region grid
+  (`eden_default_region`, shared with `Player.cpp`) makes (0,0) the snow mountain snow and (0,1) pyramid,
+  (0,2) oasis dry; elsewhere snow at and above `weather.snowline` × `T_HEIGHT` (cvar, default 0.75; since SX.6 a persisted Settings row on World › *Weather tuning*), else
+  rain. The snow flag makes it snow everywhere until the spell ends.
+- **Saved** as `.emod` record 12 `WEATHER` (`docs/emod-file-format.md`), copying `SKY_CLOCK`'s rules; a
+  multiplayer session resets it at `MpWorld::beginSession` and never saves it.
+- **Overcast look (AT.2a).** No re-mesh ever (a dark storm never flips to the night bake). With weather on:
+  - *Light:* `SkyCycle::worldLight` is multiplied by `lightMul()` (cycle off: the base is (1,1,1)), and the
+    `dnLight` gate at all three `Terrain.cpp` sites (opaque chunks + doors/golden cubes, transparent chunks,
+    flowers) is `SkyCycle::lightActive()` = cycle **or** weather. Portals stay (1,1,1). The LightSet-lit doors
+    and golden cubes (Original lighting) get the same multiplier on their ambient/diffuse; the stock day/night
+    pick for those LightSets stays keyed on the cycle alone (`SkyCycle::enabled()`).
+  - *Sky, cycle on:* `SkyLook::lookFor` greys the keyframe zenith/horizon/glow colours (`Weather::greySky`:
+    toward luma × 0.8 by `skyGrey()`), and the glow, stars, sun and moon fade by `clearSky()` (1 − cover).
+    `SkyLook::fogColor` is therefore greyed too.
+  - *Sky, cycle off:* one extra blended `ICO_SKY_BOX_BW` pass (depth `-P_ZFAR/1.000006`, nearer than the stock
+    overlays) tinted the sky colour's grey at alpha `skyGrey()`, only while `skyGrey() > 0`; the fog colour is
+    greyed in `Graphics::applyWorldFog` (only with the cycle off, as the cycle's is already greyed).
+  - Fog *distance* (`fogScale()`) is AT.5's (Mist, below). Weather off or clear is byte-identical (A/B `--sky-shot`, 16/16
+    frames, `--weather=clear` too). References: `TESTERS/atmosphere/at2a/overcast-*` (`--sky-shot
+    --weather=overcast --sky-times=0,0.26,0.5,0.76`; the run adds `nocycle-level/up` frames).
+- **Splashes (AT.2c, in `Precip.cpp`).** High only, with `atmo.splash` on, while rain draws: a second
+  `R::drawPrecip` with `PrecipParams::splash` (same program, buffer and column-top map; no new resource). The
+  first `SPLASH_HIGH` (1200) × `precipAmount()` seeds become flat quads on their column's top (+0.04): the seed's
+  x/z pick a column fixed in the world, its y a phase in a 1.1 s cycle (`g_splashPh`, passed as `length`); a
+  quarter of the cycle shows, a ring growing 0.10 → 0.38 blocks while it fades. AT.11: the ring is hard-edged (the
+  fragment stage keeps only the outer cells of an 8 × 8 grid across the quad, `v_side.z` = 1 marks splash mode),
+  alpha 0.70; it was a soft blob nobody could see. Sheltered columns splash on
+  their roof; a column with top 0 shows none. `--weather-selftest=precip` checks Low = none, High = the count.
+- **Snow (AT.3, same `Precip` / `P_PRECIP`).** When `Weather::precipAt` at the eye says snow (A5: region (0,0) on the default seed, above `weather.snowline` elsewhere, or `weather snow`), `Precip::render` draws the same seed buffer in flake mode (`PrecipParams::snow`, `u_ptops.w = 2`): camera-facing squares (1× or 2× by seed, ≥ `widthPerDist` × distance and, AT.11, ≤ 2 × `widthPerDist` × distance, so a near flake is a few pixels, not a screen-filling square; rain streaks take the same cap on their width), swaying ±0.35 block, falling at `SNOW_SPEED` (2.2 blocks/s, own clock). Same shelter map and fade; no splashes. Storm in a cold cell is simply heavy snow (no lightning exists yet). Shot: `--sky-shot --weather=snow --atmo=high` adds `snow-open` (refs `TESTERS/atmosphere/at3/shots/`).
+- **Rain (AT.2b, `Classes/Precip.{h,cpp}`).** Drawn only when Video › *Atmosphere* is Low/High, `atmo.precip` is
+  on, weather is on, `precipAmount() > 0` and `precipAt(eye)` is rain (snow is AT.3; dry draws nothing).
+  - *One draw* (`R::drawPrecip`, program `P_PRECIP`, end of the effects pass, render-local modelview): a static
+    buffer of 4000 streak seeds (`kFmtPrecip`, 4 B a vertex, 6 a streak, fixed splitmix stream so shots repeat),
+    uploaded once. The vertex shader places each head at `seed × box + offset` wrapped into a 32 × 32 × 32 box
+    round the eye (12 below, 20 above), so drops stay put in the world as the box follows; the tail leans
+    up-wind. Per frame only uniforms move (`Precip::update` advances fall 14 blocks/s and a drift, stronger in a
+    storm, and stops under the pause menu). Streaks drawn = cap × `precipAmount()`, caps Low 1500 / High 4000.
+    Alpha fades toward the box edges and top; colour × `SkyCycle::worldLight` (night and overcast rain is dim).
+    Blended, depth-tested, no depth write, no discard, no fog.
+  - *Shelter:* a 32 × 32 column-top cache (`TF_L8` texture, by world `(x & 31, z & 31)`; value = the y above
+    the column's highest **non-air** block, so glass, water, leaves and objects stop rain too: `shadowTop[]`
+    excludes glass, liquids and cloud, which is why it is not reused). A head below its column's top collapses
+    the streak outside the clip volume. A column is scanned (from the top, skipping empty bands) only when it
+    enters the box, when its chunk column lands (`Terrain::addChunk` → `Precip::onLanded`) or when
+    `Terrain::setLand` lowers its top (`Precip::onSetLand`, which raises it without a scan); only changed rows
+    upload. A write that bypasses `setLand`/`addChunk` would not reach the cache (none known).
+  - *Off = absent:* tier Off, `atmo.precip` off or weather off frees the texture and buffer on the next frame;
+    `Terrain::clearBlocks`/`deallocateMemory` free them too; `P_PRECIP` is built on first use.
+  - Gates: `--weather-selftest=precip` (off = absent, caps × intensity, G3: 600 frames scan/upload/allocate/
+    re-mesh nothing, a roof placed and removed, the cache following a jump); `--sky-shot --weather=rain
+    --atmo=high` adds `rain-open` / `rain-roof` (noon, snowline lifted, a 7×7 stone roof 3 above the eye: no
+    streaks under it); references `TESTERS/atmosphere/at2b/shots/`.
+
+- **Lightning (AT.4, `Weather::lightningUpdate`, `flashMul()`)**: only in a storm at full strength, never where
+  `precipAt` says snow (a cold storm is heavy snow, no lightning). Strikes 4–12 s apart (dry regions 8–20 s). A
+  strike multiplies the world light (`lightMul()`) and the sky/fog colours (`greySky()`) by `flashMul()`: up to
+  **1.5** in one frame, linear fade over 0.3 s, 40 % of strikes add a 0.6 flash at +0.4 s, so at most 2 flashes in
+  any second. **Video › *Reduce flashing*** swaps that for a dim (`flashMul()` 1 → 0.85 → 1 over 0.5 s, sine,
+  never above 1; no second flash). Thunder (`S_THUNDER`, `Resources::playThunder`, no repeat filter) follows
+  0.5–4 s later: delay < 1.5 s plays `thunder_01` (close), < 2.8 s `_02`, else `_03`; dry regions are always 2.5–4 s
+  (distant). The three clips are synthesised in-house (filtered brown noise, `CREDITS-weather.txt`). Own RNG
+  (not the schedule's `rng`), nothing saved, no night remesh (P6). No bolt sprite (the plan's optional item was
+  left out). Gate: `--weather-selftest=lightning` (peak ≤ 1.5, ≤ 2 flashes/s, reduce never brightens, delay
+  0.5–4 s, dry rarer + distant, off = exactly 1).
+- **Mist (AT.5).** Three parts, all exactly absent with the weather off (`Weather::fogScale()` 1, `mist()` 0):
+  - *Fog distance, every tier:* `Graphics::applyWorldFog` multiplies the stock start/end (`P_ZFAR − P_ZFAR/1.6`,
+    `P_ZFAR − 30`) by `fogScale()` = (1 − 0.10 cover − 0.30 heavy) × (1 − 0.30 `dawnMist()`): 0.9 overcast, 0.6
+    a full storm, 0.7 at a clear sunrise. `dawnMist()` is a bump around SkyCycle time 0.26 (± 0.07; 0 with the
+    cycle off). Uniforms only; the fog **colour** is left as the sky's, so a culled chunk (below) shows the sky
+    exactly where a fully fogged one would have shown nearly the same colour (the stock far-plane cut looks the same).
+  - *Height fog (valley mist), High + `atmo.height_fog` only (plan P3):* `Graphics::applyHeightFog` (from
+    `beginTerrain` and `Terrain::render2`, before the ×0.25 push; `endTerrain` turns it off) states
+    `R::setHeightFog(plane, params)` only when `mist()` = max(`dawnMist()`, `precipAmount()`) > 0. The plane maps
+    an eye-space point to world y (derived from the view matrix); params are the mist top (`weather.mistheight`
+    × `T_HEIGHT`, cvar default 0.4; SX.6: a persisted Settings row, World › *Weather tuning*), 1/thickness (full 0.12 × `T_HEIGHT` below the top), 1/48 (full strength 48
+    blocks away) and strength 0.85 × `mist()`. `drawWorld` then uses the `EDEN_HEIGHT_FOG` twins of program 1
+    (`world-hfog`, `world-opaque-hfog`, built on first use): `f = min(f, 1 − s·depth·distance)`. Off, Low or no
+    mist: the plain programs (no extra varying or ALU on the Air 2). Doors/golden cubes on `drawLit`, creatures
+    and sprites keep the plain fog.
+  - *Culling past the fog (plan S3):* while `fogScale() < 1`, `renderTree` skips chunks whose box is wholly more
+    than `Graphics::mistCullDistance()` + 1 (the pulled-in fog end) from the eye; `P_ZFAR` and the sky are
+    untouched. Counter `eden_mist_culled()` (a storm at the 64z site: ~340 chunks a frame). AT.9 measures the saving.
+  - Gates: `--weather-selftest=mist` (off identities, dawn bump, height fog on High with mist only, storm culls,
+    G3 600 frames, clear noon culls nothing); `--render-selftest-gl` (12 programs; the twin's half-fog pixel, off
+    = plain, fog off = plain). Shots `TESTERS/atmosphere/at5/shots/` (`--sky-shot --sky-times=0.26,0.5
+    --weather=clear|storm --atmo=low|high`; clear noon Low = High byte-identical).
+- **Clouds (AT.6, `Classes/Clouds.{h,cpp}`).** Video › *Atmosphere* Low/High with `atmo.clouds` on, **weather or
+  not** (the weather only changes their coverage and colour). No `cloud` block clash: `TYPE_CLOUD` is a building cube.
+  - *The layer:* one horizontal plane at y = max(`T_HEIGHT`, 128) + 64 (192 in a 64z world, 320 in a 256z one;
+    raised from `T_HEIGHT` + 24 on the user's look, 2026-11-06). `Clouds::render` runs in `Terrain::render`'s sky
+    pass right after the sky, sun and moon (so after the opaque terrain), with the camera's projection/modelview
+    still current: it unprojects three NDC points to get the view ray as an affine function of NDC
+    (`ray0 + x·ray1 + y·ray2`) and draws one viewport quad (`R::drawClouds`, program `P_CLOUDS`, `kFmtClouds`, a
+    static 4-vertex buffer) at the sky ortho's eye z `−P_ZFAR/1.000012`, nearer than the sky (`/1.000001`) and the
+    sun/moon (`/1.000008`). Blended, depth-tested, no depth write: terrain hides it, so only visible sky pixels pay
+    (plan P5). Each fragment intersects its ray with the plane and samples the map there.
+  - *The map:* 128 × 128 `TF_L8`, repeat, nearest, generated at first use (4 octaves of tileable value noise, 8, 16,
+    32 and 64 cells across, then **rank-equalised** to 0..255, so a threshold of 1 − c leaves exactly the fraction c as cloud). A texel is
+    8 × 8 blocks (period 1024), so clouds are hard-edged blocks: the pixel look. (AT.11: was 12 blocks and 4..32
+    cells, which drew one or two huge slabs at the base coverage; now several mid-sized clouds.) Texels further above the
+    threshold shade toward a darker underside colour.
+  - *Coverage:* 0.30 (`BASE_COVER`) with the weather off or clear, + 0.48 × cover (→ 0.78 overcast) + 0.17 ×
+    heavy (→ 0.95 storm). *Colour (AT.11, lit by the sky, no longer × the world light, which made them muddy
+    brown at dawn and in rain):* with the cycle on, `SkyLook::fogColor` (the horizon, already greyed by the weather)
+    lifted toward white by 0.78 × daylight (daylight = smoothstep of the sun's elevation from −6° to 24°) and by
+    ×1.15 + 0.04 at night: white at noon, peach/pink at dawn and dusk, faint silhouettes a little lighter than the
+    night sky. Cycle off: white, 0.16 grey at a painted night, greyed by `Weather::greySky`. Then × (1 − 0.38 ×
+    heavy) × `Weather::flashMul()` (storms darken, lightning lights); the underside shade is × (0.82 − 0.20 ×
+    heavy). Alpha 0.90; faded out between 0.3 × and 1 × clamp(14 × height above the eye,
+    500, 2000) blocks of horizontal distance. *Wind:* `Clouds::update` (after `Precip::update`, stops under the
+    pause menu) drifts the map 1.2 blocks/s (+2.8 in a storm) toward +x/+z; the offsets are kept wrapped in
+    doubles so no float grows.
+  - *Cloud shadows, High + `atmo.cloud_shadows` only (plan P3):* `Clouds::applyShadow` (from `beginTerrain` and
+    `Terrain::render2`, before the ×0.25 push; the sky pass and `endTerrain` turn it off) states
+    `R::setCloudShadow(map, u, v, params)`: from the inverse view matrix, the sun direction and the chunk offset it
+    builds the affine map eye position → map uv of the point where the ray toward the sun meets the plane (large
+    constants wrapped in doubles). `drawWorld` then uses the `EDEN_CLOUD_SHADOW` twins (a **vertex**-stage fetch
+    on texture unit 1: block-corner granularity), darkening a vertex by `strength` under a cloud texel. Strength
+    0.32 × day (sun elevation 2° → 15°; cycle off: a fixed high sun, none on a painted night) × (1 − cover), so it
+    fades as the sky closes over (overcast is already dark); < 0.01 states nothing (plain programs). Water and
+    glass in `render2` take it too; portals, doors/golden cubes on `drawLit`, creatures and sprites do not.
+  - *Off = absent:* tier Off, or `atmo.clouds` and `atmo.cloud_shadows` both off, frees the map and the quad at
+    the next sky pass; `Terrain::deallocateMemory` frees them too; programs built on first use.
+  - Gates: `--weather-selftest=clouds` (off = absent, Low = layer at 0.30 without shadows, High shadows by day
+    only, storm coverage 0.95 with no shadow, G3: 600 frames upload/allocate/re-mesh nothing, Off frees);
+    `--render-selftest-gl` (17 programs; a ray up hits a full texel, a ray down misses, the shadow twin halves a
+    quad, a threshold no texel reaches = off). G1: plain `--sky-shot` byte-identical to the pre-AT.6 build (24/24).
+    References `TESTERS/atmosphere/at6/shots/` (`--sky-shot --atmo=low|high`).
+- **Ambient particles (AT.7, `Classes/Ambient.{h,cpp}`).** Video › *Atmosphere* Low/High with `atmo.ambient` on; needs no weather.
+  An own fixed pool (`POOL` 256; cap Low 96 / High 256, never `pbuffer`), CPU-simulated in `Ambient::update` (after
+  `Clouds::update`; stops under the pause menu), drawn by `Ambient::render` (beside `Precip::render`, render-local
+  coordinates) as **one** `R::drawSprites` batch of untextured square points (`kFmtSprite`) streamed from the pool.
+  AT.11: points are **world-sized** (the size attribute is world size × the focal length in pixels, `0.5 ×
+  drawable height × proj[5]`, and the sprite attenuation (0, 0, 1) divides by the distance; firefly 0.05 (AT.11b,
+  was 0.09), leaf 0.14, mote 0.035, ember 0.06 shrinking to half, bubble 0.09 blocks; nearer than 0.6 not drawn); they were a fixed 1–2 px and
+  invisible at 720p. Spawning samples at most 8
+  random cells a frame within 12 blocks of the eye (y −6 … +10) and probes 2 random columns (`PROBES`: from 10
+  above the eye down to the first block; leaves followed to their underside), never a scan. **AT.11 sources:** a
+  sample or probe that finds a grass / leaf-underside / lava cell remembers it (`SRC_MAX` 8 per kind), and each
+  remembered cell emits at its kind's rate (firefly 0.30/s at night, leaf 0.25/s, ember 0.35/s, AT.11b: was 1.5/s, a steady fountain), checked again on
+  every emission (still that block, within 14 blocks) and forgotten otherwise: random cells alone found a small
+  lava pool or canopy about once a minute, so embers and leaves never showed. Each kind is capped to a share of
+  the cap (AT.11: firefly 0.40, leaf 0.30, ember 0.30, bubble 0.30, mote 0.25; motes spawn at 0.04 a sample, were
+  0.10 and 0.60 of the cap): *fireflies* at night (`sky_isNight`) above grass/flowers,
+  blinking warm points; *leaves* below a `TYPE_LEAVES` block with air under it, falling and swaying; *dust motes*
+  by day in open air; *embers* off lava with air above (AT.11b: each emission pops 1–3 sparks from one point,
+  up at 1.8–3.2 blocks/s with a little sideways speed, slowed by 2.6/s² against drag and flutter, living 0.7–1.6 s,
+  flickering, hot near-white cooling to yellow → orange → dull red; on **painted lava** the spark takes the paint's
+  `colorTable` colour, whitened while hot, so green "acid" gives green embers: `P::paint`, read by `emitAt`); *bubbles* only while `hud->underLiquid` (a water
+  cell within 3 blocks; the only kind spawned underwater). Rain (`precipAmount` > 0.3) stops fireflies and motes.
+  A particle dies on age, past 16 blocks, or on entering a block (bubbles: on leaving water). Colours take the
+  world light except the glowing kinds. A tier drop sheds the surplus at once; Off empties the pool;
+  `Terrain::deallocateMemory`/`clearBlocks` reset it.
+  Gate: `--weather-selftest=ambient` (off = absent, caps, 1000 forced spawns never pass the cap, High → Low sheds,
+  G3: 600 frames bounded with no R resource of its own, night spawns no new motes). *Firefly glows* (AT.11) are
+  drawn by `renderHalos` (below) with the lamp halos.
+
+- **Water and light polish (AT.8).** Video › *Atmosphere* with the element switches `atmo.water_tint` (Low, High),
+  `atmo.glint` and `atmo.halos` (High). (a) *Water tint*: `Graphics::applyWaterTint` (called from `Terrain::render2` before
+  the x0.25 push, off after the chunk loop) states `R::setWaterTint(tint, sun, up)`; the `EDEN_WATER_TINT` vertex twins pull
+  only vertices whose colour alpha is 145/255 (the mesher's `IS_WATER` mark; nothing else meshes 145) 30 % toward the
+  sky/fog colour (greyed by weather). (b) *Glint* (AT.11, High + `atmo.glint`: the `EDEN_WATER_GLINT` twins of the four
+  water-tint twins, chosen only while the glint strength `0.55 x day x clearSky` is > 0, so Low and night keep the plain
+  tint twins): **texel sparkles**. The vertex stage passes the surface's 1/16-block cell (`a_position.xz` × 4) and the
+  sun-path weight `(r.sun)^16` (r the view ray mirrored in the surface; 0 off water) and adds a faint sheen of 0.3 ×
+  `(r.sun)^32`; the fragment stage hashes the cell and lights it near white where the hash is in the top 10 % × the
+  weight and its own twinkle phase (`u_wup.w` = `Ambient::clock()` × 0.7) is in the first 30 % of a cycle. It replaced
+  AT.8's per-vertex `(r.sun)^32` highlight, which smeared into one soft blob over a pool (user: "pixel sparkles").
+  (c) *Underwater fog* (any tier above Off): while `Hud::underLiquid`, `applyWorldFog`
+  uses 0.7 × the liquid's colour (in the clock's light; AT.11: was 1.0, a flat bright tint), start 1, end 24 (was 28), and height fog is off; the HUD's 0.5 fill is unchanged.
+  `Graphics::worldFogRange` (AT.11) returns the start/end applyWorldFog states (under water, mist) for draws that
+  fade themselves. Culling is not pulled in (the sky behind would show). (d) *Lamp halos* (AT.11 redesign; AT.8's
+  flickering point sprite read as a pulsing square and was disabled): the first four `TYPE_LIGHTBOX`
+  cells per chunk are recorded in `rebuild2`'s first scan loop (`TerrainChunk::lamps`, outside the count/fill pair);
+  `eden_lamp_positions` walks only the chunk columns within the radius (a slot holding another column of the
+  toroidal window is skipped) and keeps the **nearest** 64 within 40 blocks. `Ambient::renderHalos` draws them and
+  the firefly glows as **one additive** (`B_ADD`) `R::drawWorld` of camera-facing quads (`kFmtGlow`: pos, colour,
+  uv; streamed, no buffer) with a 16 × 16 `TF_L8` nearest **pixel-ring** texture (bands 1.0 / 0.59 / 0.31 / 0.12,
+  core radius 0.24, made on first use, freed when nothing glows, `atmo-glow`): a halo is 2.6 blocks across (AT.11b:
+  was 3.6, user: too big, not subtle), 0.9 toward the camera
+  from the lamp's centre (so the block's own faces do not hide it), **steady** (no flicker: user), tinted by the
+  lamp's paint (unpainted warm white), alpha 0.30 (AT.11b: was 0.42) × the lamp's visibility × night (the cycle's sun −4° … 8°, or the stock flag; a dark
+  storm adds 0.35 × its cover) × the world fog's range (`worldFogRange`: an additive quad must not take the fog
+  colour, so `fogOff` and the CPU fades it) × the 40-block edge × a fade nearer than 2.7 blocks. **Visibility**
+  (AT.11b; the depth test alone let halos show through walls: the pulled quad poked out of a one-block wall and the
+  wide quad spilled round whatever hid the lamp): `lampSeen` walks the voxels (Amanatides–Woo) from the eye to the
+  centre of each lamp face turned to the eye whose neighbour cell is open; an occluder is a block > 0 without
+  `IS_NOTSOLID | IS_LIQUID | IS_NOSHADOW` (glass, cloud, weave, water see through). Per-lamp state is matched by cell
+  across frames and eased 0.15 a frame (no pop); a lamp new to the list is walked at once, others round-robin (≤ 16
+  walks a frame). Lamp *light* still passes through blocks (stock lighting; a far-future item). A firefly glow is
+  0.44 blocks across, its blink × 0.35 (AT.11b: were 0.8 and × 0.75). High + `atmo.halos` for lamps; glows whenever fireflies live. Gate:
+  `--weather-selftest=halos` (Off = absent, none by day or on Low, three at night from one texture, G3 600 night
+  frames, a lamp boxed in by stone loses its halo and gets it back, the nearest-first cap, Off frees the texture).
+- **Review set (AT.11):** `--atmo-shot[=PREFIX]` (window) builds the scene-shot site + an annex (8 × 8 pool, grass,
+  canopy, three lamps) and writes one frame per effect with its own forced tier and weather, plus a counter line
+  each, then two edited scenes (AT.11b): `halos-wall` (a stone wall hides one lamp: two halos) and
+  `ambient-lava-green` (the site's lava painted green, shot once three embers are up); the refs are `TESTERS/atmosphere/at11/{before,after}/` and `at11b/after/` (the tuning round). Verdicts per effect: `WORKING/atmosphere-plan-2026-11-05.md` §12.
 
 ## Common pitfalls
 - Lighting rebuilds re-mesh chunks in radius; a wall of lightboxes on a streaming

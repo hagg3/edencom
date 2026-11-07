@@ -594,6 +594,7 @@ int         eden_settings_count(void);
 const char* eden_settings_key(int i);
 const char* eden_settings_label(int i);
 const char* eden_settings_group(int i);
+const char* eden_settings_cvar(int i);   // SX.6
 int         eden_settings_kind(int i);
 float       eden_settings_min(int i);
 float       eden_settings_max(int i);
@@ -1164,8 +1165,8 @@ int run_console_selftest() {
             std::string why;
             int rows = 0, present = 0;
             for (int i = 0; i < eden_settings_count(); ++i) {
-                if (eden_settings_kind(i) == 4) continue;   // MP.8: KIND_TEXT rows are not cvars
-                const std::string name = lowerS(eden_settings_group(i)) + "." + eden_settings_key(i);
+                if (eden_settings_kind(i) >= 4) continue;   // MP.8: KIND_TEXT rows are not cvars; SX.1: nor pages/headings; SX.6: KIND_CVAR shows one
+                const std::string name = eden_settings_cvar(i);   // group.key; SX.6: Movement tuning rows are move.*
                 const int ci = cvarIndex(name.c_str());
                 const bool expect = diag || !eden_settings_native_hidden(i);
                 ++rows;
@@ -1458,11 +1459,11 @@ int run_console_selftest() {
         check(std::fabs(tA - 0.6) < 1e-6 && std::fabs(tB - 0.9) < 1e-6 && std::fabs(tC - 0.95) < 1e-4 && tP == tC && tL == tC &&
               SkyCycle::locked() && std::fabs(SkyCycle::time() - 0.4) < 1e-6 && !sky_isNight() && SkyCycle::needsSave(),
               "cycle on: time/world.time set the clock, it advances etime/dayLength, pause and timefreeze stop it, time T still sets it", d);
-        Console::run("experiments.day_length 0");
+        Console::run("gameplay.day_length 0");
         const double len10 = SkyCycle::dayLengthSeconds();
-        Console::run("reset experiments.day_length");
+        Console::run("reset gameplay.day_length");
         std::snprintf(d, sizeof(d), "day_length 0 -> %.0f s, reset -> %.0f s", len10, SkyCycle::dayLengthSeconds());
-        check(len10 == 600 && SkyCycle::dayLengthSeconds() == 1200, "experiments.day_length maps 10/20/40/60 min (default 20)", d);
+        check(len10 == 600 && SkyCycle::dayLengthSeconds() == 1200, "gameplay.day_length maps 10/20/40/60 min (default 20)", d);
 
         // the save carries it: a reload restores t and the lock (a world with no record would read 0.30, unlocked)
         Console::run("save");

@@ -13,6 +13,7 @@
 
 #include "VecMath.h"
 #include "Renderer.h"
+#include "BlockTraits.h"   // K.2-1: per-type behaviour
 //#import "SpecialEffects.h"
 
 #define BREAKP 10
@@ -346,7 +347,7 @@ void BlockBreak::addBlockExplode(int x,int z,int y,int type, int color) {
             bf=blockTypeFaces[TYPE_CLOUD][arc4random()%6];
         for(int j=0;j<12;j++){
             if(color==0){
-                if(bf==TEX_GRASS_SIDE||type==TYPE_GRASS3||type==TYPE_TNT||type==TYPE_BRICK||type==TYPE_VINE||type==TYPE_FIREWORK||IS_NEWBLOCK_TEX(bf))
+                if(trait_paintArtParticle(type,bf))   // K.2-1
                 {
                     useColorTex=true;
                     pbuffer2[pvbi+j].colors[0]=255;
@@ -695,7 +696,7 @@ void BlockBreak::addBlockBreak(int x,int z,int y,int type,int color){
             bf=blockTypeFaces[TYPE_CLOUD][arc4random()%6];
         for(int j=0;j<12;j++){
             if(color==0){
-                if(bf==TEX_GRASS_SIDE||type==TYPE_GRASS3||type==TYPE_TNT||type==TYPE_BRICK||type==TYPE_VINE||type==TYPE_FIREWORK||IS_NEWBLOCK_TEX(bf))
+                if(trait_paintArtParticle(type,bf))   // K.2-1
                 {
                     useColorTex=true;
                     pbuffer2[pvbi+j].colors[0]=255;

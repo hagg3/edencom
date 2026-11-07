@@ -1,0 +1,14 @@
+# pack.py validate / --pack-selftest: every line, in order (K.2-3)
+eden@102: tile "stone_again": atlas 1 index 5 is already tile "stone"
+eden@144: tile "Bad-Name": the name must match [a-z0-9_]{1,24}
+eden@191: tile "big": "atlas" must be 1 or 2
+eden@240: tile "far": "index" must be 0..127
+eden@291: tile "extra": unknown key "png"
+eden@355: tile "glass": particle_art is for atlas 1 tiles only
+eden@374: tile "glass": an unpainted twin pairs two atlas 1 tiles, and index 0 cannot be one
+eden@479: tile "brick": unknown unpainted tile "nope"
+eden@567: tile "dirt": "particle_art" must be true or false
+eden@538: tile "dirt": an unpainted twin pairs two atlas 1 tiles, and index 0 cannot be one
+eden@686: stock ids without a block: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127
+eden@707: picker page 0 must have 35 cells (the stock grid)
+eden@711: picker page 1 must have 20 cells (the stock grid)

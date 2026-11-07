@@ -14,7 +14,7 @@ the entire audio layer (sound effects, ambience, music, creature voices).
 - Audio: `Classes/SimpleAudioEngine.h` is the contract. Stock implements it with
   `Classes/SimpleAudioEngine.mm` (C++ wrapper) over `SimpleAudioEngine_objc` / `CocosDenshion` /
   `CDAudioManager` (OpenAL). *Port:* none of that is compiled; `port/src/seam/SimpleAudioEngine_native.cpp`
-  implements the contract (effects decoded once and mixed as `SDL_AudioStream`s; music + four ambience
+  implements the contract (effects decoded once and mixed as `SDL_AudioStream`s; music + five ambience
   layers streamed), decoding through `AppleAudio_native.mm` (Apple) or `PortableAudio_native.cpp`
   (Linux/Windows). Gate: `--audio-selftest` (CI; decoders, mixer, slider vs fade).
 - Sound assets: the hundreds of `.caf`/`.mp3` files under `media/` (block break/build per material
@@ -29,6 +29,14 @@ the entire audio layer (sound effects, ambience, music, creature voices).
   `getBlockTexShort(texId)` returns the tile origin/height.
 - `atlas2` — the transparent/animated atlas (water/lava frames, glass, leaves…);
   rows are animation frames advanced by the render pass.
+- **Mod pack tiles (K.2-4, 2026-11-01).** `atlas.png` 66–127 and `atlas2.png` 32–127 are free (atlas2 in 8-slot
+  strips: the transparent pass animates every atlas2 tile over 8 rows, `Terrain::render2`); a mod pack's PNG
+  tiles are placed there at world entry (`ContentPack::loadMods`, allocation rules in
+  [content-packs.md](content-packs.md) "Mod packs") and `Resources::setModTiles` re-uploads an atlas whose
+  content changed: the stock strip (decoded from the bundle once, the first time a pack has a tile, then kept,
+  512 KiB each) plus the tiles, through `Texture2D::replaceFromImage` (new GL name, mips regenerated, same
+  format: RGB565 for `atlas.png`, so a mod tile's alpha only counts in `atlas2.png`). No pack tiles = the
+  stock upload, untouched; `atlasUploads()` counts re-uploads (`--packs-selftest`).
 - `textures` / `menutextures` vectors — indexed by `ICO_*` enums (sky boxes, swirl,
   flower sheet, spheremap, HUD icons…). Game vs. menu sets are loaded/unloaded on
   world enter/exit (`loadGameAssets`/`unloadGameAssets`,
@@ -46,16 +54,23 @@ the entire audio layer (sound effects, ambience, music, creature voices).
   worst case ≈ 68 → 16 MB). Gate for the recolour inputs: `--recolor-selftest`.
 
 ## Audio
+- **Block sounds are sound sets** (K.2-2, 2026-11-01): which effect a block's build, break, landing,
+  footstep and blast-mix events play is one row of `blockSoundSets[]` (`Classes/BlockTraits.{h,cpp}`),
+  picked per type by `blockSoundSet[256]`; 25 `eden:` sets reproduce the old per-site `if` chains exactly
+  (pinned by `--content-dump`; `docs/world-and-terrain.md` "Per-type behaviour"). **Changed on purpose
+  (plan D9):** the chains tested `IS_FLAMMABLE` live, so with *Fire melts ice* on, ice built and broke with
+  the wood sounds; the tables do not, so ice always sounds like ice (`--content-dump` fails if a fire toggle
+  moves any sound). The ladder/vine climbing sound and `S_BOUNCE` are still per-site.
 - H.6/H.9 (2026-10-14): `S_JUMP` (73, `player_jump_1/2`, on grounded jumps), `S_TNT_DIRT/STONE/MIX/MIX_GLASS`
   (74–77, picked by `Terrain::tntSoundForBlast` from the blast sphere's majority material; painted TNT
-  keeps `S_GOOP_EXPLODE`) and `S_RESPAWN` (78, `pendingRespawnSound` set in `Hud::update`'s death warp,
+  keeps `S_GOOP_EXPLODE`) `S_THUNDER` (79, AT.4: `thunder_01..03.mp3`, played by `Resources::playThunder(variation)` from `Weather`, bypassing `playSound`'s repeat filter and random variation) and `S_RESPAWN` (78, `pendingRespawnSound` set in `Hud::update`'s death warp,
   played in `Terrain::render` right after `firstframe` clears). `Player::takeDamage(damage, cause)` picks the
   death sound by `DEATH_*` cause, not the damage float. Break tables use the shipped variations 5–7/`_v2`
   (wood/leaves/glass 7, stone/dirt 8; `MAX_VARIATIONS2` 8). Nergle's `VO_STRETCHING` is `Nergle_Stretch_1/2`.
 - H.11: `CREATURE_WALK_VOICES` (Experiments "Creature walking sounds", off) plays `VO_WALKING` on a
   creature's transition into `DEFAULT_WALK`, at most once per creature per 8 s, never for Batty
   (`Model.cpp setState`).
-- `playSound(soundId)` — `NUM_SOUNDS 79` effect groups (`enum SOUND_TYPES`,
+- `playSound(soundId)` — `NUM_SOUNDS 80` effect groups (`enum SOUND_TYPES`,
   `Resources.h`), each with random variants, preloaded via
   `[SimpleAudioEngine preloadEffect:]`. `S_MENU_BUTTON_PRESS`/`_RELEASE`,
   `S_SKY_CHANGE_DARK_TO_LIGHT`/`_LIGHT_TO_DARK`/`S_SKY_PAINTING`,
@@ -159,8 +174,19 @@ the entire audio layer (sound effects, ambience, music, creature voices).
   (`VO_*` actions × 7 species × 5 variants).
 - Ambience: `NUM_AMBIENT 17` environment loops (`AMBIENT_UNDERWATER`, `_CAVE`,
   `_GRASSLANDS`, `_PYRAMID`, `_NIGHT`…), split into **four** independent, simultaneously-
-  audible layers (each with its own crossfade state, stepped every frame in
+  audible layers (plus the rain layer 4 below) (each with its own crossfade state, stepped every frame in
   `update(etime)`):
+  - **Rain layer (4, AT.2d, `Resources.cpp` `rainWanted`)**: `rain_ambience.mp3` (CC0, `media/new_sound/CREDITS-weather.txt`)
+    plays *alongside* the exclusive bed, so caves and biomes keep their sound. Target = `Weather::precipAmount()` while
+    `precipAt` at the camera is rain (snow, dry regions, weather off, not in play: 0); under a roof (`Precip::top` of the
+    eye column above the eye) it is ×0.3. Same `FADE_SPEED` ramp as the other layers; once silent for 3 s the stream is
+    stopped, not left decoding at volume 0. One loop for all intensities (the plan's light/heavy crossfade needs a second
+    channel; volume alone carries it). Native backend: `kChannelCount` 6 (channel 5). Gate: `--weather-selftest=rain-audio`.
+    AT.11: the play is re-issued (at most every 60 frames) when `rainplaying` is set but the engine has no such stream:
+    a play started while audio was off is a no-op, so turning sound on mid-shower never brought the rain in, and the
+    full `--weather-selftest` failed this leg after the muted `precip` leg. Measured (ffmpeg `volumedetect`): the loop is
+    27 s, mean −22.7 dB, seam level (first/last 0.3 s −22.8 / −23.3 dB); the stock `ambience_open.wav` is −55 dB, so
+    the rain sits ~20 dB above the open-air bed even at ×0.3: an ear check for AT.12.
   - **Bed layer** (`soundEventBed`, `Player.cpp`): exactly one of
     {underwater, sky-high, cave, open, the 11 biome ambiences} at a time, chosen by the
     same underwater>sky-high>cave>biome priority chain as before, crossfading between

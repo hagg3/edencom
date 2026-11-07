@@ -15,6 +15,7 @@
 // EdenWorldStore::verify() (= emod.py verify) is clean on every saved file.
 #include "harness.h"
 #include "../../../Classes/BlockRegistry.h"
+#include "../../../Classes/BlockTraits.h"
 #include "../../../Classes/SkyCycle.h"
 
 using namespace harness;
@@ -206,6 +207,13 @@ int run_registry_selftest() {
                   eden_console_getblock(xf + 1, z, y), BlockRegistry::idOf("emod:test_1"));
     check(r == CmdScript::RUN_DONE && eden_console_getblock(xf, z, y) == 129 && eden_console_getblock(xf + 1, z, y) == 129,
           "fill emod:test_1 takes 129", d);
+    // K.2-2: a definition's trait rows reach the table through resolve() (test_0 is brick-like, test_1 glass-like).
+    std::snprintf(d, sizeof(d), "128: set %d art %#x build %d; 129: set %d noshadow %d caster %d", blockSoundSet[128],
+                  blockPaintArt[128], trait_buildSound(128), blockSoundSet[129], trait_noShadow(129), g_shadow_caster[129]);
+    check(blockSoundSet[128] == blockSoundSet[TYPE_BRICK] && blockPaintArt[128] == blockPaintArt[TYPE_BRICK] &&
+              trait_buildSound(128) == trait_buildSound(TYPE_BRICK) && trait_paintArtChunk(128) &&
+              blockSoundSet[129] == blockSoundSet[TYPE_GLASS] && trait_noShadow(129) && g_shadow_caster[129] == 0,
+          "a mod block carries its definition's sound set, paint art and no-shadow trait", d);
     r = con("if " + at(xa, y, z) + " emod:test_0; say holds; unless " + at(xa, y, z) + " emod:test_1; say differs", &sk);
     std::snprintf(d, sizeof(d), "r %d: %s", r, sk.all().c_str());
     check(r == CmdScript::RUN_DONE && sk.has("holds") && sk.has("differs"), "if/unless compare mod names", d);
@@ -245,7 +253,7 @@ int run_registry_selftest() {
                       verts(xa, y, z), h.c_str());
         check(eden_console_getblock(xa, z, y) == 128 && color_at(xa, y, z) == 5 && BlockRegistry::missing(128) &&
                   blockinfo[128] == (IS_HARD | IS_MISSING) && blockTypeFaces[128][0] == TEX_MISSING && verts(xa, y, z) > 0 &&
-                  h != hashA && BlockRegistry::count() == 3,
+                  blockSoundSet[128] == 0 && blockPaintArt[128] == 0 && h != hashA && BlockRegistry::count() == 3,
               "unregistered: the bytes draw as the missing block, paint kept", d);
         r = con("set " + at(xa, y, z) + " emod:test_2", &sk);
         check(r == CmdScript::RUN_BAD && sk.has("Unknown block: emod:test_2"), "a mod name with no definition is unknown", sk.all().c_str());

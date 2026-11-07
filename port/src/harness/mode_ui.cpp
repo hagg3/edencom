@@ -1,5 +1,10 @@
 // G.4: split out of the old eden_main_native.cpp (see harness.h). Mode group "ui".
+extern bool DEV_CONSOLE_ALLOWED;   // Hud.cpp
 #include "harness.h"
+#include "../../../Classes/SrclikeMove.h"   // SRC.8b
+#include "../../../Classes/Weather.h"       // SX.6
+#include "../shim/foundation/eden_prefs.h"
+extern "C" int eden_settings_set_by_key(const char* key, float v);   // SRC.8b
 
 using namespace harness;
 
@@ -50,6 +55,8 @@ int   eden_settings_kind(int i);
 int   eden_settings_enum_count(int i);
 void  eden_input_pointer_event(int phase, int identity, float x, float y);
 }
+extern "C" void eden_settings_set_text(int i, const char* text);   // K.3-6
+extern "C" int eden_settings_scope(int i);   // SX.6
 int settings_index(const char* key) {
     for (int i = 0; i < eden_settings_count(); ++i)
         if (std::strcmp(eden_settings_key(i), key) == 0) return i;
@@ -318,6 +325,158 @@ int mp_ui_checks(Menu* m) {
     return 0;
 }
 
+
+// K.3-5/6: the mod manager, driven by taps at the rects it reports, asserting on the model and on Packs/
+// (mods.json, folders). Runs on whatever --docs the harness has: it writes its own packs under Packs/.
+int mods_ui_checks(Menu* m) {
+    char detail[240];
+    const std::string docs = World::getWorld->fm->documents;
+    const std::string packs = docs + "/Packs";
+    eden_fs_make_dirs(packs);
+    auto put = [](const std::string& path, const std::string& text) {
+        FILE* f = std::fopen(path.c_str(), "wb");
+        if (f) { std::fwrite(text.data(), 1, text.size(), f); std::fclose(f); }
+    };
+    for (const char* id : { "ma", "mb", "mc" }) {
+        eden_fs_make_dirs(packs + "/" + id);
+        put(packs + "/" + id + "/pack.json", std::string("{\"format\": 1, \"id\": \"") + id + "\", \"name\": \"Mod " + id +
+            "\", \"version\": \"1.0\", \"blocks\": []}\n");
+    }
+    eden_fs_make_dirs(packs + "/bad");
+    put(packs + "/bad/pack.json", "{ not json");
+    eden_fs_remove(packs + "/mods.json");
+
+    ModsMenu* mm = m->mods;
+    if (!m->showhome) { m->showHome(true); tick(3); }
+    ui_tap_rect(m->controlRect("home.mods"));
+    tick(3);
+    { const CGRect mr = m->controlRect("home.mods"); std::snprintf(detail, sizeof detail, "rect %.0f,%.0f %.0fx%.0f home=%d loading=%d servers=%d settings=%d", mr.origin.x, mr.origin.y, mr.size.width, mr.size.height, m->showhome, m->loading, m->showservers, m->showsettings); }
+    check(m->showmods && mm->isOpen(), "the home screen's Mods button opens the manager", detail);
+    auto indexOf = [&](const char* key) {
+        for (int i = 0; i < mm->entryCount(); i++) if (!std::strcmp(mm->entryId(i), key)) return i;
+        return -1;
+    };
+    auto tapRow = [&](int i) {
+        mm->showRow(i);
+        tick(1);
+        CGRect r;
+        if (mm->rowRect(i, &r)) { ui_tap_rect(r); tick(2); return true; }
+        return false;
+    };
+    const int ia = indexOf("ma"), ib = indexOf("mb"), ic = indexOf("mc"), ix = indexOf("bad");
+    std::snprintf(detail, sizeof detail, "ma %d mb %d mc %d bad %d count %d", ia, ib, ic, ix, mm->entryCount());
+    check(ia >= 0 && ib == ia + 1 && ic == ib + 1 && ix >= 0 && !std::strcmp(mm->entryState(ia), "On") &&
+          !std::strcmp(mm->entryState(ix), "Refused"), "one row per pack folder, in load order; a broken pack is Refused", detail);
+
+    // Select + toggle.
+    tapRow(ib);
+    check(mm->selectedIndex() == ib && mm->canToggle() && mm->canMove(-1) && mm->canMove(+1) && mm->canRemove(),
+          "tapping a row selects it and enables its actions", "");
+    tapRow(ix);
+    check(!mm->canToggle() && !mm->canMove(-1) && mm->canRemove(), "a refused pack can only be removed", "");
+    tapRow(ib);
+    ui_tap_rect(mm->controlRect("toggle"));
+    tick(2);
+    check(!std::strcmp(mm->entryState(indexOf("mb")), "Off") && mm->selectedIndex() == indexOf("mb"), "Turn off switches the pack off and keeps it selected", mm->statusText());
+    std::vector<unsigned char> list;
+    check(read_file(packs + "/mods.json", &list) && std::string(list.begin(), list.end()).find("\"enabled\": false") != std::string::npos,
+          "mods.json records it", "");
+    ui_tap_rect(mm->controlRect("toggle"));
+    tick(2);
+    check(!std::strcmp(mm->entryState(indexOf("mb")), "On"), "Turn on switches it back", "");
+
+    // Move.
+    ui_tap_rect(mm->controlRect("up"));
+    tick(2);
+    std::snprintf(detail, sizeof detail, "ma %d mb %d", indexOf("ma"), indexOf("mb"));
+    check(indexOf("mb") + 1 == indexOf("ma") && mm->selectedIndex() == indexOf("mb"), "Up moves the pack earlier and follows it", detail);
+    ui_tap_rect(mm->controlRect("down"));
+    tick(2);
+    check(indexOf("ma") + 1 == indexOf("mb"), "Down moves it back", "");
+
+    // Remove: Cancel keeps it, Remove deletes the folder.
+    tapRow(indexOf("mc"));
+    ui_tap_rect(mm->controlRect("remove"));
+    tick(3);
+    CGRect br;
+    check(GLDialog::active(), "Remove asks first", "");
+    if (GLDialog::buttonRect(1, &br)) ui_tap_rect(br);
+    tick(3);
+    check(!GLDialog::active() && indexOf("mc") >= 0, "Cancel keeps the pack", "");
+    ui_tap_rect(mm->controlRect("remove"));
+    tick(3);
+    if (GLDialog::buttonRect(0, &br)) ui_tap_rect(br);
+    tick(3);
+    std::vector<unsigned char> gone;
+    check(indexOf("mc") < 0 && !read_file(packs + "/mc/pack.json", &gone), "Remove deletes the folder and the row", mm->statusText());
+
+    // Install from file (the dialog's outcome, fed in) -> a new row, selected.
+    const std::string zp = docs + "/ui-mod.zip";
+    {
+        const std::string z = g_mods::ui_pack_zip("mz", "2.0");
+        put(zp, z);
+    }
+    mm->installFile(zp.c_str());
+    tick(2);
+    check(indexOf("mz") >= 0 && mm->selectedIndex() == indexOf("mz") && std::strstr(mm->statusText(), "Installed"), "Install from file adds the pack", mm->statusText());
+    mm->installFile((docs + "/no-such.zip").c_str());
+    tick(2);
+    check(mm->entryCount() > 0 && indexOf("mz") >= 0 && !std::strstr(mm->statusText(), "Installed"), "a bad zip is reported and installs nothing", mm->statusText());
+    eden_fs_remove(zp);
+
+    // Get Mods: hidden without the catalogue setting, the tab appears when it is set.
+    const int si = settings_index("mods_catalogue_url");
+    check(si >= 0 && !mm->tabsShown(), "no Get Mods tab while mods_catalogue_url is empty", "");
+    eden_settings_set_text(si, "http://127.0.0.1:1/catalogue.json");
+    tick(3);
+    check(mm->tabsShown(), "the Get Mods tab appears when it is set", "");
+    ui_tap_rect(mm->tabRect(ModsMenu::TAB_GET));
+    tick(3);
+    check(mm->tab() == ModsMenu::TAB_GET, "tapping the tab switches to it", "");
+    // The unreachable catalogue fails; then feed bytes as the server would have sent them.
+    tick_until([mm] { return !mm->busy(); }, 3000, "the catalogue request");
+    const char* cat = "{\"format\": 1, \"packs\": [{\"id\": \"mz\", \"name\": \"Zip mz\", \"version\": \"3.0\", \"url\": \"http://127.0.0.1:1/mz.zip\", "
+                      "\"sha256\": \"0000000000000000000000000000000000000000000000000000000000000000\", \"size\": 2048, \"author\": \"Sam\", \"description\": \"A mod.\"},"
+                      "{\"id\": \"new\", \"name\": \"New one\", \"version\": \"1.0\", \"url\": \"http://127.0.0.1:1/n.zip\", "
+                      "\"sha256\": \"0000000000000000000000000000000000000000000000000000000000000000\"}, {\"id\": \"nourl\"}]}";
+    mm->feedCatalogue(cat, std::strlen(cat));
+    tick(2);
+    check(mm->entryCount() == 2 && !std::strcmp(mm->entryId(0), "mz") && !std::strcmp(mm->installedVersion("mz"), "2.0") &&
+          *mm->installedVersion("new") == 0, "the catalogue lists its valid entries; installed ids are known", "");
+    tapRow(1);
+    ui_tap_rect(mm->controlRect("install"));
+    tick(2);
+    tick_until([mm] { return !mm->busy(); }, 4000, "the download");
+    std::vector<unsigned char> part;
+    check(!mm->busy() && !read_file(packs + "/.download.partial", &part) && !*mm->installedVersion("new") && mm->statusText()[0],
+          "a failed download leaves no partial and installs nothing", mm->statusText());
+
+    // Back to Installed, then Escape-equivalent Back.
+    ui_tap_rect(mm->tabRect(ModsMenu::TAB_INSTALLED));
+    tick(2);
+    eden_settings_set_text(si, "");
+    tick(2);
+    check(!mm->tabsShown() && mm->tab() == ModsMenu::TAB_INSTALLED, "clearing the setting hides the tab again", "");
+    ui_tap_rect(mm->controlRect("back"));
+    tick(3);
+    check(!m->showmods && m->showhome, "Back returns to the home screen", "");
+
+    // Settings > Mods opens it too.
+    ui_tap_rect(m->controlRect("home.settings"));
+    tick(3);
+    eden_settings_menu_close();
+    tick(2);
+    m->openMods();
+    tick(2);
+    check(m->showmods, "Menu::openMods (Settings > Mods) opens it", "");
+    mm->back();
+    m->showmods = false;
+    tick(2);
+    for (const char* id : { "ma", "mb", "mz", "bad" }) eden_fs_remove_tree(packs + "/" + id);
+    eden_fs_remove(packs + "/mods.json");
+    return 0;
+}
+
 // Stage 5.6: the kit main menu, driven only through taps at the rects the screen reports (and one
 // wheel event), asserting on the menu's model — the list, the selection, `loading`, the disk.
 // Works on whatever list this machine already has: it adds its own worlds and only deletes those.
@@ -341,6 +500,7 @@ int run_menu_selftest() {
         tick(3);
         check(!m->showservers && m->showhome, "the server list's Back returns home", "");
         if (mp_ui_checks(m) != 0) return 1;
+        if (mods_ui_checks(m) != 0) return 1;
         const CGRect gw = m->controlRect("getworlds"), hg = m->controlRect("home.getworlds");
         auto same = [](CGRect a, CGRect b) {
             return a.origin.x == b.origin.x && a.origin.y == b.origin.y && a.size.width == b.size.width &&
@@ -891,6 +1051,91 @@ int run_picker_selftest() {
     return 0;
 }
 
+// SX.6: Settings > World > This world, in a world (WORKING/settings-ux-audit-2026-11-06.md §7). Sets the time of
+// day, the weather and both locks through the panel's real controls, saves by quitting, reopens the world and
+// reads them back through the cvars. Then, with the world flagged a multiplayer session, the section is still
+// there with the "temporary" badge (its rows write the same local cvars; nothing in that path talks to a server).
+float sx6_cvar(const char* name) {
+    const int ci = Console::cvarIndex(name);
+    const Console::Cvar* c = ci >= 0 ? Console::cvarAt(ci) : nullptr;
+    return (c && c->get) ? c->get(c->tag) : -1.0f;
+}
+int sx6_this_world_leg(const char* name) {
+    char detail[240];
+    Console::init();
+    const int iCycle = settings_index("day_night_cycle"), iWeather = settings_index("weather");
+    const float cycle0 = eden_settings_get(iCycle), weather0 = eden_settings_get(iWeather);
+    eden_settings_set(iCycle, 1.0f);
+    eden_settings_set(iWeather, 1.0f);
+    tick(5);
+    eden_settings_menu_open_now();
+    tick(3);
+    SettingsMenu* sm = World::getWorld->menu->settings;
+    CGRect r;
+    const bool hasNone = sm->rowHint("heading_world_none") != nullptr;
+    const char* hintSp = sm->rowHint("heading_world_this");
+    const std::string spHint = hintSp ? hintSp : "";
+    // Time of day: tap 3/4 along the track (about 18:00; the thumb inset moves it a little).
+    const bool tRow = sm->showRow("world_time", &r);
+    if (tRow) { tick(2); ui_tap(r.origin.x + r.size.width * 0.75f, r.origin.y + r.size.height * 0.5f); tick(2); }
+    const float tSet = sx6_cvar("world.time");
+    // Weather now: > three times from whatever it is lands on (kind + 3) % 5.
+    const int w0 = (int)lroundf(sx6_cvar("weather.now"));
+    const bool wRow = sm->showRow("weather_now", &r);
+    if (wRow) for (int i = 0; i < 3; ++i) { tick(2); ui_tap(r.origin.x + r.size.width - r.size.height * 0.5f, r.origin.y + r.size.height * 0.5f); }
+    tick(2);
+    const int wSet = (int)lroundf(sx6_cvar("weather.now")), wWant = (w0 + 3) % 5;
+    // Both locks: tap their toggles (both start off in a fresh world).
+    const float lt0 = sx6_cvar("world.locktime"), wl0 = sx6_cvar("weather.lock");
+    const bool ltRow = sm->showRow("world_locktime", &r);
+    if (ltRow) { tick(2); ui_tap_rect(r); tick(2); }
+    const bool wlRow = sm->showRow("weather_lock", &r);
+    if (wlRow) { tick(2); ui_tap_rect(r); tick(2); }
+    const float ltSet = sx6_cvar("world.locktime"), wlSet = sx6_cvar("weather.lock");
+    std::snprintf(detail, sizeof(detail), "rows %d%d%d%d none=%d time %.3f weather %d->%d (want %d) locks %.0f->%.0f %.0f->%.0f hint \"%s\"",
+                  tRow, wRow, ltRow, wlRow, hasNone, tSet, w0, wSet, wWant, lt0, ltSet, wl0, wlSet, spHint.c_str());
+    check(tRow && wRow && ltRow && wlRow && !hasNone && std::fabs(tSet - 0.75f) <= 0.03f && wSet == wWant &&
+          lt0 == 0.0f && ltSet == 1.0f && wl0 == 0.0f && wlSet == 1.0f && spHint == "Saved with this world.",
+          "SX.6: World > This world sets the time, the weather and both locks through their cvars", detail);
+    eden_settings_menu_back();   // Escape on a tab closes
+    tick(3);
+
+    // Save (quit), reopen, read back.
+    if (!quit_to_menu()) return 1;
+    tick(30);
+    if (!open_world(name, g_opt.height)) return 1;
+    tick(30);
+    const float tBack = sx6_cvar("world.time"), ltBack = sx6_cvar("world.locktime"), wlBack = sx6_cvar("weather.lock");
+    const int wBack = (int)lroundf(sx6_cvar("weather.now"));
+    std::snprintf(detail, sizeof(detail), "time %.3f (set %.3f) weather %d (set %d) locktime %.0f weatherlock %.0f",
+                  tBack, tSet, wBack, wSet, ltBack, wlBack);
+    check(std::fabs(tBack - tSet) <= 0.011f && wBack == wSet && ltBack == 1.0f && wlBack == 1.0f,
+          "SX.6: the This world edits are saved with the world (time locked, weather locked, read back after a reload)", detail);
+
+    // A multiplayer session: the section stays, badged. No tick runs while the
+    // local world wears the session flag (an autosave or quit then would take the session path).
+    FileManager* fm = World::getWorld->fm;
+    fm->sessionWorld = true;
+    eden_settings_menu_open_now();
+    const char* hintMp = sm->rowHint("heading_world_this");
+    const std::string mpHint = hintMp ? hintMp : "";
+    const bool mpRow = sm->showRow("weather_lock", &r);
+    fm->sessionWorld = false;
+    const char* hintAfter = sm->rowHint("heading_world_this");
+    std::snprintf(detail, sizeof(detail), "row %d hint \"%s\" after \"%s\"", mpRow, mpHint.c_str(), hintAfter ? hintAfter : "(null)");
+    check(mpRow && mpHint.compare(0, 9, "Temporary") == 0 && hintAfter && std::string(hintAfter) == "Saved with this world.",
+          "SX.6: in a multiplayer session This world stays, badged temporary (badge gone once the session ends)", detail);
+    World::getWorld->menu->showsettings = false;
+
+    // Leave the world as a fresh one would be: unlocked; the two global switches back as they were.
+    Console::run("world.locktime off");
+    if (Weather::active()) Weather::setLocked(false);
+    eden_settings_set(iCycle, cycle0);
+    eden_settings_set(iWeather, weather0);
+    tick(3);
+    return 0;
+}
+
 int run_ui_selftest() {
     g_selftestTag = "eden-ui";
     g_tickInput = true;            // headless pump_events() only drains SDL's queue with this set
@@ -1011,10 +1256,96 @@ int run_ui_selftest() {
     {   // U.3: seven tabs, every settings row on exactly one of them
         int rows = 0, shown = 0;
         for (int t = 0; t < sm->tabCount(); ++t) rows += sm->tabRowCount(t);
-        for (int i = 0; i < eden_settings_count(); ++i) if (!eden_settings_native_hidden(i)) shown++;
+        // SX.6: on the title screen the This world rows (scope 1) are out, their placeholder heading (2) in
+        for (int i = 0; i < eden_settings_count(); ++i) if (!eden_settings_native_hidden(i) && eden_settings_scope(i) != 1) shown++;
         std::snprintf(detail, sizeof(detail), "%d tabs, %d rows on them, %d rows shown", sm->tabCount(), rows, shown);
-        check(sm->tabCount() == 7 && rows == shown && sm->tabRowCount(3) == 0,
-              "settings has 7 tabs and every native row is on one", detail);
+        check(sm->tabCount() == 11 && sm->railTabCount() == 7 && rows == shown && sm->tabRowCount(3) == 0 &&
+              sm->rowHint("world_time") == nullptr && sm->rowHint("heading_world_none") != nullptr,
+              "settings has 7 rail tabs + 4 sub-pages, every native row in scope on one (no world: This world placeholder)", detail);
+    }
+    {   // SRC.8b: Experiments > Movement tuning opens the slider panel; sliders <-> move.* cvars, reset, persist
+        CGRect openR, sliderR, resetR;
+        const bool haveOpen = sm->showRow("srclike_settings_open", &openR);
+        if (haveOpen) ui_tap_rect(openR);
+        tick(2);
+        const bool haveSl = sm->showRow("move_airaccelerate", &sliderR);
+        if (haveSl) ui_tap_rect(sliderR);   // centre of the track
+        tick(2);
+        SrclikeMove::Tunables& tn = SrclikeMove::tunables();
+        const float viaSlider = tn.airaccelerate;
+        eden_settings_set_by_key("move_friction", 9.0f);   // what the console's move.friction does (needs a world to run: mode_input gate 10)
+        const int fi = eden_settings_count();
+        float rowFriction = -1;
+        for (int i = 0; i < fi; ++i) if (!std::strcmp(eden_settings_key(i), "move_friction")) rowFriction = eden_settings_get(i);
+        const int stored = eden_prefs_get_int("move_airaccelerate", 0);
+        // SX.1: Reset is the page's titlebar Defaults action, not a row
+        const bool haveReset = sm->showRow("move_airaccelerate", nullptr) && sm->currentTab() >= sm->railTabCount();
+        resetR = sm->defaultsRect();
+        if (haveReset) ui_tap_rect(resetR);
+        tick(2);
+        const SrclikeMove::Tunables& d = SrclikeMove::kDefaults;
+        const bool reset = tn.airaccelerate == d.airaccelerate && tn.friction == d.friction &&
+                           eden_prefs_get_int("move_airaccelerate", 0) == (int)lroundf(d.airaccelerate * 1000.0f);
+        std::snprintf(detail, sizeof(detail), "open=%d slider=%d air=%.1f row.friction=%.1f stored=%d reset=%d",
+                      (int)haveOpen, (int)haveSl, viaSlider, rowFriction, stored, (int)reset);
+        check(haveOpen && haveSl && viaSlider > 300.0f && viaSlider < 700.0f && rowFriction == 9.0f &&
+              stored == (int)lroundf(viaSlider * 1000.0f) && haveReset && reset,
+              "Srclike settings: slider sets the move.* store, a by-key set (the console path) writes the slider row, persisted, Reset restores", detail);
+        sm->resetView();
+        tick(2);
+    }
+    {   // SX.1: a sub-page's titlebar Back and Escape go up to the parent tab; on a tab they close the screen
+        const int rail = sm->railTabCount();
+        CGRect openR;
+        bool ok = sm->showRow("srclike_settings_open", &openR);
+        if (ok) ui_tap_rect(openR);
+        tick(2);
+        const int onPage = sm->currentTab();
+        ui_tap_rect(sm->backRect());
+        tick(2);
+        const int afterBack = sm->currentTab();
+        const bool openAfterBack = eden_settings_menu_open() != 0;
+        if (ok) ui_tap_rect(openR);
+        tick(2);
+        const int onPage2 = sm->currentTab();
+        eden_settings_menu_back();   // Escape
+        tick(2);
+        const int afterEsc = sm->currentTab();
+        const bool openAfterEsc = eden_settings_menu_open() != 0;
+        eden_settings_menu_back();   // Escape on a tab closes
+        tick(2);
+        const bool closed = eden_settings_menu_open() == 0;
+        std::snprintf(detail, sizeof(detail), "page=%d back->%d open=%d page=%d esc->%d open=%d closed=%d",
+                      onPage, afterBack, (int)openAfterBack, onPage2, afterEsc, (int)openAfterEsc, (int)closed);
+        check(ok && onPage >= rail && afterBack == 5 && openAfterBack && onPage2 >= rail && afterEsc == 5 && openAfterEsc && closed,
+              "Srclike settings page: titlebar Back and Escape go up to Experiments, Escape on a tab closes", detail);
+        eden_settings_menu_open_now();
+        tick(2);
+    }
+    {   // SX.7: Input mode flipped inside the panel (Touch <-> Keyboard+Mouse) never softlocks it: Back/Escape still leave
+        const int iIn = settings_index("input_mode"), iSc = settings_index("ui_scale");
+        const float in0 = eden_settings_get(iIn), sc0 = eden_settings_get(iSc);
+        int okBack = 0, okEsc = 0;
+        const float modes[3] = {1.0f, 2.0f, 0.0f};
+        for (int k = 0; k < 3; ++k) {
+            eden_settings_menu_open_now();
+            tick(2);
+            eden_settings_set(iIn, modes[k]);
+            eden_settings_set(iSc, (float)(k + 1));
+            tick(3);
+            CGRect rr;
+            const bool rowsOk = sm->showRow("input_mode", &rr) || true;
+            (void)rowsOk;
+            if (k == 0) { ui_tap_rect(sm->backRect()); tick(3); if (eden_settings_menu_open() == 0) ++okBack; }
+            else { eden_settings_menu_back(); tick(3); if (eden_settings_menu_open() == 0) ++okEsc; }
+        }
+        eden_settings_set(iIn, in0);
+        eden_settings_set(iSc, sc0);
+        tick(2);
+        std::snprintf(detail, sizeof(detail), "back-closed %d esc-closed %d", okBack, okEsc);
+        check(okBack == 1 && okEsc == 2, "SX.7: flipping Input mode / UI scale in the panel never softlocks it (Back and Escape still close)", detail);
+        eden_settings_menu_open_now();
+        tick(2);
     }
     {   // U.4: the Keys tab. A key button arms a capture, any tap cancels it, Defaults resets.
         // Every binding is saved first and put back after: Defaults resets them ALL.
@@ -1175,6 +1506,7 @@ int run_ui_selftest() {
     const char* name = g_opt.world.empty() ? "ui-selftest" : g_opt.world.c_str();
     if (!open_world(name, g_opt.height)) return 1;
     tick(60);
+    if (sx6_this_world_leg(name) != 0) return 1;
     if (!quit_to_menu()) return 1;
     tick(30);
     check(!World::getWorld->menu->showhome, "Quit to Menu lands on My Worlds, not the home screen", "");   // I.7
@@ -1304,22 +1636,29 @@ int run_ui_selftest() {
         // --- C.3: the Console over the running world --------------------------------------------
         {
             ConsoleMenu* cm = menu->console;
-            const Button* pm[7] = { &hud->rresume, &hud->rsave, &hud->rhome, &hud->rcam, &hud->rsettings,
-                                    &hud->rconsole, &hud->rexit };
+            const Button* pm[6] = { &hud->rresume, &hud->rsave, &hud->rhome, &hud->rcam, &hud->rsettings,
+                                    &hud->rexit };
             bool allIn = true;
             for (const Button* b : pm)
                 if (b->size.width <= 0 || b->origin.x < 0 || b->origin.y < 0 ||
                     b->origin.x + b->size.width > SCREEN_WIDTH || b->origin.y + b->size.height > SCREEN_HEIGHT) allIn = false;
             std::snprintf(detail, sizeof(detail), "screen %.0fx%.0f console button y=%.0f h=%.0f", SCREEN_WIDTH, SCREEN_HEIGHT,
-                          hud->rconsole.origin.y, hud->rconsole.size.height);
-            check(allIn, "the pause menu's seven buttons all fit on the screen", detail);
-            const Button rc = hud->rconsole;
+                          hud->rcons.origin.y, hud->rcons.size.height);
+            check(allIn, "the pause menu's six buttons all fit on the screen", detail);
+            check(hud->rconsole.size.width <= 0, "the pause menu no longer lists Console", "");
+            {   // the HUD console button: resume play, enable the developer-console setting, tap it
+                const Button rr = hud->rresume;
+                ui_tap(rr.origin.x + rr.size.width * 0.5f, rr.origin.y + rr.size.height * 0.5f);
+                tick(3);
+                ::DEV_CONSOLE_ALLOWED = true;
+            }
+            const Button rc = hud->rcons;
             ui_tap(rc.origin.x + rc.size.width * 0.5f, rc.origin.y + rc.size.height * 0.5f);
             tick(5);
             std::snprintf(detail, sizeof(detail), "showconsole=%d open=%d in_menu=%d game_mode=%d", (int)menu->showconsole,
                           cm->isOpen() ? 1 : 0, eden_hud_in_menu(), World::getWorld->game_mode);
             check(menu->showconsole && cm->isOpen() && eden_hud_in_menu() == 0 && World::getWorld->game_mode == GAME_MODE_PLAY,
-                  "pause menu -> Console opens it over the world and closes the pause menu", detail);
+                  "HUD console button (Allow developer console on) opens the Console over the world", detail);
             check(cm->inputFocused() && eden_text_input_active() == 1, "the Console's input is focused on open", "");
             check(eden_ui_wants_cursor() == 1, "the Console releases the mouse", "");
 

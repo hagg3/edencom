@@ -19,6 +19,8 @@
 #include "Joystick.h"
 #include "statusbar.h"
 #include "Globals.h"
+#include <vector>
+#include <string>
 #define MODE_CAMERA 0
 #define MODE_PICK_BLOCK 1
 #define MODE_BUILD 2
@@ -40,6 +42,12 @@
 #define HUD_TOOL_SIGN 1000
 #define HUD_TOOL_CMD 1001
 static inline bool hud_picker_is_tool(int type){ return type>=HUD_TOOL_SIGN; }
+// K.2-5 (D13): a Mods-page cell / the pending selection of a mod block is HUD_MOD_BASE + an index into
+// ContentPack::modReport().blocks. Like a tool it is never a table index (hud_picker_is_tool is true
+// for it); unlike a tool it becomes a real palette id at the first placement (Hud::resolveModBlock),
+// and the selection is kept by NAME (Hud::modSelection) so another world never places a different block.
+#define HUD_MOD_BASE 2000
+static inline bool hud_picker_is_mod(int type){ return type>=HUD_MOD_BASE; }
 
 // Host hook: return false to suppress the built-in in-game menu screen (the 4-icon GL panel
 // Hud::renderMenuScreen draws over the world). NULL — the default, and the only value the iOS
@@ -84,6 +92,7 @@ public:
     Button rflyhit,rflyrender;   // FM.3: the fly-mode cycle button, left of the crouch slot (only when Allow fly is on)
     
     Button rcam,rexit,rsave,rhome,rmenu;
+    Button rcons;   // singleplayer developer-console button (same spot as rchat)
     Button rchat;   // MP.7: the touch chat button, right of the pause gear (a session only)
     
 	int leftymode;
@@ -125,8 +134,19 @@ public:
     // D.2p: step the block picker's page by `delta` (wraps). FALSE (and nothing happens) unless
     // the block picker is open — the ◀ ▶ taps, [ ] and the wheel all come through here.
     bool pickerPageStep(int delta);
+    // K.2-5: pages = 2 stock + one per 35 picker-visible mod blocks (none in a session / without packs).
+    static int pickerPageCount();
+    // K.2-5: the selected mod block's full name ("" = none); survives world changes.
+    static const std::string& modSelection();
+    // K.2-5: the full name behind a HUD_MOD_BASE+index cell ("" if out of range).
+    static std::string modCellName(int type);
+    // K.2-5: turn a pending mod selection into a real palette id before a build. TRUE when blocktype is
+    // now a placeable type; FALSE when nothing may be placed this tap (confirm dialog up, refusal toasted).
+    bool resolveModBlock();
     // D.2p: the type in picker cell `i` of `page` (-1 = no cell there).
     static int pickerCell(int page,int i);
+    // K.2-3: the stock pack's two pages (ContentPack::commitStock).
+    static void setPickerPages(const std::vector<int>& page0,const std::vector<int>& page1);
     static int pickerCellCount(int page);
     // D.2p: a tool cell is selectable only once its row lands (SIGN: D.3c, CMD: D.4b).
     static bool pickerToolEnabled(int type);

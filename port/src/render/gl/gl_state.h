@@ -52,6 +52,9 @@ void attribConstant(int slot, float x, float y, float z, float w);
 // ---- programs, texture unit ------------------------------------------------------------------------
 void useProgram(GLuint prog);
 void activeTexture0();
+// AT.6: the one second-unit binding (the cloud map for EDEN_CLOUD_SHADOW): binds on unit 1, then unit 0 is
+// active again, so every other bind stays a unit-0 bind.
+void bindTexture1(GLuint t);
 
 // ---- buffer bindings ---------------------------------------------------------------------------------
 // The binding every draw hands back (restoreBindings). Until G.5b-7 these mirrored the engine's own

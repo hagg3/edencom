@@ -1,7 +1,11 @@
 Classes/BlockBreak.cpp
 Classes/BlockRegistry.cpp
+Classes/BlockTraits.cpp
 Classes/Camera.cpp
 Classes/ColorUtil.cpp
+Classes/ContentPack.cpp
+Classes/ModsMenu.cpp
+Classes/PackInstall.cpp
 Classes/error.c
 Classes/FileManager.cpp
 Classes/FileManagerHelper.cpp
@@ -16,6 +20,7 @@ Classes/Graphics.cpp
 Classes/hashmap.cpp
 Classes/Hud.cpp
 Classes/Input.cpp
+Classes/Json.cpp
 Classes/Joystick.cpp
 Lighting.cpp
 Classes/Liquids.cpp
@@ -67,4 +72,12 @@ Classes/ServerListMenu.cpp
 Classes/ServerFormMenu.cpp
 Classes/TouchLook.cpp
 Classes/SkyCycle.cpp
+Classes/SrclikeMove.cpp
+Classes/SrclikeTrace.cpp
 Classes/SkyLook.cpp
+Classes/Weather.cpp
+Classes/Precip.cpp
+Classes/Clouds.cpp
+Classes/Ambient.cpp
+Classes/ModScript.cpp
+port/src/shim/vendor/lua/lua_onefile.cpp

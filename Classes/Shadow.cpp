@@ -11,6 +11,7 @@
 #include "../Lighting.h"   // light_get: the brick store (the root header, not Classes/)
 #include <stdlib.h>
 #include <string.h>
+#include "BlockTraits.h"   // K.2-1: per-type behaviour
 
 int g_shadow_mode=SHADOW_OFF;
 unsigned char* shadowTop=NULL;
@@ -37,7 +38,7 @@ static bool g_shadow_stale[CHUNKS_PER_SIDE_MAX*CHUNKS_PER_SIDE_MAX];
 void shadow_buildCasterTable(){
     memset(g_shadow_caster,0,sizeof(g_shadow_caster));
     for(int t=1;t<BLOCK_IDS;t++){   // rows 128..255: the palette's defs, or the missing block (IS_HARD: it casts)
-        if(t==TYPE_CLOUD||t==TYPE_GLASS||t==TYPE_WEAVE)continue;
+        if(trait_noShadow(t))continue;   // K.2-1
         if(blockinfo[t]&(IS_LIQUID|IS_OBJECT))continue;
         g_shadow_caster[t]=1;
     }

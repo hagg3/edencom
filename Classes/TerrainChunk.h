@@ -109,6 +109,11 @@ public:
     bool typesEmpty;
     bool in_view;
     bool has_light;
+    // AT.8 (plan S1): the first few TYPE_LIGHTBOX cells (chunk-local x,y,z) the last rebuild2 scan saw, for lamp halos.
+    // Written only in that scan's first loop (outside the count/fill pair); reset wherever has_light is.
+    enum { MAX_LAMPS=4 };
+    uint8_t num_lamps;
+    uint8_t lamps[MAX_LAMPS][3];
     bool modified;
     // DN.5 (day/night cycle): the night bit (sky_isNight) the live vertex colours were baked with, so
     // Terrain::render can pick the R::setWorldLight that makes a day- and a night-baked chunk match

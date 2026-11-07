@@ -96,12 +96,55 @@ static const char* kWorldVS =
     "out vec4 v_color;\n"
     "out vec2 v_texcoord;\n"
     "out float v_eyedist;\n"
+    "#ifdef EDEN_HEIGHT_FOG\n"   // AT.5 (plan P3): the High tier's twin only; the plain program never sees it
+    "uniform vec4 u_hfogPlane;\n"
+    "out float v_wy;\n"
+    "#endif\n"
+    "#ifdef EDEN_CLOUD_SHADOW\n"   // AT.6 (plan P3): the High tier's cloud shadows, per vertex (block corners)
+    "uniform vec4 u_csU;\n"
+    "uniform vec4 u_csV;\n"
+    "uniform vec4 u_cshadow;\n"   // threshold, strength
+    "uniform sampler2D u_cloudTex;\n"   // texture unit 1
+    "#endif\n"
+    "#ifdef EDEN_WATER_TINT\n"   // AT.8: water's vertices only (alpha 145/255), tinted
+    "uniform vec4 u_wtint;\n"    // rgb: the colour water is pulled toward, w: how far
+    "#endif\n"
+    "#ifdef EDEN_WATER_GLINT\n"  // AT.11: + the High tier's sun glint (a faint sheen here, sparkles in the fragment stage)
+    "uniform vec4 u_wsun;\n"     // xyz: eye-space direction to the sun, w: glint strength
+    "uniform vec4 u_wup;\n"      // xyz: world up in eye space (unit), w: the sparkle clock
+    "out highp vec2 v_sp;\n"     // the sparkle cell (1/16 block) of the surface
+    "out float v_glint;\n"       // how near the mirror direction (0 off water)
+    "#endif\n"
     "void main() {\n"
     "  gl_Position = u_mvp * a_position;\n"
     "  vec4 eye = u_mv * a_position;\n"
     "  v_eyedist = length(eye.xyz);\n"
     "  v_color = a_color * vec4(u_worldLight, 1.0);\n"
     "  v_texcoord = a_texcoord * u_uvso.xy + u_uvso.zw;\n"
+    "#ifdef EDEN_HEIGHT_FOG\n"
+    "  v_wy = dot(u_hfogPlane.xyz, eye.xyz) + u_hfogPlane.w;\n"
+    "#endif\n"
+    "#ifdef EDEN_CLOUD_SHADOW\n"
+    "  vec2 cuv = vec2(dot(u_csU.xyz, eye.xyz) + u_csU.w, dot(u_csV.xyz, eye.xyz) + u_csV.w);\n"
+    "  float cv = textureLod(u_cloudTex, cuv, 0.0).r;\n"
+    "  v_color.rgb *= 1.0 - u_cshadow.y * step(u_cshadow.x, cv);\n"
+    "#endif\n"
+    "#ifdef EDEN_WATER_TINT\n"
+    "  bool water = abs(a_color.a - 0.5686) < 0.004;\n"
+    "  if (water) v_color.rgb = mix(v_color.rgb, u_wtint.rgb, u_wtint.w);\n"
+    "#ifdef EDEN_WATER_GLINT\n"
+    "  v_sp = a_position.xz * 4.0;\n"   // terrain positions are in quarter blocks: cells of 1/16 block
+    "  v_glint = 0.0;\n"
+    "  if (water) {\n"
+    "    vec3 r = reflect(normalize(eye.xyz), u_wup.xyz);\n"
+    "    float gl = max(dot(r, u_wsun.xyz), 0.0);\n"
+    "    gl *= gl; gl *= gl; gl *= gl; gl *= gl;\n"  // ^16: the sun's path on the water
+    "    v_glint = gl;\n"
+    "    gl *= gl;\n"                                // ^32
+    "    v_color.rgb += u_wsun.w * 0.3 * gl;\n"      // a faint sheen right at the mirror direction
+    "  }\n"
+    "#endif\n"
+    "#endif\n"
     "}\n";
 static const char* kWorldFS =
     "precision mediump float;\n"
@@ -114,12 +157,32 @@ static const char* kWorldFS =
     "in highp vec2 v_texcoord;\n"
     "in float v_eyedist;\n"
     "out vec4 fragColor;\n"
+    "#ifdef EDEN_HEIGHT_FOG\n"
+    "uniform vec4 u_hfog;\n"     // AT.5: mist top y, 1 / thickness, 1 / distance to full, strength
+    "in float v_wy;\n"
+    "#endif\n"
+    "#ifdef EDEN_WATER_GLINT\n"
+    "uniform vec4 u_wsun;\n"
+    "uniform vec4 u_wup;\n"
+    "in highp vec2 v_sp;\n"
+    "in float v_glint;\n"
+    "#endif\n"
     "void main() {\n"
     "  vec4 c = v_color * texture(u_tex, EDEN_UV(v_texcoord));\n"
+    "#ifdef EDEN_WATER_GLINT\n"   // AT.11: texel-sized sparkles along the sun's path, each twinkling on its own phase
+    "  highp vec2 cell = floor(v_sp);\n"
+    "  highp float h = fract(sin(dot(cell, vec2(12.9898, 78.233))) * 43758.5453);\n"
+    "  float tw = fract(h * 13.7 + u_wup.w);\n"
+    "  float sp = step(1.0 - 0.1 * v_glint, h) * step(tw, 0.3);\n"
+    "  c.rgb = mix(c.rgb, vec3(1.0, 0.97, 0.86), clamp(sp * u_wsun.w * 1.8, 0.0, 1.0));\n"
+    "#endif\n"
     "#ifndef EDEN_NO_DISCARD\n"   // PW.3: the opaque variants never discard, so the GPU keeps early-Z/HSR
     "  if (c.a <= u_alphaRef) discard;\n"
     "#endif\n"
     "  float f = clamp((u_fogEnd - v_eyedist) / u_fogRange, 0.0, 1.0);\n"
+    "#ifdef EDEN_HEIGHT_FOG\n"   // denser the deeper below the mist top, and the farther away
+    "  f = min(f, 1.0 - u_hfog.w * clamp((u_hfog.x - v_wy) * u_hfog.y, 0.0, 1.0) * clamp(v_eyedist * u_hfog.z, 0.0, 1.0));\n"
+    "#endif\n"
     "  c.rgb = mix(u_fogColor.rgb, c.rgb, f);\n"
     "  fragColor = c;\n"
     "}\n";
@@ -282,6 +345,132 @@ static const char* kLitVS =
     "  v_texcoord = a_texcoord * u_uvso.xy + u_uvso.zw;\n"
     "}\n";
 
+// AT.2b (atmosphere plan P1, P2): rain streaks. a_position is a static seed (x, y, z in 0..255) and a
+// corner (bit 0 the side, bit 1 the tail end); six vertices a streak. The drop's head is the seed placed
+// in the box and wrapped (mod) around the camera-centred box, so drops are fixed in the world and only the
+// box's edges move; the tail leans up-wind. A head below its column's top (u_tex, an L8 n x n map by
+// (x, z) mod n, read in the vertex stage) collapses the streak to a point outside the clip volume. No
+// discard, no fog (the box is 32 blocks across), one mediump multiply in the fragment stage.
+static const char* kPrecipVS =
+    "uniform mat4 u_mv;\n"
+    "uniform mat4 u_proj;\n"
+    "uniform vec4 u_pbox0;\n"    // origin.xyz, fade start
+    "uniform vec4 u_pbox1;\n"    // size.xyz, fade end
+    "uniform vec4 u_pmove;\n"    // offset.xyz, streak length (splash mode: the phase clock)
+    "uniform vec4 u_pslant;\n"   // slant.xz, width, width per eye distance
+    "uniform vec4 u_pcolor;\n"
+    "uniform vec4 u_ptops;\n"    // shift.xz, n, mode (0 streaks, 1 splashes: AT.2c)
+    "uniform sampler2D u_tex;\n"
+    "in vec4 a_position;\n"
+    "out vec4 v_color;\n"
+    "out vec3 v_side;\n"
+    "void main() {\n"
+    "  float side = mod(a_position.w, 2.0) * 2.0 - 1.0;\n"
+    "  float tail = floor(a_position.w * 0.5);\n"
+    "  if (u_ptops.w > 0.5 && u_ptops.w < 1.5) {\n"
+    // AT.2c: a splash is a flat quad on its column's top. The seed's x/z pick a column (fixed in the world,
+    // as a drop's), its y a phase in the cycle; it shows for the first quarter of the cycle, a ring growing
+    // while it fades. A column with no top (0) shows none.
+    "    vec2 c = u_pbox0.xz + mod(a_position.xz * (1.0 / 256.0) * u_pbox1.xz - u_pbox0.xz, u_pbox1.xz);\n"
+    "    vec2 cell = mod(floor(c) + u_ptops.xy, u_ptops.z);\n"
+    "    float top = textureLod(u_tex, (cell + 0.5) / u_ptops.z, 0.0).r * 255.0;\n"
+    "    float ph = fract(a_position.y * (1.0 / 256.0) + u_pmove.w);\n"
+    "    float t = ph * 4.0;\n"
+    "    float alive = step(ph, 0.25) * step(0.5, top);\n"
+    "    float rad = 0.10 + 0.28 * t;\n"
+    "    vec3 p = vec3(floor(c.x) + 0.5, top + 0.04, floor(c.y) + 0.5) + vec3(side, 0.0, tail * 2.0 - 1.0) * rad;\n"
+    "    vec3 e = (u_mv * vec4(p, 1.0)).xyz;\n"
+    "    float r = length(c - (u_pbox0.xz + 0.5 * u_pbox1.xz));\n"
+    "    float fade = (1.0 - smoothstep(u_pbox0.w, u_pbox1.w, r)) * (1.0 - t);\n"
+    "    v_color = vec4(u_pcolor.rgb, u_pcolor.a * fade);\n"
+    "    v_side = vec3(side, tail * 2.0 - 1.0, 1.0);\n"
+    "    gl_Position = mix(vec4(0.0, 0.0, -2.0, 1.0), u_proj * vec4(e, 1.0), alive);\n"
+    "    return;\n"
+    "  }\n"
+    "  vec3 p = u_pbox0.xyz + mod(a_position.xyz * (1.0 / 256.0) * u_pbox1.xyz + u_pmove.xyz - u_pbox0.xyz, u_pbox1.xyz);\n"
+    // AT.3: a flake is a camera-facing square at the head (1x or 2x by seed), swaying as it falls.
+    "  if (u_ptops.w > 1.5) {\n"
+    "    p.x += 0.35 * sin(u_pmove.y * 0.9 + a_position.x);\n"
+    "    p.z += 0.35 * cos(u_pmove.y * 0.7 + a_position.z);\n"
+    "    vec2 cell = mod(floor(p.xz) + u_ptops.xy, u_ptops.z);\n"
+    "    float top = textureLod(u_tex, (cell + 0.5) / u_ptops.z, 0.0).r * 255.0;\n"
+    "    float alive = step(top, p.y);\n"
+    "    vec3 eh = (u_mv * vec4(p, 1.0)).xyz;\n"
+    "    float sz = min(max(u_pslant.z, u_pslant.w * length(eh)), 2.0 * u_pslant.w * length(eh)) * (1.0 + step(128.0, a_position.y));\n"
+    "    vec3 e = eh + vec3(side, tail * 2.0 - 1.0, 0.0) * (0.5 * sz);\n"
+    "    float r = length(p.xz - (u_pbox0.xz + 0.5 * u_pbox1.xz));\n"
+    "    float h = (p.y - u_pbox0.y) / u_pbox1.y;\n"
+    "    float fade = (1.0 - smoothstep(u_pbox0.w, u_pbox1.w, r)) * (1.0 - smoothstep(0.75, 1.0, h)) * smoothstep(0.0, 0.1, h);\n"
+    "    v_color = vec4(u_pcolor.rgb, u_pcolor.a * fade);\n"
+    "    v_side = vec3(0.0);\n"
+    "    gl_Position = mix(vec4(0.0, 0.0, -2.0, 1.0), u_proj * vec4(e, 1.0), alive);\n"
+    "    return;\n"
+    "  }\n"
+    "  vec3 q = p + vec3(-u_pslant.x, 1.0, -u_pslant.y) * u_pmove.w;\n"
+    "  vec2 cell = mod(floor(p.xz) + u_ptops.xy, u_ptops.z);\n"
+    "  float top = textureLod(u_tex, (cell + 0.5) / u_ptops.z, 0.0).r * 255.0;\n"
+    "  float alive = step(top, p.y);\n"
+    "  vec3 eh = (u_mv * vec4(p, 1.0)).xyz;\n"
+    "  vec3 et = (u_mv * vec4(q, 1.0)).xyz;\n"
+    "  vec3 e = mix(eh, et, tail);\n"
+    "  vec3 across = cross(et - eh, e);\n"
+    "  across *= inversesqrt(max(dot(across, across), 1e-12));\n"
+    "  e += across * (side * 0.5 * min(max(u_pslant.z, u_pslant.w * length(e)), 2.0 * u_pslant.w * length(e)));\n"
+    "  float r = length(p.xz - (u_pbox0.xz + 0.5 * u_pbox1.xz));\n"
+    "  float h = (p.y - u_pbox0.y) / u_pbox1.y;\n"
+    "  float fade = (1.0 - smoothstep(u_pbox0.w, u_pbox1.w, r)) * (1.0 - smoothstep(0.75, 1.0, h)) * smoothstep(0.0, 0.1, h);\n"
+    "  v_color = vec4(u_pcolor.rgb, u_pcolor.a * fade);\n"
+    "  v_side = vec3(side, 0.0, 0.0);\n"
+    "  gl_Position = mix(vec4(0.0, 0.0, -2.0, 1.0), u_proj * vec4(e, 1.0), alive);\n"
+    "}\n";
+// AT.6 (atmosphere plan P5): the pixel cloud layer. One quad over the whole viewport at a clip depth just
+// nearer than the sky's, drawn after the sky with a depth test, so terrain hides it for free. Each fragment
+// intersects its view ray (affine in NDC, so interpolated exactly) with the cloud plane and samples the
+// tileable cloud map there, nearest: whole texels are cloud or sky (the pixel look). highp throughout: the
+// hit point is up to a few thousand blocks out.
+static const char* kCloudsVS =
+    "uniform vec4 u_cray0;\n"   // the ray at NDC (0, 0); w = the clip depth
+    "uniform vec4 u_cray1;\n"   // d ray / d x
+    "uniform vec4 u_cray2;\n"   // d ray / d y
+    "in vec4 a_position;\n"
+    "out highp vec3 v_ray;\n"
+    "void main() {\n"
+    "  v_ray = u_cray0.xyz + a_position.x * u_cray1.xyz + a_position.y * u_cray2.xyz;\n"
+    "  gl_Position = vec4(a_position.xy, u_cray0.w, 1.0);\n"
+    "}\n";
+static const char* kCloudsFS =
+    "precision highp float;\n"
+    "uniform sampler2D u_tex;\n"
+    "uniform vec4 u_cpos;\n"     // eye x, z (minus the wind, wrapped), plane height above the eye, 1 / period
+    "uniform vec4 u_cparam;\n"   // threshold, fade start, fade end
+    "uniform vec4 u_ccolor;\n"   // lit rgb, alpha
+    "uniform vec4 u_cshade;\n"   // shade rgb
+    "in highp vec3 v_ray;\n"
+    "out vec4 fragColor;\n"
+    "void main() {\n"
+    "  float dy = abs(v_ray.y) < 1e-6 ? 1e-6 : v_ray.y;\n"
+    "  float t = u_cpos.z / dy;\n"
+    "  vec2 off = v_ray.xz * t;\n"
+    "  float v = textureLod(u_tex, (u_cpos.xy + off) * u_cpos.w, 0.0).r;\n"
+    "  float a = step(0.0, t) * step(u_cparam.x, v) * (1.0 - smoothstep(u_cparam.y, u_cparam.z, length(off)));\n"
+    "  vec3 c = mix(u_ccolor.rgb, u_cshade.rgb, smoothstep(u_cparam.x, 1.0, v));\n"
+    "  fragColor = vec4(c, u_ccolor.a * a);\n"
+    "}\n";
+
+static const char* kPrecipFS =
+    "precision mediump float;\n"
+    "in vec4 v_color;\n"
+    "in vec3 v_side;\n"
+    "out vec4 fragColor;\n"
+    "void main() {\n"
+    // AT.11: a splash (v_side.z = 1) is a hard-edged square ring, 4 x 4 cells across (the pixel look), not a
+    // soft blob; a streak or flake keeps its soft sides.
+    "  vec2 q = floor(abs(v_side.xy) * 3.999);\n"
+    "  float ring = step(2.5, max(q.x, q.y));\n"
+    "  float soft = (1.0 - abs(v_side.x)) * (1.0 - abs(v_side.y));\n"
+    "  fragColor = vec4(v_color.rgb, v_color.a * mix(soft, ring, v_side.z));\n"
+    "}\n";
+
 // I.1/FT.8: the texcoord varyings are `highp` in every fragment stage. Under `precision mediump`
 // they were fp16 on Apple GPUs (A18 measured by eye: iPhone 16 Pro Max), and the block atlas is
 // 32x4096 (128 tiles of 32 rows) whose tile UVs are inset only 1e-5 (0.04 row): fp16 rounds v by up
@@ -314,6 +503,34 @@ static const ProgSrc kProgSrc[P_PROG_COUNT] = {
     {"world-opaque", kWorldVS, kWorldFS, "#define EDEN_COLOR_QUAL\n#define EDEN_NO_DISCARD\n"},
     {"lit-opaque", kLitVS, kWorldFS, "#define EDEN_COLOR_QUAL\n#define EDEN_NO_DISCARD\n"},
     {"lit-flat-opaque", kLitVS, kWorldFS, "#define EDEN_COLOR_QUAL flat\n#define EDEN_NO_DISCARD\n"},
+    {"precip", kPrecipVS, kPrecipFS, kSmooth},   // AT.2b
+    // AT.5 (P3): program 1 with the height-fog term, for the High tier's mist; built on first use.
+    {"world-hfog", kWorldVS, kWorldFS, "#define EDEN_COLOR_QUAL\n#define EDEN_HEIGHT_FOG\n"},
+    {"world-opaque-hfog", kWorldVS, kWorldFS, "#define EDEN_COLOR_QUAL\n#define EDEN_NO_DISCARD\n#define EDEN_HEIGHT_FOG\n"},
+    {"clouds", kCloudsVS, kCloudsFS, kSmooth},   // AT.6
+    // AT.6 (P3): the cloud-shadow twins of the four world programs above (a vertex-stage term only).
+    {"world-cs", kWorldVS, kWorldFS, "#define EDEN_COLOR_QUAL\n#define EDEN_CLOUD_SHADOW\n"},
+    {"world-opaque-cs", kWorldVS, kWorldFS, "#define EDEN_COLOR_QUAL\n#define EDEN_NO_DISCARD\n#define EDEN_CLOUD_SHADOW\n"},
+    {"world-hfog-cs", kWorldVS, kWorldFS, "#define EDEN_COLOR_QUAL\n#define EDEN_HEIGHT_FOG\n#define EDEN_CLOUD_SHADOW\n"},
+    {"world-opaque-hfog-cs", kWorldVS, kWorldFS,
+     "#define EDEN_COLOR_QUAL\n#define EDEN_NO_DISCARD\n#define EDEN_HEIGHT_FOG\n#define EDEN_CLOUD_SHADOW\n"},
+    // AT.8: the water-tint twins of the four discard-free world programs (the transparent chunk draws).
+    {"world-opaque-wt", kWorldVS, kWorldFS, "#define EDEN_COLOR_QUAL\n#define EDEN_NO_DISCARD\n#define EDEN_WATER_TINT\n"},
+    {"world-opaque-hfog-wt", kWorldVS, kWorldFS,
+     "#define EDEN_COLOR_QUAL\n#define EDEN_NO_DISCARD\n#define EDEN_HEIGHT_FOG\n#define EDEN_WATER_TINT\n"},
+    {"world-opaque-cs-wt", kWorldVS, kWorldFS,
+     "#define EDEN_COLOR_QUAL\n#define EDEN_NO_DISCARD\n#define EDEN_CLOUD_SHADOW\n#define EDEN_WATER_TINT\n"},
+    {"world-opaque-hfog-cs-wt", kWorldVS, kWorldFS,
+     "#define EDEN_COLOR_QUAL\n#define EDEN_NO_DISCARD\n#define EDEN_HEIGHT_FOG\n#define EDEN_CLOUD_SHADOW\n#define EDEN_WATER_TINT\n"},
+    // AT.11: the glint twins of the four water-tint twins (High: sparkles in the fragment stage, water draws only).
+    {"world-opaque-wg", kWorldVS, kWorldFS,
+     "#define EDEN_COLOR_QUAL\n#define EDEN_NO_DISCARD\n#define EDEN_WATER_TINT\n#define EDEN_WATER_GLINT\n"},
+    {"world-opaque-hfog-wg", kWorldVS, kWorldFS,
+     "#define EDEN_COLOR_QUAL\n#define EDEN_NO_DISCARD\n#define EDEN_HEIGHT_FOG\n#define EDEN_WATER_TINT\n#define EDEN_WATER_GLINT\n"},
+    {"world-opaque-cs-wg", kWorldVS, kWorldFS,
+     "#define EDEN_COLOR_QUAL\n#define EDEN_NO_DISCARD\n#define EDEN_CLOUD_SHADOW\n#define EDEN_WATER_TINT\n#define EDEN_WATER_GLINT\n"},
+    {"world-opaque-hfog-cs-wg", kWorldVS, kWorldFS,
+     "#define EDEN_COLOR_QUAL\n#define EDEN_NO_DISCARD\n#define EDEN_HEIGHT_FOG\n#define EDEN_CLOUD_SHADOW\n#define EDEN_WATER_TINT\n#define EDEN_WATER_GLINT\n"},
 };
 
 static const char* const kUniName[U_COUNT] = {
@@ -323,6 +540,11 @@ static const char* const kUniName[U_COUNT] = {
     "u_palette[0]", "u_boneCount", "u_lightAmbient", "u_lightDiffuse",
     "u_ambSum", "u_lpos0", "u_lpos1", "u_ldiff0", "u_ldiff1", "u_lspec0", "u_lspec1", "u_shininess",
     "u_worldLight",
+    "u_pbox0", "u_pbox1", "u_pmove", "u_pslant", "u_pcolor", "u_ptops",
+    "u_hfogPlane", "u_hfog",
+    "u_cray0", "u_cray1", "u_cray2", "u_cpos", "u_cparam", "u_ccolor", "u_cshade",
+    "u_csU", "u_csV", "u_cshadow", "u_cloudTex",
+    "u_wtint", "u_wsun", "u_wup",
 };
 
 static Program g_progs[P_PROG_COUNT];
@@ -358,6 +580,46 @@ ProgId alphaVariant(ProgId id, float alphaRef) {
         default: return id;
     }
 }
+
+// AT.5: the height-fog twin of a world program (P_WORLD or P_WORLD_OPAQUE); anything else unchanged.
+ProgId heightFogVariant(ProgId id) {
+    return id == P_WORLD ? P_WORLD_HFOG : id == P_WORLD_OPAQUE ? P_WORLD_OPAQUE_HFOG : id;
+}
+
+// AT.8: the water-tint twin of a discard-free world program (plain, height-fog, cloud-shadow or both).
+ProgId waterTintVariant(ProgId id) {
+    switch (id) {
+        case P_WORLD_OPAQUE: return P_WORLD_OPAQUE_WT;
+        case P_WORLD_OPAQUE_HFOG: return P_WORLD_OPAQUE_HFOG_WT;
+        case P_WORLD_OPAQUE_CS: return P_WORLD_OPAQUE_CS_WT;
+        case P_WORLD_OPAQUE_HFOG_CS: return P_WORLD_OPAQUE_HFOG_CS_WT;
+        default: return id;
+    }
+}
+
+// AT.11: the glint twin of a water-tint twin; anything else unchanged.
+ProgId waterGlintVariant(ProgId id) {
+    switch (id) {
+        case P_WORLD_OPAQUE_WT: return P_WORLD_OPAQUE_WG;
+        case P_WORLD_OPAQUE_HFOG_WT: return P_WORLD_OPAQUE_HFOG_WG;
+        case P_WORLD_OPAQUE_CS_WT: return P_WORLD_OPAQUE_CS_WG;
+        case P_WORLD_OPAQUE_HFOG_CS_WT: return P_WORLD_OPAQUE_HFOG_CS_WG;
+        default: return id;
+    }
+}
+
+// AT.6: the cloud-shadow twin of a world program (plain or height-fog); anything else unchanged.
+ProgId cloudShadowVariant(ProgId id) {
+    switch (id) {
+        case P_WORLD: return P_WORLD_CS;
+        case P_WORLD_OPAQUE: return P_WORLD_OPAQUE_CS;
+        case P_WORLD_HFOG: return P_WORLD_HFOG_CS;
+        case P_WORLD_OPAQUE_HFOG: return P_WORLD_OPAQUE_HFOG_CS;
+        default: return id;
+    }
+}
+
+bool built(ProgId id) { return g_progs[id].id != 0; }
 
 Program* program(ProgId id) {
     Program& p = g_progs[id];

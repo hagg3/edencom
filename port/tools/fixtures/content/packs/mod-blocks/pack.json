@@ -1,0 +1,26 @@
+// every block-level rule; a bad block is skipped, the rest of the pack loads
+{"format": 1, "id": "blocks_test", "name": "Block rules", "version": "0",
+ "blocks": [
+  7,
+  {"id": "Bad"},
+  {"id": "stocky", "stock_id": 3, "faces": {"all": "eden:stone"}, "color": [1, 2, 3], "fallback": "eden:stone"},
+  {"id": "warned", "shiny": true, "faces": {"all": "eden:stone"}, "color": [1, 2, 3], "fallback": "eden:stone"},
+  {"id": "warned", "faces": {"all": "eden:stone"}, "color": [1, 2, 3], "fallback": "eden:stone"},
+  {"id": "door", "kind": "door", "faces": {"all": "eden:stone"}, "color": [1, 2, 3], "fallback": "eden:stone"},
+  {"id": "oddkind", "kind": "blob", "faces": {"all": "eden:stone"}, "color": [1, 2, 3], "fallback": "eden:stone"},
+  {"id": "traits", "traits": ["solid", "solid", "glowing"], "faces": {"all": "eden:stone"}, "color": [1, 2, 3], "fallback": "eden:stone"},
+  {"id": "shape", "faces": {"top": "eden:stone"}, "color": [1, 2, 3], "fallback": "eden:stone"},
+  {"id": "wrong_atlas", "traits": ["transparent"], "faces": {"all": "eden:stone"}, "color": [1, 2, 3], "fallback": "eden:glass"},
+  {"id": "no_tile", "faces": {"all": "eden:nope"}, "color": [1, 2, 3], "fallback": "eden:stone"},
+  {"id": "colour", "faces": {"all": "eden:stone"}, "color": [1, 2], "fallback": "eden:stone"},
+  {"id": "nocolour", "faces": {"all": "eden:stone"}, "fallback": "eden:stone"},
+  {"id": "sound", "faces": {"all": "eden:stone"}, "color": [1, 2, 3], "sounds": "eden:nope", "fallback": "eden:stone"},
+  {"id": "nofaces", "color": [1, 2, 3], "fallback": "eden:stone"},
+  {"id": "nofallback", "faces": {"all": "eden:stone"}, "color": [1, 2, 3]},
+  {"id": "door_fallback", "faces": {"all": "eden:stone"}, "color": [1, 2, 3], "fallback": "eden:door1"},
+  {"id": "alias_fallback", "faces": {"all": "eden:stone"}, "color": [1, 2, 3], "fallback": "stone"},
+  {"id": "paint", "faces": {"all": "eden:stone"}, "color": [1, 2, 3], "fallback": "eden:stone", "fallback_paint": 55},
+  {"id": "picker", "faces": {"all": "eden:stone"}, "color": [1, 2, 3], "fallback": "eden:stone", "picker": "yes"},
+  {"id": "good/one", "traits": ["solid", "hard"], "faces": {"sides": "eden:stone", "top": "eden:grass_top", "bottom": "eden:dirt"},
+   "color": [1, 2, 3], "sounds": "eden:stone", "fallback": "eden:stone", "fallback_paint": 54, "picker": false}
+ ]}

@@ -118,6 +118,9 @@ bool decode_file(const std::string& path, Clip* out) {
 std::unordered_map<std::string, Clip> g_clips;   // name -> decoded PCM; a failed decode caches an
                                                  // empty Clip so it is attempted exactly once
 float g_effectsVolume = 1.0f;
+float g_masterVolume = 1.0f;      // SX.7: Settings > Audio > Master volume
+bool  g_bgMuted = false;          // SX.7: mute-in-background is on AND the window lacks focus
+float master_gain() { return g_bgMuted ? 0.0f : g_masterVolume; }
 
 struct Voice {
     unsigned int id = 0;
@@ -227,7 +230,7 @@ extern "C" void eden_native_audio_shutdown(void) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The five streaming channels (0 = music, 1-4 = ambience), AVAudioPlayer-backed
+// The six streaming channels (0 = music, 1-5 = ambience), AVAudioPlayer-backed
 // ---------------------------------------------------------------------------------------------
 // The volume split is web's, exactly: `userVolume` is the settings slider, `engineFade` is the
 // per-frame crossfade Resources::update computes, and the player's volume is their product. They
@@ -235,18 +238,18 @@ extern "C" void eden_native_audio_shutdown(void) {
 // the other once — folding them would make each stomp the other.
 namespace {
 
-constexpr int kChannelCount = 5;
-EdenApplePlayer* g_players[kChannelCount] = {nullptr, nullptr, nullptr, nullptr, nullptr};
+constexpr int kChannelCount = 6;   // AT.2d: channel 5 = ambience layer 4 (rain)
+EdenApplePlayer* g_players[kChannelCount] = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
 std::string g_channelName[kChannelCount];
-float g_channelUserVolume[kChannelCount] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
-float g_channelFade[kChannelCount] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+float g_channelUserVolume[kChannelCount] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+float g_channelFade[kChannelCount] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
 
 float clamp01(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
 
 void apply_channel_volume(int ch) {
     if (ch < 0 || ch >= kChannelCount || !g_players[ch]) return;
     eden_apple_player_set_volume(g_players[ch],
-                                 clamp01(g_channelUserVolume[ch]) * clamp01(g_channelFade[ch]));
+                                 clamp01(g_channelUserVolume[ch]) * clamp01(g_channelFade[ch]) * master_gain());
 }
 
 void play_channel(int ch, const char* name, bool loop) {
@@ -341,7 +344,7 @@ unsigned int SimpleAudioEngine::playEffect(const char* pszFilePath, bool bLoop) 
     srcSpec.freq = c->rate;
     SDL_AudioStream* s = SDL_CreateAudioStream(&srcSpec, &g_deviceSpec);
     if (!s) return 0;
-    SDL_SetAudioStreamGain(s, clamp01(g_effectsVolume));
+    SDL_SetAudioStreamGain(s, clamp01(g_effectsVolume) * master_gain());
     SDL_PutAudioStreamData(s, c->pcm.data(), clip_bytes(*c));
     if (bLoop) SDL_PutAudioStreamData(s, c->pcm.data(), clip_bytes(*c));   // one copy of headroom
     if (!SDL_BindAudioStream(g_device, s)) { SDL_DestroyAudioStream(s); return 0; }
@@ -416,7 +419,12 @@ void SimpleAudioEngine::unloadEffect(const char* pszFilePath) {
 float SimpleAudioEngine::getEffectsVolume() { return g_effectsVolume; }
 void SimpleAudioEngine::setEffectsVolume(float volume) {
     g_effectsVolume = clamp01(volume);
-    for (Voice& v : g_voices) SDL_SetAudioStreamGain(v.stream, g_effectsVolume);
+    for (Voice& v : g_voices) SDL_SetAudioStreamGain(v.stream, g_effectsVolume * master_gain());
+}
+
+static void reapply_all_volumes() {
+    for (Voice& v : g_voices) SDL_SetAudioStreamGain(v.stream, g_effectsVolume * master_gain());
+    for (int ch = 0; ch < kChannelCount; ++ch) apply_channel_volume(ch);
 }
 
 // --- channel 0: music ---
@@ -470,3 +478,7 @@ void SimpleAudioEngine::setAmbienceVolume(float v) {
 }
 
 }  // namespace CocosDenshion
+
+// SX.7 seam: master volume and background mute (called from Settings.cpp / harness/core.cpp).
+void eden_audio_set_master(float v) { g_masterVolume = clamp01(v); CocosDenshion::reapply_all_volumes(); }
+void eden_audio_set_bg_muted(int m) { g_bgMuted = m != 0; CocosDenshion::reapply_all_volumes(); }

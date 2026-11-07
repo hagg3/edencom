@@ -1,0 +1,23 @@
+{
+  "format": 1, "id": "eden",
+  "tiles": {"stone": {"atlas": 1, "index": 5}, "glass": {"atlas": 2, "index": 0}},
+  "sound_sets": {"generic": {"build": "build_generic", "break": "break_generic", "tnt": "other"},
+                 "stone": {"build": "build_stone", "break": "break_stone", "land": "land_hard", "step": "footsteps_hard", "tnt": "stone"}},
+  "blocks": [
+    {"id": "none", "stock_id": 0, "kind": "air", "color": [0, 0, 0]},
+    {"id": "stone", "stock_id": 2, "traits": ["solid", "hard"], "faces": {"all": "stone"}, "color": [198, 198, 198], "sounds": "eden:stone", "bt": "eden:btstone"},
+    {"id": "stone", "stock_id": 3, "color": [1, 2, 3]},
+    {"id": "Dirt", "stock_id": 3, "color": [1, 2, 3]},
+    {"stock_id": 4, "color": [1, 2, 3]},
+    {"id": "sand", "stock_id": 128, "color": [1, 2, 3]},
+    {"id": "sand2", "stock_id": 2, "color": [1, 2, 3]},
+    {"id": "leaves", "stock_id": 5, "kind": "slab", "traits": ["solid", "glowing", "solid"], "flags": ["door", "teleport", "door"], "color": [1, 2, 3], "texture": "x"},
+    {"id": "tree", "stock_id": 6, "traits": ["paint_art"], "paint_art_sites": ["chunk"], "faces": {"all": "stone", "top": "stone"}, "color": [1, 2]},
+    {"id": "wood", "stock_id": 7, "traits": ["transparent"], "paint_art_sites": ["chunk", "sky", "chunk"], "faces": {"sides": "stone", "top": "glass", "bottom": "eden:nope"}, "color": [256, 0, 0], "sounds": "eden:loud"},
+    {"id": "grass", "stock_id": 8, "faces": {"front": "stone", "back": "stone", "left": "stone", "right": "stone", "bottom": "stone", "top": "eden:stone"}, "sounds": "stone", "tnt_map": "eden:missing"},
+    7
+  ],
+  "aliases": {"rock": "eden:stone", "pebble": "eden:pebble", "Bad": "eden:stone"},
+  "picker_pages": [["eden:stone"], ["eden:stone", "eden:stone", "eden:stone", "eden:stone", "eden:stone", "eden:stone", "eden:stone", "eden:stone", "eden:stone", "eden:stone",
+                                    "eden:stone", "eden:stone", "eden:stone", "eden:stone", "eden:stone", "eden:stone", "eden:stone", "tool:sign", "tool:cmd", "tool:hammer"]]
+}

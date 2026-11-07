@@ -21,9 +21,14 @@ extern bool pendingRespawnSound;
 #include "MpWorld.h"   // MP.3a: pause-menu gates
 #include "ChatFeed.h"   // MP.7: the feed and the chat button
 #include "Menu.h"
+#include "BlockTraits.h"   // K.2-1: per-type behaviour
+#include "ContentPack.h"   // K.2-5: the Mods page
+#include "BlockRegistry.h"
 
 // FM.3: fly state for the jump/crouch/cycle buttons (Player.mm; fly_* are declared in Player.h)
 extern bool FLY_ALLOWED;
+bool DEV_CONSOLE_ALLOWED=false;   // Settings > Experiments > Allow developer console: the singleplayer HUD console button
+static inline bool consoleBtnShown(){ return DEV_CONSOLE_ALLOWED&&!MpWorld::active(); }
 extern bool FLY_MODE;
 int  fly_get_state();
 void fly_cycle_state();
@@ -39,140 +44,61 @@ static int BLOCK_ICON_SPACING =15;
 static int BLOCK_ICON_SIZE =38;
 static int COLOR_ICON_SPACING =9;
 static int COLOR_ICON_SIZE =32;
-static int hudBlocks[NUM_DISPLAY_BLOCKS]={	
-	TYPE_GRASS,	
-	TYPE_FLOWER,
-	TYPE_DARK_STONE,
-	TYPE_STONE,
-	TYPE_DIRT,
-	TYPE_SAND,
-	TYPE_TNT,
-	
-	TYPE_WOOD,
-	TYPE_SHINGLE,
-    TYPE_GLASS,
-    TYPE_GRADIENT,
-	TYPE_TREE,
-	TYPE_LEAVES,
-	
-	
-	TYPE_BRICK,
-	TYPE_COBBLESTONE,
-    TYPE_VINE,
-    TYPE_LADDER,
-	TYPE_ICE,
-
-	TYPE_CRYSTAL,
-	
-	TYPE_TRAMPOLINE,
-    TYPE_CLOUD,
-    TYPE_STONE_RAMP1,
-    TYPE_WOOD_RAMP1,
-    TYPE_ICE_RAMP1,
-    TYPE_SHINGLE_RAMP1,
-    TYPE_WEAVE,
-    
-    
-    
-    
-   
-    
-    TYPE_WATER,
-    TYPE_LAVA,
-    
-    TYPE_BLOCK_TNT,
-     TYPE_FIREWORK,
-    
-    TYPE_DOOR_TOP,
-    TYPE_GOLDEN_CUBE,
-    TYPE_LIGHTBOX,
-    TYPE_STEEL,
-    TYPE_PORTAL_TOP,
-    
-};
-
-extern "C" int hudBlocksMap[BLOCK_IDS]={
-    [TYPE_GRASS]=TYPE_BTGRASS,
-    [TYPE_FLOWER]=-1,
-    [TYPE_GRASS3]=-1,   // H.14: block 12 has no BT variant
-    [TYPE_GRASS2]=-1,   // FT.1: weeds have no BT variant
-    [TYPE_DARK_STONE]=TYPE_BTDARKSTONE,
-    [TYPE_STONE]=TYPE_BTSTONE,
-    [TYPE_DIRT]=TYPE_BTDIRT,
-    [TYPE_SAND]=TYPE_BTSAND,
-    [TYPE_TNT]=TYPE_BTTNT,
-   
-    [TYPE_WOOD]=TYPE_BTWOOD,
-    [TYPE_SHINGLE]=TYPE_BTSHINGLE,
-    [TYPE_GLASS]=TYPE_BTGLASS,
-    [TYPE_GRADIENT]=TYPE_BTGRADIENT,
-    [TYPE_TREE]=TYPE_BTTREE,
-    [TYPE_LEAVES]=TYPE_BTLEAVES,
-    
-    
-    [TYPE_BRICK]=TYPE_BTBRICK,
-    [TYPE_COBBLESTONE]=TYPE_BTCOBBLESTONE,
-    [TYPE_VINE]=TYPE_BTVINES,
-    [TYPE_LADDER]=TYPE_BTLADDER,
-    [TYPE_ICE]=TYPE_BTICE,
-    
-    [TYPE_CRYSTAL]=TYPE_BTCRYSTAL,
-    
-    [TYPE_TRAMPOLINE]=TYPE_BTTRAMPOLINE,
-    [TYPE_CLOUD]=TYPE_BTCLOUD,
-    [TYPE_STONE_RAMP1]=TYPE_BTSTONESIDE,
-    [TYPE_WOOD_RAMP1]=TYPE_BTWOODSIDE,
-    [TYPE_ICE_RAMP1]=TYPE_BTICESIDE,
-    [TYPE_SHINGLE_RAMP1]=TYPE_BTSHINGLESIDE,
-    
-    
-    [TYPE_WEAVE]=TYPE_BTFENCE,
-    
-    
-    
-    [TYPE_WATER]=TYPE_BTWATER,
-    [TYPE_LAVA]=TYPE_BTLAVA,
-    
-    [TYPE_BLOCK_TNT]=-1,
-    [TYPE_FIREWORK]=TYPE_BTFIREWORK,
-    
-    [TYPE_DOOR_TOP]=-1,
-    [TYPE_GOLDEN_CUBE]=-1,
-    [TYPE_LIGHTBOX]=-1,
-    [TYPE_STEEL]=TYPE_BTSTEEL,
-    [TYPE_PORTAL_TOP]=-1,
-    // 112-127 (D.2a): the id space is full, so there are no BT variants to pick.
-    [TYPE_ORE_SAND]=-1,
-    [TYPE_SPACE_STONE]=-1,
-    [TYPE_CARPET]=-1,
-    [TYPE_SNAKESKIN]=-1,
-    [TYPE_OBSIDIAN]=-1,
-    [TYPE_CHEESE]=-1,
-    [TYPE_SPACE_DIRT]=-1,
-    [TYPE_SPACE_GRASS]=-1,
-    [TYPE_MOSS]=-1,
-    [TYPE_DARK_MATTER]=-1,
-    [TYPE_SPACE_SAND]=-1,
-    [TYPE_SNOW]=-1,
-    [TYPE_MOONROCK]=-1,
-    [TYPE_BASALT]=-1,
-    [TYPE_DARK_TILE]=-1,
-    [TYPE_ALGAE]=-1,
-    
-};
-
-// D.2p: the picker's page 2 — the 2026 game's second page in ID ORDER (the user's call; the
-// game's screenshot starts 113, 112), then its two tool cells. Laid out in the first 18 slots of
-// the same blockBounds[] grid as page 1. (H.14 adds TYPE_GRASS3 and FT.1 TYPE_GRASS2 (weeds), so it fills the first 20.)
-static const int hudBlocks2[NUM_PICKER_PAGE2_CELLS]={
-    TYPE_ORE_SAND,TYPE_SPACE_STONE,TYPE_CARPET,TYPE_SNAKESKIN,TYPE_OBSIDIAN,TYPE_CHEESE,TYPE_SPACE_DIRT,
-    TYPE_SPACE_GRASS,TYPE_MOSS,TYPE_DARK_MATTER,TYPE_SPACE_SAND,TYPE_SNOW,TYPE_MOONROCK,TYPE_BASALT,
-    TYPE_DARK_TILE,TYPE_ALGAE,TYPE_GRASS3,TYPE_GRASS2,HUD_TOOL_SIGN,HUD_TOOL_CMD,   // H.14: the 1.x flower block; FT.1: weeds (id 11); then the tools
-};
-int Hud::pickerCellCount(int page){ return page==1?NUM_PICKER_PAGE2_CELLS:NUM_DISPLAY_BLOCKS; }
+// K.2-3: the two picker pages and hudBlocksMap (a picker cell's BT "second block" variant; -1 none)
+// come from the stock pack's "picker_pages" and each block's "bt" (media/packs/eden/pack.json;
+// ContentPack::commitStock -> setPickerPages at boot). Page 1 is the stock grid of 35 cells; page 2 is
+// D.2p's 2026 second page in ID order, H.14's grass3, FT.1's weeds, then the sign and command tools.
+static int hudBlocks[NUM_DISPLAY_BLOCKS];
+extern "C" int hudBlocksMap[BLOCK_IDS]={};
+static int hudBlocks2[NUM_PICKER_PAGE2_CELLS];
+void Hud::setPickerPages(const std::vector<int>& page0,const std::vector<int>& page1){
+    for(int i=0;i<NUM_DISPLAY_BLOCKS;i++) hudBlocks[i]=i<(int)page0.size()?page0[i]:TYPE_NONE;
+    for(int i=0;i<NUM_PICKER_PAGE2_CELLS;i++) hudBlocks2[i]=i<(int)page1.size()?page1[i]:TYPE_NONE;
+}
+// K.2-5 (D13): the Mods pages. Cells are the loaded mod blocks whose pack says "picker": true, in load
+// order, 35 to a page after the two stock pages; none in a multiplayer session (a session loads no packs).
+static std::string s_modSel;          // the selected mod block's full name, kept across worlds
+static bool s_modConfirmed=false;     // this world's first-placement confirm was answered OK
+static std::vector<int> modCells(){
+    std::vector<int> v;
+    if(MpWorld::active()) return v;
+    const ContentPack::ModReport& r=ContentPack::modReport();
+    if(r.session) return v;
+    for(size_t i=0;i<r.blocks.size();i++) if(r.blocks[i].picker) v.push_back((int)i);
+    return v;
+}
+int Hud::pickerPageCount(){
+    const int n=(int)modCells().size();
+    return NUM_PICKER_PAGES+(n+NUM_DISPLAY_BLOCKS-1)/NUM_DISPLAY_BLOCKS;
+}
+const std::string& Hud::modSelection(){ return s_modSel; }
+std::string Hud::modCellName(int type){
+    const ContentPack::ModReport& r=ContentPack::modReport();
+    const int i=type-HUD_MOD_BASE;
+    return (i>=0&&i<(int)r.blocks.size())?r.blocks[i].name:std::string();
+}
+static int mod_sentinel_of(const std::string& name){
+    const ContentPack::ModReport& r=ContentPack::modReport();
+    for(size_t i=0;i<r.blocks.size();i++) if(r.blocks[i].name==name) return HUD_MOD_BASE+(int)i;
+    return -1;
+}
+int Hud::pickerCellCount(int page){
+    if(page>=NUM_PICKER_PAGES){
+        const int n=(int)modCells().size()-(page-NUM_PICKER_PAGES)*NUM_DISPLAY_BLOCKS;
+        return n<0?0:(n>NUM_DISPLAY_BLOCKS?NUM_DISPLAY_BLOCKS:n);
+    }
+    return page==1?NUM_PICKER_PAGE2_CELLS:NUM_DISPLAY_BLOCKS;
+}
 int Hud::pickerCell(int page,int i){
     if(i<0||i>=pickerCellCount(page)) return -1;
+    if(page>=NUM_PICKER_PAGES) return HUD_MOD_BASE+modCells()[(page-NUM_PICKER_PAGES)*NUM_DISPLAY_BLOCKS+i];
     return page==1?hudBlocks2[i]:hudBlocks[i];
+}
+// The cells of `page` into out[NUM_DISPLAY_BLOCKS]; returns the count.
+static int page_cells(int page,int* out){
+    const int n=Hud::pickerCellCount(page);
+    for(int i=0;i<n;i++) out[i]=Hud::pickerCell(page,i);
+    return n;
 }
 // SIGN landed with D.3c, CMD with D.4b. Both need a text prompt (a sign's text, a command block's
 // script), so both stay veiled on a host with no GL text input (web, until 5.9's web text-input
@@ -189,7 +115,17 @@ static CGRect picker_hit(CGRect r){
     // Grown DOWNWARD only: centred, it would reach into the grid's last row and steal its taps.
     return CGRectMake(r.origin.x,r.origin.y+r.size.height-h,r.size.width,h);
 }
-static int picker_page_of(int type){ return (type>=TYPE_ORE_SAND&&type<=TYPE_ALGAE)||type==TYPE_GRASS3||type==TYPE_GRASS2||hud_picker_is_tool(type)?1:0; }
+// K.2-3: the page a cell is on, from the pages themselves (was a hard-coded id list of page 2).
+static int picker_page_of(int type){
+    if(type>STOCK_BLOCK_MAX&&!hud_picker_is_tool(type)&&!s_modSel.empty()) type=mod_sentinel_of(s_modSel);   // a resolved mod id
+    if(hud_picker_is_mod(type)){
+        const std::vector<int> v=modCells();
+        for(size_t i=0;i<v.size();i++) if(HUD_MOD_BASE+v[i]==type) return NUM_PICKER_PAGES+(int)i/NUM_DISPLAY_BLOCKS;
+        return 0;
+    }
+    for(int i=0;i<NUM_PICKER_PAGE2_CELLS;i++) if(hudBlocks2[i]==type) return 1;
+    return 0;
+}
 
 static int marginVert=10;
 static int marginLeft=10;
@@ -383,6 +319,7 @@ void Hud::layoutForScreen(){
     rchat.origin.y=sT-45;
     rchat.size.width=45;
     rchat.size.height=45;
+    rcons=rchat;   // the singleplayer console button takes the chat button's place
    // }else{
     //    rjumprender.origin.y+=13;
     //    rjumprender.origin.x-=7;
@@ -590,7 +527,7 @@ void Hud::layoutPauseMenu(){
     // MP.3a: a multiplayer session has no world file, no home and no thumbnail (engine plan §11), so
     // Save Game (which also sets home), Warp Home and Take Photo go the way Settings does without a GL screen.
     const bool session=MpWorld::active();
-    auto hidden=[&](int k){ return (k==PM_SETTINGS&&!withSettings)||(session&&(k==PM_SAVE||k==PM_HOME||k==PM_PHOTO)); };
+    auto hidden=[&](int k){ return k==PM_CONSOLE||(k==PM_SETTINGS&&!withSettings)||(session&&(k==PM_SAVE||k==PM_HOME||k==PM_PHOTO)); };
     int n=0;
     for(int k=0;k<PM_COUNT;k++) if(!hidden(k)) n++;
     // Gap > 8pt on purpose: inbox2/inbox3 add 4pt of slop on every side, and a smaller gap would
@@ -646,6 +583,13 @@ void Hud::worldLoaded(){
     inmenu=false;
     pickSecondBlock=false;
     at1=0;
+    // K.2-5: a new world has its own palette and its own first-placement confirm; a mod selection is
+    // re-pointed by NAME (the sentinel's index and the resolved id both belong to the previous load).
+    s_modConfirmed=false;
+    if(blocktype>STOCK_BLOCK_MAX&&!hud_picker_is_tool(blocktype)||hud_picker_is_mod(blocktype)){
+        const int s=s_modSel.empty()?-1:mod_sentinel_of(s_modSel);
+        blocktype=(s>=0&&!MpWorld::active())?s:TYPE_BRICK;
+    }
 	if(mode==MODE_PICK_BLOCK){
 		mode=MODE_BUILD;
 	}
@@ -654,6 +598,41 @@ void Hud::worldLoaded(){
     }
 	
 }
+// K.2-5 (D13): the palette id is taken at the first PLACEMENT, never at selection. In an unflagged world
+// that placement rewrites the file once (flag compaction), so the first one asks. Failures reuse the
+// console's wording (BlockRegistry::acquire's `why`: palette full, locked, session) as a status toast.
+static bool mod_acquire_now(Hud* h){
+    std::string why;
+    const int id=BlockRegistry::acquire(s_modSel,&why);
+    if(id<0){ h->sb->setStatus(why.empty()?"Could not use this mod block":why.c_str(),4); return false; }
+    h->blocktype=id;
+    return true;
+}
+static void mod_confirm_cb(int chosen){
+    if(chosen!=0) return;
+    s_modConfirmed=true;
+    mod_acquire_now(World::getWorld->hud);
+}
+bool Hud::resolveModBlock(){
+    if(!hud_picker_is_mod(blocktype)) return true;
+    const std::string name=modCellName(blocktype);
+    if(name.empty()){ blocktype=TYPE_BRICK; return false; }
+    s_modSel=name;
+    const int have=BlockRegistry::idOf(name);
+    if(have>=0){ blocktype=have; return true; }
+    if(MpWorld::active()){ sb->setStatus("Mod blocks are not available in a multiplayer world",4); return false; }
+    if(!s_modConfirmed&&World::getWorld->fm&&!World::getWorld->fm->paletteFlagged()){
+        if(!GLDialog::active()){
+            static const char* const kBtn[]={"Place it","Cancel"};
+            GLDialog::show("Use a mod block?",
+                           "Worlds with mod blocks can't be opened by Emod builds older than 0.4.",
+                           kBtn,2,mod_confirm_cb);
+        }
+        return false;
+    }
+    return mod_acquire_now(this);
+}
+
 static const int usage_id=15;
 static const int usage_id2=16;
 static int delayedaction=0;
@@ -846,6 +825,11 @@ bool Hud::update(float etime){
                 eden_chat_open(0);
                 rchat.pressed=false;
             }
+            if(consoleBtnShown()&&!inmenu&&inbox2(touches[i].mx,touches[i].my,&rcons)){
+                rcons.pressed=false;
+                eden_console_menu_open();
+                Input::getInput()->clearAll();
+            }
             if(inbox2(touches[i].mx,touches[i].my,&rmenu)){	
                 inmenu=!inmenu;
                 if(inmenu==true){
@@ -949,6 +933,11 @@ bool Hud::update(float etime){
                 Resources::getResources->playSound(S_MENU_BUTTON_PRESS);
             }
             if(FLY_ALLOWED&&!inmenu&&inbox3(touches[i].mx,touches[i].my,&rflyhit)){   // FM.3: claims the touch
+                touches[i].inuse=usage_id2;
+                touches[i].down=M_NONE;
+                Resources::getResources->playSound(S_MENU_BUTTON_PRESS);
+            }
+            if(consoleBtnShown()&&!inmenu&&inbox3(touches[i].mx,touches[i].my,&rcons)){   // claims the touch
                 touches[i].inuse=usage_id2;
                 touches[i].down=M_NONE;
                 Resources::getResources->playSound(S_MENU_BUTTON_PRESS);
@@ -1178,6 +1167,7 @@ bool Hud::update(float etime){
                     
                         mode=MODE_BUILD;
                         blocktype=blocktype_pressed;
+                        if(hud_picker_is_mod(blocktype)) s_modSel=modCellName(blocktype);   // K.2-5: by name
                         printf("blocktype:%d\n",blocktype);
                     }
                     
@@ -1305,7 +1295,8 @@ bool Hud::handlePickMenu(int x,int y){
 
 bool Hud::pickerPageStep(int delta){
     if(mode!=MODE_PICK_BLOCK||delta==0) return false;
-    pickerPage=((pickerPage+delta)%NUM_PICKER_PAGES+NUM_PICKER_PAGES)%NUM_PICKER_PAGES;
+    const int np=pickerPageCount();
+    pickerPage=((pickerPage+delta)%np+np)%np;
     blocktype_pressed=-1;
     return true;
 }
@@ -1316,9 +1307,14 @@ bool Hud::handlePickBlock(int x,int y){
 	// The art is 22 points tall; the hit box meets the touch floor (design-system.md).
 	if(inbox(x,y,picker_hit(pickerPrev))) return pickerPageStep(-1);
 	if(inbox(x,y,picker_hit(pickerNext))) return pickerPageStep(1);
-	const int* cells=pickerPage==1 ? hudBlocks2 : hudBlocks;
+	int cells[NUM_DISPLAY_BLOCKS];
+	page_cells(pickerPage,cells);
 	for(int i=0;i<pickerCellCount(pickerPage);i++){
 		if(inbox(x,y,blockBounds[i])){
+            if(hud_picker_is_mod(cells[i])){
+                // K.2-5: a mod block cell. Not a second-block candidate (no BT variant); consumed either way.
+                if(!pickSecondBlock) blocktype_pressed=cells[i];
+            }else
             if(hud_picker_is_tool(cells[i])){
                 // A tool cell: consumed either way, picks only once its row has landed.
                 if(pickerToolEnabled(cells[i])&&!pickSecondBlock) blocktype_pressed=cells[i];
@@ -1438,6 +1434,32 @@ static void picker_face(CGRect r,CGPoint tp,bool triangle){
     Pen::strip(vertices, coordinates, 0, triangle?3:4);
 }
 
+// K.2-5: a mod block's icon straight from its definition (it has no table row until placed): the +Y
+// face, in the atlas the definition names, tinted like a stock cell unless its art carries colour.
+static void mod_icon(const std::string& name,CGRect in){
+    const BlockRegistry::BlockDef* d=BlockRegistry::findDef(name);
+    if(!d) return;
+    Resources* res=Resources::getResources;
+    const int f=d->faces[5];
+    Pen::texture((d->info&IS_ATLAS2)?res->atlas2->name:res->atlas->name);
+    const CGPoint tp=IS_NEWBLOCK_TEX(f)?res->getBlockTex(NEWBLOCK_COLOR_TEX(f)):res->getBlockTex(f);
+    if(d->paintArt&ART_PICKER) Pen::color(1.0f,1.0f,1.0f,1.0f);
+    else Pen::colorub(d->color[0],d->color[1],d->color[2],255);
+    picker_face(in,tp,false);
+}
+// Is picker cell `type` the block a build would place? (A mod cell: by name; the selection is either
+// still the sentinel or already resolved to this world's id.)
+static bool picker_cell_on(int type,int blocktype,bool pickSecondBlock,int blocktype_pressed){
+    if(blocktype_pressed==type) return true;
+    if(pickSecondBlock) return false;
+    if(hud_picker_is_mod(type)){
+        const std::string n=Hud::modCellName(type);
+        if(n.empty()||n!=s_modSel) return false;
+        return blocktype==type||(blocktype>STOCK_BLOCK_MAX&&!hud_picker_is_tool(blocktype)&&BlockRegistry::idOf(n)==blocktype);
+    }
+    return type==blocktype;
+}
+
 void Hud::renderColorPickScreen(){
     if(mode!=MODE_PICK_COLOR) return;
     using namespace GLW;
@@ -1463,6 +1485,16 @@ void Hud::renderColorPickScreen(){
 extern bool DOUBLE_BRUSH;   // Player.mm, H.7
 void Hud::renderBlockAndBorder(CGRect recto){
     int type=blocktype;
+    if(hud_picker_is_mod(type)){
+        // K.2-5: a mod block not yet placed: the build background, then its icon from the definition.
+        Pen::color(1.0f,1.0f,1.0f,1.0f);
+        Resources::getResources->getTex((mode==MODE_BUILD||mode==MODE_PICK_BLOCK)?ICO_BUILD2_ACTIVE:ICO_BUILD2)->drawTextHalfsies(recto);
+        const float sz=fminf(recto.size.width,recto.size.height)*0.6f;
+        Pen::textured(true);
+        mod_icon(modCellName(type),CGRectMake(recto.origin.x+(recto.size.width-sz)*0.5f,recto.origin.y+(recto.size.height-sz)*0.5f,sz,sz));
+        Pen::color(1.0f,1.0f,1.0f,1.0f);
+        return;
+    }
     if(hud_picker_is_tool(type)){
         // D.3c: a tool is never a table index -- the build background, then its picture (a caption
         // until the Maysunbo art, 2026-10-27).
@@ -1820,7 +1852,7 @@ void Hud::renderBlockAndBorder(CGRect recto){
         Vector clr=colorTable[block_paintcolor];
         Pen::color(clr.x,clr.y,clr.z,1.0f);
     }
-    else if(type==TYPE_GRASS3||type==TYPE_TNT||type==TYPE_FIREWORK||type==TYPE_BRICK||type==TYPE_VINE||(type>=TYPE_ORE_SAND&&type<=TYPE_ALGAE))   // FT.1: weeds (GRASS2) take blockColor like the world mesh
+    else if(trait_paintArtIcon(type))   // K.2-1; FT.1: weeds (GRASS2) take blockColor like the world mesh
         Pen::color(1.0f, 1.0f, 1.0f, 1.0f);
     else
         Pen::colorub(blockColor[type][0], blockColor[type][1], blockColor[type][2], 255);
@@ -2010,8 +2042,8 @@ void Hud::renderBlockScreen(){
         cells[NUM_DISPLAY_BLOCKS+1]=pickerNext;
         bevel(picker_panel(cells,NUM_DISPLAY_BLOCKS+2),BEVEL_WINDOW);
     }
-    const int* hudBlocks=pickerPage==1 ? hudBlocks2 : ::hudBlocks;
-    const int ncells=pickerCellCount(pickerPage);
+    int hudBlocks[NUM_DISPLAY_BLOCKS];
+    const int ncells=page_cells(pickerPage,hudBlocks);
 
     // Pass 1, chrome: the second-block ring, then the cell. TYPE_CUSTOM is a blank slot, as stock.
     // "Current" is the block a build would place; while a second block is being picked there is
@@ -2021,7 +2053,7 @@ void Hud::renderBlockScreen(){
         const int type=hudBlocks[i];
         if(type==TYPE_GOLDEN_CUBE) golden_cubei=i;
         if(type==TYPE_CUSTOM) continue;
-        const bool on=(blocktype_pressed==type)||(!pickSecondBlock&&type==blocktype);
+        const bool on=picker_cell_on(type,blocktype,pickSecondBlock,blocktype_pressed);
         if(pickSecondBlock&&picker_bt(type)!=-1){
             const float g=du(3);
             const CGRect c=blockBounds[i];
@@ -2035,8 +2067,12 @@ void Hud::renderBlockScreen(){
     for(int i=0;i<ncells;i++){
         const int type=hudBlocks[i];
         if(type==TYPE_CUSTOM) continue;
-        const bool on=(blocktype_pressed==type)||(!pickSecondBlock&&type==blocktype);
+        const bool on=picker_cell_on(type,blocktype,pickSecondBlock,blocktype_pressed);
         const CGRect in=picker_inner(blockBounds[i],on);
+        if(hud_picker_is_mod(type)){
+            mod_icon(modCellName(type),in);
+            continue;
+        }
         if(hud_picker_is_tool(type)){
             // D.2p captioned these; since 2026-10-27 they are pictured (Maysunbo art).
             Pen::color(1.0f,1.0f,1.0f,1.0f);
@@ -2062,7 +2098,7 @@ void Hud::renderBlockScreen(){
         else if(IS_NEWBLOCK_TEX(blockTypeFaces[type][5])) tp=res->getBlockTex(NEWBLOCK_COLOR_TEX(blockTypeFaces[type][5]));
         else                               tp=res->getBlockTex(blockTypeFaces[type][5]);
         // Faces whose art already carries its colour draw white; the rest take blockColor, as stock.
-        if(type==TYPE_FIREWORK||type==TYPE_GRASS3||type==TYPE_TNT||type==TYPE_BLOCK_TNT||type==TYPE_BRICK||type==TYPE_VINE||(type>=TYPE_ORE_SAND&&type<=TYPE_ALGAE))
+        if(trait_paintArtPicker(type))   // K.2-1
             Pen::color(1.0f,1.0f,1.0f,1.0f);
         else
             Pen::colorub(blockColor[type][0],blockColor[type][1],blockColor[type][2],255);
@@ -2081,7 +2117,8 @@ void Hud::renderBlockScreen(){
     for(int i=0;i<ncells;i++){
         const int type=hudBlocks[i];
         if(type==TYPE_CUSTOM) continue;
-        const bool veiled=hud_picker_is_tool(type)?(pickSecondBlock||!pickerToolEnabled(type))
+        const bool veiled=hud_picker_is_mod(type)?pickSecondBlock
+                          :hud_picker_is_tool(type)?(pickSecondBlock||!pickerToolEnabled(type))
                                                   :(pickSecondBlock&&picker_bt(type)==-1);
         if(veiled) fill(blockBounds[i],rgb(0xc9c9c9,0.6f));
     }
@@ -2092,9 +2129,9 @@ void Hud::renderBlockScreen(){
     {
         const float d=du(8),gap=du(8);
         const float x0=(pickerPrev.origin.x+pickerPrev.size.width+pickerNext.origin.x)*0.5f
-                       -(NUM_PICKER_PAGES*d+(NUM_PICKER_PAGES-1)*gap)*0.5f;
+                       -(pickerPageCount()*d+(pickerPageCount()-1)*gap)*0.5f;
         const float y=pickerPrev.origin.y+(pickerPrev.size.height-d)*0.5f;
-        for(int p=0;p<NUM_PICKER_PAGES;p++){
+        for(int p=0;p<pickerPageCount();p++){
             const float x=x0+p*(d+gap);
             fill(CGRectMake(x,y,d,d),rgb(0x000000));
             if(p!=pickerPage) fill(CGRectMake(x+u(),y+u(),d-2.0f*u(),d-2.0f*u()),rgb(0xc9c9c9));
@@ -2395,6 +2432,12 @@ void Hud::render(){
 	Pen::color(1.0, 1.0, 1.0, 1.0);
     
 	MpWorld::renderPeerTags();   // MP.5
+    if(consoleBtnShown()&&!inmenu){   // developer console button (singleplayer), where chat sits in a session
+        Pen::textured(true);
+        if(rcons.pressed) Pen::color(0.7f,0.7f,0.7f,1.0f); else Pen::color(1.0f,1.0f,1.0f,1.0f);
+        Resources::getResources->getArtTex(ART_CONSOLE)->drawInRect(CGRectMake(rcons.origin.x,rcons.origin.y,rcons.size.width,rcons.size.height));
+        Pen::color(1.0f,1.0f,1.0f,1.0f);
+    }
     if(MpWorld::active()){   // MP.7: the chat feed (inert) and the touch button
         ChatFeed::renderHud(World::getWorld->menu&&World::getWorld->menu->showconsole);
         if(!inmenu) ChatFeed::renderButton(CGRectMake(rchat.origin.x,rchat.origin.y,rchat.size.width,rchat.size.height),rchat.pressed);
@@ -2430,7 +2473,7 @@ void Hud::render(){
     }
     if(underLiquid){
         //NSLog(@"%f",flash);
-		Graphics::fillScreen(liquidColor.x, liquidColor.y, liquidColor.z, 0.5f);
+		Graphics::fillScreen(liquidColor.x, liquidColor.y, liquidColor.z, 0.5f);   // AT.8: unchanged; the underwater fog uses the same colour, so far terrain and this fill agree (AT.9 retunes)
 
     }
 	if(flash>0||World::getWorld->player->flash>0){

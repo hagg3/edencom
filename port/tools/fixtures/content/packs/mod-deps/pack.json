@@ -1,0 +1,3 @@
+// K.3: a bad "requires" / "conflicts" list refuses the pack (top-level errors)
+{"format": 1, "id": "deps", "requires": ["ok", "ok2>=1.2.0", "Bad", "x>=1..2", "y>=", 7, "deps"],
+ "conflicts": "nope", "blocks": []}

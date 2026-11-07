@@ -63,7 +63,11 @@ passes, special objects, sky, and the per-vertex data formats.
   glScalef(1, 1/ATLAS_TILES, 1)` around the terrain passes and `BlockBreak::render` (each atlas
   is a 1×`ATLAS_TILES` strip). **Modified from stock (D.2t, 2026-10-10):** stock was 1/32 with
   32-tile atlases; both grew to 64 (`Constants.h` `ATLAS_TILES`) to carry blocks 112–127, then to **128 (H.14, 2026-10-16; the PNG loader's size cap in `Texture2D.cpp` had to go 2048→4096 with it, or every tile loads half-res)** for tile 64 `TEX_GRASS_FLOWER` (block 12's top, `grass3o.png`, full colour so the mesher leaves its paint white; `port/tools/atlas-h14.py`); tile 65 `TEX_MISSING` (K.1-3, 2026-10-31) is the "missing" block's magenta/black checker, every face of a palette byte 128–255 with no loaded definition (`port/tools/atlas-k13.py`, atlas.png only; `IS_MISSING` makes the fill pass skip its paint, `docs/world-and-terrain.md`) — atlas2's
-  extra 32 tiles are transparent padding so one constant serves both passes. Every consumer reads
+  extra 32 tiles are transparent padding so one constant serves both passes. **K.2-4 (2026-11-01):** the free
+  tiles (`atlas.png` 66–127, `atlas2.png` 32–127 as 8-frame strips, because `Terrain::render2`'s `R::uv()`
+  translate by `frame/16` animates **every** atlas2 tile over 8 rows: a one-slot tile would show 1 frame in 8)
+  take mod pack tiles at world entry; the atlas texture is then
+  re-created (a new `atlas->name`, read at every draw) — `docs/content-packs.md` "Mod packs". Every consumer reads
   it: the two passes, `BlockBreak`, `Resources::getBlockTex`/`getBlockTexShort` (normalized
   `type/ATLAS_TILES` for the HUD icons, picker and `Graphics::drawCube`). The door, portal-frame and portal-swirl immediate batches (`Terrain::render`) used to hardcode `*32` to cancel the 1/32 matrix for their own non-atlas textures; they now multiply by `ATLAS_TILES` (X.7 — at `*32` only the top half of the door texture was sampled, stretched over both blocks). The image loader's cap is
   2048 (`kMaxImageTextureSize_Eden`); at the old 1024 the 2048-row atlas was silently halved.

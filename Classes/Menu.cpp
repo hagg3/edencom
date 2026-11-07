@@ -10,6 +10,7 @@
 #include "WorldPropertiesMenu.h"   // H.15 (Menu.h only forward-declares it)
 #include "ConsoleMenu.h"           // C.3 (likewise)
 #include "ServerListMenu.h"        // MP.6 (likewise)
+#include "ModsMenu.h"              // K.3-5
 #include "MpWorld.h"
 #include "GLDialog.h"
 #include "Graphics.h"
@@ -72,7 +73,7 @@ struct MenuKit {
     GLW::Button     back, myWorlds, multiplayer;
     // About screen: placeholder licence/credits text, one Label per paragraph
     static const int ABOUT_PARAS=6;
-    GLW::Button     about, aboutBack;
+    GLW::Button     about, aboutBack, modsBtn;   // modsBtn: K.3-5, beside About
     GLW::Label      aboutTitle, aboutPara[ABOUT_PARAS];
     CGRect          aboutPanel, aboutContent;
     GLW::IconRail   aboutRail;   // one tile for now: Info
@@ -126,7 +127,8 @@ void Menu::layoutKit(){
         k->title.set("My Worlds",du(32),UITextAlignmentCenter);   // I.7: was "Worlds"
         k->back.setLabel("Back",du(22));
         k->settings.setLabel("Settings",du(22));
-        k->about.setLabel("About",du(14));
+        k->about.setLabel("About",du(22));
+        k->modsBtn.setLabel("Mods",du(22));
         k->aboutBack.setLabel("Back",du(20));
         k->aboutBack.sizeToFit();
         k->aboutTitle.set("About Emod",du(32),UITextAlignmentCenter);
@@ -272,6 +274,7 @@ CGRect Menu::controlRect(const char* which){
     if(!strcmp(which,"getworlds")||!strcmp(which,"home.getworlds")) return kit->getWorlds.rect();
     if(!strcmp(which,"home.myworlds"))    return kit->myWorlds.rect();
     if(!strcmp(which,"home.multiplayer")) return kit->multiplayer.rect();
+    if(!strcmp(which,"home.mods"))        return kit->modsBtn.rect();   // K.3-5
     return CGRectMake(0,0,0,0);
 }
 
@@ -308,14 +311,13 @@ void Menu::layoutHome(){
     // Settings. On a short window the tall row flattens and the padding tightens before the window
     // would run into the logo.
     k->homeTopY=rect_name.origin.y-du(2);
-    k->about.setRect(CGRectMake(safe.origin.x+margin,safe.origin.y+margin,du(90),controlH(22)));
-    const float bottom=safe.origin.y+margin+controlH(22)+du(6);   // the About button sits under the panel
+    const float bottom=safe.origin.y+margin;
     const float avail=k->homeTopY-bottom;
     const float bh=btnH, bg=du(10), sh=k->subtitle.height();
     float pad=du(12), gap=du(10), gh=bh*1.6f;
-    if(pad*2.0f+sh+gap+gh+bg+bh>avail) gh=bh;
-    if(pad*2.0f+sh+gap+gh+bg+bh>avail){ pad=du(8); gap=du(5); }
-    const float groupH=gh+bg+bh;
+    if(pad*2.0f+sh+gap+gh+bg*2.0f+bh*2.0f>avail) gh=bh;
+    if(pad*2.0f+sh+gap+gh+bg*2.0f+bh*2.0f>avail){ pad=du(8); gap=du(5); }
+    const float groupH=gh+bg*2.0f+bh*2.0f;
     const float ph=pad*2.0f+sh+gap+groupH;
     const float gw=std::min((float)du(360),(float)(safe.size.width-margin*2.0f-pad*2.0f));
     const float cw=(gw-bg)*0.5f;
@@ -324,9 +326,11 @@ void Menu::layoutHome(){
     k->homePanel=CGRectMake(safe.origin.x+(safe.size.width-pw)*0.5f,py,pw,ph);
     k->homeSubY=py+ph-pad;
     const float x0=k->homePanel.origin.x+pad;
-    float y=py+pad+bh;
-    k->multiplayer.setRect(CGRectMake(x0,py+pad,cw,bh));
-    k->settings.setRect(CGRectMake(x0+cw+bg,py+pad,cw,bh));
+    float y=py+pad+bh*2.0f+bg;
+    k->about.setRect(CGRectMake(x0,py+pad,cw,bh));
+    k->modsBtn.setRect(CGRectMake(x0+cw+bg,py+pad,cw,bh));
+    k->multiplayer.setRect(CGRectMake(x0,py+pad+bh+bg,cw,bh));
+    k->settings.setRect(CGRectMake(x0+cw+bg,py+pad+bh+bg,cw,bh));
     y+=bg;
     k->myWorlds.setRect(CGRectMake(x0,y,cw,gh));
     k->getWorlds.setRect(CGRectMake(x0+cw+bg,y,cw,gh));
@@ -338,9 +342,10 @@ void Menu::layoutHome(){
         k->homeTileW=cw;
         const float room=cw-du(20);
         struct Pair { const char* a; const char* b; float pt; GLW::Button* x; GLW::Button* y; };
-        Pair pairs[2]={ {"My Worlds","Get Worlds",du(26),&k->myWorlds,&k->getWorlds},
-                        {"Multiplayer","Settings",du(22),&k->multiplayer,&k->settings} };
-        for(int i=0;i<2;i++){
+        Pair pairs[3]={ {"My Worlds","Get Worlds",du(26),&k->myWorlds,&k->getWorlds},
+                        {"Multiplayer","Settings",du(22),&k->multiplayer,&k->settings},
+                        {"About","Mods",du(22),&k->about,&k->modsBtn} };
+        for(int i=0;i<3;i++){
             float pt=pairs[i].pt;
             GLW::Label m;
             const char* words[2]={pairs[i].a,pairs[i].b};
@@ -359,6 +364,7 @@ void Menu::layoutHome(){
     k->getWorlds.setEnabled(idle&&browserOffered());
     k->settings.setEnabled(idle);
     k->about.setEnabled(idle);
+    k->modsBtn.setEnabled(idle);
 }
 
 // A tile's art and caption, inside the button it sits on (drawn first).
@@ -408,6 +414,7 @@ void Menu::renderHome(){
     k->getWorlds.render();
     k->settings.render();
     k->about.render();
+    k->modsBtn.render();
     Pen::color(1.0f,1.0f,1.0f,1.0f);
 }
 
@@ -546,6 +553,8 @@ Menu::Menu(){
     shared_list=new SharedList();
     browser=new WorldBrowser();
     showbrowser=false;
+    mods=new ModsMenu();
+    showmods=false;
     newworld=new NewWorldMenu();
     shownewworld=false;
     props=new WorldPropertiesMenu();
@@ -770,6 +779,12 @@ bool Menu::browserOffered(){
     return WorldBrowser::available();
 }
 
+void Menu::openMods(){
+    if(loading||MpWorld::active()) return;
+    mods->open();
+    showmods=true;
+}
+
 void Menu::openBrowser(){
     if(!browserOffered()||loading) return;
     browser->open();
@@ -817,7 +832,7 @@ void Menu::updateHome(float etime){
     MenuKit* k=kit;
     sbar->update(etime);
     itouch* touches=Input::getInput()->getTouches();
-    GLW::Button* const tiles[]={&k->myWorlds,&k->multiplayer,&k->getWorlds,&k->settings,&k->about};
+    GLW::Button* const tiles[]={&k->myWorlds,&k->multiplayer,&k->getWorlds,&k->settings,&k->about,&k->modsBtn};
     for(int i=0;i<MAX_TOUCHES;i++){
         if(touches[i].inuse==0&&touches[i].down==M_DOWN){
             touches[i].inuse=usage_id;
@@ -847,6 +862,10 @@ void Menu::updateHome(float etime){
             }
             if(chosen==&k->about){
                 showabout=true;
+                return;
+            }
+            if(chosen==&k->modsBtn){
+                openMods();
                 return;
             }
             if(chosen==&k->settings){
@@ -973,6 +992,11 @@ void Menu::update(float etime){
 	if(showprops){
 		props->update(etime);
 		if(!props->isOpen()) showprops=false;   // Back, or a save
+		return;
+	}
+	if(showmods){
+		mods->update(etime);
+		if(!mods->isOpen()) showmods=false;   // Back
 		return;
 	}
 	if(showbrowser){
@@ -1253,6 +1277,11 @@ void Menu::render(){
 	}
 	if(showprops){
 		props->render();
+        Graphics::endMenu();
+		return;
+	}
+	if(showmods){
+		mods->render();
         Graphics::endMenu();
 		return;
 	}

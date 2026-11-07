@@ -9,6 +9,7 @@
 #include "World.h"
 #include "Camera.h"
 #include "Renderer.h"
+#include "Weather.h"
 
 extern float eden_fov_degrees;
 
@@ -46,6 +47,12 @@ Look lookFor(float s) {
     }
     L.glowA = a.glowA + (b.glowA - a.glowA) * u;
     L.starA = smooth01((-2.0f - s) / 8.0f);   // 0 above -2 degrees, 1 below -10
+    // AT.2a: overcast greys the keyframes and hides the glow and stars (identity in clear weather).
+    if (Weather::active()) {
+        Weather::greySky(L.zen); Weather::greySky(L.hor); Weather::greySky(L.glow);
+        const float c = Weather::clearSky();
+        L.glowA *= c; L.starA *= c;
+    }
     return L;
 }
 

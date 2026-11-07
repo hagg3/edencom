@@ -1,5 +1,7 @@
 // G.4: split out of the old eden_main_native.cpp (see harness.h). Mode group "shots".
 #include "harness.h"
+#include "eden_fs.h"
+extern "C" { int eden_settings_count(void); const char* eden_settings_key(int i); void eden_settings_set_text(int, const char*); }   // K.3-6
 
 using namespace harness;
 
@@ -281,6 +283,84 @@ int run_shot() {
         b->close();
         m->showbrowser = false;
         tick(4);
+    }
+
+    // K.3-5/6: the mod manager, over packs written into this run's Documents/Packs (a good one, one a
+    // requirement keeps off, a broken one) and a catalogue fed in as bytes (no network).
+    if (World::getWorld && World::getWorld->menu && World::getWorld->fm) {
+        Menu* m = World::getWorld->menu;
+        const std::string packs = World::getWorld->fm->documents + "/Packs";
+        eden_fs_make_dirs(packs);
+        auto put = [](const std::string& path, const std::string& text) {
+            FILE* f = std::fopen(path.c_str(), "wb");
+            if (f) { std::fwrite(text.data(), 1, text.size(), f); std::fclose(f); }
+        };
+        // --shot may run on the player's real Documents: remember which fixture folders were already there
+        // (never overwrite one) and the enable list, and put both back after the captures (WB, 2026-11-07:
+        // an earlier run left stairs/trims/broken in a real Packs folder).
+        std::vector<std::string> made;
+        bool clash = false;
+        for (const char* id : { "stairs", "trims", "broken" }) {
+            if (eden_fs_exists(packs + "/" + id)) clash = true;
+            else made.push_back(id);
+        }
+        const std::string listPath = packs + "/mods.json";
+        std::string listText;
+        const bool hadList = eden_fs_exists(listPath);
+        if (hadList) {
+            if (FILE* f = std::fopen(listPath.c_str(), "rb")) {
+                char buf[4096];
+                size_t n;
+                while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) listText.append(buf, n);
+                std::fclose(f);
+            }
+        }
+        if (clash) std::fprintf(stderr, "[shot] mods: a fixture pack folder is already in %s, skipping the mods shots\n", packs.c_str());
+        else {
+        for (const char* id : { "stairs", "trims", "broken" }) eden_fs_make_dirs(packs + "/" + id);
+        put(packs + "/stairs/pack.json", "{\"format\": 1, \"id\": \"stairs\", \"name\": \"Stairs and Trims\", \"version\": \"1.2.0\", \"blocks\": []}\n");
+        put(packs + "/trims/pack.json", "{\"format\": 1, \"id\": \"trims\", \"name\": \"Extra Trims\", \"version\": \"0.9\", \"requires\": [\"stairs>=2.0\"], \"blocks\": []}\n");
+        put(packs + "/broken/pack.json", "{ \"format\": 1, oops");
+        m->showHome(true);
+        tick(3);
+        m->openMods();
+        tick(4);
+        ModsMenu* mm = m->mods;
+        mm->select(1);
+        tick(2);
+        capture("mods");
+        mm->select(2);
+        tick(2);
+        capture("mods-skipped");
+        mm->select(0);
+        tick(2);
+        capture("mods-refused");
+        int si = -1;
+        for (int i = 0; i < eden_settings_count(); ++i) if (!std::strcmp(eden_settings_key(i), "mods_catalogue_url")) si = i;
+        if (si >= 0) {
+            eden_settings_set_text(si, "http://127.0.0.1:1/x.json");
+            tick(2);
+            mm->showTab(ModsMenu::TAB_GET);
+            const char* cat = "{\"format\": 1, \"packs\": [{\"id\": \"stairs\", \"name\": \"Stairs and Trims\", \"version\": \"2.0.0\", "
+                              "\"author\": \"Sam\", \"size\": 184320, \"description\": \"Half blocks, stairs and trim pieces for every stock material.\", "
+                              "\"requires\": [\"base>=1.0\"], \"url\": \"http://127.0.0.1:1/s.zip\", \"sha256\": \"0000000000000000000000000000000000000000000000000000000000000000\"},"
+                              "{\"id\": \"lanterns\", \"name\": \"Lanterns\", \"version\": \"1.0\", \"url\": \"http://127.0.0.1:1/l.zip\", "
+                              "\"sha256\": \"0000000000000000000000000000000000000000000000000000000000000000\"}]}";
+            tick_until([mm] { return !mm->busy(); }, 3000, "the catalogue request");
+            mm->feedCatalogue(cat, std::strlen(cat));
+            tick(3);
+            capture("mods-get");
+            eden_settings_set_text(si, "");
+            tick(2);
+        }
+        mm->back();
+        m->showmods = false;
+        m->showHome(false);
+        tick(3);
+        }
+        for (const std::string& id : made) eden_fs_remove_tree(packs + "/" + id);
+        if (hadList) put(listPath, listText);
+        else eden_fs_remove(listPath);
     }
 
     // MP.6: the Multiplayer screens over the --mp-mock fixture (UI plan §9): the list, its empty

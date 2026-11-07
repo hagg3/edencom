@@ -181,7 +181,9 @@ void WorldPropertiesMenu::buildRows(){
         addRow(TAB_WORLD,WPK_VALUE,"converted","Converted from","",buf);
     }
     if(p.kind==WP_KIND_EMOD)
-        addRow(TAB_WORLD,WPK_TOGGLE,"locktime","Lock time of day","Keeps this world's clock still when the Day/night cycle is on (Settings > Experiments).");
+        addRow(TAB_WORLD,WPK_TOGGLE,"locktime","Lock time of day","Keeps this world's clock still when the Day/night cycle is on (Settings > Gameplay).");
+    if(p.kind==WP_KIND_EMOD)
+        addRow(TAB_WORLD,WPK_TOGGLE,"lockweather","Lock weather","Keeps the current weather from ever ending when Gameplay > Weather is on. Change it with the weather command.");
     if(p.originalBytes>0)
         addRow(TAB_WORLD,WPK_VALUE,"original","Original kept","The file it was converted from. Share > Remove original deletes it.",
                wp_bytes(p.originalBytes).c_str());
@@ -252,6 +254,7 @@ bool WorldPropertiesMenu::open(WorldNode* node){
         if(!std::strcmp(R.key,"flowers")) m_toggle[r].setOn(g.flowers!=0);
         if(!std::strcmp(R.key,"clouds"))  m_toggle[r].setOn(g.clouds!=0);
         if(!std::strcmp(R.key,"locktime")) m_toggle[r].setOn(p.skyLocked);
+        if(!std::strcmp(R.key,"lockweather")) m_toggle[r].setOn(p.weatherLocked);
         if(R.kind==WPK_SLIDER){
             m_slider[r].setRange(0,(float)(R.nOpts-1),1);
             m_slider[r].setValue((float)classic_option_index(kScales,5,g.scale4));
@@ -364,7 +367,12 @@ bool WorldPropertiesMenu::skyLockChanged() const{
     return r>=0&&m_toggle[r].on()!=m_props.skyLocked;
 }
 
-bool WorldPropertiesMenu::saveEnabled() const{ return m_open&&(nameChanged()||terrainChanged()||skyLockChanged()); }
+bool WorldPropertiesMenu::weatherLockChanged() const{
+    const int r=rowOf("lockweather");
+    return r>=0&&m_toggle[r].on()!=m_props.weatherLocked;
+}
+
+bool WorldPropertiesMenu::saveEnabled() const{ return m_open&&(nameChanged()||terrainChanged()||skyLockChanged()||weatherLockChanged()); }
 
 // ---------------------------------------------------------------------------------------------
 // saving (plan §3)
@@ -395,6 +403,7 @@ void WorldPropertiesMenu::commit(){
     if(!n.empty()) e.name=n;
     editedGenerator(&e.gen);
     {const int lr=rowOf("locktime"); if(lr>=0) e.skyLocked=m_toggle[lr].on();}
+    {const int wr=rowOf("lockweather"); if(wr>=0) e.weatherLocked=m_toggle[wr].on();}
     const int r=fm->applyWorldProperties(m_fileName,e);
     m_lastResult=r;
     if(r<0){

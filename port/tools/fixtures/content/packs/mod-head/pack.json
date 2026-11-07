@@ -1,0 +1,2 @@
+// top-level errors refuse the whole pack; an unknown key is only a warning
+{"format": 2, "id": "emod", "name": 3, "tiles": [], "sound_sets": {}}

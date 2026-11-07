@@ -1,0 +1,9 @@
+// format, id and an unknown top-level key
+{
+  "format": 2,
+  "id": "stairs",
+  "name": 7,
+  "textures": {},
+  "tiles": {}, "sound_sets": {"generic": {"build": "build_generic", "break": "break_generic", "tnt": "other"}},
+  "blocks": [], "picker_pages": [[], []]
+}

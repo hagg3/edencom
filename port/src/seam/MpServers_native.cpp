@@ -216,6 +216,7 @@ int eden_mp_servers_get(int i, EdenMpServerRow* out) {
     out->status = l.status;
     out->pingMs = l.pingMs;
     out->fromCache = !l.fresh;
+    out->usesMods = !eden_net::modsCompatible(e->cache, "") ? 1 : 0;   // K.3-6 (M8)
     // The fallback row has no live count: a cached one from an old INFO would be stale (plan §5).
     if (l.status == EDEN_MP_ST_BASIC || l.status == EDEN_MP_ST_FULL) { out->players = -1; out->motd[0] = 0; }
     return 1;

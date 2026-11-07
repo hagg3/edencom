@@ -128,6 +128,8 @@ jobs:
           python3 -I ../port/tools/objc-surface.py --check
           # LG.7: the shipped .edm creature models are exactly pod2edm.py's conversion of the .pod art.
           python3 -I ../port/tools/pod2edm.py --check
+          # SRC.4: the Srclike movement reference model still prints its golden vectors (--srclike-selftest=move reads them).
+          python3 -I ../port/tools/srclike-pm-ref.py --check
           # G.5b-7: no live GL call outside the renderer (port/src/render/); the engine and host draw through R::.
           python3 -I ../port/tools/gl-call-gate.py
           # FT.4: no non-ASCII bytes in UI string literals (the fonts have no glyph for them).
@@ -168,6 +170,8 @@ jobs:
           # move() in noclip again and must FAIL it.
           rm -rf fly-docs && mkdir -p fly-docs
           run_gate "fly selftest"     $B --fly-selftest --docs="$PWD/fly-docs"
+          rm -rf source-docs && mkdir -p source-docs
+          run_gate "srclike selftest"  $B --srclike-selftest --docs="$PWD/source-docs"   # Stage SRC (SRC.2 input, SRC.3 trace, SRC.4 move legs; move reads ../port/tools/fixtures/srclike-pm/vectors.txt)
           rm -rf fly-docs-m && mkdir -p fly-docs-m
           if $B --fly-selftest --fly-mutate=move --docs="$PWD/fly-docs-m" > gate-fly-mutate-move.log 2>&1; then
             echo "::error::--fly-selftest --fly-mutate=move PASSED: the gate cannot see noclip calling move()"; exit 1
@@ -197,6 +201,43 @@ jobs:
           run_gate "folders selftest" $B --headless --folders-selftest --docs="$PWD/folders-docs"
           # K.1-3: the block registry (names, palette, placeholders, flag compaction, refusals).
           run_gate "registry selftest" $B --registry-selftest --docs="$PWD/registry-docs"
+          # K.2-1: the content pin (every per-type table + the BlockTraits oracle; check-content-dump.py)
+          # and the pack JSON reader.
+          run_gate "content dump" $B --content-dump
+          python3 ../.github/scripts/check-content-dump.py gate-content-dump.log
+          run_gate "json selftest" $B --json-selftest
+          # K.2-3: the stock pack. The boot loaded packs/eden/pack.json (the dump above is what it compiles
+          # to); --pack-selftest re-compiles it against the live tables and refuses every corrupt fixture
+          # with exactly its expect.txt; pack.py (the independent reference) gives the same dump and the
+          # same refusals; and a broken or missing stock pack is fatal (exit 1), never a half-filled table.
+          run_gate "pack selftest" $B --pack-selftest=../port/tools/fixtures/content/packs
+          python3 ../port/tools/pack.py compile ../media/packs/eden --check gate-content-dump.log
+          python3 ../port/tools/pack.py fixtures ../port/tools/fixtures/content/packs
+          # K.2-4: mod packs. The example pack compiles to the same `## mods` section in both validators,
+          # and --packs-selftest drives it through a world (load, place, save, remove, restore, tile budget).
+          run_gate "content dump mods" $B --content-dump --packs=../media/packs/emod_example
+          python3 ../port/tools/pack.py compile ../media/packs/emod_example --check gate-content-dump-mods.log
+          # The Wonder Blocks example pack (23 blocks, 26 tiles, 13 Lua scripts): same parity.
+          run_gate "content dump wonders" $B --content-dump --packs=../media/packs/wonders
+          python3 ../port/tools/pack.py compile ../media/packs/wonders --check gate-content-dump-wonders.log
+          # K.3: requires/conflicts resolution, same skips and lines in both (fixture README.txt).
+          run_gate "content dump resolve" $B --content-dump --packs=../port/tools/fixtures/content/mods-resolve
+          python3 ../port/tools/pack.py compile ../port/tools/fixtures/content/mods-resolve --check gate-content-dump-resolve.log
+          rm -rf mods-docs && mkdir -p mods-docs
+          run_gate "mods selftest" $B --mods-selftest --docs="$PWD/mods-docs"
+          rm -rf lua-docs && mkdir -p lua-docs
+          run_gate "lua selftest" $B --lua-selftest --docs="$PWD/lua-docs"   # K.4: sandboxed Lua mod scripts
+          # K.4: each mutation must FAIL the selftest (count hook off; sandbox escapes left in)
+          for m in hook sandbox; do rm -rf lua-mut && mkdir -p lua-mut
+            if $B --lua-selftest --lua-mutate=$m --docs="$PWD/lua-mut" > lua-mut-$m.log 2>&1; then echo "::error::--lua-selftest --lua-mutate=$m passed"; exit 1; fi
+          done
+          rm -rf packs-docs && mkdir -p packs-docs
+          run_gate "packs selftest" $B --packs-selftest --docs="$PWD/packs-docs"
+          rm -rf broken-bundle && mkdir -p broken-bundle/packs/eden
+          cp ../port/tools/fixtures/content/packs/blocks/pack.json broken-bundle/packs/eden/
+          if $B --content-dump --bundle="$PWD/broken-bundle" > broken-pack.log 2>&1; then
+            echo "::error::a broken stock pack did not stop the boot"; cat broken-pack.log; exit 1; fi
+          grep -q 'FATAL: the stock content pack did not load' broken-pack.log || { cat broken-pack.log; exit 1; }
           # K.1-4: a 256-high run adds Convert to 64z (the palette and flag survive the cut); linux leg only
           run_gate "registry selftest 256" $B --registry-selftest --height=256 --docs="$PWD/registry-docs-256"
           run_gate "folders crash loop" bash ../port/tools/folders-crash-gate.sh $B "$PWD/folders-crash"
@@ -273,6 +314,7 @@ jobs:
           # the same script pressed on a block. The anchor mutation must FAIL it.
           rm -rf console-docs console-docs-anchor console-docs-noreg && mkdir -p console-docs console-docs-anchor console-docs-noreg
           run_gate "console selftest" $B --console-selftest --docs="$PWD/console-docs"
+          run_gate "weather selftest" $B --weather-selftest --docs="$PWD/weather-docs"   # Stage AT (AT.1a settings; AT.1b schedule, region, record, save; AT.1c verbs; AT.2b precip)
           if $B --console-selftest --console-mutate=anchor --docs="$PWD/console-docs-anchor" > gate-console-mutate-anchor.log 2>&1; then
             echo "::error::--console-selftest --console-mutate=anchor PASSED: the gate cannot see that mutation"; exit 1
           fi
@@ -360,6 +402,7 @@ jobs:
           find build -maxdepth 1 \( -type f -o -type l \) \
             \( -name '*.png' -o -name '*.edm' -o -name '*.caf' -o -name '*.wav' \
                -o -name '*.aif' -o -name '*.mp3' -o -name '*.eden' -o -name '*.emod' -o -name '*.ttf' \) -exec cp -L {} dist/Emod/ \;
+          cp -RL build/packs dist/Emod/   # K.2-3: content packs keep their tree; no stock pack = no game
           cp -a "$HOME"/sdl3-prefix/lib/libSDL3.so* dist/Emod/
           printf '%s\n' '#!/bin/sh' \
             'd="$(dirname "$(readlink -f "$0")")"' \
@@ -455,12 +498,25 @@ jobs:
           run_gate "folders selftest" $B --headless --folders-selftest --docs="$PWD/folders-docs"
           # K.1-3: the block registry (names, palette, placeholders, flag compaction, refusals).
           run_gate "registry selftest" $B --registry-selftest --docs="$PWD/registry-docs"
+          # K.2-1: the content pin (every per-type table + the BlockTraits oracle; check-content-dump.py)
+          # and the pack JSON reader.
+          run_gate "content dump" $B --content-dump
+          python3 ../.github/scripts/check-content-dump.py gate-content-dump.log
+          run_gate "json selftest" $B --json-selftest
+          run_gate "pack selftest" $B --pack-selftest=../port/tools/fixtures/content/packs   # K.2-3
+          rm -rf packs-docs && mkdir -p packs-docs
+          run_gate "packs selftest" $B --packs-selftest --docs="$PWD/packs-docs"   # K.2-4
+          rm -rf mods-docs && mkdir -p mods-docs
+          run_gate "mods selftest" $B --mods-selftest --docs="$PWD/mods-docs"   # K.3
+          rm -rf lua-docs && mkdir -p lua-docs
+          run_gate "lua selftest" $B --lua-selftest --docs="$PWD/lua-docs"   # K.4: sandboxed Lua mod scripts
           run_gate "emod selftest" $B --emod-selftest --emod-fixtures=../port/tools/fixtures/emod --emod-work="$PWD/emod-work"
           run_gate "bundled map" $B --bundled-map-selftest --bundled-eden=../Eden.eden --bundled-emod=../Eden.emod
           rm -rf ci-docs evict-docs console-docs && mkdir -p ci-docs evict-docs console-docs
           run_gate "save round-trip" $B --headless --save-roundtrip --world=ci --docs="$PWD/ci-docs"
           run_gate "evict selftest" $B --evict-selftest --docs="$PWD/evict-docs"
           run_gate "console selftest" $B --console-selftest --docs="$PWD/console-docs"
+          run_gate "weather selftest" $B --weather-selftest --docs="$PWD/weather-docs"   # Stage AT (AT.1a settings; AT.1b schedule, region, record, save; AT.1c verbs; AT.2b precip)
           run_gate "render selftest" $B --render-selftest --docs="$PWD/render-docs"   # G.5b-0
 
   # =============================================================================================
@@ -567,6 +623,8 @@ jobs:
           # move() in noclip again and must FAIL it.
           rm -rf fly-docs && mkdir -p fly-docs
           run_gate "fly selftest"     $B --fly-selftest --docs="$PWD/fly-docs"
+          rm -rf source-docs && mkdir -p source-docs
+          run_gate "srclike selftest"  $B --srclike-selftest --docs="$PWD/source-docs"   # Stage SRC (SRC.2 input, SRC.3 trace, SRC.4 move legs; move reads ../port/tools/fixtures/srclike-pm/vectors.txt)
           rm -rf fly-docs-m && mkdir -p fly-docs-m
           if $B --fly-selftest --fly-mutate=move --docs="$PWD/fly-docs-m" > gate-fly-mutate-move.log 2>&1; then
             echo "::error::--fly-selftest --fly-mutate=move PASSED: the gate cannot see noclip calling move()"; exit 1
@@ -597,6 +655,18 @@ jobs:
           run_gate "folders selftest" $B --headless --folders-selftest --docs="$PWD/folders-docs"
           # K.1-3: the block registry (names, palette, placeholders, flag compaction, refusals).
           run_gate "registry selftest" $B --registry-selftest --docs="$PWD/registry-docs"
+          # K.2-1: the content pin (every per-type table + the BlockTraits oracle; check-content-dump.py)
+          # and the pack JSON reader.
+          run_gate "content dump" $B --content-dump
+          python ../.github/scripts/check-content-dump.py gate-content-dump.log
+          run_gate "json selftest" $B --json-selftest
+          run_gate "pack selftest" $B --pack-selftest=../port/tools/fixtures/content/packs   # K.2-3
+          rm -rf packs-docs && mkdir -p packs-docs
+          run_gate "packs selftest" $B --packs-selftest --docs="$PWD/packs-docs"   # K.2-4
+          rm -rf mods-docs && mkdir -p mods-docs
+          run_gate "mods selftest" $B --mods-selftest --docs="$PWD/mods-docs"   # K.3
+          rm -rf lua-docs && mkdir -p lua-docs
+          run_gate "lua selftest" $B --lua-selftest --docs="$PWD/lua-docs"   # K.4: sandboxed Lua mod scripts
           run_gate "folders crash loop" bash ../port/tools/folders-crash-gate.sh $B "$PWD/folders-crash"
           run_gate "emod selftest" $B --emod-selftest --emod-fixtures=../port/tools/fixtures/emod --emod-work="$PWD/emod-work"
           # MP.1/MP.2: the multiplayer TCP seam + protocol session against an in-process mock server on
@@ -650,6 +720,7 @@ jobs:
           # the same script pressed on a block. The anchor mutation must FAIL it.
           rm -rf console-docs console-docs-anchor console-docs-noreg && mkdir -p console-docs console-docs-anchor console-docs-noreg
           run_gate "console selftest" $B --console-selftest --docs="$PWD/console-docs"
+          run_gate "weather selftest" $B --weather-selftest --docs="$PWD/weather-docs"   # Stage AT (AT.1a settings; AT.1b schedule, region, record, save; AT.1c verbs; AT.2b precip)
           if $B --console-selftest --console-mutate=anchor --docs="$PWD/console-docs-anchor" > gate-console-mutate-anchor.log 2>&1; then
             echo "::error::--console-selftest --console-mutate=anchor PASSED: the gate cannot see that mutation"; exit 1
           fi
@@ -726,7 +797,7 @@ jobs:
           export PATH="/c/sdl3-prefix/bin:$PATH"
           mkdir -p own-docs
           ./build/eden_native.exe --headless --save-roundtrip --world=ci --docs="$PWD/own-docs"
-          mkdir -p publish && cp "$(ls -S own-docs/*.emod | head -1)" publish/world-windows.emod
+          mkdir -p publish && cp "$(ls -S own-docs/Worlds/*/*.emod | head -1)" publish/world-windows.emod
           ./build/eden_native.exe --export=publish/world-windows.emod --export-out=publish/world-windows.eden
           ls -l publish
 
@@ -764,6 +835,7 @@ jobs:
           find build -maxdepth 1 \( -type f -o -type l \) \
             \( -name '*.png' -o -name '*.edm' -o -name '*.caf' -o -name '*.wav' \
                -o -name '*.aif' -o -name '*.mp3' -o -name '*.eden' -o -name '*.emod' -o -name '*.ttf' \) -exec cp -L {} dist/ \;
+          cp -RL build/packs dist/   # K.2-3: content packs keep their tree; no stock pack = no game
 
           # SDL3, plus the runtime this toolchain links against. `ldd` on the built exe is the
           # source of truth rather than a hand-listed set of DLL names: it reports what THIS binary
@@ -889,12 +961,25 @@ jobs:
           run_gate "folders selftest" $B --headless --folders-selftest --docs="$PWD/folders-docs"
           # K.1-3: the block registry (names, palette, placeholders, flag compaction, refusals).
           run_gate "registry selftest" $B --registry-selftest --docs="$PWD/registry-docs"
+          # K.2-1: the content pin (every per-type table + the BlockTraits oracle; check-content-dump.py)
+          # and the pack JSON reader.
+          run_gate "content dump" $B --content-dump
+          python ../.github/scripts/check-content-dump.py gate-content-dump.log
+          run_gate "json selftest" $B --json-selftest
+          run_gate "pack selftest" $B --pack-selftest=../port/tools/fixtures/content/packs   # K.2-3
+          rm -rf packs-docs && mkdir -p packs-docs
+          run_gate "packs selftest" $B --packs-selftest --docs="$PWD/packs-docs"   # K.2-4
+          rm -rf mods-docs && mkdir -p mods-docs
+          run_gate "mods selftest" $B --mods-selftest --docs="$PWD/mods-docs"   # K.3
+          rm -rf lua-docs && mkdir -p lua-docs
+          run_gate "lua selftest" $B --lua-selftest --docs="$PWD/lua-docs"   # K.4: sandboxed Lua mod scripts
           run_gate "folders crash loop" bash ../port/tools/folders-crash-gate.sh $B "$PWD/folders-crash"
           run_gate "emod selftest" $B --emod-selftest --emod-fixtures=../port/tools/fixtures/emod --emod-work="$PWD/emod-work"
           run_gate "classic selftest" $B --classic-selftest --docs="$PWD/classic-docs"
           rm -rf ci-docs && mkdir -p ci-docs
           run_gate "save round-trip" $B --headless --save-roundtrip --world=ci --docs="$PWD/ci-docs"
           run_gate "console selftest" $B --console-selftest --docs="$PWD/console-docs"
+          run_gate "weather selftest" $B --weather-selftest --docs="$PWD/weather-docs"   # Stage AT (AT.1a settings; AT.1b schedule, region, record, save; AT.1c verbs; AT.2b precip)
           run_gate "ui selftest" $B --ui-selftest --docs="$PWD/ui-docs"
 
   # =============================================================================================
@@ -930,6 +1015,16 @@ jobs:
           python3 ../.github/scripts/check-stage1.py --shadows stage1-64s.log
           rm -rf base-docs && mkdir -p base-docs
           ./build/eden_native --base-selftest --docs="$PWD/base-docs"   # G.2b-0
+          ./build/eden_native --content-dump > content-dump.log   # K.2-1: the content pin
+          python3 ../.github/scripts/check-content-dump.py content-dump.log
+          ./build/eden_native --json-selftest
+          ./build/eden_native --pack-selftest=../port/tools/fixtures/content/packs   # K.2-3: the stock pack + corrupt fixtures
+          rm -rf packs-docs && mkdir -p packs-docs
+          ./build/eden_native --packs-selftest --docs="$PWD/packs-docs"   # K.2-4: mod packs (ASan/UBSan over the loader)
+          rm -rf mods-docs && mkdir -p mods-docs
+          ./build/eden_native --mods-selftest --docs="$PWD/mods-docs"   # K.3: enable list, deps, zip install (ASan/UBSan over the zip reader)
+          rm -rf lua-docs && mkdir -p lua-docs
+          ./build/eden_native --lua-selftest --docs="$PWD/lua-docs"   # K.4: Lua mod scripts (ASan/UBSan over the VM and the sandbox)
           rm -rf folders-docs folders-crash && mkdir -p folders-docs   # K.0w-2: world-folder adoption + its crash loop
           ./build/eden_native --headless --folders-selftest --docs="$PWD/folders-docs"
           bash ../port/tools/folders-crash-gate.sh ./build/eden_native "$PWD/folders-crash"
@@ -1049,7 +1144,7 @@ jobs:
         run: |
           mkdir -p own-docs
           ./build/eden_native --headless --save-roundtrip --world=ci --docs="$PWD/own-docs"
-          mkdir -p publish && cp "$(ls -S own-docs/*.emod | head -1)" publish/world-macos.emod
+          mkdir -p publish && cp "$(ls -S own-docs/Worlds/*/*.emod | head -1)" publish/world-macos.emod
           ./build/eden_native --export=publish/world-macos.emod --export-out=publish/world-macos.eden
 
       - uses: actions/upload-artifact@v4
@@ -1075,6 +1170,7 @@ jobs:
           find build -maxdepth 1 \( -type f -o -type l \) \
             \( -name '*.png' -o -name '*.edm' -o -name '*.caf' -o -name '*.wav' \
                -o -name '*.aif' -o -name '*.mp3' -o -name '*.eden' -o -name '*.emod' -o -name '*.ttf' \) -exec cp -L {} dist/Emod/ \;
+          cp -RL build/packs dist/Emod/   # K.2-3: content packs keep their tree; no stock pack = no game
           lib=$(otool -L build/eden_native | awk '/libSDL3/{print $1}')
           cp -L "$lib" dist/Emod/libSDL3.0.dylib
           chmod u+w dist/Emod/libSDL3.0.dylib
@@ -1206,6 +1302,8 @@ jobs:
           test -x "$APP/Emod"            || { echo "::error::no executable in the bundle"; exit 1; }
           test -f "$APP/Info.plist"      || { echo "::error::no Info.plist"; exit 1; }
           test -f "$APP/Eden.emod"       || { echo "::error::Eden.emod is not inside the .app"; exit 1; }
+          test -f "$APP/packs/eden/pack.json" || { echo "::error::the stock pack (packs/eden/pack.json) is not inside the .app"; exit 1; }
+          test -f "$APP/packs/emod_example/textures/oak.png" || { echo "::error::the example pack's PNGs are not inside the .app"; exit 1; }
           ! test -f "$APP/Eden.eden"     || { echo "::error::raw Eden.eden shipped in the .app -- S.6 bundles only Eden.emod"; exit 1; }
           ! test -f "$APP/Eden.eden.gz"  || { echo "::error::Eden.eden.gz shipped in the .app -- S.6 retired it"; exit 1; }
           n=$(find "$APP" -type f | wc -l | tr -d ' ')
@@ -1339,6 +1437,25 @@ jobs:
           # H.4: the Classic generator's fixture + pinned hashes on ARM64 iOS (the fixture is copied
           # into the container; the app reads it by host path, as it writes EDEN_LOG).
           cp port/tools/fixtures/classic/legacy-1315365413.bin.gz "$DATA/classic-fixture.bin.gz"
+          # K.2-1: the content pin on ARM64 iOS (the tables and the oracle are the same bytes everywhere).
+          launch content-dump.log --content-dump
+          python3 .github/scripts/check-content-dump.py content-dump.log
+          launch json.log --json-selftest
+          grep -q 'json. .* ALL PASS' json.log || {
+            echo "::error::--json-selftest did not pass in the simulator"; cat json.log; exit 1; }
+          # K.2-3: the stock pack the app loaded from Emod.app/packs/eden/, and the corrupt fixtures (copied in).
+          rm -rf "$DATA/pack-fixtures" && cp -R port/tools/fixtures/content/packs "$DATA/pack-fixtures"
+          launch pack.log --pack-selftest="$DATA/pack-fixtures"
+          grep -q 'pack. .* ALL PASS' pack.log || {
+            echo "::error::--pack-selftest did not pass in the simulator"; cat pack.log; exit 1; }
+          # K.2-4: mod packs, the example pack copied from Emod.app/packs/ into the app's Documents/Packs.
+          launch packs.log --packs-selftest
+          grep -q 'eden-packs. ALL PASS' packs.log || {
+            echo "::error::--packs-selftest did not pass in the simulator"; cat packs.log; exit 1; }
+          # K.4: Lua mod scripts on iOS (the interpreter as C++, the sandbox, the budgets).
+          launch lua.log --lua-selftest
+          grep -q 'eden-lua. ALL PASS' lua.log || {
+            echo "::error::--lua-selftest did not pass in the simulator"; cat lua.log; exit 1; }
           launch classic.log --classic-selftest --classic-fixture="$DATA/classic-fixture.bin.gz"
           grep -q 'eden-classic. ALL PASS' classic.log || {
             echo "::error::--classic-selftest did not pass in the simulator"; cat classic.log; exit 1; }

@@ -1,5 +1,6 @@
 // G.4: the harness core, split out of the old eden_main_native.cpp (see harness.h).
 #include "harness.h"
+void eden_settings_focus_changed(int focused);   // SX.7, port/src/seam/Settings.cpp
 
 namespace harness {
 
@@ -297,9 +298,11 @@ void pump_events() {
                 if (g_app) g_app->onPageHide();
                 break;
             case SDL_EVENT_WINDOW_FOCUS_LOST:
+                eden_settings_focus_changed(0);
                 if (g_app) g_app->onVisibilityHidden();
                 break;
             case SDL_EVENT_WINDOW_FOCUS_GAINED:
+                eden_settings_focus_changed(1);
                 if (g_app) g_app->onVisibilityVisible();
                 break;
             case SDL_EVENT_WINDOW_SAFE_AREA_CHANGED:   // I.2: rotation, island side, home bar

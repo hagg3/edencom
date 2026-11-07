@@ -184,6 +184,8 @@ public:
     // registry reloads that palette, so a new id can never give old garbage a meaning. Main thread, in
     // play. False + `why` when there is no open `.emod`, it is damaged, or the rewrite fails.
     bool preparePaletteAllocation(std::string* why);
+    // K.2-5: the open world is already flagged for mod blocks (no compaction needed; no first-placement confirm).
+    bool paletteFlagged() const;
     // ---- Stage S: `.emod` worlds (docs/emod-file-format.md; Classes/EdenWorldStore.h) ----
     // A world is an `.emod` iff its file name ends in ".emod"; every method above routes on that.
     static bool isEmodName(const std::string& name);

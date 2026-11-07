@@ -17,8 +17,14 @@
 #include "Util.h"
 #include "WorldTrailer.h"
 #include "SkyCycle.h"   // DN.2: world.time
+#include "Weather.h"    // AT.1c: weather / weatherlock; SX.6: weather.now, weather.lock
+#include "SrclikeMove.h"   // SRC.2: the move.* tunables
 #include "MpWorld.h"   // MP.3a: world.* writes are refused in a session
 #include "eden_prefs.h"   // G.2b-1: console.history
+#include "ContentPack.h"   // K.2-4: packs
+#include "ModScript.h"     // K.4: lua, scripts, mod
+#include "BlockRegistry.h"
+#include "StrUtil.h"
 
 #include <algorithm>
 #include <cctype>
@@ -49,6 +55,7 @@ int         eden_settings_apply(int i);
 float       eden_settings_get(int i);
 void        eden_settings_set(int i, float v);
 void        eden_settings_reset_all(void);
+const char* eden_settings_cvar(int i);   // SX.6: the row's console name ("" = not a cvar)
 int         eden_keybind_count(void);
 const char* eden_keybind_action(int i);
 const char* eden_keybind_label(int i);
@@ -311,10 +318,9 @@ void keyReset(int tag) { eden_keybind_set(tag, eden_keybind_default(tag)); }
 void bridgeSettings() {
     const int n = eden_settings_count();
     for (int i = 0; i < n; ++i) {
-        if (eden_settings_kind(i) == 4) continue;   // MP.8: KIND_TEXT rows (Matchmakers) are not cvars
+        if (eden_settings_kind(i) >= 4) continue;   // MP.8: KIND_TEXT rows (Matchmakers) are not cvars; SX.1: nor KIND_PAGE/KIND_HEADING; SX.6: KIND_CVAR shows one
         Cvar c = {};
-        const std::string group = lower(eden_settings_group(i));
-        const std::string name = group + "." + eden_settings_key(i);
+        const std::string name = eden_settings_cvar(i);   // lower(group).key; SX.6: "Movement tuning" rows are move.*
         c.name = name.c_str();
         c.label = eden_settings_label(i);
         c.help = eden_settings_hint(i)[0] ? eden_settings_hint(i) : NULL;
@@ -429,6 +435,28 @@ const char* genText(int tag) {
     }
 }
 
+// SRC.2 (plan D7): the Srclike movement tunables, `move.*`. SX.6: they are the Settings rows of group
+// "Movement tuning" (Settings.cpp's one range table), bridged by bridgeSettings under move.<name>.
+
+// SX.6: the open world's lock of the clock and the weather "now", for the Settings > World > This world rows
+// (KIND_CVAR). Saved with the world at its next commit (SKY_CLOCK flag, WEATHER record), as World Properties'
+// locks are; in a multiplayer session they change only this device's view (the panel badges them, U3).
+const char* const kWeatherNowLabels = "Clear,Overcast,Rain,Storm,Snow";
+float wLockTime(int) { return world() && SkyCycle::locked() ? 1.0f : 0.0f; }
+void wSetLockTime(int, float v) { if (world()) SkyCycle::setLocked(v != 0.0f); }
+float wWeatherNow(int) {
+    if (!world()) return 0.0f;
+    return Weather::forceSnow() ? 4.0f : (float)Weather::kind();
+}
+void wSetWeatherNow(int, float v) {
+    if (!world() || !Weather::active()) return;   // as the `weather` verb: Gameplay > Weather off = nothing
+    const int k = (int)std::lround(v);
+    if (k == 4) Weather::set(Weather::RAIN, 0, true);
+    else Weather::set((Weather::Kind)std::max(0, std::min(3, k)), 0, false);
+}
+float wWeatherLock(int) { return world() && Weather::locked() ? 1.0f : 0.0f; }
+void wSetWeatherLock(int, float v) { if (world() && Weather::active()) Weather::setLocked(v != 0.0f); }
+
 void bridgeWorld() {
     struct T { const char* name; const char* label; const char* (*get)(int); bool (*set)(int, const char*); int apply; };
     static const T txt[] = {
@@ -453,10 +481,29 @@ void bridgeWorld() {
     addCvar(g);
     Cvar tm = {};
     tm.name = "world.time"; tm.label = "Time of day";
-    tm.help = "0 midnight, 0.25 sunrise, 0.5 noon, 0.75 sunset. The clock runs with Experiments > Day/night cycle.";
+    tm.help = "0 midnight, 0.25 sunrise, 0.5 noon, 0.75 sunset. The clock runs with Gameplay > Day/night cycle.";
     tm.kind = KIND_RANGE; tm.min = 0; tm.max = 1; tm.step = 0.01f; tm.def = 0.3f; tm.apply = APPLY_LIVE;
     tm.get = wTime; tm.set = wSetTime;
     addCvar(tm);
+    // AT.1b's weather.snowline and AT.5's weather.mistheight are Settings rows since SX.6 (group Weather).
+    Cvar lt = {};   // SX.6: World Properties' Lock time of day, on the open world
+    lt.name = "world.locktime"; lt.label = "Lock time of day";
+    lt.help = "Keeps this world's clock still (the day/night cycle's time does not move). Saved with the world.";
+    lt.kind = KIND_TOGGLE; lt.min = 0; lt.max = 1; lt.step = 1; lt.def = 0; lt.apply = APPLY_LIVE;
+    lt.get = wLockTime; lt.set = wSetLockTime;   // no reset: world state, not a setting (`reset all` leaves it)
+    addCvar(lt);
+    Cvar wn = {};   // SX.6: the `weather KIND` verb as a choice
+    wn.name = "weather.now"; wn.label = "Weather now";
+    wn.help = "The weather here now; setting it starts that kind (a drawn length). Needs Gameplay > Weather.";
+    wn.kind = KIND_ENUM; wn.min = 0; wn.max = 4; wn.step = 1; wn.def = 0; wn.options = kWeatherNowLabels;
+    wn.apply = APPLY_LIVE; wn.get = wWeatherNow; wn.set = wSetWeatherNow;
+    addCvar(wn);
+    Cvar wl = {};   // SX.6: `weatherlock on|off` as a switch
+    wl.name = "weather.lock"; wl.label = "Lock weather";
+    wl.help = "On: the current weather never ends. Saved with the world. Needs Gameplay > Weather.";
+    wl.kind = KIND_TOGGLE; wl.min = 0; wl.max = 1; wl.step = 1; wl.def = 0; wl.apply = APPLY_LIVE;
+    wl.get = wWeatherLock; wl.set = wSetWeatherLock;
+    addCvar(wl);
     static const char* const gen[] = {"gen.hills", "gen.caves", "gen.trees", "gen.flowers", "gen.clouds", "gen.size", "gen.scale"};
     static const char* const genLabel[] = {"Hills", "Caves", "Trees", "Flowers", "Clouds", "World size", "Scale"};
     for (int i = 0; i < 7; ++i) {
@@ -624,6 +671,40 @@ void cmdHistory(Ctx& c) {
     for (size_t i = 0; i < g_history.size(); ++i) c.print("%zu  %s", i + 1, g_history[i].c_str());
 }
 
+// AT.1c: `weather [KIND] [SECS]` and `weatherlock on|off` (plan §10; Weather.h).
+const char* const kWeatherNames[] = {"clear", "overcast", "rain", "storm"};
+void weatherLine(Ctx& c) {
+    const char* what = Weather::forceSnow() ? "snow" : kWeatherNames[Weather::kind()];
+    c.print("weather: %s, intensity %.2f, %s%s", what, Weather::intensity(),
+            Weather::locked() ? "locked" : "next spell in ", Weather::locked() ? "" : (std::to_string((int)Weather::secondsLeft()) + " s").c_str());
+}
+void cmdWeather(Ctx& c) {
+    if (!Weather::active()) { c.error("Weather is off (Settings > Gameplay > Weather)"); return; }
+    if (c.args.empty()) { weatherLine(c); return; }
+    const std::string k = lower(c.args[0]);
+    int kind = -1;
+    for (int i = 0; i < Weather::KIND_COUNT; ++i) if (k == kWeatherNames[i]) kind = i;
+    const bool snow = k == "snow";
+    if (snow) kind = Weather::RAIN;
+    if (kind < 0) { c.error("weather needs clear, overcast, rain, storm or snow"); return; }
+    float secs = 0;
+    if (c.args.size() > 1) {
+        char* end = NULL;
+        const double v = std::strtod(c.args[1].c_str(), &end);
+        if (!end || *end || !(v > 0) || v > 1e7) { c.error("SECS is a number of seconds above 0"); return; }
+        secs = (float)v;
+    }
+    Weather::set((Weather::Kind)kind, secs, snow);
+    weatherLine(c);
+}
+void cmdWeatherlock(Ctx& c) {
+    if (!Weather::active()) { c.error("Weather is off (Settings > Gameplay > Weather)"); return; }
+    const std::string a = c.args.empty() ? std::string() : lower(c.args[0]);
+    if (c.args.size() != 1 || (a != "on" && a != "off")) { c.error("weatherlock needs on or off"); return; }
+    Weather::setLocked(a == "on");
+    weatherLine(c);
+}
+
 void cmdEcho(Ctx& c) { c.print("%s", join(c.args).c_str()); }
 
 void cmdWhere(Ctx& c) {
@@ -685,6 +766,101 @@ void cmdSave(Ctx& c) {
     w->fm->saveWorld();
     Resources::getResources->playSound(S_WORLD_SAVED);
     c.print("World saved");
+}
+
+// K.2-4: what the last world entry loaded from the mod packs (ContentPack::loadMods).
+void cmdPacks(Ctx& c) {
+    const ContentPack::ModReport& r = ContentPack::modReport();
+    // K.3: `packs on|off ID` edits the enable list (Packs/mods.json); it applies at the next world load.
+    if (c.args.size() >= 2 && (lower(c.args[0]) == "on" || lower(c.args[0]) == "off")) {
+        World* w = World::getWorld;
+        const std::string docs = w && w->fm ? w->fm->documents : std::string();
+        const bool on = lower(c.args[0]) == "on";
+        if (ContentPack::setPackEnabled(docs, lower(c.args[1]), on))
+            c.print("%s is %s from the next world load", lower(c.args[1]).c_str(), on ? "on" : "off");
+        else c.error("No installed pack called %s", lower(c.args[1]).c_str());
+        return;
+    }
+    if (!r.ran) { c.print("Mod packs load when a world opens"); return; }
+    if (r.session) { c.print("A multiplayer world: no mod packs"); return; }
+    if (!c.args.empty()) {
+        const std::string want = lower(c.args[0]);
+        int shown = 0;
+        for (const ContentPack::LoadedBlock& b : r.blocks) {
+            if (r.packs[b.pack].id != want) continue;
+            const int id = BlockRegistry::idOf(b.name);
+            c.print("%s%s%s%s", b.name.c_str(), id >= 0 ? strf(" (%d in this world)", id).c_str() : "",
+                    b.picker ? "" : " (not in the picker)", b.missingTexture ? " (no free atlas tile: missing texture)" : "");
+            ++shown;
+        }
+        if (!shown) c.error("No blocks loaded from a pack called %s", want.c_str());
+        return;
+    }
+    if (r.packs.empty() && r.lines.empty()) { c.print("No mod packs: put one in Documents/Packs and open the world again"); return; }
+    for (size_t i = 0; i < r.packs.size(); ++i) {
+        const ContentPack::ModPack& p = r.packs[i];
+        if (p.state == ContentPack::PACK_DISABLED) c.print("%s: off", p.folder.c_str());
+        else if (p.state == ContentPack::PACK_NEEDS || p.state == ContentPack::PACK_CONFLICT)
+            c.error("%s: not loaded: %s", p.folder.c_str(), p.why.c_str());
+        else if (p.refused) c.error("%s: not loaded", p.folder.c_str());
+        else {
+            int n = 0;
+            for (const ContentPack::LoadedBlock& b : r.blocks) if (b.pack == (int)i) ++n;
+            c.print("%s%s%s%s: %d of %zu block(s)", p.id.c_str(), p.name.empty() ? "" : strf(" \"%s\"", p.name.c_str()).c_str(),
+                    p.version.empty() ? "" : " ", p.version.c_str(), n, p.blocksInFile);
+        }
+        for (const std::string& l : p.lines) {
+            if (l.find(": warning: ") != std::string::npos) c.print("  %s", l.c_str());
+            else c.error("  %s", l.c_str());
+        }
+    }
+    for (const std::string& l : r.lines) c.error("%s", l.c_str());
+    int used[2] = {0, 0};
+    for (const ContentPack::LoadedTile& t : r.tiles) used[t.atlas == 2]++;
+    c.print("%zu block(s); atlas tiles %d of %d opaque, %d of %d transparent", r.blocks.size(), used[0],
+            ATLAS_TILES - ContentPack::ATLAS1_FREE_FIRST, used[1], (ATLAS_TILES - ContentPack::ATLAS2_FREE_FIRST) / ContentPack::ATLAS2_FRAMES);
+    // K.3: what this world's palette names (plan M4), and the mod-list hash a server would advertise.
+    if (World* w = world()) {
+        static const char* st[] = {"loaded", "off", "not installed"};
+        for (const ContentPack::WorldMod& m : ContentPack::worldMods(w->fm->documents)) {
+            if (m.state == ContentPack::WMOD_LOADED) c.print("This world uses %s (%d block(s)): %s", m.id.c_str(), m.blocks, st[m.state]);
+            else c.error("This world uses %s (%d block(s)): %s", m.id.c_str(), m.blocks, st[m.state]);
+        }
+    }
+    const std::string h = ContentPack::modsHash();
+    if (!h.empty()) c.print("Mod list hash %.16s", h.c_str());
+}
+
+// K.4 (mod-scripting plan S13): Lua in the console's own state, the packs' script states, their commands.
+void cmdLua(Ctx& c) {
+    if (c.args.empty()) { c.error("lua needs CODE (one line, no ';')"); return; }
+    ModScript::runConsole(join(c.args), c.sink);
+}
+void cmdScripts(Ctx& c) {
+    if (!c.args.empty() && lower(c.args[0]) == "reload") {
+        ModScript::restart();
+        c.print("Mod scripts restart on the next frame (the sources read when the world opened)");
+        return;
+    }
+    const std::vector<ModScript::Info> v = ModScript::info();
+    if (v.empty()) { c.print("No mod scripts are running (a pack lists them in pack.json \"scripts\")"); return; }
+    for (const ModScript::Info& i : v) {
+        const std::string line = strf("%s: %d handler(s), %d waiting, %zu KiB (peak %zu), %ld instr last frame, %d error(s)%s%s",
+                                      i.pack.c_str(), i.handlers, i.coroutines, i.mem / 1024, i.memPeak / 1024, i.instrLastFrame,
+                                      i.errors, i.why.empty() ? "" : (i.stopped ? "; STOPPED: " : "; last: "), i.why.c_str());
+        if (i.stopped || i.errors) c.error("%s", line.c_str());
+        else c.print("%s", line.c_str());
+    }
+}
+void cmdMod(Ctx& c) {
+    if (c.args.empty()) {
+        const std::vector<std::string> v = ModScript::commands();
+        if (v.empty()) c.print("No mod commands (a script adds one with eden.command)");
+        for (const std::string& s : v) c.print("%s", s.c_str());
+        return;
+    }
+    const std::vector<std::string> rest(c.args.begin() + 1, c.args.end());
+    if (!ModScript::runCommand(lower(c.args[0]), rest, c.sink)) c.error("No mod command called %s (mod lists them)", lower(c.args[0]).c_str());
 }
 
 void cmdGetblock(Ctx& c) {   // diagnostics: the raw type:colour of a cell
@@ -791,12 +967,18 @@ void init() {
     addCommand("reset", "VARIABLE | GROUP | all", "Back to the default. `reset all yes` resets every setting and key.", 0, {ARG_CVAR}, cmdReset);
     addCommand("clear", "", "Empties the scrollback.", 0, {}, cmdClear);
     addCommand("history", "", "The lines you ran last.", 0, {}, cmdHistory);
+    addCommand("weather", "[clear|overcast|rain|storm|snow] [SECS]", "Shows the weather, or starts that kind now (for SECS seconds; else a drawn length). Needs Gameplay > Weather.", CF_WORLD, {CmdScript::ARG_TEXT, CmdScript::ARG_NUMBER}, cmdWeather);
+    addCommand("weatherlock", "on|off", "On: the current weather never ends. Saved with the world.", CF_WORLD, {CmdScript::ARG_TEXT}, cmdWeatherlock);
     addCommand("echo", "[TEXT]", "Prints TEXT here only (say also toasts).", 0, {CmdScript::ARG_TEXT}, cmdEcho);
     addCommand("where", "", "Your cell, the anchor and the cell you look at, with their offsets.", CF_WORLD, {}, cmdWhere);
     addCommand("anchor", "[me | look | X Y Z]", "What 0 0 0 means: the cell under you (me), the cell you look at, or a fixed cell.", CF_WORLD, {}, cmdAnchor);
     addCommand("jobs", "", "The lines still waiting on a `wait`.", 0, {}, cmdJobs);
     addCommand("stop", "[JOB | all]", "Stops one job, every job, or all (blocks too).", 0, {CmdScript::ARG_NUMBER}, cmdStop);
     addCommand("save", "", "Saves the world (the pause menu's Save).", CF_WORLD, {}, cmdSave);
+    addCommand("packs", "[PACK | on PACK | off PACK]", "The mod packs this world loaded, with every problem; or the blocks of one PACK; on/off switches a pack for the next world load.", 0, {CmdScript::ARG_TEXT}, cmdPacks);
+    addCommand("lua", "CODE", "Runs Lua in the console's own sandboxed state (an expression prints its value). One line, no ';'.", CF_WORLD, {CmdScript::ARG_TEXT}, cmdLua);
+    addCommand("scripts", "[reload]", "The mod packs' Lua scripts: memory, CPU, errors; reload restarts them.", 0, {CmdScript::ARG_TEXT}, cmdScripts);
+    addCommand("mod", "[NAME ARGS...]", "Lists the commands mod scripts added, or runs one.", CF_WORLD, {CmdScript::ARG_TEXT}, cmdMod);
     addCommand("getblock", "X Y Z", "The raw type:colour of a cell.", CF_DIAG | CF_WORLD, {CmdScript::ARG_COORD, CmdScript::ARG_COORD, CmdScript::ARG_COORD}, cmdGetblock);
     addCommand("cmdtrace", "[0|1]", "Prints every statement a script runs.", CF_DIAG, {CmdScript::ARG_NUMBER}, cmdCmdtrace);
     addCommand("stats", "", "The command interpreter's counters.", CF_DIAG, {}, cmdStats);

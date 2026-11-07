@@ -37,6 +37,7 @@ public:
     Texture2D* getMenuTex(int idx);
     int getSkin(int model_type,int color,int state);
     int playSound(int soundid);
+    void playThunder(int variation);   // AT.4: S_THUNDER variation 0 close .. 2 distant (no repeat filter)
     int playLoopedSound(int soundid);
     int startedBurn(float length);
     void endBurnId(int idx);
@@ -67,8 +68,20 @@ public:
     Texture2D* getArtTex(int id);   // ART_* below: port art outside the stock table
     void voSound(int action,int type,Vector location);
     //static Resources* getResources();
+    // K.2-4 (data-driven-content plan D10): mod pack tiles in the free atlas slots (atlas.png 66..127,
+    // atlas2.png 32..127), 32x32 RGBA each. An atlas whose composition changed is re-uploaded whole
+    // (stock pixels + these tiles, mips regenerated); an empty list puts the stock atlases back. The stock
+    // pixels are decoded from the bundle the first time a mod tile is needed and kept. Main thread (GL).
+    struct AtlasTile { int atlas, index; const uint8_t* rgba; };
+    void setModTiles(const std::vector<AtlasTile>& tiles);
+    int atlasUploads(int atlas) const { return atlasUploadCount[atlas==2]; }   // --packs-selftest
+    // The RGBA the live atlas was last built from when it holds mod tiles (empty: the stock upload).
+    const std::vector<uint8_t>& atlasModPixels(int atlas) const { return modAtlasPx[atlas==2]; }
     
 private:
+    std::vector<uint8_t> stockAtlasPx[2];   // K.2-4: decoded atlas.png / atlas2.png (empty until needed)
+    std::vector<uint8_t> modAtlasPx[2];     // what the live atlas holds when it is not stock (empty: stock)
+    int atlasUploadCount[2] = {0, 0};
     void unloadGameTextures();
     void loadGameTextures();
 };
@@ -111,7 +124,7 @@ private:
 #define VO_EXCITED 8
 #define VO_ANGRY 0
 
-#define NUM_SOUNDS 79
+#define NUM_SOUNDS 80
 
 enum SOUND_TYPES{
     S_LADDER=0,
@@ -209,6 +222,7 @@ enum SOUND_TYPES{
     S_TNT_MIX=76,
     S_TNT_MIX_GLASS=77,
     S_RESPAWN=78,
+    S_THUNDER=79,   // AT.4: 3 variations, close -> distant (thunder_01..03.mp3)
 };
 enum MENU_TYPES{
 	MENU_AUTOJUMP=0,

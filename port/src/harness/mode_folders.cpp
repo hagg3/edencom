@@ -177,6 +177,7 @@ static std::map<std::string, std::string> tree() {
     for (const std::string& n : eden_fs_list(d)) {
         if (eden_fs_is_dir(d + "/" + n)) continue;
         if (n == "folders-manifest.txt") continue;
+        if (n == "emod-last-run.log" || n == "eden-args.last.txt") continue;   // iOS logs into Documents and grows during the scan
         t[n] = sha_of(d + "/" + n);
     }
     for (const std::string& e : eden_fs_list(d + "/Worlds")) {

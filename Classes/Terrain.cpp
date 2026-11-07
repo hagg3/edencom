@@ -18,8 +18,12 @@
 #include "../Lighting.h"
 #include "SignTool.h"
 #include "CmdScript.h"
+#include "ModScript.h"   // K.4: mod scripts stop with the world
 #include "FileManagerHelper.h"   // fmh_defaultBandCount (Stage R / R.2b)
 #include "Shadow.h"              // H.2 baked shadows
+#include "Precip.h"
+#include "Ambient.h"              // AT.7
+#include "Clouds.h"              // AT.6 cloud layer + shadows
 #include "MpWorld.h"             // MP.3a: the session world (no file behind the window)
 
 // Repo-root Lighting.h is the built one (Eden.xcodeproj / web CMake); the Classes/ copy next to
@@ -28,9 +32,11 @@ void calculateLighting();
 #include "F3Timing.h"
 #include "SkyCycle.h"
 #include "SkyLook.h"
+#include "Weather.h"   // AT.2a: overcast light and sky
 #include "PassTimers.h"   // P.1b per-pass instruments
 #include "Renderer.h"     // G.5b-6: the terrain passes draw through R::
 #include "port/src/shim/foundation/platform_shims.h"   // eden_platform_now_ms
+#include "BlockTraits.h"   // K.2-1: per-type behaviour
 bool calculateLightingSlice();
 void calculateLightingSliceReset();
 
@@ -248,6 +254,8 @@ void Terrain::clearBlocks(){
 	memset(blockarray,0,sizeof(block8)*T_SIZE*T_SIZE*T_HEIGHT);
   //  memset(shadowarray,0,sizeof(color8)*T_SIZE*T_SIZE);
     shadow_clear();   // H.2: the 1.x shadowarray's successor (Shadow.h)
+    Precip::reset();  // AT.2b
+    Ambient::reset(); // AT.7
     if(!LOW_MEM_DEVICE)
     light_storeClear();   // Stage R / R.3 (Lighting.h); was memset(lightarray,...)
 }
@@ -350,6 +358,9 @@ void Terrain::deallocateMemory(){
     free(blockarray);
     blockarray=NULL;
     shadow_free();
+    Precip::reset();  // AT.2b: the rain's texture and buffer
+    Clouds::reset();  // AT.6: the cloud map and quad
+    Ambient::reset(); // AT.7: the particle pool
     if(!LOW_MEM_DEVICE)
 light_storeFree();   // R.3: the only place a light brick is freed (Lighting.h)
     
@@ -376,6 +387,8 @@ void Terrain::unloadTerrain(bool exitToMenu){
     loaded=false;
     CmdScript::reset(); //D.4c: a world that closes or warps stops every command-block script
 	if(exitToMenu){
+        ModScript::reset(); //K.4: mod scripts outlive a warp, not the world
+
         // Only wipe the portal/firework registries when the mesh cache (troot) is ALSO being
         // discarded. Portal::addPortal only runs when a chunk's mesh is actually rebuilt
         // (TerrainChunk.mm), which most portals never get again after their first meshing unless
@@ -729,6 +742,8 @@ void Terrain::addChunk(TerrainChunk* chunk, int cx,int cy,int cz,bool rebuild){
     shadow_markLanded(cx,cz);
     // P.10: and its "no lightbox" memory is forgotten (Lighting.h).
     light_markLanded(cx,cz);
+    // AT.2b: the rain cache rescans the column's tops when it next draws (Precip.h).
+    Precip::onLanded(cx,cz);
     // B.5b-1a: the slot's old mesh belongs to the column that just left it. Stock re-meshed every
     // landed column within a frame or so, so drawing that mesh at the new pbounds was a brief
     // glitch; now a column landing on the window's outer ring is never meshed (it is data for its
@@ -807,6 +822,7 @@ void Terrain::setLand(int x,int z,int y,int type,bool chunkToo){
     // follows the edit (Shadow.h).
     shadow_onSetLand(x,z,y,oldtype,type);
     light_onSetLand(x,z,type);   // P.10: a new lightbox un-forgets its column (Lighting.h)
+    Precip::onSetLand(x,z,y,type);   // AT.2b: the rain's column-top cache (returns at once while rain is off)
 
 	if(chunkToo){
         int cx=x/CHUNK_SIZE;
@@ -888,7 +904,7 @@ bool Terrain::setColor(int x,int z,int y, color8 color){
 void Terrain::destroyBlock(int x,int z,int y){
     printg(@"%d, %d, %d",x,z,y);
     int cur=getLandc(x,z,y);
-    if(cur==TYPE_GOLDEN_CUBE||cur==TYPE_BEDROCK)return;
+    if(trait_unbreakable(cur))return;   // K.2-1
     if(blockinfo[cur]&IS_LIQUID){
         liquids->removeSource(x,z,y,cur);
     }else{
@@ -1831,38 +1847,9 @@ void Terrain::shootFirework(int x,int z,int y){
     destroyBlock(x ,z,y);
     //printg("shooting firework, color:%d\n",getColor:x:z:y]);
 }
-extern "C" int blockTntMap[BLOCK_IDS]={
-    [TYPE_BTGRASS]=TYPE_GRASS,
-    [TYPE_BTDARKSTONE]=TYPE_DARK_STONE,
-    [TYPE_BTSTONE]=TYPE_STONE,
-    [TYPE_BTDIRT]=TYPE_DIRT,
-    [TYPE_BTSAND]=TYPE_SAND,
-   [ TYPE_BTTNT]=TYPE_TNT,
-   [ TYPE_BTWOOD]=TYPE_WOOD,
-   [ TYPE_BTSHINGLE]=TYPE_SHINGLE,
-   [ TYPE_BTGLASS]=TYPE_GLASS,
-   [ TYPE_BTGRADIENT]=TYPE_GRADIENT,
-   [ TYPE_BTTREE]=TYPE_TREE,
-   [ TYPE_BTLEAVES]=TYPE_LEAVES,
-   [ TYPE_BTBRICK]=TYPE_BRICK,
-   [ TYPE_BTCOBBLESTONE]=TYPE_COBBLESTONE,
-   [ TYPE_BTVINES]=TYPE_VINE,
-   [ TYPE_BTLADDER]=TYPE_LADDER,
-   [ TYPE_BTICE]=TYPE_ICE,
-  [  TYPE_BTCRYSTAL]=TYPE_CRYSTAL,
-  [  TYPE_BTTRAMPOLINE]=TYPE_TRAMPOLINE,
-  [  TYPE_BTCLOUD]=TYPE_CLOUD,
-  [  TYPE_BTSTONESIDE]=TYPE_STONE,
-  [  TYPE_BTWOODSIDE]=TYPE_WOOD,
-  [  TYPE_BTICESIDE]=TYPE_ICE,
-  [  TYPE_BTSHINGLESIDE]=TYPE_SHINGLE,
-  [  TYPE_BTFENCE]=TYPE_WEAVE,
-  [  TYPE_BTWATER]=TYPE_WATER,
-  [  TYPE_BTLAVA]=TYPE_LAVA,
-  [  TYPE_BTFIREWORK]=TYPE_FIREWORK,
-  [  TYPE_BTLIGHTBOX]=TYPE_LIGHTBOX,
-  [  TYPE_BTSTEEL]=TYPE_STEEL,
-};
+// K.2-3: the BT family's base block (what a block-TNT explosion spawns), from each block's "tnt_map" in the
+// stock pack (Classes/ContentPack); 0 = none.
+extern "C" int blockTntMap[BLOCK_IDS]={};
 void Terrain::blocktntexplode(int x,int z,int y,int btype){
    
   // printf("type %d  btt %d\n",type,blockTntMap[btype]);
@@ -2057,9 +2044,10 @@ int Terrain::tntSoundForBlast(int x,int z,int y){
                 int t=getLandc(j,k,y+yy);
                 if(t<=TYPE_NONE||(blockinfo[t]&IS_LIQUID))continue;
                 total++;
-                if(t==TYPE_DIRT||t==TYPE_SAND||t==TYPE_GRASS||t==TYPE_GRASS2||t==TYPE_GRASS3)dirt++;
-                else if(t==TYPE_STONE||t==TYPE_DARK_STONE||t==TYPE_COBBLESTONE||t==TYPE_BEDROCK||(t>=TYPE_STONE_RAMP1&&t<=TYPE_STONE_RAMP4)||(t>=TYPE_STONE_SIDE1&&t<=TYPE_STONE_SIDE4))stone++;
-                else if(t==TYPE_GLASS||t==TYPE_CRYSTAL||(blockinfo[t]&IS_ICE))glass++;
+                const int g=trait_tntGroup(t);   // K.2-1
+                if(g==TRAIT_TNT_DIRT)dirt++;
+                else if(g==TRAIT_TNT_STONE)stone++;
+                else if(g==TRAIT_TNT_GLASS)glass++;
             }
         }
     }
@@ -2122,7 +2110,7 @@ void Terrain::explode(int x,int z,int y){
                             //else
                             burnBlock(j ,k ,y-yy ,true);
                         }else{
-                            if(type!=TYPE_BEDROCK&&type!=TYPE_STEEL){
+                            if(!trait_blastproof(type)){   // K.2-1
                                 explodeBlock(j ,k ,y-yy);
                             }
                         }
@@ -2135,7 +2123,7 @@ void Terrain::explode(int x,int z,int y){
                         
 						burnBlock(j ,k ,y+yy ,true);
                     }else{
-                        if(type!=TYPE_BEDROCK&&type!=TYPE_STEEL)
+                        if(!trait_blastproof(type))   // K.2-1
                             explodeBlock(j ,k ,y+yy);
                     }
                     }
@@ -3125,18 +3113,71 @@ void Terrain::colort(float r,float g,float b){
 }
 static TerrainChunk* renderList[CHUNKS_PER_SIDE_MAX*CHUNKS_PER_SIDE_MAX*CHUNKS_PER_COLUMN_MAX];
 static TerrainChunk* renderList2[CHUNKS_PER_SIDE_MAX*CHUNKS_PER_SIDE_MAX*CHUNKS_PER_COLUMN_MAX];
+extern Vector g_cullEye;   // below (Q.1 F19)
+static long g_mistCulled=0;   // AT.5: chunks skipped past a pulled-in fog end (--weather-selftest=mist)
+long eden_mist_culled(void){ return g_mistCulled; }
+// AT.8 (plan S1): the world-space centres of the recorded light cells (TerrainChunk::lamps) of chunks within
+// `radius` blocks of the eye, at most `cap`. AT.11: only the chunk columns the radius reaches are walked (a few
+// dozen slots, was the whole table), a slot whose chunk is not that column's (the toroidal window) is skipped,
+// and when more than `cap` lamps are in range the nearest are kept. No voxel scan.
+int eden_lamp_positions(float ex,float ey,float ez,float radius,int cap,float (*out)[3]){
+    if(!chunkTablec||cap<=0)return 0;
+    enum{CAND=256};
+    static float cand[CAND][4];
+    int n=0;
+    const float r2=radius*radius;
+    const int cx0=(int)floorf((ex-radius)/CHUNK_SIZE),cx1=(int)floorf((ex+radius)/CHUNK_SIZE);
+    const int cz0=(int)floorf((ez-radius)/CHUNK_SIZE),cz1=(int)floorf((ez+radius)/CHUNK_SIZE);
+    for(int cx=cx0;cx<=cx1;cx++)for(int cz=cz0;cz<=cz1;cz++){
+        const int s=getColIndex(cx,cz);
+        for(int band=0;band<CHUNKS_PER_COLUMN;band++){
+            const TerrainChunk* c=chunkTablec[s*CHUNKS_PER_COLUMN+band];
+            if(!c||!c->has_light||!c->num_lamps)continue;
+            const int* b=c->pbounds;
+            if(b[0]!=cx*CHUNK_SIZE||b[2]!=cz*CHUNK_SIZE)continue;
+            for(int j=0;j<c->num_lamps&&n<CAND;j++){
+                const float x=b[0]+c->lamps[j][0]+0.5f,y=b[1]+c->lamps[j][1]+0.5f,z=b[2]+c->lamps[j][2]+0.5f;
+                const float d2=(x-ex)*(x-ex)+(y-ey)*(y-ey)+(z-ez)*(z-ez);
+                if(d2>r2)continue;
+                cand[n][0]=x;cand[n][1]=y;cand[n][2]=z;cand[n][3]=d2;n++;
+            }
+        }
+    }
+    if(n>cap){   // keep the nearest cap (selection: cap is small)
+        for(int i=0;i<cap;i++){
+            int m=i;
+            for(int j=i+1;j<n;j++)if(cand[j][3]<cand[m][3])m=j;
+            if(m!=i)for(int k=0;k<4;k++){const float t=cand[i][k];cand[i][k]=cand[m][k];cand[m][k]=t;}
+        }
+        n=cap;
+    }
+    for(int i=0;i<n;i++){out[i][0]=cand[i][0];out[i][1]=cand[i][1];out[i][2]=cand[i][2];}
+    return n;
+}
 void renderTree(TreeNode* node,int state){
     //once upon a time this descended an oct-tree, profiling showed it was useless, now just iterates through chunk list
     //P.7: one walk fills BOTH lists (was two walks, one per pass), one frustum test per chunk, table order kept.
     //in_view keeps its old meaning: membership in the transparent list (the second walk used to overwrite it).
     int n=CHUNKS_PER_SIDE*CHUNKS_PER_SIDE*CHUNKS_PER_COLUMN;
     int r1=chunks_rendered,r2=chunks_rendered2;
+    // AT.5 (plan S3): when the weather pulls the fog in, a chunk wholly past its end would draw as pure fog
+    // colour; skip it (draw culling only, as B.5a's view distance; P_ZFAR and the sky are untouched).
+    const float mistCull=Graphics::mistCullDistance();
+    const float mistCull2=(mistCull+1.0f)*(mistCull+1.0f);
+    const Vector eye=g_cullEye;
     for(int i=0;i<n;i++){
         TerrainChunk* chunk=chunkTablec[i];
         chunk->in_view=false;
         bool want1=chunk->n_vertices!=0||chunk->num_objects!=0;
         bool want2=chunk->n_vertices2!=0;
         if(!want1&&!want2)continue;
+        if(mistCull>0){
+            const int* b=chunk->pbounds;
+            const float dx=eye.x<b[0]?b[0]-eye.x:eye.x>b[3]?eye.x-b[3]:0.0f;
+            const float dy=eye.y<b[1]?b[1]-eye.y:eye.y>b[4]?eye.y-b[4]:0.0f;
+            const float dz=eye.z<b[2]?b[2]-eye.z:eye.z>b[5]?eye.z-b[5]:0.0f;
+            if(dx*dx+dy*dy+dz*dz>mistCull2){ g_mistCulled++; continue; }
+        }
         if(ViewTestAABB(chunk->rbounds,state)&VT_OUTSIDE) continue;
         if(want1)renderList[r1++]=chunk;
         if(want2){
@@ -3399,7 +3440,8 @@ void Terrain::render(){
     int chunksr=chunks_rendered;
     // DN.5: with the day/night cycle on, each chunk is drawn under the world light that matches the
     // night bit its colours were baked with (SkyCycle::worldLight). Off: never set, (1,1,1).
-    const bool dnLight=SkyCycle::enabled();
+    // AT.2a: also on with Gameplay > Weather (the overcast multiplier rides in worldLight).
+    const bool dnLight=SkyCycle::lightActive();
     float wlDay[3],wlNight[3];
     if(dnLight){ SkyCycle::worldLight(false,wlDay); SkyCycle::worldLight(true,wlNight); }
     pass_begin(P_R_CHUNKS);
@@ -3436,7 +3478,7 @@ void Terrain::render(){
     float lightDiffuse2[4]  = {0.3f, 0.3f, 0.3f, 1.0f};
     
     
-    if(dnLight){
+    if(SkyCycle::enabled()){   // the cycle itself, not lightActive(): weather alone keeps the stock pick
         // DN.5: the stock day and night values below, blended for the clock (SkyCycle::blendLight).
         const float NA[3]={0.17f,0.17f,0.17f}, ND[3]={0.3f,0.3f,0.3f};
         const float NA2[3]={0.15f,0.15f,0.15f}, ND2[3]={0.15f,0.15f,0.15f};
@@ -3463,6 +3505,10 @@ void Terrain::render(){
         }
     }
     
+    if(Weather::active()){   // AT.2a: the overcast multiplier for the LightSet-lit doors (1.0 when clear)
+        const float m=Weather::lightMul();
+        for(int c=0;c<3;c++){ lightAmbient[c]*=m; lightDiffuse[c]*=m; lightAmbient2[c]*=m; lightDiffuse2[c]*=m; }
+    }
     //PVRTVec4 lightSpecular = PVRTVec4(0.2f, 0.2f, 0.2f, 1.0f);
     
     // Doors: LIGHT0 at the eye, LIGHT1 off, ES 1.1's default model ambient 0.2 and material specular 0
@@ -3866,6 +3912,8 @@ void Terrain::render(){
     // pass; the BW layer alpha-blends over the first one. (Stock used whatever blend func the last frame's
     // HUD left: SA,1-SA, or with the HUD hidden beginHud's ONE,ONE, an accident; docs/rendering.md.)
     R::fogOff();
+    R::cloudShadowOff();   // AT.6: the shadows are the terrain's; the sky and the swirls draw without them
+    R::waterTintOff();     // AT.8
     R::proj().push();
     R::proj().loadIdentity();
 /*	if(World::getWorld->FLIPPED)
@@ -3943,9 +3991,21 @@ void Terrain::render(){
         Resources::getResources->getTex(ICO_SKY_BOX_BW)->drawSky(CGRectMake(0,0, SCREEN_WIDTH,SCREEN_HEIGHT),-P_ZFAR/1.000001,v.x,v.y,v.z,1.0f);
         }
     }
-    if(SkyCycle::enabled()){ R::setState(skyBlend); SkyCycle::drawSunMoon(); }   // DN.4: no-op unless Experiments > Day/night cycle
+    if(!SkyCycle::enabled()&&Weather::active()&&Weather::skyGrey()>0){
+        // AT.2a: cycle off, overcast: the stock/painted sky blended toward its grey (Weather::greySky) by one
+        // tinted ICO_SKY_BOX_BW pass a hair nearer than the stock overlays. Only while the sky is greyed.
+        Vector v=skycolor;
+        if(v_equals(final_skycolor,colorTable[14]))v=MakeVector(0.5,0.72,0.9);   // the stock fog's blue
+        float g[3]={v.x,v.y,v.z};
+        const float t=Weather::skyGrey();
+        const float luma=0.8f*(0.299f*g[0]+0.587f*g[1]+0.114f*g[2]);
+        R::setState(skyBlend);
+        Resources::getResources->getTex(ICO_SKY_BOX_BW)->drawSky(CGRectMake(0,0, SCREEN_WIDTH,SCREEN_HEIGHT),-P_ZFAR/1.000006,luma,luma,luma,t);
+    }
+    if(SkyCycle::enabled()){ R::setState(skyBlend); SkyCycle::drawSunMoon(); }   // DN.4: no-op unless Gameplay > Day/night cycle
     R::mv().pop();
     R::proj().pop();
+    Clouds::render();   // AT.6: after the sky, sun and moon, depth-tested against the opaque terrain (plan P5)
     ////////////////sky
     pass_end(P_R_SKY);
     pass_begin(P_R_OBJECTS);
@@ -4096,6 +4156,9 @@ void Terrain::render2(){
     const R::State st={R::B_ALPHA,true,true,true,0.0f,0.0f};
     R::setState(st);
     Graphics::applyWorldFog();
+    Graphics::applyHeightFog();   // AT.5: before the x0.25 (the plane is the camera's view)
+    Clouds::applyShadow();        // AT.6: likewise (water and glass take the cloud shadows too)
+    Graphics::applyWaterTint();   // AT.8: likewise (state it before the x0.25: it reads the camera's view)
 	R::mv().push();
 	R::mv().scale(.25f,.25f,.25f);
     R::uv().scale(1,1.0f/ATLAS_TILES,1);
@@ -4116,7 +4179,7 @@ void Terrain::render2(){
     pass_end(P_R_CULL);
     
     // DN.5: as Terrain::render's opaque chunks, per chunk by the night bit it was baked with.
-    const bool dnLight=SkyCycle::enabled();
+    const bool dnLight=SkyCycle::lightActive();   // AT.2a: cycle or weather
     float wlDay[3],wlNight[3];
     if(dnLight){ SkyCycle::worldLight(false,wlDay); SkyCycle::worldLight(true,wlNight); }
     pass_begin(P_R_TCHUNKS);
@@ -4125,6 +4188,7 @@ void Terrain::render2(){
         renderList2[i]->render2();
     }
     pass_end(P_R_TCHUNKS);
+    R::waterTintOff();   // AT.8: the chunk draws only (the objects below are not water)
     pass_begin(P_R_OBJECTS);
     R::uv().translate(0,-(int)(frame/16),0);
     R::uv().scale(1,(float)ATLAS_TILES,1);

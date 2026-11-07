@@ -38,6 +38,12 @@ const VertexFormat kFmtUI2UV = { 16, Attr{ A_F32, 2, 0 }, kNone, Attr{ A_F32, 2,
 
 const VertexFormat kFmtUI3UV = { 20, Attr{ A_F32, 3, 0 }, kNone, Attr{ A_F32, 2, 12 }, kNone, kNone, kNone, kNone };
 
+// AT.2b: four unsigned bytes (seed x, y, z, corner), read as 0..255 floats (not normalised).
+const VertexFormat kFmtPrecip = { 4, Attr{ A_U8, 4, 0 }, kNone, kNone, kNone, kNone, kNone, kNone };
+
+// AT.6: the cloud layer's quad, two floats (an NDC corner).
+const VertexFormat kFmtClouds = { 8, Attr{ A_F32, 2, 0 }, kNone, kNone, kNone, kNone, kNone, kNone };
+
 #undef EDEN_ATTR_
 
 }  // namespace R
