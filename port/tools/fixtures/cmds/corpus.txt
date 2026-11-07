@@ -10,7 +10,7 @@
 #   c  the console only: every statement the block calls bad is a registry verb or uses `=`;
 #      the rest is field-equal
 #   x  neither
-# '#' starts a comment line; blank lines are skipped. Sound bounds assume NUM_SOUNDS = 79.
+# '#' starts a comment line; blank lines are skipped. Sound bounds assume NUM_SOUNDS = 80.
 
 # cmd.html: the examples
 B say WELCOME TRAVELER;wait 1;set 0 3 0 lamp;gold 1
@@ -72,10 +72,10 @@ B time 1
 x time 1.01
 x time -0.1
 x time
-# sound 0..78
+# sound 0..79
 B sound 0
-B sound 78
-x sound 79
+B sound 79
+x sound 80
 x sound 1.5
 # wait: capped at 600, not refused
 B wait 600
