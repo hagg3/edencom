@@ -121,7 +121,13 @@ static void settings_leg() {
     eden_settings_set(pi, 3.0f);
     check(eden_atmo_tier() == 2 && (int)eden_settings_get(pi) == 3, "preset High sets Atmosphere High", "");
     eden_settings_set(pi, 2.0f);
-    check(eden_atmo_tier() == 2 && (int)eden_settings_get(pi) == 2, "preset Default sets the device default (High off iOS)", "");
+    // The device default is Off on iOS Air 2-class hardware (A7), High elsewhere: an iOS run accepts either.
+#if defined(EDEN_PLATFORM_IOS)
+    const bool defOk = eden_atmo_tier() == 0 || eden_atmo_tier() == 2;
+#else
+    const bool defOk = eden_atmo_tier() == 2;
+#endif
+    check(defOk && (int)eden_settings_get(pi) == 2, "preset Default sets the device default (High off iOS)", "");
     eden_settings_set(ai, 1.0f);
     check((int)eden_settings_get(pi) == 0, "moving Atmosphere by hand drops the preset to Custom", "");
     eden_settings_set(pi, 2.0f);
