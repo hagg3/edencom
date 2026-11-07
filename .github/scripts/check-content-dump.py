@@ -58,7 +58,7 @@ def main(argv):
         print(__doc__)
         return 2
     with open(FIXTURE, "rb") as f:
-        fixture = f.read()
+        fixture = f.read().replace(b"\r\n", b"\n")   # Windows checkouts (core.autocrlf) turn the LF fixture into CRLF
     if hashlib.sha256(fixture).hexdigest() != PINNED:
         print("FAIL: %s does not hash to the pin (edit both together)" % FIXTURE)
         return 1
