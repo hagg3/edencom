@@ -1232,9 +1232,10 @@ jobs:
     needs: linux
     # A SIMULATOR LAUNCH CAN HANG, and the default job timeout is six hours. `simctl launch`
     # waits for the app to exit, and an app that neither exits nor prints looks exactly like a
-    # slow one — cap the whole job rather than guess per step. A green run is ~12 minutes, most
-    # of it building SDL3 twice.
-    timeout-minutes: 45
+    # slow one — cap the whole job rather than guess per step. A green run was ~12 minutes (Oct);
+    # by 2026-11-07 the two slice builds took 20-25 min each on the runner (~55-65 min total), so
+    # 45 cancelled three runs mid-build. 90 keeps the hang cap without clipping a slow green run.
+    timeout-minutes: 90
     env:
       # 15.0 is the iOS floor (SM.1), see native/CMakeLists.txt's iOS block. It is asserted below out of the built binary's own load command, because a
       # deployment target that silently got raised is exactly the kind of regression that only
