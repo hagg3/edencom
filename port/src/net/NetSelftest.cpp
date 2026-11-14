@@ -68,6 +68,7 @@ struct Mock {
         });
         return true;
     }
+    void finish() { if (th.joinable()) th.join(); }   // happens-before for state the script wrote
     ~Mock() { if (th.joinable()) th.join(); closeSock(ls); }
 };
 
@@ -565,6 +566,7 @@ void legErrors() {
     s.start(cfg);
     Got g;
     pump(s, g, 3000, closedStage);
+    m.finish();
     CHECK(join == "JOIN:Sam:10::zr");
 }
 

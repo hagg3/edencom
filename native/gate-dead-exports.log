@@ -1,1 +1,0 @@
-dead-exports: ok (12 stripped by the linker, all with call sites or allowed)
