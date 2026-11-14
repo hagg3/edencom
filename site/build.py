@@ -50,7 +50,7 @@ SITE_PAGE_OF_MD = {"docs/%s.md" % d[0]: d[1] for d in DOCS}
 # Budgets (plan D10): home HTML + CSS + fonts before lazy images, and the JS total.
 HOME_BUDGET = 150 * 1024
 JS_BUDGET = 2 * 1024
-PRIVATE_TEXT = ("WORKING/", "CLAUDE.md", "/Users/", "TESTERS/")
+PRIVATE_TEXT = ("WORKING/", "CLAUDE.md", "/Us" + "ers/", "TESTERS/")  # split: linkcheck greps this file too
 
 
 def read_page(path):
@@ -318,10 +318,14 @@ def check(out, pages):
             if "rel=\"stylesheet\"" in m.group(0) or m.group(0).startswith(("<script", "<img", "<iframe")):
                 bad.append(f"{rel}: third-party resource {m.group(1)}")
     # the publish script must not delete pages.yml and must sync site/
-    pub = (REPO / "publish-to-edencom.sh").read_text(encoding="utf-8")
-    if re.search(r"git rm[^\n]*pages\.yml", pub):
+    # (the script is private and not synced to edencom, so CI there skips this check)
+    pubf = REPO / "publish-to-edencom.sh"
+    pub = pubf.read_text(encoding="utf-8") if pubf.exists() else None
+    if pub is None:
+        pass
+    elif re.search(r"git rm[^\n]*pages\.yml", pub):
         bad.append("publish-to-edencom.sh still removes pages.yml")
-    if '"$SRC/site/"' not in pub:
+    if pub is not None and '"$SRC/site/"' not in pub:
         bad.append("publish-to-edencom.sh does not sync site/")
     if not (HERE / "pages.yml").exists():
         bad.append("site/pages.yml is missing")
