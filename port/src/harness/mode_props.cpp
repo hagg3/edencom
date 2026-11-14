@@ -1091,6 +1091,7 @@ static void settings_set_all() {
     for (int i = 0; i < eden_settings_count(); ++i) {
         const int k = eden_settings_kind(i);
         if (k != 0 && k != 1 && k != 2) continue;   // toggle, range, enum
+        if (!std::strcmp(eden_settings_key(i), "debug_menu")) continue;   // added after the capture: stays at its default (off) in both legs, alternation unchanged; --ui-selftest drives it
         const float d = eden_settings_def(i), lo = eden_settings_min(i), hi = eden_settings_max(i);
         const float v = k == 0 ? ((toggles++ % 2) ? d : (d != 0.0f ? 0.0f : 1.0f)) : (d != hi ? hi : lo);
         eden_settings_set(i, v);

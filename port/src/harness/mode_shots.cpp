@@ -4,6 +4,7 @@
 #include "../../../Classes/BlockIcon.h"
 #include "../../../Classes/BlockRegistry.h"
 #include "../../../Classes/Graphics.h"
+#include "../../../Classes/DebugMenu.h"
 extern "C" { int eden_settings_count(void); const char* eden_settings_key(int i); void eden_settings_set_text(int, const char*); }   // K.3-6
 
 using namespace harness;
@@ -688,6 +689,30 @@ int run_shot() {
     World::getWorld->menu->showsettings = false;
     tick(2);
 
+    // The Debug menu (Classes/DebugMenu.h): its pause button, the main page, the Screenshot page, then a
+    // real "Shot now" (a windowed run is the only one with pixels: the PNG lands in <docs>/Screenshots).
+    {
+        Hud* hud = World::getWorld->hud;
+        ::DEBUG_MENU_ALLOWED = true;
+        tick(5);
+        capture("pausemenu-debug");
+        const Button rd = hud->rdebug;
+        ui_tap(rd.origin.x + rd.size.width * 0.5f, rd.origin.y + rd.size.height * 0.5f);
+        tick(10);
+        capture("debug");
+        CGRect b;
+        if (GLDialog::buttonRect(0, &b)) ui_tap(b.origin.x + b.size.width * 0.5f, b.origin.y + b.size.height * 0.5f);
+        tick(10);
+        capture("debug-shot");
+        if (GLDialog::buttonRect(0, &b)) ui_tap(b.origin.x + b.size.width * 0.5f, b.origin.y + b.size.height * 0.5f);
+        tick(15);
+        const std::string& shot = DebugMenu::lastShot();
+        std::printf("[eden-shot] debug screenshot %s (%lld bytes)\n", shot.empty() ? "(none)" : shot.c_str(),
+                    shot.empty() ? -1LL : eden_fs_size(shot));
+        ::DEBUG_MENU_ALLOWED = false;
+        eden_tap_hud_button_begin(0); tick(6); eden_tap_hud_button_end(0); tick(10);   // the pause menu, as before
+    }
+
     // C.3: the Console over the running world -- full (a few lines through the real path), Variables,
     // Help, then the collapsed strip. Opened from play (the pause menu is toggled off and back on).
     eden_tap_hud_button_begin(0); tick(6); eden_tap_hud_button_end(0); tick(10);
@@ -983,7 +1008,7 @@ void fit_check(const char* label) {
     bool overflow = false;
     if (World::getWorld && World::getWorld->hud && eden_hud_in_menu() == 1) {
         const Hud* h = World::getWorld->hud;
-        const Button* pm[] = { &h->rresume, &h->rsave, &h->rhome, &h->rcam, &h->rsettings, &h->rconsole, &h->rexit };
+        const Button* pm[] = { &h->rresume, &h->rsave, &h->rhome, &h->rcam, &h->rsettings, &h->rconsole, &h->rdebug, &h->rexit };
         for (const Button* b : pm) {
             if (b->size.width <= 0) continue;
             pause.push_back(CGRectMake(b->origin.x, b->origin.y, b->size.width, b->size.height));

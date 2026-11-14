@@ -127,7 +127,7 @@ fit, a row taller than the view still shows; `rowOffset()`; content drags walk t
   (`port/src/seam/seam_link_stubs_native.cpp`) points `showAlertWorldType()` (a chained
   type→height pair; since U.5 only for a world not made through `NewWorldMenu`, which parks both answers), `showAlertWarpHome()`, since 5.6 `showAlertDeleteConfirm()`, and since S.5 `showAlertDeleteOriginal()`
   (Share › Remove original) and `showAlertConvertHeight()` (convert-on-play's Upgrade to 256 · Keep 64 · Cancel) at it.
-  `GLDialog::buttonRect(j, &r)` (5.6) tells a harness where button j is. **UX.9:** Escape over any open dialog is its **last button** (`GLDialog::escape()`, reached through the seam's `eden_dialog_escape`, first in the Escape chain; a prompt's field does this itself), so put Cancel / Keep editing last.
+  `GLDialog::buttonRect(j, &r)` (5.6) tells a harness where button j is. **UX.9:** Escape over any open dialog is its **last button** (`GLDialog::escape()`, first in the Escape chain: the seam's `eden_menu_back` tries it before `Menu::back()`; a prompt's field does this itself), so put Cancel / Keep editing last.
   `eden_ui_wants_cursor()` returns true while a `GLDialog` is up, so the native mouse-capture
   predicate releases the pointer for it — needed because `Hud::handlePickMenu` clears `inmenu` in
   the same breath as `showAlertWarpHome()`, so the "in a menu" term alone would not cover it.
@@ -961,6 +961,31 @@ Third person (front), default first) and a native-only `kKeybinds[]` row **F5** 
 that cycles it. The key goes **through** the setting (`eden_cycle_camera_view`, `Settings.cpp`), so the
 live `CAMERA_VIEW`, the Settings row and the persisted value never disagree; touch devices use the row. No
 gamepad binding. Engine side: [player-input-camera.md](player-input-camera.md) § Camera.
+
+## Debug menu (`Classes/DebugMenu.{h,cpp}`)
+Experiments › *Debug menu* (`debug_menu`, `DEBUG_MENU_ALLOWED`, default off) adds **Debug** to the pause menu
+(`PM_DEBUG`, `Hud::rdebug`, before Quit; hidden in a multiplayer session, like Save). It closes the pause menu and
+shows a paged `GLDialog` (the button cap `GLDIALOG_MAX_BUTTONS` is 8 for it): each button acts, then re-shows its
+page with the result in the body, so the world is frozen under it like any dialog and Escape is Back / Close.
+Most actions are console lines run through `Console::run` (the body shows the last line printed, errors too) or
+`Console::cvarSet`, so they obey what the console does (`weather` needs Gameplay › *Weather*).
+- **Screenshot**: *Shot now* / *Shot in 5 s* queue a shot that `DebugMenu::tick` (from `World::update` in play, after
+  the Console) fires a few frames after the dialog and pause menu are gone, through the F2 path (`MODE_CAMERA` +
+  `take_screenshot`); `Hud::render`'s camera branch then calls `DebugMenu::captureNow()` instead of `takeScreenshot()`:
+  the whole drawable, no 3:2 crop or downscale, no HUD, to `<Documents>/Screenshots/emod-YYYYMMDD-HHMMSS.png`
+  (the world thumbnail is untouched). The path and the pose go to the console scrollback and stdout (`[debug]`).
+  *1280x720 px* / *1920x1080 px* size the window so its drawable is that many device pixels
+  (`eden_window_set_pixel_size`, desktop and not fullscreen/maximized); *Open folder* is `eden_reveal_folder`
+  (`SDL_OpenURL`, desktop). Those seam calls and `eden_clipboard_set` live in `WindowState_native.cpp`.
+- **Time & weather**: dawn (`time 0.27`), `noon`, dusk (`time 0.73`), `midnight`, `timefreeze on|off`, and
+  *Next weather* steps `weather.now` Clear → Overcast → Rain → Storm → Snow.
+- **Player**: Fly / Noclip cycle through `fly_set_state` (ignores Gameplay › *Allow fly*), `heal`, `gold 100`, `save`.
+- **View**: HUD on/off (`hud->hideui`, as F1), `video.camera_view`, `video.fov` presets 60/70/80/95/110, `atmo.clouds`.
+- **Copy pose**: `--at=X,Y,Z --look=YAW,PITCH` (Player `pos`/`yaw`/`pitch`, the harness's pose flags) to the clipboard
+  and the console, so a frame found by hand can be re-shot by a deterministic mode (`--sign-shot`, `--pass-probe`).
+Gates: `--ui-selftest` (the button appears only with the toggle, opens the dialog, *Shot now* returns to play) and
+the windowed `--shot` tour (`pausemenu-debug`, `debug`, `debug-shot` pages, then a real PNG; it prints
+`[eden-shot] debug screenshot <path> (<bytes> bytes)`).
 
 ### Q.1a notes (2026-10-21)
 - **F5 (menu background):** the four undrawn cloud/mountain menu textures (`cloud_SM`, `mountains`, `cloud_MD`, `cloud_LG`) are no longer decoded; their `menutextures` slots hold `NULL` (positional). **F25 (Console screen):** `ConsoleMenu` keeps one rasterised-line cache per source tab (`m_cache` / `m_cacheOther`, swapped on a tab switch) instead of rebuilding.

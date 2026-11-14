@@ -208,6 +208,7 @@ A variable is `group.name`. **`NAME`** prints it, **`NAME VALUE`** sets it. Name
 | `experiments.fire_chars_vines` | on / off | off | at once | Burning vines turn to dark stone. |
 | `experiments.dev_console` | on / off | off | at once | Adds a console button next to the settings icon in singleplayer. |
 | `experiments.double_brush` | on / off | off | at once | A key builds 2x2x2 blocks at a time. |
+| `experiments.debug_menu` | on / off | off | at once | Adds Debug to the pause menu: clean screenshots, time, weather, fly, view. |
 
 #### `weather.`
 

@@ -1,0 +1,26 @@
+title: Developers - Eden: Community Edition
+nav: dev
+description: Source code, build instructions, architecture and licence of Eden: Community Edition, a C++20 SDL3 port of Eden: World Builder.
+toc: <section class="box toc"><h2 class="box__t">Developers</h2><ol><li class="on">Overview</li><li><a href="developers/architecture.html">Architecture overview</a></li></ol></section><section class="box toc"><h2 class="box__t">On this page</h2><ol><li><a href="#what">What the code is</a></li><li><a href="#build">Build it</a></li><li><a href="#read">Where to read next</a></li><li><a href="#licence">Licence and credits</a></li><li><a href="#contribute">Contributing</a></li></ol></section>
+---
+<h1>Developers</h1>
+<h2 id="what">What the code is</h2>
+<p>The 2.1.1 source of Eden: World Builder (Objective-C++, OpenGL ES 1.1, iOS), moved to plain C++20 on SDL3 and OpenGL, running on macOS, Linux, Windows and iOS. The engine lives in <code>Classes/</code>; platform glue sits in <code>port/</code>; the game binary is built from <code>native/</code>. Worlds are saved in an append-only <code>.emod</code> format, with <code>.eden</code> kept for import and export.</p>
+<h2 id="build">Build it</h2>
+<pre><code>git clone {{github}}.git
+cd edencom/native
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DEDEN_DIAGNOSTICS=ON
+cmake --build build -j8
+./build/eden_native</code></pre>
+<p>You need CMake and a C++20 compiler. Options, test modes (<code>--*-selftest</code>) and save locations are in <a href="{{github}}/blob/main/native/README.md">native/README.md</a>.</p>
+<h2 id="read">Where to read next</h2>
+<ul>
+<li><a href="developers/architecture.html">Architecture overview</a>: who owns what, the frame loop, the big ideas, how a block edit travels.</li>
+<li><a href="{{github}}/blob/main/docs/README.md">The engine reference</a> (<code>docs/</code>): one file per system, from voxels and meshing to saving and networking.</li>
+<li><a href="{{github}}/blob/main/docs/conventions-and-pitfalls.md">Conventions and pitfalls</a>: read this before changing anything.</li>
+<li><a href="modding/content-packs.html">Content packs</a> and <a href="modding/scripting.html">Lua scripting</a> if you want to extend the game without touching C++.</li>
+</ul>
+<h2 id="licence">Licence and credits</h2>
+<p>Eden was created by Ari Ronen (Kingly Games), who released its source in 2018. This fork is distributed under the GNU GPL v3 (<a href="{{github}}/blob/main/COPYING">COPYING</a>); the third-party code it bundles and the full list of credits are in <a href="{{github}}/blob/main/NOTICE">NOTICE</a>. This is a fan project, not affiliated with or endorsed by Kingly Games or Ari Ronen. More on the story: <a href="about.html">About</a>.</p>
+<h2 id="contribute">Contributing</h2>
+<p>Issues and pull requests are welcome on <a href="{{github}}">GitHub</a>. Linux, Windows and iOS builds are only checked by the project's CI, so a green CI run on your branch matters. For a chat first, join the <a href="{{discord}}">Discord</a>.</p>

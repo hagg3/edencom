@@ -8,6 +8,7 @@
 
 extern bool pendingRespawnSound;
 #include "Hud.h"
+#include "DebugMenu.h"
 #include "GLWidgets.h"
 #include <algorithm>
 #include <cstring>
@@ -220,9 +221,9 @@ extern "C" void eden_console_menu_open(void);      // Menu.cpp (C.3): opens Cons
 extern "C" int  eden_profile_touch_chrome(void);   // DisplayProfile.cpp (UX.3): hide the jump button on keyboard + mouse
 extern "C" int  eden_chat_open(int slash);          // Menu.cpp (MP.7): the Console screen on its Chat tile
 
-enum { PM_RESUME, PM_SAVE, PM_HOME, PM_PHOTO, PM_SETTINGS, PM_CONSOLE, PM_QUIT, PM_COUNT };
+enum { PM_RESUME, PM_SAVE, PM_HOME, PM_PHOTO, PM_SETTINGS, PM_CONSOLE, PM_DEBUG, PM_QUIT, PM_COUNT };
 static const char* kPauseLabels[PM_COUNT] = {
-    "Resume", "Save game", "Warp home", "Take photo", "Settings", "Console", "Quit to menu"   // ui-label
+    "Resume", "Save game", "Warp home", "Take photo", "Settings", "Console", "Debug", "Quit to menu"   // ui-label
 };
 
 struct HudPauseKit {
@@ -524,12 +525,12 @@ void Hud::layoutForScreen(){
 
 void Hud::layoutPauseMenu(){
     using namespace GLW;
-    ::Button* r[PM_COUNT]={&rresume,&rsave,&rhome,&rcam,&rsettings,&rconsole,&rexit};
+    ::Button* r[PM_COUNT]={&rresume,&rsave,&rhome,&rcam,&rsettings,&rconsole,&rdebug,&rexit};
     const bool withSettings=eden_gl_settings_available()!=0;
     // MP.3a: a multiplayer session has no world file, no home and no thumbnail (engine plan §11), so
     // Save Game (which also sets home), Warp Home and Take Photo go the way Settings does without a GL screen.
     const bool session=MpWorld::active();
-    auto hidden=[&](int k){ return k==PM_CONSOLE||(k==PM_SETTINGS&&!withSettings)||(session&&(k==PM_SAVE||k==PM_HOME||k==PM_PHOTO)); };
+    auto hidden=[&](int k){ return k==PM_CONSOLE||(k==PM_DEBUG&&!DebugMenu::shown())||(k==PM_SETTINGS&&!withSettings)||(session&&(k==PM_SAVE||k==PM_HOME||k==PM_PHOTO)); };
     int n=0;
     for(int k=0;k<PM_COUNT;k++) if(!hidden(k)) n++;
     // Gap > 8pt on purpose: inbox2/inbox3 add 4pt of slop on every side, and a smaller gap would
@@ -971,7 +972,7 @@ bool Hud::update(float etime){
                 if(inmenu==true){
                     rcam.pressed=rtCam.pressed=false;rhome.pressed=rtHome.pressed=false;
                     rsave.pressed=rtSave.pressed=false;rexit.pressed=rtExit.pressed=false;
-                    rresume.pressed=rsettings.pressed=rconsole.pressed=false;
+                    rresume.pressed=rsettings.pressed=rconsole.pressed=rdebug.pressed=false;
                     if(mode==MODE_PICK_BLOCK){
                         mode=MODE_BUILD;
                         
@@ -1048,6 +1049,7 @@ bool Hud::update(float etime){
                 if(inbox3(touches[i].mx,touches[i].my,&rresume)||
                    inbox3(touches[i].mx,touches[i].my,&rsettings)||
                    inbox3(touches[i].mx,touches[i].my,&rconsole)||
+                   inbox3(touches[i].mx,touches[i].my,&rdebug)||
                    inbox3(touches[i].mx,touches[i].my,&rcam)||
                    inbox3(touches[i].mx,touches[i].my,&rhome)||
                    inbox3(touches[i].mx,touches[i].my,&rsave)||
@@ -1061,6 +1063,7 @@ bool Hud::update(float etime){
                     inbox3(touches[i].mx,touches[i].my,&rresume);
                     inbox3(touches[i].mx,touches[i].my,&rsettings);
                     inbox3(touches[i].mx,touches[i].my,&rconsole);
+                    inbox3(touches[i].mx,touches[i].my,&rdebug);
                     inbox3(touches[i].mx,touches[i].my,&rcam);
                     inbox3(touches[i].mx,touches[i].my,&rhome);
                     inbox3(touches[i].mx,touches[i].my,&rsave);
@@ -1382,6 +1385,14 @@ bool Hud::handlePickMenu(int x,int y){
         rconsole.pressed=false;
         eden_console_menu_open();
         Input::getInput()->clearAll();
+        return true;
+    }
+    if(inbox2(x,y,&rdebug)&&DebugMenu::shown()){
+        // The Debug menu replaces the pause menu (its pages are GLDialogs over the frozen world); Close returns to play.
+        inmenu=false;
+        rdebug.pressed=false;
+        Input::getInput()->clearAll();
+        DebugMenu::open();
         return true;
     }
     if(inbox2(x,y,&rcam)||inbox2(x,y,&rtCam)){
@@ -1885,9 +1896,9 @@ void Hud::renderMenuScreen(){
         for(int j=0;j<PM_COUNT;j++) k->btn[j].setLabel(kPauseLabels[j], du(22));
         // C.3's UIICON_TERMINAL glyph gave way to the Maysunbo console_button art (2026-10-27).
     }
-    ::Button* r[PM_COUNT]={&rresume,&rsave,&rhome,&rcam,&rsettings,&rconsole,&rexit};
+    ::Button* r[PM_COUNT]={&rresume,&rsave,&rhome,&rcam,&rsettings,&rconsole,&rdebug,&rexit};
     // An rt* rect may carry the press (handlePickMenu tests both), so either lights the button.
-    const bool rtp[PM_COUNT]={false,rtSave.pressed,rtHome.pressed,rtCam.pressed,false,false,rtExit.pressed};
+    const bool rtp[PM_COUNT]={false,rtSave.pressed,rtHome.pressed,rtCam.pressed,false,false,false,rtExit.pressed};
 
     // Same GL set-up as GLDialog::render, minus the projection: the HUD's ortho (Graphics::
     // beginHud) is already SCREEN*2, the space GLW draws in.
@@ -1904,7 +1915,7 @@ void Hud::renderMenuScreen(){
     Resources* res=Resources::getResources;
     Texture2D* icon[PM_COUNT]={NULL,res->getTex(ICO_SAVE),res->getTex(ICO_HOME),
                                res->getTex(ICO_SCREENSHOT),res->getTex(ICO_OPEN_MENU),
-                               res->getArtTex(ART_CONSOLE),res->getTex(ICO_EXIT)};
+                               res->getArtTex(ART_CONSOLE),NULL,res->getTex(ICO_EXIT)};
     for(int j=0;j<PM_COUNT;j++){
         if(r[j]->size.width<=0) continue;
         k->btn[j].setRect(CGRectMake(r[j]->origin.x,r[j]->origin.y,r[j]->size.width,r[j]->size.height));
@@ -2404,7 +2415,8 @@ void Hud::render(){
                 }
             }
 			//else P_ZFAR=70.0f;
-			takeScreenshot();
+			if(DebugMenu::wantsCapture()) DebugMenu::captureNow();   // full size, to Documents/Screenshots
+			else takeScreenshot();
 			flash=1.0;
             flashcolor=MakeVector(1.0,1.0,1.0);
 			take_screenshot=false;

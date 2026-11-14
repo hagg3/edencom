@@ -11,6 +11,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <string>
 
 #include "../shim/foundation/eden_prefs.h"
 #include "DisplayProfile.h"
@@ -118,6 +119,27 @@ void eden_window_remember(void) {
     SDL_GetWindowPosition(win, &x, &y);
     SDL_GetWindowSize(win, &w, &h);
     if (eden_window_size_ok(w, h)) eden_window_prefs_save(x, y, w, h);
+}
+
+
+// The Debug menu (Classes/DebugMenu.cpp). A window sized so its DRAWABLE is w x h device pixels (a site
+// screenshot's size, whatever the display's scale). 0 where there is no window manager or the window is
+// fullscreen or maximized; macOS may still clamp a size larger than the screen.
+int eden_window_set_pixel_size(int w, int h) {
+    SDL_Window* win = eden_native_gl_window();
+    if (!kDesktop || !win || (SDL_GetWindowFlags(win) & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MAXIMIZED))) return 0;
+    float d = SDL_GetWindowPixelDensity(win);
+    if (!(d > 0.0f)) d = 1.0f;
+    return SDL_SetWindowSize(win, (int)std::lround(w / d), (int)std::lround(h / d)) ? 1 : 0;
+}
+int eden_clipboard_set(const char* text) { return text && SDL_SetClipboardText(text) ? 1 : 0; }
+// Shows a folder in the desktop's file manager; 0 on iOS (the Files app already lists Documents).
+int eden_reveal_folder(const char* path) {
+    if (!kDesktop || !path || !*path) return 0;
+    std::string url = "file://";
+    if (path[0] != '/') url += "/";   // Windows: file:///C:/...
+    for (const char* p = path; *p; ++p) url += (*p == '\\') ? '/' : *p;
+    return SDL_OpenURL(url.c_str()) ? 1 : 0;
 }
 
 }  // extern "C"

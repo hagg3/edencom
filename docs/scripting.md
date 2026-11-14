@@ -1,6 +1,6 @@
 # Mod scripts (Lua) — *Emod only*
 
-K.4 (2026-11-03). Plan and decisions: `WORKING/mod-scripting-plan-2026-11-03.md`. Code: `Classes/ModScript.{h,cpp}`
+K.4 (2026-11-03). Code: `Classes/ModScript.{h,cpp}`
 (the runtime), `CmdScript::runNow` (the back end every world edit goes through), the vendored Lua 5.4.9 in
 `port/src/shim/vendor/lua/` (`port/tools/vendor-lua.sh`). Gate: `eden_native --lua-selftest --docs=<fresh>`
 (`port/src/harness/mode_lua.cpp`; `--lua-mutate=hook|sandbox` must fail it).
@@ -128,12 +128,12 @@ An error prints `[pack] <file>:<line>: <message>` to the console and stderr and 
 
 ## Testing a pack's scripts headless
 
-`--live-cmds=<feed>` with `--packs=<pack>` and `/mod ...`, `/lua ...`, `/scripts` lines (port/CLAUDE.md). Two traps
+`--live-cmds=<feed>` with `--packs=<pack>` and `/mod ...`, `/lua ...`, `/scripts` lines (see the headless-driving notes in `port/`). Two traps
 found with the showcase pack (2026-11-03) and Wonder Blocks: the feed's `wait N` counts **frames**, and under `SDL_VIDEO_DRIVER=dummy` frames run
 at thousands a second while `eden.wait` counts game seconds (150 000 frames was about 5 s), so a timed build needs a
 huge `wait`; and `eden.get` answers nothing above the world's top (64 in a fresh test world), so a scan from above
 must skip `nil` rather than stop. Events come from player input (plus `tick`, `load` and AT.1c's `weather`), so a test copy of a pack can wrap `eden.on`
-in a first script to keep the handlers and call them from an `eden.command` (`TESTERS/wonders/testpack/test/`, driven by `TESTERS/wonders/run.sh`).
+in a first script to keep the handlers and call them from an `eden.command`.
 
 ## Implementation notes (for engine work)
 

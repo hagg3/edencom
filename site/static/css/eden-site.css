@@ -1,0 +1,155 @@
+/* Eden: Community Edition site stylesheet (WS.3, from the WS.2 mockup): a fixed-scale port of the retired eden-ui.css (tag web-port-final).
+   Same tokens and the three mechanics (RAISED / SUNKEN / PRESSED), but authored in plain px:
+   a web page is read at the browser's own zoom, so the game's --u scale unit is dropped.
+   WS.2 picked mockup A (window, text title), the dark-wood tile, this type scale and the core badge set. */
+
+@font-face { font-family: "Jersey 10"; src: url("../fonts/Jersey10-Regular.woff2") format("woff2"); font-display: swap; }
+@font-face { font-family: "Rubik"; src: url("../fonts/Rubik-Regular.woff2") format("woff2"); font-display: swap; }
+
+:root {
+  --gray-50: #f8f8f8; --gray-100: #efefef; --gray-150: #c9c9c9; --gray-200: #8c8c8c;
+  --gray-300: #979797; --gray-500: #646464; --gray-650: #454545; --gray-700: #404040;
+  --gray-800: #2c2c2c; --gray-900: #1c1c1c;
+  --green-100: #c6f175; --green-500: #89c31f; --green-700: #5b8d02; --green-play: #a9e4b0;
+  --link: #1d5c00; --link-visited: #4b3a73;
+
+  --display: "Jersey 10", "Courier New", monospace;
+  --body: "Rubik", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+
+  --keyline: inset 0 0 0 2px var(--gray-500);
+  --raised: var(--keyline), 2px 2px 0 0 rgba(0,0,0,.25), inset -3px -3px 0 0 rgba(100,100,100,.47);
+  --raised-sm: var(--keyline), 2px 2px 0 0 rgba(0,0,0,.25), inset -2px -2px 0 0 rgba(100,100,100,.47);
+  --pressed: var(--keyline), inset 4px 4px 0 0 rgba(0,0,0,.5);
+  --sunken: inset 0 0 0 1px var(--gray-500), inset 3px 3px 0 0 rgba(44,43,43,.47);
+  --window: inset 0 0 0 3px var(--gray-700), 4px 4px 0 0 rgba(0,0,0,.5);
+  --content: inset 0 0 0 1px var(--gray-500);
+  --ts-raised: 1px 1px 0 #fff;
+  --ts-pressed: 1px 1px 0 #000;
+
+  /* type scale (locked in WS.2) */
+  --fs-body: 14px; --lh-body: 1.5;
+  --fs-h1: 40px; --fs-h2: 28px; --fs-h3: 22px; --fs-tab: 22px; --fs-small: 12px;
+  --page-w: 980px; --side-w: 240px; --gap: 12px;
+}
+
+* { box-sizing: border-box; }
+html { background: #2a1d10 url("../img/tile-dark_wood.png") repeat; image-rendering: pixelated; }
+body { margin: 0; padding: 16px 12px 24px; font: var(--fs-body)/var(--lh-body) var(--body); color: #000; image-rendering: auto; }
+img { image-rendering: auto; }
+a { color: var(--link); }
+a:visited { color: var(--link-visited); }
+:focus-visible { outline: 2px solid var(--green-700); outline-offset: 2px; }
+code, pre { font: 13px/1.45 ui-monospace, Menlo, Consolas, monospace; }
+pre { background: var(--gray-100); box-shadow: var(--sunken); padding: 10px 12px; overflow-x: auto; }
+code { background: var(--gray-100); padding: 0 3px; }
+pre code { background: none; padding: 0; }
+
+/* --- the page window --- */
+.page { max-width: var(--page-w); margin: 0 auto; background: rgba(201,201,201,.94); box-shadow: var(--window); padding: 8px 14px 14px; }
+
+/* --- masthead --- */
+.mast { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; padding: 4px 2px 10px; }
+.mast__title { font: 400 var(--fs-h1)/1 var(--display); margin: 0; text-shadow: var(--ts-raised); }
+.mast__title a { color: inherit; text-decoration: none; }
+.mast__tag { font: 400 20px/1 var(--display); color: var(--gray-650); margin: 4px 0 0; }
+.mast__right { font-size: var(--fs-small); color: var(--gray-650); text-align: right; }
+
+/* --- tab rail (horizontal): ordinary buttons, current page PRESSED --- */
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; padding: 5px; background: rgba(150,150,150,.55); box-shadow: var(--content); margin: 0 0 var(--gap); }
+.tabs a { text-decoration: none; }
+
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 36px; padding: 0 14px;
+  font: 400 var(--fs-tab)/1 var(--display); color: #000; text-shadow: var(--ts-raised); text-decoration: none;
+  background: linear-gradient(180deg, #fff 6%, var(--gray-150) 6%); box-shadow: var(--raised-sm); border: 0; cursor: pointer; }
+.btn:visited { color: #000; }
+@media (hover: hover) { .btn:hover { background: linear-gradient(180deg, #fff 6%, var(--gray-50) 6%); } }
+.btn:active, .btn[aria-current="page"] { background: var(--gray-200); box-shadow: var(--pressed); color: var(--gray-150); text-shadow: var(--ts-pressed); }
+.btn--go { background: linear-gradient(180deg, #fff 6%, var(--green-play) 6%); }
+@media (hover: hover) { .btn--go:hover { background: linear-gradient(180deg, #fff 6%, var(--green-100) 6%); } }
+.btn--go:active { background: var(--green-500); }
+.btn--big { height: 52px; font-size: 30px; padding: 0 22px; box-shadow: var(--raised); width: 100%; }
+.btn--sm { height: 28px; font-size: 18px; padding: 0 9px; }
+
+/* --- two columns --- */
+.cols { display: flex; gap: var(--gap); align-items: flex-start; }
+.main { flex: 1; min-width: 0; background: #fff; box-shadow: var(--content); padding: 14px 18px 18px; }
+.side { width: var(--side-w); flex-shrink: 0; display: flex; flex-direction: column; gap: var(--gap); }
+
+.main h1, .main h2, .main h3 { font-family: var(--display); font-weight: 400; line-height: 1.05; margin: 1.1em 0 .35em; }
+.main h1 { font-size: var(--fs-h1); margin-top: 0; }
+.main h2 { font-size: var(--fs-h2); border-bottom: 2px solid var(--gray-150); padding-bottom: 2px; }
+.main h3 { font-size: var(--fs-h3); }
+.main p, .main ul, .main ol { margin: 0 0 .8em; }
+.main table { border-collapse: collapse; width: 100%; margin: 0 0 1em; font-size: .95em; }
+.main th, .main td { border: 1px solid var(--gray-150); padding: 4px 7px; text-align: left; vertical-align: top; }
+.main th { background: var(--gray-100); font: 400 18px/1.1 var(--display); }
+
+/* --- sidebar box: a small RAISED panel with a title strip --- */
+.box { background: var(--gray-100); box-shadow: var(--raised-sm); padding: 8px 10px 10px; }
+.box__t { font: 400 24px/1 var(--display); margin: 0 0 6px; text-shadow: var(--ts-raised); }
+.box p { margin: 0 0 .5em; font-size: .93em; }
+.box ul { margin: 0; padding-left: 1.1em; font-size: .93em; }
+.news li { margin-bottom: .45em; }
+.news time { display: block; font: 400 16px/1 var(--display); color: var(--gray-500); }
+.dl-alt { font-size: var(--fs-small); margin-top: 6px; }
+.dl-alt a { margin-right: 6px; }
+
+/* --- hero --- */
+.hero { display: grid; grid-template-columns: 1fr; gap: 10px; margin-bottom: 14px; }
+.hero__shot { width: 100%; height: auto; display: block; box-shadow: var(--sunken); padding: 3px; background: var(--gray-100); }
+.hero__lede { font-size: 1.12em; margin: 0; }
+.fork-note { font-size: var(--fs-small); color: var(--gray-650); background: var(--gray-50); box-shadow: var(--content); padding: 6px 9px; margin: 0 0 14px; }
+
+.remember { background: #f4fae8; box-shadow: inset 0 0 0 1px var(--green-700); padding: 10px 14px; margin: 0 0 14px; }
+.remember h2 { border: 0; margin-top: 0; }
+
+.feat { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 0 0 14px; }
+.feat > div { background: var(--gray-50); box-shadow: var(--content); padding: 8px 10px; font-size: .93em; }
+.feat h3 { margin: 0 0 4px; font-size: 22px; }
+.feat img { width: 100%; height: auto; display: block; margin-bottom: 6px; }
+
+.gallery { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.gallery a { display: block; box-shadow: var(--sunken); padding: 3px; background: var(--gray-100); }
+.gallery img { display: block; width: 100%; height: auto; }
+
+/* --- doc page --- */
+.crumbs { font-size: var(--fs-small); color: var(--gray-650); margin: 0 0 8px; }
+.toc { font-size: .93em; }
+.toc ol { margin: 0; padding-left: 1.3em; }
+.toc li { margin: .15em 0; }
+.toc .on { font-weight: bold; }
+.doc-src { font-size: var(--fs-small); color: var(--gray-500); margin-top: 18px; border-top: 1px solid var(--gray-150); padding-top: 6px; }
+
+/* --- footer --- */
+.foot { margin-top: var(--gap); display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px;
+  font-size: var(--fs-small); color: var(--gray-800); padding: 8px 4px 0; border-top: 2px solid var(--gray-300); }
+.badges { display: flex; flex-wrap: wrap; gap: 4px; }
+.badges img { display: block; width: 88px; height: 31px; image-rendering: pixelated; }
+
+/* ======================= phone: one breakpoint, stack ======================= */
+@media (max-width: 720px) {
+  body { padding: 6px 4px 12px; }
+  .page { padding: 6px 8px 10px; }
+  .mast { flex-direction: column; align-items: flex-start; }
+  .mast__right { text-align: left; }
+  .cols { flex-direction: column; }
+  .side { width: 100%; }
+  .side .box--dl { order: -1; }
+  .main { padding: 10px 12px 14px; }
+  .tabs { gap: 4px; }
+  .btn { height: 40px; font-size: 20px; padding: 0 10px; flex: 1 1 auto; } /* >=40px tap height */
+  .feat, .gallery { grid-template-columns: 1fr; }
+}
+
+/* Phone: the sidebar's Download box lands after the content, so the hero carries its own button. */
+.dl-phone { display: none; }
+@media (max-width: 720px) { .dl-phone { display: flex; margin-top: 10px; } }
+.btn.btn--big { height: 52px; font-size: 30px; padding: 0 22px; }
+kbd { font: inherit; font-size: .9em; padding: 0 4px; background: var(--gray-100); box-shadow: var(--raised-sm); }
+
+/* --- imported docs --- */
+.tbl { overflow-x: auto; margin: 0 0 1em; }
+.tbl table { margin: 0; }
+.main blockquote { margin: 0 0 .8em; padding: 2px 10px; border-left: 4px solid var(--gray-150); color: var(--gray-650); }
+.main li > ul, .main li > ol { margin: .2em 0; }
+.main td code, .main li code { overflow-wrap: anywhere; }

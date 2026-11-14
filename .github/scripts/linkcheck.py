@@ -66,9 +66,9 @@ try:
 except Exception:
     tracked = []
 skip_ext = {".png", ".bin", ".gz", ".emod", ".eden", ".zip", ".ogg", ".wav", ".edm", ".a", ".o", ".zst",
-            ".ipa", ".mp3", ".caf", ".jpg", ".icns", ".ico"}
+            ".ipa", ".mp3", ".caf", ".jpg", ".icns", ".ico", ".woff2", ".ttf"}
 for r in tracked:
-    if not r or not r.split("/")[0] in ("README.md", "docs", "port", "native", "Classes"):
+    if not r or not r.split("/")[0] in ("README.md", "docs", "port", "native", "Classes", "site"):
         continue
     if is_private(r) or os.path.splitext(r)[1] in skip_ext or r.startswith("port/tools/fixtures/"):
         continue

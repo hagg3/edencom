@@ -17,6 +17,7 @@
 
 #include "Alert.h"
 #include "GLDialog.h"
+#include "DebugMenu.h"
 #include "ConsoleMenu.h"   // C.3 (Menu.h only forward-declares it)
 #include "SignRenderer.h"
 #include "Renderer.h"      // G.5b-4: the effects pass bracket
@@ -777,6 +778,7 @@ bool World::update(float etime){
 		// tap) and claims every touch; the play step below then runs as usual with no player
 		// input. Unlike Settings it freezes nothing.
 		if(menu->showconsole) menu->console->update(etime);
+		DebugMenu::tick(etime);   // the Debug menu's delayed screenshot (Classes/DebugMenu.h)
         SkyCycle::update(etime,hud->inmenu);   // DN.2: the day/night clock (stops under the pause menu)
         Weather::update(etime,hud->inmenu);    // AT.1b: returns at once while Gameplay > Weather is off
         Precip::update(etime,hud->inmenu);     // AT.2b: the rain's motion clock (nothing while it is off)

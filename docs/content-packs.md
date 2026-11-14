@@ -1,6 +1,6 @@
 # Content packs (`pack.json`)
 
-Normative schema for Emod's content packs (Stage K.2, plan `WORKING/data-driven-content-plan-2026-11-01.md`).
+Normative schema for Emod's content packs (Stage K.2).
 Where `Classes/ContentPack.cpp` or `port/tools/pack.py` disagree with this page, this page wins and the code
 has a bug. Status: **K.2-3 (2026-11-01)** loads the stock pack `eden` at boot; **K.2-4 (2026-11-01)** loads
 mod packs (`Documents/Packs/`, `--packs=`) at every world entry ("Mod packs" below). **K.2-5
@@ -43,7 +43,7 @@ two picker pages (`Hud`). The C initialisers that held them are gone (`pristine-
   `.github/scripts/check-content-dump.py` pins its SHA-256 and diffs it against
   `port/tools/fixtures/content/stock-dump.txt` on every CI leg, the iOS simulator included. Editing
   `pack.json` changes block behaviour for every world: re-pin the dump in the same commit and say so.
-- **Never renumber a `stock_id`** (root `CLAUDE.md` rule 4: worlds store the raw byte).
+- **Never renumber a `stock_id`** (worlds store the raw byte).
 
 ## JSON dialect
 
@@ -231,7 +231,7 @@ skips the whole pack. Every line goes to stderr as `[pack] ...` and to the conso
 
 ## Managing packs (K.3)
 
-Plan: `WORKING/mod-manager-plan-2026-11-01.md`. Code: `Classes/ContentPack` (list, order, resolution, hash,
+Code: `Classes/ContentPack` (list, order, resolution, hash,
 world mods) and `Classes/PackInstall` (zip install, catalogue). Gate: `eden_native --mods-selftest --docs=<fresh>`.
 
 - **Dependencies.** A mod pack may say `"requires": ["base", "trims>=1.2"]` and `"conflicts": ["other"]` (at
@@ -298,7 +298,7 @@ A mod block is a folder with a `pack.json` and a PNG. No code, no rebuild.
    `BLOCK_PALETTE` stay, so putting the pack back restores the look. Exports (`.eden`) carry each block's
    `fallback` instead.
 
-Rehearsed on copies of real worlds (K.2-6, `TESTERS/k2/rehearsal/`): placed six blocks, saved, reopened without the
+Rehearsed on copies of real worlds (K.2-6): placed six blocks, saved, reopened without the
 pack (bytes kept, a save with no pack changes nothing), reopened with it, `emod.py verify` OK, exported to `.eden`
 and re-imported with the palette intact.
 

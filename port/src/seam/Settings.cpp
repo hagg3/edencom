@@ -260,6 +260,7 @@ static const Setting kSettings[] = {
   { "fire_chars_vines",  "Fire chars vines",  "Experiments", KIND_TOGGLE, 0,   1,   1,   0,  "Burning vines turn to dark stone.", NULL },
   { "dev_console",       "Allow developer console", "Experiments", KIND_TOGGLE, 0,   1,   1,   0,  "Adds a console button next to the settings icon in singleplayer.", NULL },
   { "double_brush",      "Double-size build brush", "Experiments", KIND_TOGGLE, 0,   1,   1,   0,  "A key builds 2x2x2 blocks at a time.", NULL },
+  { "debug_menu",        "Debug menu",        "Experiments", KIND_TOGGLE, 0,   1,   1,   0,  "Adds Debug to the pause menu: clean screenshots, time, weather, fly, view.", NULL },
   // DN.2 (WORKING/day-night-cycle-plan-2026-10-31.md U1): the clock runs and is saved per world, but
     // MP.8: comma-separated matchmaker addresses (host[:port], default 27020); empty = no Matchmakers tab.
   { "online_sources_open", "Online sources", "Experiments", KIND_PAGE, 0,   0,   0,   0,  "Matchmakers and the mod catalogue.", "online" },
@@ -593,6 +594,7 @@ static void apply_move_tunable(int i, float v, bool) {   // SRC.8b
 }
 static Player* settings_player(void) { return World::getWorld ? World::getWorld->player : nullptr; }
 extern bool DEV_CONSOLE_ALLOWED;
+extern bool DEBUG_MENU_ALLOWED;   // Classes/DebugMenu.cpp
 extern bool touchControlsSoundEnabled;
 extern bool nightAmbienceEnabled;
 static const SettingBinding kBindings[] = {
@@ -721,6 +723,7 @@ static const SettingBinding kBindings[] = {
   { "fire_melts_ice",  nullptr, [](int, float v, bool) { eden_set_fire_melts_ice(on(v)); } },
   { "fire_chars_vines", nullptr, [](int, float v, bool) { eden_set_fire_chars_vines(on(v)); } },
   { "dev_console",     nullptr, [](int, float v, bool) { DEV_CONSOLE_ALLOWED = on(v); } },
+  { "debug_menu",      nullptr, [](int, float v, bool) { DEBUG_MENU_ALLOWED = on(v); } },
   { "double_brush",    nullptr, [](int, float v, bool) { DOUBLE_BRUSH = on(v); if (!DOUBLE_BRUSH) eden_set_build_size(1); } },
   { "move_accelerate",    nullptr, apply_move_tunable },
   { "move_airaccelerate", nullptr, apply_move_tunable },

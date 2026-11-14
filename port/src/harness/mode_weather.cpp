@@ -24,6 +24,7 @@
 #include "../../../Classes/Clouds.h"
 #include "../../../Classes/Ambient.h"
 #include "../../../Classes/Camera.h"
+#include "../../../Classes/Player.h"
 #include "../../render/render_internal.h"
 #include "../../render/render_passes.h"
 #include "../../../Classes/Graphics.h"
@@ -1021,6 +1022,11 @@ static void halos_leg() {
         was[i] = t->getLand(lx[i], lz, ly[i]);
         t->setCellState(lx[i], lz, ly[i], TYPE_LIGHTBOX, 0);
     }
+    // QA.28: hold the eye still, 6 above the highest lamp. Scripted modes run on wall-clock etime, so a player left
+    // falling from the teleport sat lower on a slow CI runner, where lamp 0's walls below hid lamp 1 too.
+    eden_console_teleport(65536.5f, (float)(std::max(ly[0], std::max(ly[1], ly[2])) + 6), 65536.5f);
+    fly_set_state(2);
+    World::getWorld->player->vel = MakeVector(0, 0, 0);
     SkyCycle::setTime(0.0);
     tick(30);
     std::snprintf(d, sizeof(d), "halos %d glows %d glow texture %d", Ambient::halosDrawn(), Ambient::glowsDrawn(), Ambient::glowLive() ? 1 : 0);
@@ -1059,9 +1065,12 @@ static void halos_leg() {
         }
         tick(40);
         const int walled = Ambient::halosDrawn();
+        Vector we, wa;
+        World::getWorld->cam->viewPoints(&we, &wa);
         for (int i = 0; i < 5; ++i) t->setCellState(nb[i][0], nb[i][1], nb[i][2], old[i] < 0 ? 0 : old[i], oldc[i] < 0 ? 0 : oldc[i]);
         tick(40);
-        std::snprintf(d, sizeof(d), "halos walled in %d, open again %d", walled, Ambient::halosDrawn());
+        std::snprintf(d, sizeof(d), "halos walled in %d, open again %d (eye %.2f %.2f %.2f, lamps y %d %d %d)", walled, Ambient::halosDrawn(),
+                      we.x, we.y, we.z, ly[0], ly[1], ly[2]);
         check(walled == 2 && Ambient::halosDrawn() == 3, "a lamp boxed in by stone loses its halo; open again it comes back", d);
     }
 
@@ -1081,6 +1090,7 @@ static void halos_leg() {
     check(!Ambient::glowLive(), "Atmosphere back to Off frees the glow texture", d);
 
     for (int i = 0; i < 3; ++i) t->setCellState(lx[i], lz, ly[i], was[i] < 0 ? TYPE_NONE : was[i], 0);
+    fly_set_state(0);
     tick(2);
     eden_atmo_set_override(-1);
     eden_weather_set_override(-1);

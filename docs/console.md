@@ -1,6 +1,6 @@
 # The console language (command blocks + typed lines)
 
-*Not stock: Emod only.* Stage C (`WORKING/dev-console-plan.md`). **As of C.2 (2026-10-16)** the shared
+*Not stock: Emod only.* Stage C. **As of C.2 (2026-10-16)** the shared
 parser and interpreter (C.1, `Classes/CmdScript.{h,mm}`) and the registry with its cvars and console
 verbs (C.2, `Classes/Console.{h,mm}`) are in place, and `--console-selftest` gates both. The screen is
 C.3 and its on-screen-keyboard layout C.4 (*The screen* below); `Console::run(line)` is the front door

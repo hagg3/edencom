@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{title}}</title>
+<meta name="description" content="{{description}}">
+{{seo}}
+<link rel="preload" href="{{root}}static/fonts/Jersey10-Regular.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="{{root}}static/css/eden-site.css"></head>
+<body><div class="page">
+<header class="mast"><div><p class="mast__title"><a href="{{root}}index.html">Eden: Community Edition</a></p>
+<p class="mast__tag">A community fork of Eden: World Builder</p></div>
+<div class="mast__right">Beta {{version}} · macOS · Windows · Linux · iOS<br>Free and open source (GPLv3)</div></header>
+{{tabs}}
+<div class="cols">
+<main class="main">
+{{body}}
+</main>
+<aside class="side">
+{{toc}}<section class="box box--dl"><h2 class="box__t">Download</h2>
+<a class="btn btn--go btn--big" href="{{root}}download.html">Download</a>
+<p class="dl-alt">Beta {{version}} · unsigned build<br>macOS · Windows · Linux · iOS</p>
+</section>
+<section class="box news"><h2 class="box__t">News</h2>
+{{news}}
+</section>
+<section class="box"><h2 class="box__t">Community</h2>
+<p>Share worlds, report bugs, ask for help on the <a href="{{discord}}">official Eden Discord</a>.</p>
+<p>Source and issues: <a href="{{github}}">GitHub</a>.</p></section>
+</aside>
+</div>
+<footer class="foot">
+<div>Eden by Ari Ronen (2010–2015). This fork: GPLv3, <a href="{{root}}about.html">credits</a>.<br>Not the official Eden site. Last updated {{updated}}.</div>
+<div class="badges">
+<a href="{{root}}index.html"><img src="{{root}}static/img/b88-eden.png" width="88" height="31" alt="Eden CE, community fork"></a>
+<a href="{{github}}/blob/main/COPYING"><img src="{{root}}static/img/b88-gpl.png" width="88" height="31" alt="GPLv3, free software"></a>
+<a href="{{discord}}"><img src="{{root}}static/img/b88-discord.png" width="88" height="31" alt="Discord, join us"></a>
+</div></footer>
+</div></body></html>

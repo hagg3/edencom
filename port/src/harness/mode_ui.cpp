@@ -3,6 +3,9 @@ extern bool DEV_CONSOLE_ALLOWED;   // Hud.cpp
 #include "harness.h"
 #include "../../../Classes/SrclikeMove.h"   // SRC.8b
 #include "../../../Classes/Weather.h"       // SX.6
+#include "../../../Classes/DebugMenu.h"
+#include "../../../Classes/GLDialog.h"
+#include "eden_fs.h"
 #include "../shim/foundation/eden_prefs.h"
 extern "C" int eden_settings_set_by_key(const char* key, float v);   // SRC.8b
 
@@ -1999,6 +2002,35 @@ int run_ui_selftest() {
                       eden_hud_in_menu());
         check(armed == miPick && stillSettings && !menu->showsettings && eden_hud_in_menu() == 1,
               "Escape steps back capture -> Settings -> the pause menu", detail);
+        // --- the Debug menu (Classes/DebugMenu.h): Experiments > Debug menu adds the pause button -------
+        {
+            check(hud->rdebug.size.width <= 0, "the pause menu has no Debug button by default", "");
+            ::DEBUG_MENU_ALLOWED = true;
+            tick(2);   // the pause column re-lays itself out every frame
+            const Button rd = hud->rdebug;
+            check(rd.size.width > 0, "Experiments > Debug menu adds Debug to the pause menu", "");
+            ui_tap(rd.origin.x + rd.size.width * 0.5f, rd.origin.y + rd.size.height * 0.5f);
+            tick(3);
+            check(GLDialog::active() && eden_hud_in_menu() == 0, "Debug opens its dialog in place of the pause menu", "");
+            CGRect b;
+            if (GLDialog::buttonRect(0, &b)) ui_tap_rect(b);   // Screenshot
+            tick(3);
+            if (GLDialog::buttonRect(0, &b)) ui_tap_rect(b);   // Shot now
+            tick(12);
+            int fw = 0, fh = 0;
+            R::drawableSize(fw, fh);
+            const std::string shot = DebugMenu::lastShot();
+            std::snprintf(detail, sizeof(detail), "drawable %dx%d shot '%s' dialog=%d mode=%d", fw, fh, shot.c_str(),
+                          (int)GLDialog::active(), hud->mode);
+            check(!GLDialog::active() && hud->mode != MODE_CAMERA, "Shot now closes the dialog and returns to play", detail);
+            if (fw > 0 && fh > 0)
+                check(!shot.empty() && eden_fs_size(shot) > 0 && shot.find("/Screenshots/") != std::string::npos,
+                      "Shot now writes a PNG to Documents/Screenshots", detail);
+            ::DEBUG_MENU_ALLOWED = false;
+            tap_hud(0);
+            tick(10);
+            check(eden_hud_in_menu() == 1 && hud->rdebug.size.width <= 0, "back in the pause menu, Debug gone with the toggle off", "");
+        }
         // --- C.3: the Console over the running world --------------------------------------------
         {
             ConsoleMenu* cm = menu->console;

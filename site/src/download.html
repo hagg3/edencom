@@ -1,0 +1,42 @@
+title: Download Eden: Community Edition for Mac, Windows, Linux and iPad
+nav: download
+description: Download Eden: Community Edition, a free community fork of Eden: World Builder, for macOS, Windows, Linux, iPhone and iPad. Unsigned beta builds with install steps.
+---
+<h1>Download</h1>
+<p>Beta {{version}} is free, and the source is open (GPLv3). The builds are <strong>unsigned</strong>: your system will warn you the first time, and the steps below get past that. All files are on the <a href="https://github.com/hagg3/edencom/releases/latest">latest release page</a>.</p>
+<h2>macOS (Apple silicon)</h2>
+<p><a class="btn btn--go" href="https://github.com/hagg3/edencom/releases/download/v{{version}}/Emod-{{version}}-macos-arm64.tar.gz">Emod-{{version}}-macos-arm64.tar.gz</a></p>
+<ol><li>Unpack it. You get a folder called <code>Emod</code>.</li>
+<li>The app is not notarized, so macOS blocks it. In Terminal, once: <code>xattr -dr com.apple.quarantine Emod</code></li>
+<li>Run <code>Emod/emod</code> from Terminal (<code>./Emod/emod</code>), or double-click it in Finder.</li></ol>
+<h2>Windows (64-bit)</h2>
+<p><a class="btn btn--go" href="https://github.com/hagg3/edencom/releases/download/v{{version}}/Emod-{{version}}-windows-x64-portable.zip">Emod-{{version}}-windows-x64-portable.zip</a></p>
+<ol><li>Unzip it somewhere you own, like your Documents folder. It runs from where it is: nothing is installed.</li>
+<li>Run <code>eden.exe</code>. If SmartScreen says "Windows protected your PC", choose <em>More info</em>, then <em>Run anyway</em>.</li></ol>
+<h2>Linux (64-bit)</h2>
+<p><a class="btn btn--go" href="https://github.com/hagg3/edencom/releases/download/v{{version}}/Emod-{{version}}-linux-x64.tar.gz">Emod-{{version}}-linux-x64.tar.gz</a></p>
+<ol><li>Unpack it: <code>tar xzf Emod-{{version}}-linux-x64.tar.gz</code></li>
+<li>Run <code>./Emod/emod</code>. It needs the usual system libraries: OpenGL, X11 or Wayland, curl and audio.</li></ol>
+<h2>iPhone and iPad</h2>
+<p><a class="btn btn--go" href="https://github.com/hagg3/edencom/releases/download/v{{version}}/Emod-{{version}}-ios-unsigned.ipa">Emod-{{version}}-ios-unsigned.ipa</a></p>
+<p>Apple only runs signed apps, so this <code>.ipa</code> needs a tool that signs it with your own Apple ID. iOS 15 or newer.</p>
+<table><tr><th>Tool</th><th>iOS</th><th>Notes</th></tr>
+<tr><td>Sideloadly (Mac, Windows)</td><td>6 and up</td><td>The widest range. A free Apple ID means 7 days before you re-sign, and 3 apps at a time.</td></tr>
+<tr><td>AltStore / SideStore</td><td>12.2 and up</td><td>Same free-ID signing, refreshes itself on the device.</td></tr>
+<tr><td>TrollStore</td><td>14 to 16.6.1</td><td>Installs for good, no Apple ID. Only on versions it supports.</td></tr></table>
+<p>Android is planned, not built yet.</p>
+<h2>What you need</h2>
+<ul><li>A graphics card or chip with <strong>OpenGL 3.3</strong> on a computer (OpenGL ES 3.0 on iOS). Anything from the last decade has it.</li>
+<li>About 1 GB free disk for the game and a few worlds. Worlds you download can be large.</li>
+<li>An iPad Air 2 or newer, or an iPhone with iOS 15, for the iOS build.</li></ul>
+<h2>Where your worlds are saved</h2>
+<table><tr><th>System</th><th>Folder</th></tr>
+<tr><td>macOS</td><td><code>~/Library/Application Support/Emod</code></td></tr>
+<tr><td>Linux</td><td><code>~/.local/share/emod/Documents</code></td></tr>
+<tr><td>Windows</td><td><code>%APPDATA%\Emod\Documents</code></td></tr>
+<tr><td>iPhone, iPad</td><td>Files app, On My iPad, Emod</td></tr></table>
+<p>This is a separate folder from the old Eden app, so the two never touch each other's worlds. Worlds are saved as <code>.emod</code> files, written so that a crash in the middle of a save cannot damage them.</p>
+<h2>Bring your old worlds</h2>
+<p>Put an old <code>.eden</code> world (or a <code>.zip</code> or <code>.gz</code> of one) in the saves folder above. It shows up in the world list and converts the first time you play it; the original file is left alone. You can also export any world back to <code>.eden</code> from the Share screen.</p>
+<h2>Build it yourself</h2>
+<p>It is open source. The <a href="developers.html">Developers page</a> has the build steps.</p>

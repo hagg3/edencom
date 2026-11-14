@@ -72,6 +72,7 @@ row fire_melts_ice=1
 row fire_chars_vines=0
 row dev_console=1
 row double_brush=0
+row debug_menu=0
 row move_accelerate=20
 row move_airaccelerate=1000
 row move_friction=20

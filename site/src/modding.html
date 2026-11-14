@@ -1,0 +1,17 @@
+title: Modding - Eden: Community Edition
+nav: modding
+description: Make blocks, packs and Lua scripts for Eden: Community Edition, from your first block to the console and command blocks.
+toc: <section class="box toc"><h2 class="box__t">Modding</h2><ol><li class="on">Overview</li><li><a href="modding/content-packs.html">Blocks and packs</a></li><li><a href="modding/scripting.html">Lua scripts</a></li><li><a href="modding/console.html">The console language</a></li><li><a href="modding/console-reference.html">Console reference</a></li></ol></section>
+---
+<h1>Modding</h1>
+<p>Eden: Community Edition can load new blocks, textures and Lua scripts from a folder, with no rebuild. A mod is a <em>pack</em>: a folder with a <code>pack.json</code>, some 32×32 PNG tiles and, if you want behaviour, a script. Worlds that use a pack keep working if you remove it: the blocks show as a magenta "missing" block and nothing is lost.</p>
+<h2 id="path">The path, in order</h2>
+<ol>
+<li><strong>Make your first block.</strong> One tile, one block, five minutes: <a href="modding/content-packs.html#make-your-first-block-player-guide">the step-by-step guide</a>.</li>
+<li><strong>Learn the pack format.</strong> Tiles, sounds, blocks and their traits, validation messages: <a href="modding/content-packs.html">Blocks and packs</a>.</li>
+<li><strong>Add behaviour with Lua.</strong> A sandboxed script per pack with an <code>eden.*</code> API, events and budgets: <a href="modding/scripting.html">Lua scripts</a>.</li>
+<li><strong>Drive the world from text.</strong> The same small language runs in command blocks and in the in-game console: <a href="modding/console.html">how it works</a> and <a href="modding/console-reference.html">every verb and setting</a>.</li>
+</ol>
+<h2 id="help">Sharing and help</h2>
+<p>Packs install from a zip and show up in the in-game mod manager. Ask questions, show what you made and find other modders on the <a href="{{discord}}">Discord</a>. Bugs and requests go to <a href="{{github}}/issues">GitHub issues</a>.</p>
+<p class="doc-src">The pages in this section are generated from the project's <code>docs/</code> folder, so they match the code.</p>

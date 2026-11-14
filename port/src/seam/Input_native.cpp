@@ -76,7 +76,6 @@ void eden_tap_hud_button_begin(int which);
 int  eden_picker_page_step(int delta);   // Input.cpp (D.2p)
 void eden_tap_hud_button_end(int which);
 int  eden_menu_back(void);              // Menu.cpp (QA.22): Escape over any menu screen = Menu::back()
-int  eden_dialog_escape(void);            // Menu.cpp (UX.9): Escape over a GLDialog = its last button
 int  eden_chat_open(int slash);          // Menu.cpp (MP.7): the Console screen on its Chat tile, in a session
 int  eden_console_menu_toggle(void);     // Menu.cpp (C.3): the `console` key
 int  eden_ui_captures_keys(void);        // Menu.cpp (C.3): the Console owns the keyboard, field focused or not

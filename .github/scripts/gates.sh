@@ -168,6 +168,8 @@ gate "gl call gate"       linux   $PY -I ../port/tools/gl-call-gate.py
 gate "ui string gate"     linux   $PY -I ../port/tools/ui-string-gate.py
 # QA.26: the public reading set links only public files and leaks no /Users/ path.
 gate "linkcheck"          linux   $PY -I ../.github/scripts/linkcheck.py
+# WS.3: the project website builds; links, images, weight budget and the publish script's pages.yml hold.
+gate "site check"         linux   $PY -I ../site/build.py --check
 # QA.16: every --*-selftest main.cpp parses is a row here or a MANUAL line (A5-05).
 gate "gate coverage"      linux   $PY -I ../.github/scripts/check-gate-coverage.py
 # QA.16 (A5-11): docs/console-reference.md is what the binary prints (C.10).
@@ -230,7 +232,9 @@ pmutant "look-nodecay"    all  'step 7: glide on'                               
 pmutant "look-unlatched"  all  'step 9: an out-and-back'                          $B --look-selftest --look-mutate=unlatched --docs=@DOCS@
 pmutant "look-multi"      all  'step 8: a second world finger'                    $B --look-selftest --look-mutate=multi --docs=@DOCS@
 pmutant "look-clearlatch" all  'step 8b: the look keeps turning'                  $B --look-selftest --look-mutate=clearlatch --docs=@DOCS@
-pmutant "fly-move"        all  'noclip cruise is NOCLIP_SPEED'                    $B --fly-selftest --fly-mutate=move --docs=@DOCS@
+# fly-move: the wall check, not the cruise one: under the mutation noclip cruises at Fly's speed, which rides the
+# wall-clock frame EMA (97 b/s on a fast Mac, 58 on a CI runner, inside the NOCLIP_SPEED 60 tolerance).
+pmutant "fly-move"        all  'noclip passes a wall Fly stops at'                $B --fly-selftest --fly-mutate=move --docs=@DOCS@
 pmutant "lua-hook"        all  'a 300k-iteration loop is paused'                  $B --lua-selftest --lua-mutate=hook --docs=@DOCS@
 pmutant "lua-sandbox"     all  'the sandbox: no io/os'                            $B --lua-selftest --lua-mutate=sandbox --docs=@DOCS@
 pmutant "classic-tables"  all  '1\.x columns regenerate byte for byte'            $B --classic-selftest --classic-mutate=tables --docs=@DOCS@

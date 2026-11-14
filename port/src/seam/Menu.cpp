@@ -197,7 +197,6 @@ int eden_menu_delete_at(int index) {
 
 // QA.22: the "menu" key (Escape) over any menu screen: one call, the routing is Menu::back()'s table
 // (Classes/Menu.cpp). 1 = consumed. UX.9: a GLDialog is first, and Escape over it is its last button.
-int eden_dialog_escape(void) { return GLDialog::escape() ? 1 : 0; }
 int eden_menu_back(void) {
     if (GLDialog::escape()) return 1;
     Menu* m = menu_ptr();

@@ -24,7 +24,7 @@
 
 #include "GLWidgets.h"
 
-#define GLDIALOG_MAX_BUTTONS 6
+#define GLDIALOG_MAX_BUTTONS 8   // 8 since the Debug menu (four rows)
 
 class GLDialog {
 public:

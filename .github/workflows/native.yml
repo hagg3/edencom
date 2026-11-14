@@ -643,7 +643,9 @@ jobs:
         working-directory: native
         run: |
           cmake -B build $EDEN_CMAKE_FLAGS
-          cmake --build build --parallel
+          # QA.28: a bare --parallel under Makefiles is `make -j` with NO cap: ~300 compiles at once on a 3-core 7 GB runner
+          # swapped the macOS build to 24 min and each iOS slice to 40+ (the job hit its 90-min cap). Ninja jobs cap themselves.
+          cmake --build build --parallel "$(sysctl -n hw.ncpu)"
 
       - name: Gate — boot, checksums, selftests (the table, .github/scripts/gates.sh)
         working-directory: native
@@ -811,7 +813,7 @@ jobs:
               -DCMAKE_BUILD_TYPE=Release -DSDL_SHARED=OFF -DSDL_STATIC=ON \
               -DSDL_TEST_LIBRARY=OFF \
               -DCMAKE_INSTALL_PREFIX="$HOME/sdl3-ios/$slice"
-            cmake --build "/tmp/SDL/build-$slice" --parallel
+            cmake --build "/tmp/SDL/build-$slice" --parallel "$(sysctl -n hw.ncpu)"
             cmake --install "/tmp/SDL/build-$slice"
           done
 
@@ -832,7 +834,7 @@ jobs:
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET="$EDEN_IOS_MIN" \
             -DSDL3_DIR="$HOME/sdl3-ios/iphoneos/lib/cmake/SDL3"
-          cmake --build build-ios-device --parallel
+          cmake --build build-ios-device --parallel "$(sysctl -n hw.ncpu)"
 
       - name: Gate — the device .app is what it claims to be
         working-directory: native
@@ -920,7 +922,7 @@ jobs:
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET="$EDEN_IOS_MIN" \
             -DSDL3_DIR="$HOME/sdl3-ios/iphonesimulator/lib/cmake/SDL3"
-          cmake --build build-ios-sim --parallel
+          cmake --build build-ios-sim --parallel "$(sysctl -n hw.ncpu)"
 
       - name: Boot a simulator and install
         id: sim
@@ -1193,7 +1195,9 @@ jobs:
   # =============================================================================================
   # release — only for a workflow_dispatch with release=true (./publish-to-edencom.sh --release).
   # Creates (or updates) the public release v<version> and attaches the selected platforms'
-  # artifacts. Linux and macOS ship no packaged artifact yet, so they are not offered.
+  # artifacts. THE SITE LINKS THESE NAMES (site/src/download.html, version from VERSION.txt):
+  # Emod-<v>-linux-x64.tar.gz, -macos-arm64.tar.gz, -windows-x64-portable.zip, -ios-unsigned.ipa.
+  # Renaming one here breaks the Download page; change both.
   # =============================================================================================
   release:
     if: github.event_name == 'workflow_dispatch' && inputs.release
