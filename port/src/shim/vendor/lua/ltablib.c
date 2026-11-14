@@ -30,6 +30,17 @@
 #define TAB_RW	(TAB_R | TAB_W)		/* read/write */
 
 
+/*
+** Emod (QA.3): a mod script's count hook can't preempt C code, and
+** insert/remove/move loop over a count the script chooses (a lying __len,
+** table.move({}, 1, 2^62, 2)). Past TAB_MAXMOVE elements they raise an
+** error (a mod state's memory cap holds far fewer elements than this).
+*/
+#if !defined(TAB_MAXMOVE)
+#define TAB_MAXMOVE	((lua_Integer)1 << 24)
+#endif
+
+
 #define aux_getn(L,n,w)	(checktab(L, n, (w) | TAB_L), luaL_len(L, n))
 
 
@@ -73,6 +84,8 @@ static int tinsert (lua_State *L) {
       /* check whether 'pos' is in [1, e] */
       luaL_argcheck(L, (lua_Unsigned)pos - 1u < (lua_Unsigned)e, 2,
                        "position out of bounds");
+      luaL_argcheck(L, e <= pos || (lua_Unsigned)e - (lua_Unsigned)pos
+                       <= (lua_Unsigned)TAB_MAXMOVE, 2, "too many elements to move");
       for (i = e; i > pos; i--) {  /* move up elements */
         lua_geti(L, 1, i - 1);
         lua_seti(L, 1, i);  /* t[i] = t[i - 1] */
@@ -95,6 +108,8 @@ static int tremove (lua_State *L) {
     /* check whether 'pos' is in [1, size + 1] */
     luaL_argcheck(L, (lua_Unsigned)pos - 1u <= (lua_Unsigned)size, 2,
                      "position out of bounds");
+  luaL_argcheck(L, pos >= size || (lua_Unsigned)size - (lua_Unsigned)pos
+                   <= (lua_Unsigned)TAB_MAXMOVE, 2, "too many elements to move");
   lua_geti(L, 1, pos);  /* result = t[pos] */
   for ( ; pos < size; pos++) {
     lua_geti(L, 1, pos + 1);
@@ -124,6 +139,7 @@ static int tmove (lua_State *L) {
     luaL_argcheck(L, f > 0 || e < LUA_MAXINTEGER + f, 3,
                   "too many elements to move");
     n = e - f + 1;  /* number of elements to move */
+    luaL_argcheck(L, n <= TAB_MAXMOVE, 3, "too many elements to move");
     luaL_argcheck(L, t <= LUA_MAXINTEGER - n + 1, 4,
                   "destination wrap around");
     if (t > e || t <= f || (tt != 1 && !lua_compare(L, 1, tt, LUA_OPEQ))) {

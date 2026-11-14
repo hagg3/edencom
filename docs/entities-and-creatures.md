@@ -147,6 +147,8 @@ was wanted.
   so a window with no ground anywhere — a void world — retried the same slot forever and hung the
   load. It now gives up for this frame after 40 such tries (`oobTries`); creatures appear once land does.
 
+- **`addMoreCreaturesIfNeeded` wrapped on a negative chunk offset** (fixed QA.2, 2026-11-11; X.28's root cause). `arc4random()%T_SIZE` is `uint32_t`; added to a negative `chunkOffset*CHUNK_SIZE` the sum wrapped to ~4.29e9, whose `(int)` conversion is UB (INT_MIN on x86, so `GBLOCK` indexed `blockarray` negatively). Both draws are now cast to `int` first. `LoadModels2` also drops a saved creature whose `pos`, `vel` or `angle` is non-finite or beyond ±1e7 (`creatureFinite`). Gate: `port/tools/hostile-world-gate.sh` (CI `sanitize`).
+
 ## Safe vs. risky to modify
 - **Safe:** AI tuning (timers, ranges), spawn density, new interactions following the
   existing dispatch pattern.

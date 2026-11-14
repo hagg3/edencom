@@ -38,6 +38,7 @@ enum : uint32_t {
     FILE_HEADER = 64,
     REC_HEADER = 32,
     MAX_PAYLOAD = 16u << 20,
+    RESYNC_BUDGET_BASE = 64u << 20,   // QA.13: resync budget = 4 x file size + this (spec "Reading" rule 2)
     BAND = 8192,                 // 4,096 type bytes + 4,096 paint bytes, CC(x,z,y) order
     EDEN_HEADER = 192,           // WorldFileHeader
     EDEN_DIR_ROW = 16,           // ColumnIndex
@@ -68,6 +69,25 @@ enum RecordType : uint8_t {
 // A type this build reads (the rest of 1..255 is reserved: a member of its batch, otherwise ignored).
 inline bool known_record_type(int t) { return t >= 1 && t <= T_WEATHER; }
 enum Codec : uint8_t { C_NONE = 0, C_ZSTD = 1, C_ZLIB = 2 };
+// QA.4 (A3-03): the most a record of `type` may declare it decodes to (RecordHeader `aux`; a COLUMN's
+// is popcount(mask) x BAND <= 128 KiB). A reader refuses a larger one as "does not decode" (damage)
+// BEFORE allocating, so a small file cannot ask for a GiB. Mirrors putRecord's limits; emod.py
+// DECODED_MAX and docs/emod-file-format.md "Reading" carry the same table.
+inline uint32_t record_decoded_max(int type) {
+    switch (type) {
+    case T_COLUMN: return 16 * BAND;
+    case T_WORLD_HEADER: return EDEN_HEADER;
+    case T_CREATURES: return EDEN_MAX_SLOTS * EDEN_ENT;
+    case T_SIGN_TRAILER: return TRAILER_MAX;
+    case T_SUMMARY: return 16;
+    case T_COMMIT: return 24;
+    case T_GENERATOR: return GENERATOR_LEN;
+    case T_BLOCK_PALETTE: return PALETTE_HEAD + PALETTE_MAX * PALETTE_ENTRY;
+    case T_SKY_CLOCK: return SKY_CLOCK_LEN;
+    case T_WEATHER: return WEATHER_LEN;
+    default: return MAX_PAYLOAD;   // PROVENANCE (its lists grow with the source's directory), INDEX, reserved
+    }
+}
 
 uint32_t crc32_of(const void* p, size_t n, uint32_t crc = 0);
 
@@ -238,6 +258,12 @@ public:
     const std::vector<std::string>& damage() const { return damage_; }
     const std::vector<std::string>& warnings() const { return warnings_; }
     double openMs() const { return openMs_; }
+    // QA.13: what the scan's resync spent of its per-open budget (spec "Reading" rule 2): the bytes
+    // charged (32 + payload_len per attempt), the attempts, and whether the budget ran out.
+    uint64_t resyncCharged() const { return resyncCharged_; }
+    uint64_t resyncAttempts() const { return resyncAttempts_; }
+    bool resyncExhausted() const { return resyncOut_; }
+    static uint64_t resyncBudget(uint64_t fileSize) { return 4 * fileSize + RESYNC_BUDGET_BASE; }
 
     // ---- live view
     size_t columnCount() const { return colIndex_.size(); }
@@ -339,7 +365,7 @@ private:
 
     bool fail(const std::string& e) { error_ = e; return false; }
     bool readAt(uint64_t off, void* dst, size_t n);
-    bool frame(uint64_t p, Rec* r, std::vector<uint8_t>& scratch);
+    bool frame(uint64_t p, Rec* r, std::vector<uint8_t>& scratch, bool resync = false);
     void scan();
     void evaluate();
     void apply(const Rec& r);
@@ -370,6 +396,8 @@ private:
     uint32_t bandCount_[16];
     uint64_t liveRecordBytes_;
     double openMs_;
+    uint64_t resyncLeft_, resyncCharged_, resyncAttempts_;
+    bool resyncOut_;
     int codec_;
     Codecs codecs_;
     // the open batch

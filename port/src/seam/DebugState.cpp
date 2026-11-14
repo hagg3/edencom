@@ -1,16 +1,7 @@
-// DebugState.cpp — TEMPORARY debug probe for the "menu layout is broken" investigation
-// (web-port-final:web/docs/archive/PORT-STATUS-2026-08-13.md "Known open issue: menu layout", opened Pass 18).
-//
-// *** DELETE THIS FILE (and its CMakeLists.txt EDEN_SEAM_SOURCES entry) once the layout bug is
-// fixed or the investigation moves on. *** It exists only so a live browser session can read
-// Menu.mm's actual runtime rect/flag state directly via JS, instead of inferring state from
-// screenshots (Pass 20 hit a false positive doing the latter — see archive/PORT-STATUS-2026-08-13.md "Pass 20").
-// Same "temporary probe, delete after" pattern as Pass 17/18's throwaway fprintf instrumentation.
-//
-// Exposed as EDEN_EXPORT `eden_debug_menu_state()`, callable from JS as
-// `UTF8ToString(Module._eden_debug_menu_state())` — returns a static buffer (not exported
-// dynamically, single string, single frame use — no ownership/free story needed, matches this
-// port's other simple debug exports).
+// DebugState.cpp — the probe surface the harness checks read: `eden_debug_*` accessors for Menu/HUD rects and flags,
+// the pick viewport, the model and recolor probes and the sign pass. Plain C functions returning static buffers
+// (one string, single-frame use, no ownership). Nothing ships to a player; the harness modes call them.
+#include <vector>
 #include "../shim/foundation/eden_base.h"
 #include "../shim/foundation/eden_image.h"
 #include "../../../Classes/Renderer.h"         // R::pickViewport, for the D1 pick-viewport probe (G.5b-3)
@@ -90,18 +81,6 @@ const char* eden_debug_model_state(void) {
     return buf;
 }
 
-// Pass 27 addition: the in-game menu's button rects, so a headless drive can tap "exit to menu"
-// (the only path that reaches World::exitToMenu -> UnloadModels) through the real touch path.
-// Rects are in itouch's bottom-left-origin, Y-up space. TEMPORARY, same as the rest of this file.
-const char* eden_debug_hud_rects(void) {
-    static char buf[256];
-    if (!World::getWorld || !World::getWorld->hud) { snprintf(buf, sizeof(buf), "{}"); return buf; }
-    Hud* h = World::getWorld->hud;
-    snprintf(buf, sizeof(buf), "{\"rexit\":[%.2f,%.2f,%.2f,%.2f],\"rhome\":[%.2f,%.2f,%.2f,%.2f]}",
-             h->rexit.origin.x, h->rexit.origin.y, h->rexit.size.width, h->rexit.size.height,
-             h->rhome.origin.x, h->rhome.origin.y, h->rhome.size.width, h->rhome.size.height);
-    return buf;
-}
 
 // Audit D1/D4 addition: the derived point space + the HUD rects that actually move with it. This
 // is what tools/headless-display-profile-test.js asserts against — the whole point of unpinning
@@ -192,9 +171,55 @@ int eden_debug_safe_area_violations(float sx, float sy, float sw, float sh, char
     chkb("rmenu", h->rmenu); chk("stick", padbounds); chk("status", h->sb->pos);
     for (int i = 0; i < NUM_DISPLAY_BLOCKS; i++) chk("block", h->blockBounds[i]);
     for (int i = 0; i < NUM_COLORS; i++) chk("color", h->colorBounds[i]);
+    for (int i = 0; i < 11; i++) { Button b = h->hotbarButton(i); if (b.size.width > 0) chkb("hotbar", b); }   // UX.8-5
     chk("pickerPrev", h->pickerPrev); chk("pickerNext", h->pickerNext);
     chk("paintframe", h->rpaintframe);
     chk("railFrame", GLW::railFrame().panel);
+    return bad;
+}
+
+// UX.8-5: the hotbar's hit rects (0-8 cells, 9/10 chevrons; point space, y up). 0 = absent.
+int eden_debug_hotbar_rect(int idx, float* x, float* y, float* w, float* hh) {
+    if (!World::getWorld || !World::getWorld->hud) return 0;
+    Button b = World::getWorld->hud->hotbarButton(idx);
+    if (b.size.width <= 0) return 0;
+    *x = b.origin.x; *y = b.origin.y; *w = b.size.width; *hh = b.size.height;
+    return 1;
+}
+
+// UX.8-5: the hotbar's hit rects must not overlap each other or any other HUD hit rect (each button's own
+// rect widened by the 4 pt slop inbox3 adds, which is what a claim tests). Returns the number of pairs.
+int eden_debug_hotbar_overlaps(char* buf, int cap) {
+    if (buf && cap > 0) buf[0] = 0;
+    if (!World::getWorld || !World::getWorld->hud) return -1;
+    Hud* h = World::getWorld->hud;
+    struct R { const char* n; CGRect r; };
+    std::vector<R> hb, other;
+    for (int i = 0; i < 11; i++) {
+        Button b = h->hotbarButton(i);
+        if (b.size.width > 0) hb.push_back({"hotbar", RectFromButton(b)});
+    }
+    auto add = [&](const char* n, Button b) {
+        CGRect r = RectFromButton(b);
+        r.origin.x -= 4; r.origin.y -= 4; r.size.width += 8; r.size.height += 8;
+        other.push_back({n, r});
+    };
+    add("rmenu", h->rmenu); add("rbuild", h->rbuild); add("rpaint", h->rpaint); add("rmine", h->rmine);
+    add("rburn", h->rburn); add("rjumphit", h->rjumphit); add("rcrouchhit", h->rcrouchhit);
+    add("rflyhit", h->rflyhit); add("rcons", h->rcons); add("rchat", h->rchat);
+    auto hit = [](CGRect a, CGRect b) {
+        const float e = 0.01f;   // abutting rects share an edge: float rounding is not an overlap
+        return a.origin.x < b.origin.x + b.size.width - e && b.origin.x < a.origin.x + a.size.width - e &&
+               a.origin.y < b.origin.y + b.size.height - e && b.origin.y < a.origin.y + a.size.height - e;
+    };
+    int bad = 0, n = 0;
+    auto note = [&](const char* a, const char* b) {
+        if (bad++ < 4 && buf && n < cap) n += snprintf(buf + n, cap - n, "%s%s/%s", bad > 1 ? " " : "", a, b);
+    };
+    for (size_t i = 0; i < hb.size(); i++) {
+        for (size_t j = i + 1; j < hb.size(); j++) if (hit(hb[i].r, hb[j].r)) note("hotbar", "hotbar");
+        for (size_t j = 0; j < other.size(); j++) if (other[j].r.size.width > 8 && hit(hb[i].r, other[j].r)) note("hotbar", other[j].n);
+    }
     return bad;
 }
 
@@ -271,26 +296,11 @@ const char* eden_debug_menu_state(void) {
         m->selected_world ? m->selected_world->rect.origin.y : -1,
         m->selected_world ? m->selected_world->rect.size.width : -1,
         m->selected_world ? m->selected_world->rect.size.height : -1,
-        World::getWorld->doneLoading, World::getWorld->game_mode,
+        World::getWorld->doneLoading.load(), World::getWorld->game_mode,
         touchBuf);
     return buf;
 }
 
-// TEMPORARY (pass 23, delete with the rest of this probe): reports the raw engine heap pointers.
-// Hunting a low-memory zero-fill that clobbers emscripten's stack cookie the instant a world
-// loads: Terrain::clearBlocks / updateLightingBegin memset lightarray unconditionally, so a
-// failed malloc would splatter ~16 MB of zeros starting at address 0.
-extern "C" const char *eden_debug_alloc_state(void) {
-    // Stage R / R.3: lightarray is no longer the light store; the brick table is, and what it
-    // holds is reported instead of the old fixed 288*288*T_HEIGHT*3.
-    extern block8 *blockarray;
-    static char buf[256];
-    snprintf(buf, sizeof(buf),
-             "{\"blockarray\":%u,\"lightbricks\":%u,\"lightarray_bytes\":%u}",
-             (unsigned)(uintptr_t)blockarray, (unsigned)(uintptr_t)lightbricks,
-             (unsigned)lightStoreBytes());
-    return buf;
-}
 
 // Audit row 11 (A5) regression probe. The recolor pipeline is entirely invisible from the outside
 // — its failure mode is a Texture2D whose GL `name` stayed 0, which draws as nothing and reports
@@ -722,11 +732,6 @@ extern "C" void* eden_debug_world_trailer(void) {
     return World::getWorld->fm->trailer();
 }
 
-// Stage D / D.3b: what the last frame's sign pass did (Classes/SignRenderer.h's Stats as JSON):
-// records, inRange, drawn, hiddenAir, hiddenFront, onCmd, withText, textures, textureBytes.
-extern "C" const char* eden_debug_signs(void) {
-    return SignRenderer::describe();
-}
 
 // The open world's file, as a full path ("" with no world): --trailer-selftest reads it back from disk.
 extern "C" const char* eden_debug_world_file(void) {
@@ -771,30 +776,8 @@ extern "C" void eden_debug_set_empty_selfcheck(int on) {
     g_empty_selfcheck = (on != 0);
 }
 
-// B5 (256z Stage 3): force the save strategy for a test. Above g_save_inplace_threshold saveWorld
-// writes the world file in place behind a rollback journal; below it, it runs on a whole-file
-// scratch copy. Real worlds pick a path by their size, which would make the in-place path
-// untestable without a multi-hundred-megabyte fixture -- so a test sets the threshold to 0
-// ("always in place") or to a huge number ("never") and drives an ordinary small world through
-// both. Diagnostics-only, like everything else in this file. tools/headless-save-inplace-test.js.
-extern "C" void eden_debug_set_save_inplace_threshold(double bytes) {
-    eden_set_save_inplace_threshold(bytes < 0 ? 0ull : (unsigned long long)bytes);
-}
 
-extern "C" double eden_debug_get_save_inplace_threshold(void) {
-    return (double)g_save_inplace_threshold;
-}
 
-// C3: turn the rollback journal's phase 2 (the dirty-column pre-images that make an in-place save
-// fully atomic) off. Two callers: tools/headless-opfs-mirror-test.js A/Bs the per-save byte cost
-// with it on and off, and tools/headless-save-inplace-test.js needs B5's old behaviour to prove
-// the new records are what closes the tearing gap rather than something else having changed.
-extern "C" void eden_debug_set_save_journal_columns(int on) {
-    eden_set_save_journal_columns(on);
-}
 
-extern "C" int eden_debug_get_save_journal_columns(void) {
-    return g_save_journal_columns;
-}
 
 } // extern "C"

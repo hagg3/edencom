@@ -16,7 +16,7 @@
 #include "Globals.h"
 
 extern "C" int eden_atmo_tier(void);      // port/src/seam/Settings.cpp (AT.1a): 0 Off, 1 Low, 2 High
-extern "C" int eden_atmo_element(int e);  // 5 = atmo.ambient, 8 = atmo.halos
+extern "C" int eden_atmo_element(int e);  // AT_AMBIENT, AT_HALOS (Weather.h)
 extern Vector colorTable[256];
 int eden_lamp_positions(float ex,float ey,float ez,float radius,int cap,float (*out)[3]);   // Terrain.cpp (AT.8)
 
@@ -57,7 +57,7 @@ GV g_gv[GLOW_MAX*6];
 inline float rnd(){g_rng^=g_rng<<13;g_rng^=g_rng>>17;g_rng^=g_rng<<5;return (g_rng>>8)*(1.0f/16777216.0f);}
 inline float rng(float a,float b){return a+(b-a)*rnd();}
 
-bool enabled(){return eden_atmo_tier()>0&&eden_atmo_element(5);}
+bool enabled(){return eden_atmo_element(AT_AMBIENT);}
 int capNow(){return enabled()?(eden_atmo_tier()>=2?CAP_HIGH:CAP_LOW):0;}
 int kindCap(int k){const int c=(int)(capNow()*kShare[k]+0.5f);return c<1&&capNow()?1:c;}
 
@@ -383,7 +383,7 @@ static int quad(int n,const float c[3],float hs,const float rt[3],const float up
 // range (an additive quad must not take the fog colour) and near the camera. One texture, no buffer.
 void renderHalos(){
     g_halosDrawn=0;g_glowsDrawn=0;
-    const bool halos=eden_atmo_tier()>=2&&eden_atmo_element(8);
+    const bool halos=eden_atmo_tier()>=2&&eden_atmo_element(AT_HALOS);
     const bool flies=g_kind[FIREFLY]>0;
     if(!halos&&!flies&&!capNow()){freeGlow();return;}
     World* w=World::getWorld;

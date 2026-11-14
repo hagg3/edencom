@@ -49,6 +49,8 @@ public:
     static void prompt(const char* title, const char* body, const char* initialText, int maxBytes,
                        const char* const* buttons, int n, void (*cb)(int chosen, const char* text),
                        int lines = 1);
+    // UX.4: call right after show()/prompt(): button j draws with the danger tone (a destructive choice).
+    static void setDanger(int j);
     static bool textEntryAvailable();
     // MP.6: call right after prompt() for a password -- the field draws bullets and raises the
     // secure keyboard (GLW::TextField::setSecure). Cleared when the dialog closes.
@@ -62,6 +64,9 @@ public:
     // Stage 5.6: where button j is (point space, y up) while a dialog is up — so a harness taps the
     // real button instead of assuming the grid. False when no dialog is up or j is out of range.
     static bool buttonRect(int j, CGRect* r);
+    // UX.9: Escape over an open dialog = its last button (Cancel / Keep editing; a prompt's field does this itself).
+    // True if a dialog was up and took it.
+    static bool escape();
 
     void update(float etime);
     void render();

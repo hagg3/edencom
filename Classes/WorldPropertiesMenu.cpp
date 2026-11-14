@@ -34,6 +34,7 @@ static const int usage_id=14;   // distinct from Menu (7), SettingsMenu (3), GLD
 static const int kNameBytes=48; // New World's name rule (NewWorldMenu.mm kRows "name")
 
 static WorldPropertiesMenu* s_confirming=NULL;   // the screen a confirm dialog answers to
+static WorldPropertiesMenu* s_discarding=NULL;   // the screen whose Discard changes? is up (UX.9)
 
 // ---------------------------------------------------------------------------------------------
 // formatting
@@ -119,6 +120,7 @@ WorldPropertiesMenu::~WorldPropertiesMenu(){
     blurFields();
     delete m_photo;
     if(s_confirming==this) s_confirming=NULL;
+    if(s_discarding==this) s_discarding=NULL;
 }
 
 int WorldPropertiesMenu::rowOf(const char* key) const{
@@ -304,11 +306,26 @@ void WorldPropertiesMenu::close(){
     delete m_photo;
     m_photo=NULL;
     if(s_confirming==this){ s_confirming=NULL; GLDialog::dismiss(); }
+    if(s_discarding==this){ s_discarding=NULL; GLDialog::dismiss(); }
     // As NewWorldMenu::close(): Menu::update returned early for every frame this screen was up.
     Input::getInput()->clearAll();
 }
 
-void WorldPropertiesMenu::back(){ close(); }
+static void wp_discard_cb(int chosen){
+    WorldPropertiesMenu* s=s_discarding;
+    s_discarding=NULL;
+    if(chosen==0&&s&&s->isOpen()) s->close();
+}
+
+void WorldPropertiesMenu::back(){
+    if(!m_open||GLDialog::active()) return;
+    if(!saveEnabled()){ close(); return; }
+    blurFields();
+    static const char* const kBtn[]={"Discard","Keep editing"};
+    s_discarding=this;
+    GLDialog::show("Discard changes?",NULL,kBtn,2,wp_discard_cb);
+    GLDialog::setDanger(0);
+}
 
 void WorldPropertiesMenu::selectTab(int t){
     if(t<0||t>=TABS||t==m_tab) return;
@@ -394,6 +411,7 @@ void WorldPropertiesMenu::save(){
                    "you've already explored. Anything you've built or dug stays exactly as it is, so its edges may show. "
                    "Setting these back later brings the old land back.",
                    kButtons,2,confirmCb);
+    GLDialog::setDanger(0);   // UX.4 (P2): regenerates land
 }
 
 void WorldPropertiesMenu::commit(){
@@ -443,7 +461,9 @@ void WorldPropertiesMenu::buildLabels(){
         m_rowIdx[m_nRows++]=r;
         if(R.kind==WPK_VALUE){
             if(R.value.empty()) m_value[r].clear();
-            else m_value[r].set(R.value.c_str(),du(20),UITextAlignmentLeft);   // one line; long values are clipped by buildRows
+            else m_value[r].set(R.value.c_str(),du(20),UITextAlignmentLeft);
+            if(!R.value.empty()&&m_value[r].width()>railFrame().content.size.width*0.45f)   // UX.2 (B4): wrap inside a column share
+                m_value[r].set(R.value.c_str(),du(20),UITextAlignmentLeft,railFrame().content.size.width*0.45f);
         }
         for(int j=0;j<R.nOpts&&j<WP_MAX_OPTS&&R.kind==WPK_CHOICE;j++){
             m_opt[r][j].setLabel(R.opts[j].label,du(20));
@@ -652,7 +672,7 @@ void WorldPropertiesMenu::update(float etime){
                 m_scrollTouch=-1; m_barDrag=false;
                 if(scrolled) continue;
             }
-            if(backHit){ close(); return; }
+            if(backHit){ back(); return; }
             if(saveHit){ save(); return; }
             if(heldRow>=0&&m_opt[heldRow][heldOpt].hit(mx,my)){ m_choice[heldRow]=heldOpt; continue; }
             bool toggled=false;
@@ -677,6 +697,7 @@ void WorldPropertiesMenu::render(){
     GLW::begin2D();
 
     using namespace GLW;
+    Focus::screen(this, &m_save);   // UX.7
     fill(CGRectMake(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT), kScrim);
     bevel(m_panel, BEVEL_WINDOW);
     m_back.render();

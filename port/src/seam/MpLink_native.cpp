@@ -301,3 +301,15 @@ extern "C" void eden_mp_join_cancel(void) {
 extern "C" void eden_mp_join_ack(void) {
     if (g_js.stage == EDEN_MP_JOIN_FAILED) g_js.stage = EDEN_MP_JOIN_IDLE;
 }
+
+// QA.8 (U9): the host loop's idle branch (an unfocused desktop window draws nothing and calls no
+// World::update) keeps a session running: the link's pump, the REGION pacer and the join drain
+// (MpWorld::tick), and in play the ordered queue, peers, chat ages and our POSVEL (MpWorld::update,
+// self-gated to play, not during a load) -- the path a GLDialog modal already takes. Edits land in
+// the overlay and resident chunks and are meshed on the first frame back. 0 = no session.
+extern "C" int eden_mp_idle_pump(float etime) {
+    if (!MpWorld::link() && !MpWorld::active()) return 0;
+    MpWorld::tick();
+    MpWorld::update(etime);
+    return 1;
+}

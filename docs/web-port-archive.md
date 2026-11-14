@@ -12,7 +12,7 @@ returned.
   web-port-final -- web/` restores the tree.
 - **hagg3/edence** is the frozen public snapshot of the web port (no longer synced). hagg3/edencom
   (the superset with `native/`) continues; see `publish-to-edencom.sh`.
-- The shared code moved, not died: `web/src/{seam,shim}` → [`port/src/`](../port/CLAUDE.md),
+- The shared code moved, not died: `web/src/{seam,shim}` → [`port/src/`](../port/src/),
   `web/tools/{emod.py, fixtures, engine-sources.txt, …}` → `port/tools/`, the two UI fonts →
   `media/fonts/`, and the shim/UI reference pages → [`port/docs/`](../port/docs/README.md). Any
   `web/...` path still printed in a comment or an older doc names the retired build; read it at the tag.
@@ -31,7 +31,7 @@ returned.
 - **Tools:** `serve.js` (COOP/COEP, ranges, compression), `serve-fastly-repro.js`, `build-dist.js`,
   every `headless-*.js` (drove `eden.js` under node), every `safari-*.js` (safaridriver), the
   browser/Chrome memory probes.
-- **Docs:** `web/CLAUDE.md` (folded into [`port/CLAUDE.md`](../port/CLAUDE.md)), `web/README.md`, and the
+- **Docs:** `web/CLAUDE.md` (folded into the private maintainer notes), `web/README.md`, and the
   `web/docs/` pages that were browser-only: build-and-toolchain, execution-flow (the Emscripten frame
   loop), save-load (MEMFS/IDBFS/OPFS mirror, lazy range-fetched `Eden.eden`), eden-file-format (the
   bundle in the browser), networking (CORS), rendering, entities, lighting, terrain-generation,

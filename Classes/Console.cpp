@@ -36,36 +36,7 @@
 #include <deque>
 #include <unordered_map>
 
-// The port's Settings / keybind tables (port/src/seam/Settings.cpp, both targets link them).
-extern "C" {
-int         eden_settings_count(void);
-const char* eden_settings_key(int i);
-const char* eden_settings_label(int i);
-const char* eden_settings_group(int i);
-const char* eden_settings_hint(int i);
-int         eden_settings_kind(int i);
-float       eden_settings_min(int i);
-float       eden_settings_max(int i);
-float       eden_settings_step(int i);
-float       eden_settings_def(int i);
-int         eden_settings_enum_count(int i);
-const char* eden_settings_enum_label(int i, int j);
-int         eden_settings_native_hidden(int i);
-int         eden_settings_apply(int i);
-float       eden_settings_get(int i);
-void        eden_settings_set(int i, float v);
-void        eden_settings_reset_all(void);
-const char* eden_settings_cvar(int i);   // SX.6: the row's console name ("" = not a cvar)
-int         eden_keybind_count(void);
-const char* eden_keybind_action(int i);
-const char* eden_keybind_label(int i);
-int         eden_keybind_native_hidden(int i);
-int         eden_keybind_default(int i);
-int         eden_keybind_get(int i);
-void        eden_keybind_set(int i, int code);
-const char* eden_keybind_code_name(int code);
-const char* eden_keybind_code_label(int code);
-}
+#include "eden_settings.h"   // QA.19: the port's Settings / keybind tables (port/src/seam/Settings.cpp)
 
 extern int fwc_result;
 
@@ -446,13 +417,12 @@ float wLockTime(int) { return world() && SkyCycle::locked() ? 1.0f : 0.0f; }
 void wSetLockTime(int, float v) { if (world()) SkyCycle::setLocked(v != 0.0f); }
 float wWeatherNow(int) {
     if (!world()) return 0.0f;
-    return Weather::forceSnow() ? 4.0f : (float)Weather::kind();
+    return Weather::forceSnow() ? 4.0f : (float)Weather::kind();   // 4 = the "Snow" label
 }
 void wSetWeatherNow(int, float v) {
     if (!world() || !Weather::active()) return;   // as the `weather` verb: Gameplay > Weather off = nothing
-    const int k = (int)std::lround(v);
-    if (k == 4) Weather::set(Weather::RAIN, 0, true);
-    else Weather::set((Weather::Kind)std::max(0, std::min(3, k)), 0, false);
+    const int k = std::max(0, std::min(4, (int)std::lround(v)));
+    Weather::setByName(k == 4 ? "snow" : Weather::name(k), 0);
 }
 float wWeatherLock(int) { return world() && Weather::locked() ? 1.0f : 0.0f; }
 void wSetWeatherLock(int, float v) { if (world() && Weather::active()) Weather::setLocked(v != 0.0f); }
@@ -672,9 +642,8 @@ void cmdHistory(Ctx& c) {
 }
 
 // AT.1c: `weather [KIND] [SECS]` and `weatherlock on|off` (plan §10; Weather.h).
-const char* const kWeatherNames[] = {"clear", "overcast", "rain", "storm"};
 void weatherLine(Ctx& c) {
-    const char* what = Weather::forceSnow() ? "snow" : kWeatherNames[Weather::kind()];
+    const char* what = Weather::forceSnow() ? "snow" : Weather::name(Weather::kind());
     c.print("weather: %s, intensity %.2f, %s%s", what, Weather::intensity(),
             Weather::locked() ? "locked" : "next spell in ", Weather::locked() ? "" : (std::to_string((int)Weather::secondsLeft()) + " s").c_str());
 }
@@ -682,10 +651,8 @@ void cmdWeather(Ctx& c) {
     if (!Weather::active()) { c.error("Weather is off (Settings > Gameplay > Weather)"); return; }
     if (c.args.empty()) { weatherLine(c); return; }
     const std::string k = lower(c.args[0]);
-    int kind = -1;
-    for (int i = 0; i < Weather::KIND_COUNT; ++i) if (k == kWeatherNames[i]) kind = i;
-    const bool snow = k == "snow";
-    if (snow) kind = Weather::RAIN;
+    bool snow;
+    const int kind = Weather::kindByName(k.c_str(), &snow);
     if (kind < 0) { c.error("weather needs clear, overcast, rain, storm or snow"); return; }
     float secs = 0;
     if (c.args.size() > 1) {
@@ -763,7 +730,7 @@ void cmdStop(Ctx& c) {
 void cmdSave(Ctx& c) {
     World* w = world();
     if (!w) { c.error("No world is open"); return; }
-    w->fm->saveWorld();
+    if (!w->fm->saveWorld()) { c.error("Could not save: %s", w->fm->lastSaveError().c_str()); return; }   // QA.5
     Resources::getResources->playSound(S_WORLD_SAVED);
     c.print("World saved");
 }

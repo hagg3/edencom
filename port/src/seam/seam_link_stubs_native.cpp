@@ -90,7 +90,7 @@ static void home_cb(int i) {
 }
 
 void showAlertWarpHome() {
-    static const char* const kHome[] = { "Set Home Here", "Warp Home", "Cancel" };
+    static const char* const kHome[] = { "Set home here", "Warp home", "Cancel" };   // ui-label
     GLDialog::show("Home menu", "Both options save the world file first.", kHome, 3, home_cb);
 }
 
@@ -112,6 +112,7 @@ void showAlertDeleteConfirm(const char *name) {
     std::snprintf(body, sizeof(body), "\"%s\" will be deleted from this device. This can't be undone.",
                   name ? name : "This world");
     GLDialog::show("Delete world?", body, kDelete, 2, delete_cb);
+    GLDialog::setDanger(0);   // UX.4 (P2)
 }
 
 // Stage S / S.5: the question after a `.eden` was converted to an `.emod`. "Delete" removes the

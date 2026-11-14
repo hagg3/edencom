@@ -36,6 +36,8 @@ extern int fwc_result;
 bool CmdScript::trace = false;
 bool CmdScript::testNoDepthCap = false;
 bool CmdScript::testAnchorFeet = false;
+bool CmdScript::testForceMp = false;
+bool CmdScript::testFlagMutant = false;
 
 // ---- parsing ----------------------------------------------------------------------------------
 
@@ -102,36 +104,36 @@ const char* const kCreatures[NUM_CREATURES] = {"moof", "batty", "green", "nergle
 // The built-in verbs (CmdScript::verbs). The wording of every "X needs ..." error comes from here.
 #define C_ CmdScript::ARG_COORD
 const CmdScript::Verb kVerbs[] = {
-    {"say", "TEXT", NULL, "Shows TEXT on screen as a status message.", {CmdScript::ARG_TEXT}},
-    {"tp", "X Y Z", NULL, "Teleports the player, feet landing at that cell.", {C_, C_, C_}},
+    {"say", "TEXT", NULL, "Shows TEXT on screen as a status message.", {CmdScript::ARG_TEXT}, CmdScript::OP_SAY, CmdScript::V_SAFE},
+    {"tp", "X Y Z", NULL, "Teleports the player, feet landing at that cell.", {C_, C_, C_}, CmdScript::OP_TP, CmdScript::V_EDITS_WORLD},
     {"set", "X Y Z TYPE [COLOR]", NULL, "Places or replaces one block; air removes it. Optional paint colour.",
-     {C_, C_, C_, CmdScript::ARG_BLOCK, CmdScript::ARG_COLOR}},
+     {C_, C_, C_, CmdScript::ARG_BLOCK, CmdScript::ARG_COLOR}, CmdScript::OP_SET, CmdScript::V_EDITS_WORLD},
     {"fill", "X Y Z X2 Y2 Z2 TYPE [COLOR]", NULL, "Fills the box between the two corners, up to 4096 blocks.",
-     {C_, C_, C_, C_, C_, C_, CmdScript::ARG_BLOCK, CmdScript::ARG_COLOR}},
-    {"paint", "X Y Z COLOR", NULL, "Repaints an existing block (colour 0-54).", {C_, C_, C_, CmdScript::ARG_COLOR}},
-    {"explode", "X Y Z", NULL, "Drops a lit TNT block there: real fuse, real blast.", {C_, C_, C_}},
-    {"fire", "X Y Z", NULL, "Ignites the block there, if it burns.", {C_, C_, C_}},
+     {C_, C_, C_, C_, C_, C_, CmdScript::ARG_BLOCK, CmdScript::ARG_COLOR}, CmdScript::OP_FILL, CmdScript::V_EDITS_WORLD},
+    {"paint", "X Y Z COLOR", NULL, "Repaints an existing block (colour 0-54).", {C_, C_, C_, CmdScript::ARG_COLOR}, CmdScript::OP_PAINT, CmdScript::V_EDITS_WORLD},
+    {"explode", "X Y Z", NULL, "Drops a lit TNT block there: real fuse, real blast.", {C_, C_, C_}, CmdScript::OP_EXPLODE, CmdScript::V_EDITS_WORLD},
+    {"fire", "X Y Z", NULL, "Ignites the block there, if it burns.", {C_, C_, C_}, CmdScript::OP_FIRE, CmdScript::V_EDITS_WORLD},
     {"spawn", "CREATURE [X Y Z]", "a creature", "Spawns a creature, on the anchor unless you give a spot.",
-     {CmdScript::ARG_CREATURE, C_, C_, C_}},
-    {"day", "", NULL, "Gives the region its day sky back (time 0.25).", {0}},
-    {"noon", "", NULL, "The day sky (time 0.5).", {0}},
-    {"night", "", NULL, "Paints the region's sky night (time 0.75).", {0}},
-    {"midnight", "", NULL, "The night sky (time 0).", {0}},
+     {CmdScript::ARG_CREATURE, C_, C_, C_}, CmdScript::OP_SPAWN, CmdScript::V_EDITS_WORLD},
+    {"day", "", NULL, "Gives the region its day sky back (time 0.25).", {0}, CmdScript::OP_TIME, CmdScript::V_TIME},
+    {"noon", "", NULL, "The day sky (time 0.5).", {0}, CmdScript::OP_TIME, CmdScript::V_TIME},
+    {"night", "", NULL, "Paints the region's sky night (time 0.75).", {0}, CmdScript::OP_TIME, CmdScript::V_TIME},
+    {"midnight", "", NULL, "The night sky (time 0).", {0}, CmdScript::OP_TIME, CmdScript::V_TIME},
     {"time", "T", "T from 0 to 1", "Sets the time, T from 0 to 1: 0.25..0.75 is day, the rest night.",
-     {CmdScript::ARG_NUMBER}},
+     {CmdScript::ARG_NUMBER}, CmdScript::OP_TIME, CmdScript::V_TIME},
     {"timefreeze", "on|off", "on or off", "Stops or restarts the day/night clock; saved with the world. time T still sets it.",
-     {CmdScript::ARG_ONOFF}},
-    {"heal", "", NULL, "Full health.", {0}},
-    {"hurt", "N", "a number", "Deals N% damage. Only bites with Health on.", {CmdScript::ARG_NUMBER}},
-    {"gold", "N", "a number", "Grants N golden cubes (the purse holds 999).", {CmdScript::ARG_NUMBER}},
-    {"sound", "N", "a number", "Plays sound effect number N.", {CmdScript::ARG_NUMBER}},
-    {"flash", "", NULL, "White screen flash.", {0}},
+     {CmdScript::ARG_ONOFF}, CmdScript::OP_TIMEFREEZE, CmdScript::V_TIME},
+    {"heal", "", NULL, "Full health.", {0}, CmdScript::OP_HEAL, CmdScript::V_SAFE},
+    {"hurt", "N", "a number", "Deals N% damage. Only bites with Health on.", {CmdScript::ARG_NUMBER}, CmdScript::OP_HURT, CmdScript::V_SAFE},
+    {"gold", "N", "a number", "Grants N golden cubes (the purse holds 999).", {CmdScript::ARG_NUMBER}, CmdScript::OP_GOLD, CmdScript::V_EDITS_WORLD},
+    {"sound", "N", "a number", "Plays sound effect number N.", {CmdScript::ARG_NUMBER}, CmdScript::OP_SOUND, CmdScript::V_SAFE},
+    {"flash", "", NULL, "White screen flash.", {0}, CmdScript::OP_FLASH, CmdScript::V_SAFE},
     {"wait", "S", "a number", "Pauses this script S seconds (up to 600). Everything else keeps running.",
-     {CmdScript::ARG_NUMBER}},
-    {"run", "X Y Z", NULL, "Pushes the command block at that spot. Chains up to 8 deep.", {C_, C_, C_}},
+     {CmdScript::ARG_NUMBER}, CmdScript::OP_WAIT, CmdScript::V_SAFE},
+    {"run", "X Y Z", NULL, "Pushes the command block at that spot. Chains up to 8 deep.", {C_, C_, C_}, CmdScript::OP_RUN, CmdScript::V_EDITS_WORLD},
     {"if", "X Y Z TYPE", NULL, "The next statement runs only if that cell holds that block.",
-     {C_, C_, C_, CmdScript::ARG_BLOCK}},
-    {"unless", "X Y Z TYPE", NULL, "The next statement runs only if it doesn't.", {C_, C_, C_, CmdScript::ARG_BLOCK}},
+     {C_, C_, C_, CmdScript::ARG_BLOCK}, CmdScript::OP_IF, CmdScript::V_EDITS_WORLD},
+    {"unless", "X Y Z TYPE", NULL, "The next statement runs only if it doesn't.", {C_, C_, C_, CmdScript::ARG_BLOCK}, CmdScript::OP_UNLESS, CmdScript::V_EDITS_WORLD},
 };
 #undef C_
 
@@ -350,6 +352,15 @@ CmdScript::ParseOptions CmdScript::consoleOptions(const Ext* ext) {
 const CmdScript::Verb* CmdScript::verbs(size_t* count) {
     if (count) *count = sizeof(kVerbs) / sizeof(kVerbs[0]);
     return kVerbs;
+}
+
+// QA.20: the MP-safety flags of a statement. Built-in verbs come from their kVerbs row; OP_EXT (console
+// verbs) were always allowed here (they police themselves), so they stay V_SAFE.
+unsigned CmdScript::stmtFlags(const Stmt& s) {
+    if (s.op == OP_EXT) return V_SAFE;
+    if (testFlagMutant && s.op == OP_FILL) return V_SAFE;   // the mutation leg: one edit verb mislabelled
+    for (const Verb& v : kVerbs) if (v.op == s.op) return v.flags;
+    return 0;   // an op with no row: default deny
 }
 
 const CmdScript::Verb* CmdScript::findVerb(const char* name) {
@@ -818,21 +829,17 @@ int CmdScript::runLine(const char* src, int ax, int ay, int az, int source, Sink
     }
     // MP.3a: a multiplayer session has no command blocks and no console world edits -- they would be
     // edits nobody else sees, or teleports that belong to the server (engine plan §11). The rest runs.
-    if (MpWorld::active()) {
+    if (MpWorld::active() || testForceMp) {
         for (const Stmt& s : prog->stmts) {
-            switch (s.op) {
-                // K.1-3: these were listed with OP_TIME below until K.1-3, so with the cycle on they ran in a
-                // session (an aa31e2a regression); world edits are refused whatever the cycle says.
-                case OP_TP: case OP_SET: case OP_FILL: case OP_PAINT: case OP_EXPLODE: case OP_FIRE: case OP_SPAWN:
-                case OP_GOLD: case OP_RUN: case OP_IF: case OP_UNLESS:
-                    if (sink) sink->line(Sink::ERR, "Not in a multiplayer world: that changes the world (line not run)");
-                    return RUN_BAD;
-                case OP_TIME: case OP_TIMEFREEZE:
-                    if (SkyCycle::enabled()) break;   // DN.6 (D9): with the cycle on these move the session-local clock only
-                    if (sink) sink->line(Sink::ERR, "Not in a multiplayer world unless the Day/night cycle is on (Settings > Gameplay): time would be a world edit");
-                    return RUN_BAD;
-                default: break;
+            const unsigned f = stmtFlags(s);   // QA.20: the verb's own row decides; a row with no flags is refused
+            if (f & V_SAFE) continue;
+            if (f & V_TIME) {
+                if (SkyCycle::enabled()) continue;   // DN.6 (D9): with the cycle on these move the session-local clock only
+                if (sink) sink->line(Sink::ERR, "Not in a multiplayer world unless the Day/night cycle is on (Settings > Gameplay): time would be a world edit");
+                return RUN_BAD;
             }
+            if (sink) sink->line(Sink::ERR, "Not in a multiplayer world: that changes the world (line not run)");
+            return RUN_BAD;
         }
     }
     // The job pool caps lines that wait; a line with no `wait` always runs (a frame-budget pause

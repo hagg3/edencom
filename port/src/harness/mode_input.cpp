@@ -165,13 +165,25 @@ int run_fly_selftest() {
     fill(bx - 2, bx + 90, bz - 2, bz + 2, by - 2, by + 3, TYPE_NONE);   // an open corridor along +x
 
 
-    if (g_opt.flyMutate == "move") NOCLIP_MUTATE_MOVE = true;
-    else if (!g_opt.flyMutate.empty()) { std::fprintf(stderr, "[eden-fly] unknown --fly-mutate=%s\n", g_opt.flyMutate.c_str()); return 1; }
+    if (!mutation_known("eden-fly", "--fly-mutate", g_opt.flyMutate, {"move"})) return 2;
+    NOCLIP_MUTATE_MOVE = g_opt.flyMutate == "move";
     auto press = [&](SDL_Scancode k) { push_key(k, true); tick(2); push_key(k, false); tick(2); };
     auto toast = [&]() -> std::string {
         const std::string* t = World::getWorld->hud->sb->current();
         return t ? *t : std::string("(none)");
     };
+
+    // UX.5: F11 flips the Fullscreen setting (headless has no window: the wanted flag is the state
+    // the window follows), and flips it back.
+    {
+        const int f0 = eden_window_fullscreen_wanted();
+        press(SDL_SCANCODE_F11);
+        const int f1 = eden_window_fullscreen_wanted();
+        press(SDL_SCANCODE_F11);
+        const int f2 = eden_window_fullscreen_wanted();
+        std::snprintf(d, sizeof(d), "wanted %d -> %d -> %d", f0, f1, f2);
+        check(f0 == 0 && f1 == 1 && f2 == 0, "UX.5: F11 toggles fullscreen", d);
+    }
 
     // FM.4 gate 1: V cycles Off -> Fly -> Noclip -> Off and the toast says so.
     set_setting_by_key("fly", 1);
@@ -555,6 +567,7 @@ int run_gamepad_selftest() {
 // key axes, crouch implied, the move.* cvars. SRC.3 leg `trace`: the swept hull trace (below). SRC.4 leg
 // `move`: the core tick against the SRC.1 vectors, and the frame driver (further below).
 // ---------------------------------------------------------------------------------------------
+extern "C" int eden_window_fullscreen_wanted(void);   // WindowState_native.cpp (UX.5)
 static void source_input_leg();
 static void srclike_trace_leg();
 static void srclike_move_leg();

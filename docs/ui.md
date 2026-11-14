@@ -93,7 +93,7 @@ fit, a row taller than the view still shows; `rowOffset()`; content drags walk t
   0.70 floor stays: 0.55 on touch was tried from shots and dropped (hint text ~10 iOS pt, the
   `railFrame` panel narrower than the phone, labels built at the old scale clipped). Every kit
   control's `render()` feeds `GLW::debugRecordControls`/`debugControlsOutside`, `--fit-selftest`'s
-  recorder. The collapsed Console strip now anchors to `safeRect()` (the gate found it under the
+  recorder; UX.2 added `debugControlsOverlap` (two leaf controls drawn over each other by >1 pt, one inside the other excused for a Stepper's arrows; modal dialogs `rename`/`sign-prompt` skipped), a second check per screen. The collapsed Console strip now anchors to `safeRect()` (the gate found it under the
   island). **It applies the `SCALE_*` corrections itself**, so
   the caller works entirely in point space with y up — the `sm_fill`/`gldialog_fill` idiom that used
   to be copy-pasted into every screen. Adding a widget? Add it here, not in a screen.
@@ -127,7 +127,7 @@ fit, a row taller than the view still shows; `rowOffset()`; content drags walk t
   (`port/src/seam/seam_link_stubs_native.cpp`) points `showAlertWorldType()` (a chained
   type→height pair; since U.5 only for a world not made through `NewWorldMenu`, which parks both answers), `showAlertWarpHome()`, since 5.6 `showAlertDeleteConfirm()`, and since S.5 `showAlertDeleteOriginal()`
   (Share › Remove original) and `showAlertConvertHeight()` (convert-on-play's Upgrade to 256 · Keep 64 · Cancel) at it.
-  `GLDialog::buttonRect(j, &r)` (5.6) tells a harness where button j is.
+  `GLDialog::buttonRect(j, &r)` (5.6) tells a harness where button j is. **UX.9:** Escape over any open dialog is its **last button** (`GLDialog::escape()`, reached through the seam's `eden_dialog_escape`, first in the Escape chain; a prompt's field does this itself), so put Cancel / Keep editing last.
   `eden_ui_wants_cursor()` returns true while a `GLDialog` is up, so the native mouse-capture
   predicate releases the pointer for it — needed because `Hud::handlePickMenu` clears `inmenu` in
   the same breath as `showAlertWarpHome()`, so the "in a menu" term alone would not cover it.
@@ -263,14 +263,8 @@ Responsibilities:
   in-game modal; only where `eden_gl_settings_available()`, which answers 1 on every live target —
   the retired web build answered 0). The button gap is kept above 8pt because
   `inbox2`/`inbox3` add 4pt of slop and `handlePickMenu` runs every action whose rect matches.
-  The panel no longer fades with `at1` (the kit snaps). **MODIFIED FROM STOCK** (2026-07-29): the
-  `renderMenuScreen()` call in `Hud::render` is now additionally gated on
-  `eden_hud_draw_menu_screen_hook` (`Hud.h`), a host hook whose default `NULL` means
-  "always draw". `Menu.cpp` installs a hook (`legacy_ui`) that was false on the web build unless
-  the player chose the legacy GL UI (the DOM drew its own menu there); native calls
-  `eden_ui_force_legacy(1)` at startup, so it is always true and the panel always draws.
-  Note that only the PANEL is suppressible — the corner open-menu icon always draws, since
-  it is what opens the thing.
+  The panel no longer fades with `at1` (the kit snaps). (The retired web build gated the
+  `renderMenuScreen()` call on a host hook; QA.21 deleted the hook and the legacy-UI switch, so the panel always draws. The corner open-menu icon always draws too, since it is what opens the thing.)
 - **Mods page (K.2-5, D13).** After the two stock pages, one page per 35 loaded mod blocks whose pack says
   `"picker": true` (`ContentPack::modReport().blocks`, load order); `Hud::pickerPageCount/pickerCellCount/pickerCell`
   are dynamic, the page dots follow, and a multiplayer session (or no pack) shows only the two stock pages. A mod
@@ -281,7 +275,7 @@ Responsibilities:
   before the tool branch), which turns `blocktype` into the world's real id (`BlockRegistry::acquire`; failure text
   such as "palette full" is a status toast). In an unflagged world the first placement asks once per world
   ("Use a mod block?": Place it / Cancel; Cancel places nothing and leaves the file untouched). `worldLoaded()`
-  re-points a stale sentinel or resolved id by name (else brick), and the hotbar never keeps a mod block.
+  re-points a stale sentinel or resolved id by name (else brick). A hotbar slot keeps a mod block by name (UX.8-3, "Hotbar" below).
   Gate: `--packs-selftest` (pages, tap-select, resolve, re-point, confirm Cancel/OK, session = 2 pages).
 - **Block picker** (`renderBlockScreen` / `handlePickBlock`): `NUM_DISPLAY_BLOCKS 35`
   tiles; picking a second block for ramps (`pickSecondBlock`). Sets `blocktype`.
@@ -327,7 +321,7 @@ Responsibilities:
   `FC_PLACE` − `FC_DESTROY` cell delta; the bottom is refused with the toast "Can't place a sign
   under the block"; otherwise `GLDialog::prompt` (95 bytes, printable ASCII kept) — a new sign,
   or, on a face that already has one, an edit prefilled with its text, where an empty answer
-  deletes it. Colour = the build paint (`block_paintcolor`, set by tapping build in paint mode)
+  deletes it. Colour = the build paint (`block_paintcolor`, set by tapping build in paint mode or by a hotbar painted slot)
   or 45 (charcoal); an edit recolours only when a paint is picked. Refusals from the trailer
   (full, unreadable) toast through `fm->reportTrailerRefusal`. `pickerPage` + the ◀ ▶ strip (`pickerPrev` /
   `pickerNext`, laid out by `layoutForScreen()` under the grid's last row; hit boxes grow DOWNWARD
@@ -336,10 +330,11 @@ Responsibilities:
   strip; page dots sit between the arrows. `Hud::pickerPageStep(delta)` (wraps) is the one entry
   point: the arrows, native `[` `]` (`Input_native.cpp`, fixed keys, not keybind rows) and the
   wheel (`eden_ui_take_wheel()` in `Hud::update`). The keys go through `eden_picker_page_step`
-  (`Input.cpp`), which answers 0 when the picker is closed so the key keeps its usual meaning. Reopening the picker lands on the current block's page. A page turn keeps a
+  (`Input.cpp`), which answers 0 when the picker is closed so the key keeps its usual meaning. On keyboard + mouse the arrows read `[ <` and `> ]` (UX.8-6 hint; touch keeps `<` `>`). Reopening the picker lands on the current block's page. A page turn keeps a
   pending Block-TNT second pick; no page-2 cell has a BT variant, so all of page 2 is veiled during it.
 - **Color picker** (`renderColorPickScreen` / `handlePickColor`): the 54-color grid +
-  "no color"; sets `block_paintcolor`.
+  "no color"; sets `paintColor` (the paint-mode colour, index+1, 0 = none) and enters paint mode; `block_paintcolor`
+  (what a placed block carries) is set by `Hud::applyHand` or a painted pick; the pick lands in the hotbar (smart replace, "Hotbar model").
 - **Both pickers draw on `GLWidgets` since Stage 5.7 (2026-10-06); the hit path is stock.**
   `blockBounds[]`/`colorBounds[]`, `rpaintframe`, `handlePick*` and `Hud::update`'s release logic
   are untouched (the display-profile test pins the classic rects). Only drawing moved: a WINDOW
@@ -367,6 +362,111 @@ them — the ordering in `World::update` is the arbitration.
 **Crosshair.** `Hud::render` draws a gapped dark+light cross at the screen centre after `sb->render()` when
 Settings › Interface › Crosshair (`eden_get_crosshair()`) is on (default ON on keyboard+mouse, OFF on touch: seeded once from the input profile, FT.13), `mode` is not `MODE_NONE`/`MODE_PICK_BLOCK`/
 `MODE_PICK_COLOR`, and no picker is fading (`at2`/`at3`). Camera mode and `hideui` return earlier, so it is hidden there too.
+
+### Block icon (`Classes/BlockIcon.{h,cpp}`, UX.8-1/-2)
+The build button's fake-isometric block picture is `BlockIcon::cube(type, colour, Geo, flags)`, a function of
+its arguments instead of `Hud` members, so other HUD parts (the hotbar, UX.8) can draw any block. Everything
+is in the pass's **raw units** (the HUD's ortho units, i.e. already ×`SCALE_*` on an iPad-scale UI).
+- **Cube:** three `Pen::strip` quads (front, top, side), each with its **own face tile** (`blockTypeFaces`
+  slots 0/5/3, the unpainted twin when unpainted: grass shows its dirt side) and a flat shade (front .84, top 1,
+  side .66). TNT, firework, ladder and `IS_BLOCKTNT` keep one picture on every face (the block-TNT top shows
+  its `blockTntMap` block). `FRONT_ONLY` draws the front alone (the Moof).
+- **Ramps and sides (`*_RAMP1..4`, `*_SIDE1..4`):** drawn from the world mesher's own triangles
+  (`Geometry.cpp` `rampNShortVertices`/`sideNShortVertices` + `*Texture`), projected like the cube (x mirrored:
+  the front face is seen from outside) and back-face culled by screen winding, so each orientation looks like the
+  placed block. Shade by triangle normal. `Strip(first,…)` indexes vertices and st arrays together: pass st arrays
+  as long as the vertex array.
+- **`BlockIcon::flat`** (flower, golden cube, door top, portal top: `isFlat`) is the recoloured picture
+  (`Resources::getPaintedTex`, 16-entry LRU) scaled into the box with `drawInRect` (which multiplies by
+  `SCALE_*` on an iPad: `flat` divides first). Those icon textures load with a world, not in the menu.
+- **`cubeMod` / `drawMod(name, colour, rect)`:** a mod block as the same iso cube from its `BlockDef`
+  (faces, atlas, tint, `paint_art` ICON); nothing if undefined. The build button's mod branch still draws the
+  flat `mod_icon` in `Hud.cpp` (UX.8-4 may switch it).
+- **Furniture:** `chip(colour, rect)` (painted block's corner chip, bottom-right), `drawSwatch(colour, rect)`
+  (a colour slot's paint chip: keyline, paint, bevel edges; no brush glyph, `UIIcons` has none), `drawEmpty(rect)`
+  (dim "+"); plain `Graphics::fillRect` fills.
+- It draws no frame: `Hud::renderBlockAndBorder` keeps the build-button art, the tool-sentinel pictures and the
+  **stock pixel sizes** it passes as a `Geo` (`size` 29/24/45 by `build_size`, ×2 under `IS_IPAD`).
+  `fit(rect)` / `draw(type, colour, rect)` scale the build-size-1 proportions to any box.
+  `type` must be a table row (never a tool or mod sentinel); a palette byte with no definition draws the
+  magenta missing block.
+- UX.8-1 was a pure extraction (byte-identical A/B); **UX.8-2 changes the build button on purpose** (shading,
+  side tiles, real ramp/side wedges). Review artefact: `--shot` pages `icons` / `icons-2` (64 px) and
+  `icons32` (32 px), drawn full-screen in-world after `hud`: block id 1.. row-major (15 columns at 1136 wide),
+  then painted stone/grass/wood ramp/wood side/TNT/flower, two mod-block cells, the missing block, two swatches,
+  an empty slot. `TESTERS/hotbar/ux8-2/`. Fences: none exist as geometry in stock (`TYPE_BTFENCE` is a
+  block-TNT variant), so there is nothing to special-case.
+
+### Hotbar model (`Classes/Hotbar.{h,cpp}`, UX.8-3)
+Nine slots per world; nothing draws them yet (the strip is UX.8-4, touch/pointer interaction UX.8-5). Plan:
+`WORKING/hotbar-plan-2026-11-12.md`.
+- **A slot** (`HotbarSlot`) is empty, a BLOCK (stock id 1..127, `HUD_TOOL_SIGN/CMD`, or a mod block as `ns:path`, plus
+  the `block_paintcolor` a placed block carries) or a COLOUR (1..54, paint mode). Two slots are the same item only if
+  kind, type/name and colour all match: painted wood and wood are different items; door and golden cube carry their
+  forced colour 20.
+- **The hand stays in `Hud`** (`blocktype`, `block_paintcolor`, `paintColor`, `mode`). A slot reaches it only through
+  `Hud::applyHand(slot, keepMode)`: BLOCK sets type + colour + `MODE_BUILD`, COLOUR sets `paintColor` + `MODE_PAINT`,
+  an open picker is closed (`blocktype_pressed=-1`). A mod slot becomes the pending sentinel `HUD_MOD_BASE+index` and
+  the selection name, so a slot never takes a palette id by existing (`resolveModBlock` still does that at the first
+  placement). `Hud::handAvailable` says no for a mod block this world has not loaded (or any mod block in a
+  multiplayer session), a text tool without text entry, a golden cube with none collected, bedrock: `applyHand` then
+  returns false, the hand is unchanged and a mod slot shows a toast.
+- **The hand reaches the bar** only through `Hud::noteHand()` (= `Hotbar::noteHand(Hud::handSlot())`), called at the
+  three places the hand changes other than a slot select: the picker commit in `Hud::update` (block and colour, on
+  the mode change out of the picker), the paint -> build combine on `rbuild`, and the eyedropper
+  (`eden_pick_block_at_crosshair`). It is the **smart replace**: the slot that already holds the item is selected;
+  else the first empty slot is filled; else the selected slot (slot 1 when none) is replaced. With a **picker
+  target** set (`setPickerTarget`, for UX.8-5's re-select) the item lands in the target and, if another slot held
+  it, the two swap. A new place that changes the hand must call `noteHand()`.
+- `Hotbar::select(i)` (`eden_select_hotbar_slot`; the keys go through `eden_hotbar_key`, see UX.8-5) refuses an empty slot; `scroll(dir)` (wheel, pad
+  shoulders, d-pad left/right) steps to the next slot `handAvailable` accepts, wrapping. `selected()` is -1 when the
+  hand matches no slot.
+- **Persistence** is the sidecar `Worlds/<id>/hotbar.json` (`docs/save-load.md`), read in
+  `FileManager::finishLoadOnMain`, written by `saveIfDirty()` after a world save and in `World::exitToMenu`. A bar
+  read from the world's own file puts its selected slot back in the hand with the mode kept; a world without one
+  starts from prefs `hotbar.last` (the last bar saved anywhere) minus mod slots, else the stock nine, and never
+  changes the hand, so a fresh world's HUD is as before.
+- Gate: `--hotbar-selftest` (`port/src/harness/mode_hotbar.cpp`).
+
+### Hotbar strip (`Hud::renderHotbar`, UX.8-4)
+- **Setting** Settings > Gameplay > *Hotbar* (`hotbar`, `eden_get_hotbar_shown()`): seeded on for keyboard+mouse, off on
+  touch. Off = zero draws, no toast lift (HUD shots byte-identical to before); the 1-9 keys work either way.
+- **Layout** (point space, drawn after the joystick/chat button and before the toast): desktop = bottom centre, cells
+  `du(40)`, `du(8)` above the safe bottom, and `GLW::Toast::setLift` raises the status toast above it. Touch = top
+  centre between the version tag (tag end taken as safe-left + 121, or + 175 with the chat/console button) and
+  `HUDR_X - 8`; cell 44 pt shrinking to a 36 pt floor, else a 7- then 5-cell window centred on the selection (`<` `>`
+  at an end mean more slots). Sized from the free width, never from the profile name.
+- **Look**: dark plate, 2u `#646464` keyline, 2u hard shadow; the selected cell is lifted 2u with a 3u lime ring
+  (dim lime while the hand is mine/burn). Icons are `BlockIcon` (block + colour chip, swatch, tool art, dim `+`);
+  a slot `handAvailable` refuses is dimmed. Desktop cells carry the live binding of `hotbarN` as a key hint.
+- **Name label** 1.5 s after a selection change (not on the first frame of a world), above (desktop) / below (touch)
+  the strip: `Hotbar::label` ("Stone ramp 1", "Sign", "Colour 12", painted adds " (colour N)").
+- **Hidden** with F1, camera mode, the pause menu, and under a picker when the picker panel (`rpaintframe`)
+  intersects it (always, on the touch top strip).
+
+### Hotbar interaction (UX.8-5)
+- **One layout, two users**: `Hud::hotbarLayout` (n, window start, cell, left, y) feeds both `renderHotbar` and
+  `Hud::hotbarButton(idx)` (0-8 slot cells, 9/10 chevrons; zero-size when hidden or outside the window). Cells abut (each takes
+  half the 2u gap either side, so no two overlap); on touch a cell is at least `touchFloor()` tall, hanging from the top edge.
+- **Claim**: a touch that goes down on a cell or chevron (not in the pause menu) gets `inuse = usage_hb (17)`, so the player
+  never places a block or turns the camera with it. Desktop: only reachable with the cursor free (a picker open, strip not
+  hidden by it); a captured mouse never produces HUD touches.
+- **Tap** (release, no drag): `Hud::hotbarActivate(slot)` = a picker open: retarget it to that slot; the *selected* slot
+  while the hand is in use, or an *empty* slot: open the block picker for it (the colour picker for a colour slot) with
+  `Hotbar::setPickerTarget` and the status line "Choosing for slot N"; else `Hotbar::select`. The 1-9 keys take the same
+  route (`eden_hotbar_key`). A select by any route plays `S_MENU_BUTTON_PRESS` once (`Hotbar::select`).
+- **Pick lands in the target**: the picker commit goes through `noteHand` as before (swap with the slot that held it). Closing the
+  picker any way (commit, Escape, menu) drops the target and the status line (`Hud::update`, `s_hbChoosing`).
+- **Assign by number**: with a picker open and the mouse over a cell, 1-9 assigns that cell to the slot
+  (`Hud::hotbarAssignAt` -> `Hotbar::assign`: an item already on the bar swaps places instead of duplicating); the picker stays
+  open. Cells that are not items (block-TNT's two-step, `TYPE_CUSTOM`, a tool whose row is off, a golden cube you do not own) refuse.
+- **Clear**: long-press (0.5 s, no drag) on a cell, or right-click on one with the cursor free (`eden_hotbar_right_click`);
+  `Hotbar::clear`, status "Slot N cleared".
+- **Slide** (window < 9 cells): a horizontal drag over the strip moves the window one slot per cell pitch and never selects;
+  a chevron tap slides one window. The slide is forgotten when the selection changes (the window re-centres).
+- Test hooks: `eden_tap_hud_button_begin/end` ids 11-19 (cells), 20/21 (chevrons); `eden_debug_hotbar_rect/overlaps`;
+  `--touch-selftest` (tap, re-tap, pick, long-press, safe rect, overlaps) at `--device=iphone16`, `iphonese` and
+  `--window=1024x768 --touch-profile`; `--hotbar-selftest` (assign/clear/activate).
 
 ## Menu system (`Classes/Menu.cpp` + satellites)
 
@@ -419,7 +519,7 @@ Settings › Interface › Crosshair (`eden_get_crosshair()`) is on (default ON 
   word of a pair does not fit, both shrink to it (`layoutHome`, redone only when the tile width
   changes). (The MENU_* art tiles of the first I.7 cut are gone; `menu_home_tile` is unused.) The list ("My Worlds"
   titlebar: **Back** · title · New) has no logo and fills the safe rect's height; Settings and Get
-  Worlds left it. Back or Escape (`eden_menu_home_back()`, last in `Input_native.cpp`'s menu-key chain)
+  Worlds left it. Back or Escape (`Menu::back()`'s fallback when no screen is open)
   returns home; Escape on home does nothing. **Quit to Menu** (`Menu::activate`) and a finished Get
   Worlds download (`addImported`) land on the list; the browser's Back returns to home. Harness keys
   `"home.myworlds"`, `"home.multiplayer"`, `"home.getworlds"`, `"home.settings"`, `"back"`; the old
@@ -430,7 +530,7 @@ Settings › Interface › Crosshair (`eden_get_crosshair()`) is on (default ON 
   detail pane when the area is ≥ 300 pt tall and ≥ du(560) wide (desktop/iPad, not phones), a bar ("Playing as …" ·
   Edit · Refresh · Join) and an empty state. `ServerFormMenu` (usage_id 18) is Add/Edit server (Name, Address, Password
   secure, Remember; foot Delete · Move up/down · Join now) and Profile (name, Character stepper) with live red/amber
-  hints; with a keyboard up the foot hides and the focused row is the lowest shown. The Connecting window and the
+  hints; **Back / Escape asks "Discard changes?" only when a field differs from what the form opened with** (`dirty()`, a snapshot taken in `open()`; Save-enabled alone would nag on an unedited Edit); with a keyboard up the foot hides and the focused row is the lowest shown. The Connecting window and the
   password/error prompts are `GLDialog`s (`setPromptSecure`). `Menu::activate` reopens the list when a session ends,
   and `Menu::update` opens it when a join is in progress (`--mp-join`). Remote text is drawn by the ASCII-only raster,
   so separators are ", " and bullets '*'. Harness: `controlRect`/`rowRect`/`debugConnecting`/`debugError`/`debugPassword`.
@@ -476,8 +576,7 @@ Settings › Interface › Crosshair (`eden_get_crosshair()`) is on (default ON 
   `eden_menu_set_pending_world_type/height`), and calls `Menu::startNewWorld(name)` — stock New's
   create body plus `loading=1` — so the `loading` ladder's `showAlertWorldType()` and
   `FileManager::probeWorldHeight()` take the parked answers and **no dialog shows**. **Back creates
-  nothing**; **Escape** is `eden_new_world_menu_back()` (`Menu.cpp`, from `Input_native.cpp`'s menu
-  key) — while the field has focus the text seam gives Escape to the field, so the first one only leaves
+  nothing**; **Escape** is a row of `Menu::back()` (QA.22, `Menu.cpp` `kBackScreens`) — while the field has focus the text seam gives Escape to the field, so the first one only leaves
   it. The dialogs stay for a world made any other way (`eden_menu_create_world()`, a harness).
   **Room for Stage H:** types and options are tables (`kTypes[]`, `kRows[]` with a per-type mask), so the
   seeded generator's seed/caves/presets are rows and a third generator is a tile; a new row KIND (a
@@ -499,7 +598,7 @@ Settings › Interface › Crosshair (`eden_get_crosshair()`) is on (default ON 
 - **`WorldPropertiesMenu`** (`Classes/WorldPropertiesMenu.{h,mm}`, `Classes/WorldProps.h`) — **Stage H /
   H.15 (2026-10-15), new.** The world list's **Properties** (Rename's slot) opens it for the selected world
   (`Menu::openProperties()`, `showprops`, drawn and updated in front of the menu like New World; Escape is
-  Back through `eden_world_props_menu_back()`). New World's frame (`GLW::railFrame`): titlebar **Back ·
+  Back through `Menu::back()`). New World's frame (`GLW::railFrame`): titlebar **Back ·
   "‹name› Properties" · Save** (positive tone, disabled until something differs), rail tiles **World**
   (`UIICON_INFO`) and **Terrain** (`UIICON_MOUNTAIN`), `TwoLineRow`s in a variable-height `ScrollView`.
   Its own `usage_id` 14. Rows are built per world at `open()` (`buildRows()`), not from a static table:
@@ -519,15 +618,17 @@ Settings › Interface › Crosshair (`eden_get_crosshair()`) is on (default ON 
   **Saving:** a name-only change saves at once; a terrain change raises a `GLDialog` (**Change terrain** /
   Cancel) first. Both go through `FileManager::applyWorldProperties()` (save-load.md), then the list entry
   is renamed in place, the status line says *Saved* and the screen closes; a failure is a one-button
-  dialog and the screen stays. **Back discards** without asking. Harness surface: `controlRect`
+  dialog and the screen stays. **Back / Escape** close at once when Save is disabled, else ask "Discard changes?" (Discard / Keep editing; UX.9). Harness surface: `controlRect`
   (`back`/`save`/`name`/`photo`), `tabRect`, `choiceRect`, `toggleRect`, `sliderRect`, `value()`,
   `rowVisible()`/`rowEditable()`, `lastResult()`; gates `--props-selftest` and the Properties cases of
   `--ui-selftest`; `--shot` writes `props-world-nophoto`, `props-world` and `props-terrain`.
   Plan: `WORKING/feature-archaeology-2026-10-13/world-properties-plan.md`.
 - **`Menu_background`** — the animated menu backdrop.
-- **`SettingsMenu`** — the GL settings screen. `load()`/`save()`/`getNewWorldName()` and the
-  5-slot `properties[]` array still own the engine-backed toggles (Health/Autojump/Creatures/
-  Music/Sound) and their prefs round-trip (`eden_prefs` since G.2b-1; `NSUserDefaults` before). **`render()`/`update()` were rewritten in
+- **`SettingsMenu`** — the GL settings screen. **QA.19 (2026-11-13):** the stock 2.1 toggles (Health/Autojump/
+  Creatures/Music/Sound) are ordinary rows of `kSettings[]`, persisted under their stock prefs names as 0/1 ints;
+  `properties[]`, `NUM_PROP`, `rect_on[]` and `save()` are gone, and `load()` runs once at construction (world
+  counter, `eden_settings_boot_stock()`, boot values of `invertcam`/`use_joystick`/`genCaves`/`bestGraphics`).
+  `LOW_MEM_DEVICE`'s old "Creatures default off" went with `properties[]`: the flag is never assigned (N.6-2b). **`render()`/`update()` were rewritten in
   Phase N Stage 2.5** into a generic paginated list over the shared settings table
   (`port/src/seam/Settings.cpp`'s `kSettings[]`, reached via `eden_settings_*` scalar
   accessors; U.2 added `eden_settings_hint(i)` and `eden_settings_parent(i)` — the trailing `Setting::parent` key of
@@ -607,8 +708,7 @@ Settings › Interface › Crosshair (`eden_get_crosshair()`) is on (default ON 
   `GLDialog`), and `resetView()` makes every opening start on page 1 of Settings proper.
   Rows stay hidden and inert until
   `eden_settings_loaded()`. (Until U.3, `pageCount()/showPage()` were the harness's entry points.) Rows
-  whose effect was web-only (`dpr_cap`, `ui_scale`, `display_mode`, `display_layout`, `input_mode`,
-  `legacy_menu`) are hidden via `eden_settings_native_hidden()` (the retired web build `--wrap`ped this
+  whose effect was web-only (`ui_scale`, `display_layout`, `input_mode`) are hidden via `eden_settings_native_hidden()` (the retired web build `--wrap`ped this
   screen away and drew a DOM panel). `render_scale` was on that list
   until N.4.11 (2026-10-04); native now renders the 3D pass at it (see rendering.md, "Scene-pass
   bracket"), so the Video page shows it. It was hidden on iOS from 2026-10-09 (N.4.12, the composite
@@ -680,8 +780,8 @@ has addresses ([networking.md](networking.md) "Matchmakers"). `SettingsMenu` dra
 `Classes/ModsMenu` (`Menu::mods` / `showmods`, `Menu::openMods()`; updated and drawn in the slot of `showbrowser`, touch claim id 20) is
 WorldBrowser's shape: Back, title, an optional `TabRail`, list + scrollbar, detail pane, two action rows. Opened by the home screen's small
 **Mods** button (home window, row under Multiplayer|Settings, paired with About; control key `home.mods`) and by Settings > Experiments > *Mods* (a `KIND_TEXT` row `mods_open` that closes
-Settings and opens the screen; in a world it only explains that mods change from the main menu). Escape = `eden_mods_menu_back`
-(`port/src/seam/Menu.cpp`, in the chain in `Input_native.cpp`). No text input anywhere on it, so the touch keyboard cannot cover anything.
+Settings and opens the screen; in a world it only explains that mods change from the main menu). Escape = a row of `Menu::back()`
+(`Classes/Menu.cpp`, QA.22). No text input anywhere on it, so the touch keyboard cannot cover anything.
 
 - **Installed** (always): `ContentPack::scanPacks(documents, &lines)` on open and after every change, one row per pack folder (name, else id,
   else folder; right-hand word On / Off / Refused / Skipped). Row 1 buttons act on the selection: *Turn off/on* (`setPackEnabled`), *Up*/*Down*
@@ -691,7 +791,7 @@ Settings and opens the screen; in a world it only explains that mods change from
   "Changes apply when a world opens" until an action replaces it with its outcome. The detail pane: id/version, folder, state + block count,
   the loader's `why` (amber), requires/conflicts, then the validator lines (errors red, `warning:` grey).
 - **Get Mods** (K.3-6): the tab rail exists only while the setting `mods_catalogue_url` (Settings > Experiments > *Get Mods catalogue*, a
-  `KIND_TEXT` row; http/https only) is non-empty. The catalogue is `eden_net_fetch(url, NULL)` on first show / *Refresh*, parsed by
+  `KIND_TEXT` row; http/https only) is non-empty (K.3-8: it defaults to `https://hagg3.github.io/emod-packs/index.json`). The catalogue is `eden_net_fetch(url, NULL)` on first show / *Refresh*, parsed by
   `PackInstall::parseCatalogue`; rows say "Installed" by id and the detail pane "installed vX". *Install* downloads to
   `Packs/.download.partial` (progress bar, polled per frame, *Cancel* in place), then `installZip(partial, docs, entry.sha256)`; the partial is
   always deleted and a failure shows `error` plus the validator lines. No catalogue host exists yet.
@@ -702,6 +802,57 @@ Settings and opens the screen; in a world it only explains that mods change from
 - Gates: `--ui-selftest` (`mods_ui_checks` in `mode_ui.cpp`: open, select, toggle, move, remove with confirm, install from file, tab hidden /
   shown, catalogue bytes via `ModsMenu::feedCatalogue`, failed download leaves no partial); `--shot` pages `mods`, `mods-skipped`,
   `mods-refused`, `mods-get` (`TESTERS/k3/`: desktop 1280x800, iPad `--window=1024x768 --touch-profile`, phone `--window=844x390 --touch-profile`).
+
+## Keyboard focus and hover (UX.7)
+
+`GLW::Focus` (`Classes/GLWidgets.{h,cpp}`) is the kit's focus model. There is no per-screen list of
+controls: **every kit control's `render()` registers itself** (rect + kind), and the keys act on what the
+top screen drew last frame.
+
+- **Opting in is one call** at the top of a screen's `render()`: `GLW::Focus::screen(this, &defaultButton)`.
+  The last `screen()` call of a frame wins (painter's order), so a `GLDialog` over a screen, or Settings
+  over the pause column, takes the focus without the screen under it knowing. Controls drawn under another
+  owner are not focusable and not hovered. `keys = false` (the Console) gives hover only: its code field
+  owns Tab and the arrows. Wired: home, My Worlds, About, Settings (+ Keys), New World, World Properties,
+  Mods, Get Worlds, the server list, its form and Connecting window, `GLDialog`, the pause menu, the Console.
+- **Keys** (from `Input_native.cpp`, only while the cursor is free and a keys screen is up; they then win
+  over play bindings such as Space = jump): Tab / Shift-Tab step through the stops, sorted top to bottom
+  then left to right; a list's rows, a `TabRail` and an `IconRail` are **one stop each**, entered at the
+  selected member. Arrows go to the nearest control that way; inside a list Up/Down also **select** the row
+  and scroll at the edge (then leave the list when there is no more to show); Left/Right on a `Slider` or
+  `Stepper` change the value. **Return** activates a focused button, otherwise the screen's default button
+  (Play, Join, Save, Download, Resume, a prompt's or a one-button dialog's button 0); **Space** activates
+  the focused control. A two-button confirm has **no** Return default (Delete / Cancel needs a focused
+  button). Escape is not Focus's: the back chain keeps it.
+- **Activation is a synthetic tap** on the control's rect (`eden_input_pointer_event`, identity -24, down
+  and up two frames apart), the trick the HUD keys already use, so a screen's claim protocol runs unchanged
+  and there is no second action path. Scrolling is a synthetic wheel notch (`eden_ui_push_wheel`), which
+  every list screen already feeds to `scrollBy()`. So a new kit screen gets keyboard navigation from
+  `Focus::screen()` alone, provided it scrolls on `eden_ui_take_wheel()` and acts on taps.
+- **In a text field** every key is the field's (the text seam); a non-code field hands Tab, Shift-Tab
+  (`EDEN_TEXT_KEY_BACKTAB`), Up and Down to `Focus::key()`, which blurs it and moves on. Tab onto a field
+  taps it, so the screen's own focus rule (keep-visible rect, keyboard kind) applies.
+- **A ScrollView's `render()` adopts** the controls drawn since the previous one that sit beside its bar and
+  left of it (that is how Up/Down know which list to scroll): draw a list's rows before its `ScrollView`.
+  A row a screen draws itself (the server list) calls `GLW::Focus::row()` after its background.
+- **The ring** is 2u of `--eden-green-700`, 2u outside the control (inside a list row), drawn by the
+  control's own `render()`. It shows only after a navigation key and goes at the next click or touch.
+- **Hover** is a TINT wash (lime; white on a toned button) in each control's `render()` while
+  `eden_ui_pointer()` reports the mouse inside its hit box: cursor free, no button down, last input not a
+  finger. Pressed, selected and disabled controls do not tint.
+- **Touch shows neither.** On the touch input profile (`GLW::touchFloor() > 0`) there is no ring, no tint
+  and the keys are not consumed.
+- `Focus::frame()` runs once a frame from `eden_native_input_tick()` (before `World::update`): it swaps the
+  collected list in, ends a pending tap, then acts on queued keys. A harness mode that does not run the
+  input tick (`--shot`) therefore draws no ring and no tint, except its `menu-focus` page, which steps the
+  model by hand.
+- Gate: `--ui-selftest` (pointer: hover counts, Tab order on My Worlds, wrap, arrows move
+  `selected_world` and scroll, dialog focus, Tab cycles, the New World field, Settings Space/Right, Return
+  plays; `--touch-profile`: zero rings, zero tints, keys untouched). Headless has no pixels, so the touch
+  leg asserts the kit's ring/tint draw counters (`Focus::debugCounts`) rather than a pixel.
+- Not done: the `IconRail` does not scroll to a focused tile that is off its end (no screen has one on a
+  pointer profile); the block/colour pickers and the HUD's own buttons are not kit screens and have no
+  focus or hover.
 
 ## Dead/auxiliary UI code
 - `Classes/Toolbar.cpp` and `Classes/Gamepad.cpp` — compiled, but each file's body is one `/* … */`
@@ -743,8 +894,8 @@ changing anything here; the summary:
 - **`kKeyNames[]`** is the one place the key's spelling, the HID number and the display label are
   related. (`eden_keybind_code_table()` still emits it as JSON — the retired web page's reader.)
 - **`kKeybinds[]`** is the action table: id, label, group, default primary, a fixed secondary, the
-  continuous/momentary dispatch class, and which hosts implement it (`fullscreen` and `settings`
-  are `KB_WEB`-only, so no live target has them; `eden_keybind_native_hidden()` is how the GL screen skips them — the same
+  continuous/momentary dispatch class, and which hosts implement it (`settings`
+  is `KB_WEB`-only, so no live target has it; `fullscreen` went native in UX.5; `eden_keybind_native_hidden()` is how the GL screen skips them — the same
   policy `eden_settings_native_hidden()` applies to settings rows).
 - **These are NOT `kSettings[]` rows.** The stage plan called for a `KIND_KEY` row type inside
   `Setting`; a keybind carries four fields a float row has no place for, and `min/max/step/def`
@@ -774,8 +925,8 @@ dark plate, built once per state; no new art.
 
 ## Version tag
 `GLW::drawVersionTag()` (GLWidgets.cpp) draws "Emod <version>" (white, 1u black shadow) in the top-left
-corner: from `Menu::render` after `renderKit()`/`renderHome()` (main menu only, not its sub-screens) and at the end of
-`Hud::render` (hidden with the UI and in camera mode). The string is `EMOD_VERSION_STRING`, defined by
+corner: from `Menu::render` after `renderKit()`/`renderHome()` (home and the world list; not the server screens, whose Back sits there: UX.3) and at the end of
+`Hud::render` (hidden with the UI and in camera mode), where `drawVersionTag(xOffset)` moves it right of the corner buttons (menu gear, then chat/console). The touch jump button is not drawn when `!eden_profile_touch_chrome()` (its hit rect stays: Space drives it). The string is `EMOD_VERSION_STRING`, defined by
 `native/CMakeLists.txt` from the repo-root `VERSION.txt` (fallback "dev"); the iOS Info.plist takes the
 same value. Change it with `./bump-version.sh`. (Not `VERSION`: on case-insensitive filesystems
 `#include <version>` finds it.)
@@ -795,8 +946,8 @@ tap; the player-box test (`Player::test(...,2)`) was already in place.
 **Atmosphere settings (Stage AT.1a).** Gameplay › *Weather* (`weather`, default off; `eden_weather_enabled()`), Video › *Atmosphere* Off/Low/High/Custom
 (`atmosphere`; default High, seeded Off once on Air 2-class iOS; a fourth knob of the Graphics preset: Low Off, Default the device default, High High)
 and Video › *Reduce flashing* (`reduce_flashing`). A tier change writes nine element rows (group `Atmo`, drawn on the Video › *Atmosphere details* page (SX.5, `kPages[]` id `atmosphere`), cvars `atmo.precip`, `splash`, `clouds`,
-`cloud_shadows`, `height_fog`, `ambient`, `water_tint`, `glint`, `halos`) from `kAtmoTier[]` in `Settings.cpp`; the renderer reads `eden_atmo_element(e)`,
-which is 0 whenever the tier is Off. SX.5: editing an element row so the nine match no tier sets the tier to *Custom* (3; `eden_atmo_tier()` clamps it to 2 so Custom gates like High and the rows decide); restoring a tier's rows snaps it back (`eden_atmo_sync`). Custom drops the Graphics preset to Custom. `--atmo=off|low|high` and `--weather=off|clear|overcast|rain|snow|storm` override for one run (not stored);
+`cloud_shadows`, `height_fog`, `ambient`, `water_tint`, `glint`, `halos`) from `kAtmoTier[]` in `Settings.cpp`; the renderer reads `eden_atmo_element(AT_*)` (the `AT_*` enum is in `Classes/Weather.h`, QA.25; insert new elements before `AT_COUNT`),
+which is 0 whenever the tier is Off (callers do not re-test `eden_atmo_tier()>0`; the High-only `>=2` tests stay, because a Low tier can carry a hand-set High-only row). SX.5: editing an element row so the nine match no tier sets the tier to *Custom* (3; `eden_atmo_tier()` clamps it to 2 so Custom gates like High and the rows decide); restoring a tier's rows snaps it back (`eden_atmo_sync`). Custom drops the Graphics preset to Custom. `--atmo=off|low|high` and `--weather=off|clear|overcast|rain|snow|storm` override for one run (not stored);
 High leaves cloud shadows off (opt-in). `--stage1`, `--scene-shot` and `--sky-shot` force both off unless given. Gate: `--weather-selftest=settings`.
 
 **Day/night cycle (Stage DN).** Experiments › *Day/night cycle* (`day_night_cycle`, default off) and *Day length*
@@ -813,3 +964,12 @@ gamepad binding. Engine side: [player-input-camera.md](player-input-camera.md) �
 
 ### Q.1a notes (2026-10-21)
 - **F5 (menu background):** the four undrawn cloud/mountain menu textures (`cloud_SM`, `mountains`, `cloud_MD`, `cloud_LG`) are no longer decoded; their `menutextures` slots hold `NULL` (positional). **F25 (Console screen):** `ConsoleMenu` keeps one rasterised-line cache per source tab (`m_cache` / `m_cacheOther`, swapped on a tab switch) instead of rebuilding.
+
+## Strings, tones and hint colour (UX.4)
+- **Sentence case** for every label and title except proper names (`My Worlds`, `Get Worlds`, `Get Mods`, `About Emod`): `port/tools/ui-string-gate.py` fails a Title Case literal on a `setLabel`/`.set`/`setTitle` line or one marked `// ui-label` (the pause-menu and dialog button arrays); names go in its `NAMES`.
+- **Danger tone** on destructive choices: My Worlds *Delete* (`k->del`), the delete dialog and *Change terrain* (`GLDialog::setDanger(j)`, called right after `show()`; reset with the dialog).
+- **Colours:** `kTextHint` #6b6b6b (5.3:1) for list dates and "not running" sub-lines; `kTextMuted` #979797 only for rows meant to look inert (muted, disabled).
+- Server list: the profile button reads "Profile: <name>" with the `USERS` icon, or "Set a name first"; Join stays disabled until a name exists. My Worlds no longer sets the "Choose world to load" status.
+
+## Desktop window basics (UX.5)
+`port/src/seam/WindowState_native.cpp` (no-ops on iOS): minimum window 568x320 (no window aspect floor: `SDL_SetWindowAspectRatio` with min != max makes AppKit trap when leaving fullscreen on macOS with SDL 3.4.12, so a window narrower than 1.2:1 is allowed and `DisplayProfile` letterboxes it), the windowed rectangle saved at quit as prefs `window.x/y/w/h` (an interactive run only, and a size that fails `eden_window_size_ok` is ignored), and the Settings > Video *Fullscreen* toggle (`fullscreen`, hidden on iOS) that F11 (`fullscreen` keybind, native) flips; the OS's own fullscreen changes write back to the setting. The home screen's **Quit** row shows only for the desktop input profile (`eden_home_quit_offered`), so `--device=iphone16` has none.

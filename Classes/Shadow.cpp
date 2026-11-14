@@ -27,6 +27,7 @@ extern TerrainChunk** chunkTablec;
 
 static int g_shadow_setting=SHADOW_OFF;
 static int g_shadow_override=-1;
+static bool g_shadow_lamp_tint=false;
 // One byte per chunk-column slot (getColIndex): its voxels landed since its tops were scanned.
 static bool g_shadow_stale[CHUNKS_PER_SIDE_MAX*CHUNKS_PER_SIDE_MAX];
 
@@ -166,6 +167,15 @@ void shadow_setOverride(int mode){
     shadow_apply();
 }
 
+void shadow_setLampTint(bool on){
+    if(on==g_shadow_lamp_tint)return;
+    g_shadow_lamp_tint=on;
+    if(g_shadow_mode!=SHADOW_OFF&&chunksToUpdate&&columnsToUpdate&&chunkTablec){
+        memset(chunksToUpdate,true,sizeof(bool)*CHUNKS_PER_SIDE*CHUNKS_PER_SIDE*CHUNKS_PER_COLUMN);
+        memset(columnsToUpdate,true,sizeof(bool)*CHUNKS_PER_SIDE*CHUNKS_PER_SIDE);
+    }
+}
+
 void shadow_gather(int x0,int z0,int y0,unsigned char* out){
     if(!blockarray){ memset(out,0,SHADOW_GATHER_BYTES); return; }
     // Casters up to REACH_END-1 above the chunk's top layer can still reach it.
@@ -195,6 +205,7 @@ void shadow_gather(int x0,int z0,int y0,unsigned char* out){
 void shadow_lightTops(int x,int z,int y,float skylight,const int* shades,int n,const float light[3],float (*out)[3]){
     const Vector8* lv=NULL;
     if(!LOW_MEM_DEVICE&&y>=0&&y<T_HEIGHT)lv=light_get((x+g_offcx)%T_SIZE,(z+g_offcz)%T_SIZE,y);
+    if(skylight==1.0f&&!g_shadow_lamp_tint)lv=NULL;   // day: lamp light would tint the shade (unshaded faces skip it too)
     float add[3]={0,0,0};
     if(lv){
         add[0]=(float)lv->x/64.0f;

@@ -2,9 +2,11 @@
 // `--mp-selftest` (the protocol session). Both run fully offline against an in-process mock
 // server on loopback, so every CI leg runs them; with `--server=host:port` (a local
 // `edenserver`, see port/tools/mp-live-gate.sh) they add a live leg. No engine, no window.
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <string>
@@ -249,6 +251,62 @@ void legSocket() {
     Sock d;
     CHECK(tcpConnect("127.0.0.1", deadPort, 6000, d) == CONN_REFUSED);   // Windows reports a closed loopback port only after ~2 s of SYN retries
     CHECK(tcpConnect("no-such-host.invalid", 27015, 2000, d) == CONN_DNS);
+}
+
+// QA.15 (A3-07): download ceilings, through the fixture path of Net_native.cpp (same on_data as the real backends).
+extern "C" {
+void eden_net_set_fixture_root(const char* dir);
+int  eden_net_fetch(const char* url, const char* destPath, long long maxBytes);
+int  eden_net_poll(int job, long long* got, long long* total);
+const char* eden_net_error(int job);
+void eden_net_release(int job);
+}
+
+int runFetch(const char* url, const char* dest, long long maxBytes, std::string* err) {
+    const int j = eden_net_fetch(url, dest, maxBytes);
+    if (!j) return -2;
+    int st = 0;
+    for (int i = 0; i < 5000 && (st = eden_net_poll(j, nullptr, nullptr)) == 0; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    if (err) *err = eden_net_error(j);
+    eden_net_release(j);
+    return st;
+}
+
+void legDownloadCeilings() {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::current_path() / "net-ceilings-tmp";
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root / "h", ec);
+    {   // a 3 MB "endless" body
+        FILE* f = std::fopen((root / "h" / "big").string().c_str(), "wb");
+        std::vector<char> z(1 << 20, 'x');
+        if (f) { for (int i = 0; i < 3; ++i) std::fwrite(z.data(), 1, z.size(), f); std::fclose(f); }
+    }
+    eden_net_set_fixture_root(root.string().c_str());
+    const std::string dest = (root / "out.bin").string();
+    std::string err;
+    CHECK(runFetch("http://h/big", dest.c_str(), 1 << 20, &err) == -1 && err == "the download is too big");
+    CHECK(!fs::exists(dest) && !fs::exists(dest + ".part"));          // aborted: nothing left behind
+    CHECK(runFetch("http://h/big", nullptr, 1 << 20, &err) == -1 && err == "the reply is too big");
+    CHECK(runFetch("http://h/big", dest.c_str(), 0, &err) == 1 && fs::exists(dest));   // 0 = no cap for a file
+    fs::remove(dest, ec);
+    CHECK(runFetch("http://h/big", dest.c_str(), 4ll << 20, &err) == 1);
+    fs::remove(dest, ec);
+#if defined(_WIN32)
+    _putenv_s("EDEN_TEST_FREE_BYTES", "1000");
+#else
+    setenv("EDEN_TEST_FREE_BYTES", "1000", 1);
+#endif
+    CHECK(runFetch("http://h/big", dest.c_str(), 0, &err) == -1 && err == "stopped: the disk is nearly full");
+    CHECK(!fs::exists(dest) && !fs::exists(dest + ".part"));
+#if defined(_WIN32)
+    _putenv_s("EDEN_TEST_FREE_BYTES", "");
+#else
+    unsetenv("EDEN_TEST_FREE_BYTES");
+#endif
+    eden_net_set_fixture_root(nullptr);
+    fs::remove_all(root, ec);
 }
 
 void legLiveNet(const std::string& server) {
@@ -569,6 +627,37 @@ void legRobustness() {
         if (hold) check(tooMuch, "held bytes count against the cap across drains");
         else check(!tooMuch && held == 2 * one, "without held bytes two drained frames fit");
     }
+    // QA.8 (A3-08): a chat flood while the consumer is paused (an unfocused window that stopped
+    // pumping, a long stall) ends the session at the side cap instead of growing without bound; the
+    // same flood drained as it arrives fits.
+    for (int paused = 0; paused < 2; ++paused) {
+        Mock m;
+        m.start([](Sock& c) {
+            drain(c);
+            putLine(c, "[Server] Welcome, Sam! (Character Type: 3)");
+            const std::string body(1000, 'x');
+            for (int i = 0; i < 200; ++i) {
+                putLine(c, "[Bob (T2)] " + body);
+                if (i % 20 == 19) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        });
+        MpSession s;
+        MpConfig cfg = cfgFor(m.port);
+        cfg.sideQueueCapBytes = 64 << 10;   // ~55 of the 200 lines
+        s.start(cfg);
+        Got g;
+        if (paused) std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+        pump(s, g, 3000, closedStage);
+        const bool tooMuch = g.error() && g.error()->err == MpError::TooMuchData;
+        if (paused) {
+            check(tooMuch, "a chat flood into a paused consumer hits the side cap");
+            check(g.count(MpSideEvent::Chat) * (sizeof(MpSideEvent) + 1000 + 3) <= (64 << 10),
+                  "the side queue never held more than its cap");
+        } else {
+            check(!tooMuch && g.count(MpSideEvent::Chat) == 200, "the same flood drained as it arrives fits");
+        }
+    }
     // F20: detach() returns at once, even mid-connect; the thread finishes alone and frees the session.
     {
         auto s = std::make_shared<MpSession>();
@@ -780,6 +869,7 @@ extern "C" int eden_net_selftest_run(const char* server) {
     legBase64();
     legSnapz();
     legSocket();
+    legDownloadCeilings();
     if (server && *server) legLiveNet(server);
     std::printf("[net-selftest] %d checks, %d failed%s\n", g_checks, g_fail, server && *server ? " (live leg ran)" : " (offline)");
     return g_fail ? 1 : 0;

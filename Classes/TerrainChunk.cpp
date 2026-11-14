@@ -183,6 +183,7 @@ static int angledFace[TYPE_ICE_SIDE4-TYPE_STONE_RAMP1+1]={
 #define FACE_BOTTOM (1<<4)
 #define FACE_TOP (1<<5)
 #define FACE_ALL 0b111111
+bool TerrainChunk::testNoCeilingTop=false;
 #define RAMP1 0
 #define RAMP2 1
 #define RAMP3 2
@@ -489,7 +490,7 @@ int TerrainChunk::rebuild2(){   //here be dragons//
     }else if(pbounds[1]+CHUNK_SIZE==T_HEIGHT){
         for(int x=0;x<CHUNK_SIZE;x++)
             for(int z=0;z<CHUNK_SIZE;z++)
-                if(pblocks[x*CHUNK_SIZE*CHUNK_SIZE+z*CHUNK_SIZE+CHUNK_SIZE-1]){
+                if(!testNoCeilingTop&&pblocks[x*CHUNK_SIZE*CHUNK_SIZE+z*CHUNK_SIZE+CHUNK_SIZE-1]){   // QA.24: the hook is --evict-mutate=noceiling
                     face_visibility[x*(CHUNK_SIZE*CHUNK_SIZE)+z*(CHUNK_SIZE)+CHUNK_SIZE-1]|=FACE_TOP;
                     hasAnything=true;
                     hasVisy[CHUNK_SIZE-1]=true;

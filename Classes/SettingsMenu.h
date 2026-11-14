@@ -17,20 +17,12 @@
 #include <vector>
 
 class KeybindsMenu;
-typedef struct{
-	int value;
-	const char* name;   // G.2b-1: the eden_prefs key
-	CGRect box;
-	Texture2D* tex;
-}property;
-#define NUM_PROP 5
-
 // Phase N Stage 2.5: the GL settings screen is a generic list over the shared kSettings[] table
 // (port/src/seam/Settings.cpp), reached through eden_settings_* accessors — see SettingsMenu.mm.
 // Stage 5.4 reskinned it onto the GL widget kit (Classes/GLWidgets.h).
-// `properties[]` and load()/save()/getNewWorldName() are untouched: the engine-visible meaning of
-// the five engine-backed toggles and the prefs round-trip (eden_prefs since G.2b-1) still live there, and
-// Settings.cpp's ENG_* mapping still indexes it.
+// QA.19: the stock five toggles (Health, Auto-jump, Creatures, Sound effects, Music) are ordinary rows of that
+// table now, persisted under their stock prefs names; `properties[]` and save() are gone, and load() runs once,
+// at construction (eden_settings_boot_stock applies the five before the title tune starts).
 //
 // Stage U.3 (WORKING/ui-rework-plan-2026-10-11.md §3) rebuilt the screen on the reference layout: a
 // FIXED panel (the same size on every tab), a vertical IconRail of 7 tabs, the tab's rows as
@@ -45,7 +37,6 @@ public:
     ~SettingsMenu();
     void update(float etime);
     void render();
-    void save();
     void load();
     std::string getNewWorldName();
     // Stage 5.3's programmatic entry point into the keybinds list; since U.4 it selects the Keys
@@ -82,11 +73,9 @@ public:
 	// Stock 2.1.1 fields. Nothing reads them since Stage 2.5/5.4 (the screen draws from the
 	// kit), kept so this header still diffs cleanly against pristine-engine.
 	Button rect_save;
-	Button rect_on[NUM_PROP];
 
 	CGRect rect_off;
 	int world_counter;
-	property properties[NUM_PROP];
 
 private:
     void build();                      // kSettings[] rows -> tabs, once

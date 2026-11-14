@@ -286,6 +286,25 @@ void set(Kind k,float secs,bool snow){
     g_s.secondsLeft=secs>0?secs:drawLength(k);
 }
 
+const char* name(int k){
+    static const char* const kNames[KIND_COUNT]={"clear","overcast","rain","storm"};
+    return k>=0&&k<KIND_COUNT?kNames[k]:NULL;
+}
+int kindByName(const char* s,bool* snow){
+    if(snow)*snow=false;
+    if(!s)return -1;
+    if(!strcmp(s,"snow")){if(snow)*snow=true;return RAIN;}
+    for(int k=0;k<KIND_COUNT;k++)if(!strcmp(s,name(k)))return k;
+    return -1;
+}
+bool setByName(const char* s,float secs){
+    bool snow;
+    const int k=kindByName(s,&snow);
+    if(k<0)return false;
+    set((Kind)k,secs,snow);
+    return true;
+}
+
 float targetFor(Kind k){return k>=CLEAR&&k<KIND_COUNT?kTarget[k]:0.0f;}
 void setTransitions(const float m[KIND_COUNT][KIND_COUNT]){
     // only along the chain: a jump (clear -> rain, overcast -> storm, ...) stays 0 whatever is asked

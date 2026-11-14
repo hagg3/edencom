@@ -17,10 +17,14 @@
 //   8. memory: an allocation bomb gets "not enough memory" under the cap and the state lives on
 //   9. errors: maxErrors errors stop that pack only
 //  10. the pack hash covers the script bytes
-//  11. a session starts no scripts; a closed world closes them; reopening starts them afresh
+//  12. C code can't hang (QA.3): setmetatable refuses __gc (a __gc added later never runs, at a collect or at close);
+//      a backtracking pattern, string.rep("", 2^62), table.move/insert/remove over 2^62 elements each return or
+//      error in < 2 s (they ran 20 s to forever before); ordinary patterns and table calls still work
+//  11. a session starts no scripts; a closed world closes them; reopening starts them afresh (runs after 12)
 // --lua-mutate=hook (count hook off: leg 7's paused loop must FAIL; the endless legs are skipped) and
-// --lua-mutate=sandbox (base escapes left in: leg 2 must FAIL).
+// --lua-mutate=sandbox (base escapes left in: leg 2 must FAIL; leg 12's __gc cases are skipped, they would hang).
 #include <algorithm>
+#include <chrono>
 #include "harness.h"
 #include "eden_fs.h"
 #include "../../../Classes/BlockRegistry.h"
@@ -151,6 +155,7 @@ int run_lua_selftest() {
     char d[2048];
     const std::string docs = eden_platform_documents_root();
     const std::string packs = docs + "/Packs";
+    if (!mutation_known("eden-lua", "--lua-mutate", g_opt.luaMutate, {"hook", "sandbox"})) return 2;
     const bool mutHook = g_opt.luaMutate == "hook", mutSandbox = g_opt.luaMutate == "sandbox";
     ModScript::testNoHook = mutHook;
     ModScript::testNoSandbox = mutSandbox;
@@ -361,6 +366,54 @@ return table.concat(r, ","))");
         const std::string h2 = hashOf();
         std::snprintf(d, sizeof(d), "%.12s -> %.12s -> %.12s", h0.c_str(), h1.c_str(), h2.c_str());
         check(!h0.empty() && h0 != h1 && h0 == h2, "a script's bytes are in its pack's hash", d);
+    }
+
+    // ---- 12. C code a script calls can't hang the game (QA.3)
+    {
+        struct Case { const char* code; const char* want; bool gc; };
+        const Case cases[] = {
+            {"return pcall(setmetatable, {}, {__gc = function() while true do end end})", "false\t", true},
+            {"return pcall(setmetatable, {}, {__gc = false})", "false\t", true},
+            // __gc added after setmetatable: never marked, so neither this collect nor the close below runs it
+            {"local mt = {}; qa3_keep = setmetatable({}, mt); do local t = setmetatable({}, mt) end; "
+             "mt.__gc = function() while true do end end; collectgarbage('collect'); return 'collected'", "collected", true},
+            {"return pcall(string.find, string.rep('a', 200), '.-.-.-.-b')", "false\t", false},
+            {"return pcall(string.find, string.rep('a', 3000), 'a-a-b')", "false\t", false},
+            {"return pcall(function() for m in string.gmatch(string.rep('a', 200), '.-.-.-.-b') do end end)", "false\t", false},
+            {"return pcall(string.gsub, string.rep('(', 60000), '%b()', '')", "false\t", false},
+            {"return #string.rep('', 1 << 62), #string.rep('', 1 << 62, '')", "0\t0", false},
+            {"return pcall(table.move, {}, 1, 1 << 62, 2)", "false\t", false},
+            {"local t = setmetatable({}, {__len = function() return 1 << 62 end}); return pcall(table.insert, t, 1, 'x')", "false\t", false},
+            {"local t = setmetatable({}, {__len = function() return 1 << 62 end}); return pcall(table.remove, t, 1)", "false\t", false},
+            {"local t = setmetatable({}, {__len = function() return -1 end}); return pcall(table.remove, t, math.mininteger)", "false\t", false},
+        };
+        std::string bad;
+        double worst = 0;
+        for (const Case& c : cases) {
+            if (c.gc && mutSandbox) continue;
+            tick(1);
+            const auto t0 = std::chrono::steady_clock::now();
+            const std::string r = lua(c.code);
+            const double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+            worst = std::max(worst, s);
+            std::printf("[eden-lua] leg 12: %.3f s  %s  ->  %s\n", s, c.code, r.c_str());
+            if (r.compare(0, std::strlen(c.want), c.want) != 0 || s >= 2.0) bad += std::string(" [") + c.code + " -> " + r + "]";
+        }
+        // the errors say why, and ordinary calls are untouched
+        const std::string why = lua("local _, a = pcall(setmetatable, {}, {__gc = 1}); local _, b = pcall(string.find, string.rep('a', 200), '.-.-.-.-b'); "
+                                    "local _, c = pcall(table.move, {}, 1, 1 << 62, 2); return a, b, c");
+        const std::string fine = lua("local t = {1, 2, 3}; table.insert(t, 1, 0); table.remove(t, 2); local m = table.move(t, 1, 3, 2, {}); "
+                                     "return table.concat(t, ','), m[4], ('x(a(b)c)y'):match('%b()'), (('a b c'):gsub('%w', 'x')), "
+                                     "string.rep('ab', 3, '-'), getmetatable(setmetatable({}, {__index = {k = 7}})).__index.k");
+        const auto t0 = std::chrono::steady_clock::now();
+        ModScript::restart();   // closes every state (the console's holds qa3_keep): a __gc would run here
+        const double closeS = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        tick(3);
+        std::snprintf(d, sizeof(d), "worst %.3f s, close %.3f s;%s why: %s; fine: %s", worst, closeS, bad.c_str(), why.c_str(), fine.c_str());
+        check(bad.empty() && closeS < 2.0 &&
+                  (mutSandbox || why.find("__gc is not available") != std::string::npos) && why.find("pattern too complex") != std::string::npos &&
+                  why.find("too many elements to move") != std::string::npos && fine == "0,2,3\t3\t(a(b)c)\tx x x\tab-ab-ab\t7",
+              "a script can't hang the game in C: no __gc, capped pattern steps, string.rep and table.move/insert/remove (< 2 s each)", d);
     }
 
     // ---- 11. session, close, reopen

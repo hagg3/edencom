@@ -1,0 +1,8 @@
+# QA.7: TSan suppressions for CI's tsan job (TSAN_OPTIONS=suppressions=../port/tools/tsan-suppressions.txt).
+# No engine lines since QA.14 (2026-11-12): the load thread's Input::clearAll / Player::reset / fly_set_state
+# and a new world's first save (Resources::endBurn) moved to the main thread (FileManager::finishLoadOnMain).
+# Keep it that way: a new engine race is fixed, not listed. If a line ever has to go in, name a LEAF
+# function, never loadWorldThread/loadTerrain/FileManager::loadWorld (the doneLoading race must stay reportable).
+
+# Test-only, not engine: --mp-selftest's mock server (NetSelftest.cpp legJoin) is synchronised by a sleep.
+race:legJoin

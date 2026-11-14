@@ -128,14 +128,15 @@ void countHook(lua_State* L, lua_Debug*) {
     p->instrResume += HOOK_EVERY;
     p->instrTotal += HOOK_EVERY;
     g_instrFrame += HOOK_EVERY;
-    if (p->closing) luaL_error(L, "the world closed");   // a __gc at lua_close runs no script code
+    if (p->closing) luaL_error(L, "the world closed");   // (no script __gc exists to run at lua_close: safeSetmetatable)
     if (testNoHook) return;
     if (overBudget(p) && L == p->running && lua_isyieldable(L)) {
         p->preempted = true;
         lua_yield(L, 0);   // a hook yields with no values; the scheduler resumes it next frame
         return;
     }
-    // Code that can't pause (a callback inside C, a __gc, a coroutine the script made): bounded instead.
+    // Code that can't pause (a callback inside C, a coroutine the script made): bounded instead. The hook never runs
+    // inside the C loops themselves: the vendored Lua caps those (pattern steps, string.rep, table.move/insert/remove).
     if (p->instrResume > g_lim.hardPerResume || p->instrFrame > 2 * g_lim.hardPerResume)
         luaL_error(L, "used too much CPU without a pause (more than %d instructions)", (int)g_lim.hardPerResume);
 }
@@ -382,6 +383,22 @@ int guardedPattern(lua_State* L) {
     return lua_gettop(L);
 }
 
+// setmetatable without __gc (QA.3): Lua runs a finalizer with the count hook off (lgc.c GCTM), at a collect and
+// inside lua_close, so a looping __gc could hang the game. Lua only marks an object for finalization when
+// setmetatable sees a __gc field (any value, even false), so refusing that here means no script finalizer ever runs;
+// adding __gc to the metatable later does nothing. (debug.setmetatable isn't in the sandbox.)
+int safeSetmetatable(lua_State* L) {
+    if (lua_type(L, 2) == LUA_TTABLE) {
+        lua_pushliteral(L, "__gc");
+        if (lua_rawget(L, 2) != LUA_TNIL) return luaL_error(L, "setmetatable: __gc is not available to a mod script");
+        lua_pop(L, 1);
+    }
+    lua_pushvalue(L, lua_upvalueindex(1));
+    lua_insert(L, 1);
+    lua_call(L, lua_gettop(L) - 1, LUA_MULTRET);
+    return lua_gettop(L);
+}
+
 // ---- the API (S8): world edits are command-block statements -----------------------------------------------
 enum { K_SET = 0, K_COUNT, K_NONE };
 struct EditJob {
@@ -520,17 +537,19 @@ int apiSound(lua_State* L) { return edit(L, "sound " + numArg(L, 1), 0, 0, 0, tr
 int apiFlash(lua_State* L) { return edit(L, "flash", 0, 0, 0, true, K_NONE); }
 
 // AT.1c: eden.weather([kind [, secs]]) -> kind, intensity, locked, precip; eden.weatherlock(on).
-const char* const kWeatherKinds[] = {"clear", "overcast", "rain", "storm", "snow", NULL};
 int apiWeather(lua_State* L) {
     if (!worldOpen()) return luaL_error(L, "no world is open");
     if (!lua_isnoneornil(L, 1)) {
-        const int k = luaL_checkoption(L, 1, NULL, kWeatherKinds);
+        bool snow;
+        const char* kn = luaL_checkstring(L, 1);
+        const int k = Weather::kindByName(kn, &snow);
+        if (k < 0) return luaL_argerror(L, 1, lua_pushfstring(L, "invalid option '%s'", kn));   // luaL_checkoption's wording
         const double secs = luaL_optnumber(L, 2, 0);
         if (!Weather::active()) return luaL_error(L, "weather is off (Settings > Gameplay > Weather)");
         if (secs < 0 || secs > 1e7) return luaL_argerror(L, 2, "seconds from 0 to 10000000");
-        Weather::set(k == 4 ? Weather::RAIN : (Weather::Kind)k, (float)secs, k == 4);
+        Weather::set((Weather::Kind)k, (float)secs, snow);
     }
-    lua_pushstring(L, Weather::forceSnow() ? "snow" : kWeatherKinds[Weather::kind()]);
+    lua_pushstring(L, Weather::forceSnow() ? "snow" : Weather::name(Weather::kind()));
     lua_pushnumber(L, Weather::intensity());
     lua_pushboolean(L, Weather::locked());
     const Player* p = World::getWorld->player;
@@ -661,6 +680,9 @@ void setupState(lua_State* L) {
         lua_setglobal(L, "load");
         lua_pushcfunction(L, safeGC);
         lua_setglobal(L, "collectgarbage");
+        lua_getglobal(L, "setmetatable");
+        lua_pushcclosure(L, safeSetmetatable, 1);
+        lua_setglobal(L, "setmetatable");
         lua_getglobal(L, LUA_STRLIBNAME);
         lua_pushnil(L);
         lua_setfield(L, -2, "dump");
@@ -874,8 +896,8 @@ void update(float etime) {
             if (p->stopped || p->handlers[e.ev].empty()) continue;
             dispatch(p.get(), e.ev, [&](lua_State* L) {
                 if (e.ev == EV_WEATHER) {   // AT.1c: (kind, previous); snow is a where, not a kind
-                    lua_pushstring(L, kWeatherKinds[e.a]);
-                    lua_pushstring(L, kWeatherKinds[e.b]);
+                    lua_pushstring(L, Weather::name(e.a));
+                    lua_pushstring(L, Weather::name(e.b));
                     return 2;
                 }
                 lua_pushinteger(L, e.x);

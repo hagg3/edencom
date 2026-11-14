@@ -155,6 +155,7 @@ public:
     void dropGeometry();
     bool holdsGeometry() const;
     void prepareVBO();
+    static bool testNoCeilingTop;   // QA.24 mutation: skip the world-ceiling top faces (rebuild2)
 };
 
 typedef struct bnode{

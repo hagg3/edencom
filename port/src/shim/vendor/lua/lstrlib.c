@@ -152,7 +152,7 @@ static int str_rep (lua_State *L) {
   const char *s = luaL_checklstring(L, 1, &l);
   lua_Integer n = luaL_checkinteger(L, 2);
   const char *sep = luaL_optlstring(L, 3, "", &lsep);
-  if (n <= 0)
+  if (n <= 0 || l + lsep == 0)  /* Emod (QA.3): n empty copies would loop n times */
     lua_pushliteral(L, "");
   else if (l_unlikely(l + lsep < l || l + lsep > MAXSIZE / n))
     return luaL_error(L, "resulting string too large");
@@ -362,11 +362,29 @@ typedef struct MatchState {
   lua_State *L;
   int matchdepth;  /* control for recursive depth (to avoid C stack overflow) */
   unsigned char level;  /* total number of captures (finished or unfinished) */
+  size_t steps;  /* Emod (QA.3): work done by this call (see MATCH_STEP) */
   struct {
     const char *init;
     ptrdiff_t len;
   } capture[LUA_MAXCAPTURES];
 } MatchState;
+
+
+/*
+** Emod (QA.3): a mod script's count hook can't preempt C code, and a
+** backtracking pattern costs (subject length)^(number of '-'/'*' items):
+** ".-.-.-.-b" on 200 bytes ran 20 s. Every pattern item, repetition and
+** '%b' character is a step; one find/match/gsub (or one gmatch iteration)
+** raises "pattern too complex" past MATCH_MAXSTEPS of them (~0.1 s).
+*/
+#if !defined(MATCH_MAXSTEPS)
+#define MATCH_MAXSTEPS	10000000
+#endif
+
+#define MATCH_STEP(ms,n) \
+  { if (l_unlikely(((ms)->steps += (size_t)(n)) > MATCH_MAXSTEPS)) \
+      luaL_error((ms)->L, "pattern too complex (more than %d steps)", \
+                 MATCH_MAXSTEPS); }
 
 
 /* recursive function */
@@ -492,12 +510,14 @@ static const char *matchbalance (MatchState *ms, const char *s,
     int b = *p;
     int e = *(p+1);
     int cont = 1;
+    const char *s0 = s;
     while (++s < ms->src_end) {
       if (*s == e) {
-        if (--cont == 0) return s+1;
+        if (--cont == 0) { MATCH_STEP(ms, s - s0); return s+1; }
       }
       else if (*s == b) cont++;
     }
+    MATCH_STEP(ms, s - s0);
   }
   return NULL;  /* string ends out of balance */
 }
@@ -508,6 +528,7 @@ static const char *max_expand (MatchState *ms, const char *s,
   ptrdiff_t i = 0;  /* counts maximum expand for item */
   while (singlematch(ms, s + i, p, ep))
     i++;
+  MATCH_STEP(ms, i);
   /* keeps trying to match with the maximum repetitions */
   while (i>=0) {
     const char *res = match(ms, (s+i), ep+1);
@@ -571,6 +592,7 @@ static const char *match (MatchState *ms, const char *s, const char *p) {
   if (l_unlikely(ms->matchdepth-- == 0))
     luaL_error(ms->L, "pattern too complex");
   init: /* using goto to optimize tail recursion */
+  MATCH_STEP(ms, 1);
   if (p != ms->p_end) {  /* end of pattern? */
     switch (*p) {
       case '(': {  /* start capture */
@@ -760,6 +782,7 @@ static void prepstate (MatchState *ms, lua_State *L,
   ms->src_init = s;
   ms->src_end = s + ls;
   ms->p_end = p + lp;
+  ms->steps = 0;
 }
 
 
@@ -838,6 +861,7 @@ static int gmatch_aux (lua_State *L) {
   GMatchState *gm = (GMatchState *)lua_touserdata(L, lua_upvalueindex(3));
   const char *src;
   gm->ms.L = L;
+  gm->ms.steps = 0;  /* Emod (QA.3): each call (one match) gets the budget */
   for (src = gm->src; src <= gm->ms.src_end; src++) {
     const char *e;
     reprepstate(&gm->ms);

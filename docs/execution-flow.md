@@ -31,6 +31,12 @@ everything below it are shared.
   `SDL_EVENT_TERMINATING` call `App::onPageHide()` — save the open world
   (`eden_app_will_background()`, docs/save-load.md "Save-on-background"), then `stopAnimation()`.
   Focus loss only pauses the loop (`onVisibilityHidden`, no save); focus gain / foreground resume it.
+- **Idle branch (QA.8)**: the interactive loop body is `interactive_iteration()` (`port/src/harness/core.cpp`).
+  While `!isAnimating()` it draws nothing and calls no `World::update`: it blocks in
+  `SDL_WaitEventTimeout(nullptr, 100)` (any event wakes it), pumps events and, in a multiplayer session, runs
+  `eden_mp_idle_pump` (`MpWorld::tick` + `MpWorld::update`, the GLDialog modal's path: queues drain, POSVEL goes out,
+  edits land and are meshed on the first frame back). Single-player stays frozen. ~10 passes/s (it spun a core at
+  91–100 % before). PW.7 / FT.18 add callers to this branch.
 - `LOW_MEM_DEVICE` and `LOW_GRAPHICS` are never set on native (a decision, commented above
   `App::boot()` in `main()`), and `eden_low_memory()` stays 0.
 
@@ -146,7 +152,8 @@ session both are no-ops ([networking.md](networking.md) "The live world").
    reload (the `count>140` path) is **spread over several frames** on a fixed per-frame chunk
    budget rather than done inside this one call — modified from stock, 2026-08-13; see
    [world-and-terrain.md](world-and-terrain.md) "Streaming". The save that opens a reload is
-   still synchronous and still strictly before the first overwrite.
+   still synchronous and still strictly before the first overwrite; with edits resident the reload
+   starts only if it committed (QA.5, docs/save-load.md "When a save fails").
 7. `terrain->updateAllImportantChunks()` — VBO uploads (GL, main thread only).
 
 ### render() in PLAY mode (`World::renderFrame`)
@@ -170,7 +177,10 @@ coordinates are huge (≈65,000) and must be rebased near the origin for float p
 ## World loading flow
 
 `Menu` → `World::loadWorld(name)` — called **every frame** while
-loading; `doneLoading` acts as the state: 0 idle → 1 loading → 2 finished.
+loading; `doneLoading` acts as the state: 0 idle → 1 loading → 2 finished. Since QA.7 it is a
+`std::atomic<int>` (the thread's store of 2 is a release, so everything it wrote is visible to the main
+thread that reads 2; it was a plain `int`, measured racing by TSan), and `Terrain::counter` (the progress the
+menu and the MP join window read) is atomic too.
 
 - **Convert first (S.5, port):** a `.eden` or archive is converted to an `.emod` before
   `doneLoading` leaves 0 — `FileManager::convertHeightGate` (the "Convert world" height prompt),
@@ -182,7 +192,22 @@ loading; `doneLoading` acts as the state: 0 idle → 1 loading → 2 finished.
 - Normal devices: `terrain->allocateMemory()` then a **pthread**
   (`loadWorldThread`) runs `terrain->loadTerrain(name, TRUE)` while the main thread
   keeps rendering the menu + progress bar (progress = `terrain->counter /
-  CHUNKS_PER_SIDE²`; stock hard-coded 324 = 18×18).
+  CHUNKS_PER_SIDE²`; stock hard-coded 324 = 18×18). QA.7: the handle is kept in
+  `World::loadThread` and **joined** first thing in the `doneLoading==2` branch (it was never joined or
+  detached: one 16 KB stack leaked per load). QA.14 kept the join instead of detaching: the port's quit
+  path also joins (`eden_world_load_join` → `World::joinLoadThread`), so quitting during "Loading World…"
+  waits out the load and `main()` never returns under the thread. If `pthread_create` fails the load runs
+  inline (it used to leave `doneLoading` at 1 forever).
+- **What the thread does not do (QA.14, A2-03).** `World::loadWorld` sets `fm->loadOnThread` before
+  `pthread_create`; with it set, `FileManager::loadWorld` skips its opening `Player::reset` and leaves its
+  tail to `FileManager::finishLoadOnMain()`, which the `doneLoading==2` branch calls after the join and the
+  `eden_load_failed()` check: a new world's first save (`firstSaveOwed`; `saveWorld` → `endDynamics` →
+  `Resources::endBurn` reaches audio), `Input::clearAll`, `effects->clearAllEffects`, `hud->worldLoaded`,
+  the generator toast. All four raced the main thread, which keeps ticking input, audio and the menu during
+  the load. An inline load (warp, reload, `LOW_MEM_DEVICE`, a failed `pthread_create`) has the flag false
+  and does all of it inside `loadWorld`, as before. So a new world's `.emod` does not exist until the
+  frame the load finishes. The port's `eden_native_input_tick` also skips its per-frame player writes
+  (`eden_set_move_input`, fly thrust, crouch) while `eden_world_loading()`.
 - `LOW_MEM_DEVICE`: fully synchronous on the main thread (stock only; never set on the port).
 - **Pre-flight 256z refusal (2026-08-31, ROADMAP Phase M / M5.3; dead on native):** before
   `allocateMemory()`, if the world is 256z **and** `eden_low_memory()` is set, `loadWorld` reports
@@ -190,7 +215,10 @@ loading; `doneLoading` acts as the state: 0 idle → 1 loading → 2 finished.
   without touching `Terrain`. Only the retired web page ever set that flag.
 - On completion: unload menu textures, `loadGameAssets` (since Q.3 this also decodes the 106 game
   textures on every target, `DEFER_GAME_TEXTURES`; they were loaded at boot before), reset camera/player,
-  `LoadModels` (creatures' POD files), switch to WAIT→PLAY.
+  `LoadModels` (creatures' POD files), switch to WAIT→PLAY. The K.3-6 "This world uses mods that are off or
+  missing" notice (`World::showModsNotice`) is said here, right after `loadGameAssets`, from the new world's
+  palette (QA.7, A2-04: it ran at the top of the next `World::update`, i.e. on the load's first frame, reading
+  the previous world's palette while the thread's `BlockRegistry::resetWorld` cleared it). Gate: `--mods-selftest` leg 9.
 - **The `doneLoading==2` transition does not, by itself, mean the load succeeded** —
   it only means the loader thread returned. `FileManager::loadWorld()` can bail out
   early (a corrupt/truncated save) without populating `Terrain` at all, and nothing
@@ -199,8 +227,9 @@ loading; `doneLoading` acts as the state: 0 idle → 1 loading → 2 finished.
   (`port/src/seam/LoadFailure.{h,mm}`, compiled on every target) and, if set, resets
   `doneLoading`/`menu->loading` and stays in `GAME_MODE_MENU` instead of advancing to
   WAIT→PLAY. Advancing anyway crashes within a frame or two rendering a cleared-but-never-
-  repopulated `Terrain`. On native the refusal is silent — no native screen shows the reason
-  yet (docs/save-load.md, Common pitfalls).
+  repopulated `Terrain`. QA.6: `World::loadWorld` clears the flag where a load starts (it was sticky:
+  one bad world refused every later one until restart), and the refusal puts "Could not load this world: <reason>"
+  on the menu status bar (`eden_load_failed_reason()`). Gate: `--load-fail-selftest`.
 
 `World::exitToMenu` reverses it: `unloadTerrain`, `UnloadModels`,
 `unloadGameAssets` (frees the game textures again since Q.3), `terrain->deallocateMemory()`, reload menu textures, menu music.
@@ -210,7 +239,7 @@ loading; `doneLoading` acts as the state: 0 idle → 1 loading → 2 finished.
 | Thread | What runs there |
 |---|---|
 | Main (stock CADisplayLink; port SDL loop) | Everything during gameplay: update, meshing, VBO upload, render, file streaming I/O, `.emod` commits |
-| Load pthread (`loadWorldThread`) | Only `Terrain::loadTerrain` during the initial world load. In a multiplayer session that includes reading `MpWorld`'s overlay through the flat branch's landing hook (MP.3a); the overlay is frozen then (nothing merges while `doneLoading==1`), so it is read-only work of the kind the thread already does |
+| Load pthread (`loadWorldThread`) | Only `Terrain::loadTerrain` during the initial world load, minus `FileManager::finishLoadOnMain` (QA.14). It writes the window arrays, chunk tables, header/palette/trailer/sky state in `FileManager`/`BlockRegistry`/`SkyCycle`/`Weather`, `player->pos`/`yaw`, `hud->goldencubes`/`justLoaded`, the fog colour and `P_ZFAR` values (plain data, no GL), and creature slots (`LoadModels2`); it opens and reads the `.emod` store (compaction at open included) but never saves. Joined at `doneLoading==2` and at quit. In a multiplayer session that includes reading `MpWorld`'s overlay through the flat branch's landing hook (MP.3a); the overlay is frozen then (nothing merges while `doneLoading==1`), so it is read-only work of the kind the thread already does |
 | Stock: NSURLConnection callbacks | Networking delegates (ShareUtil/FileDownload/FileUpload) on the main run loop — seam-excluded on the port |
 | Port: one detached `std::thread` per HTTP request | `eden_net_fetch`/`eden_net_post_file` (`Net_native.cpp`) run the backend (AppleNet/WinHTTP/libcurl) there; the main thread polls the job (`WorldBrowser`/`WorldShare`) |
 | Port: the multiplayer network thread (one `std::thread` per `MpSession`, `port/src/net/`, MP.2) | connects, reads/writes the socket, frames lines, inflates `SNAPZ` and classifies lines into plain data on mutex-guarded queues; never touches engine state. The main thread drains with `drainSide`/`drainWorld`. Started by the join flow (`port/src/seam/MpLink_native.cpp`, MP.3b; `MpWorld::tick` pumps it each frame), stopped (joined) when `MpWorld::endSession`/`dropLink` releases the link. `--mp-replay` feeds recorded lines with no thread |
@@ -226,7 +255,12 @@ race-condition annotations left in place (the `//issue #1..#3` comments in
 (the `rt*` double-buffered chunk fields went in SM.8).
 **Caution:** the load pthread *does* touch the same chunk table the render thread reads
 (`doneLoading` handshake is the only synchronization; there are no locks). Don't add
-work to the loading thread without understanding this.
+work to the loading thread without understanding this. The rule for anything a load must do: if the
+main thread reads or writes it while the menu is up (touches, HUD widgets, effects, audio, anything
+`World::update`/`Menu` ticks), it goes in `FileManager::finishLoadOnMain`, not in `loadWorld`'s body.
+CI's `tsan` job (QA.7) enforces it with `halt_on_error=1`; since QA.14 `port/tools/tsan-suppressions.txt`
+has no engine lines (only `--mp-selftest`'s mock server). TSan sees only what its legs run, so the list
+of thread writes in the table above is what was read in code, not what was proved race-free.
 
 ## Common pitfalls
 - Anything GL (VBO creation, texture loads) must stay on the main thread; the load

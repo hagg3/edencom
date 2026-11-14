@@ -221,6 +221,21 @@ extern "C" int eden_native_audio_probe(const char* name, int* frames, int* chann
 
 extern "C" int eden_native_audio_voice_count(void) { return (int)g_voices.size(); }
 
+// QA.18: the decoded-PCM cache, for --mem-trace and the low-memory path.
+extern "C" int eden_native_audio_clip_count(void) { return (int)g_clips.size(); }
+extern "C" long long eden_native_audio_clip_bytes(void) {
+    long long n = 0;
+    for (auto& kv : g_clips) n += (long long)kv.second.pcm.size() * (long long)sizeof(Sint16);
+    return n;
+}
+// SDL_EVENT_LOW_MEMORY: voices point into g_clips (a looping one re-reads clip->pcm every tick), so
+// they go first; the next playEffect decodes again. Streaming channels are untouched.
+extern "C" void eden_native_audio_drop_clips(void) {
+    for (Voice& v : g_voices) SDL_DestroyAudioStream(v.stream);
+    g_voices.clear();
+    g_clips.clear();
+}
+
 
 extern "C" void eden_native_audio_shutdown(void) {
     for (Voice& v : g_voices) SDL_DestroyAudioStream(v.stream);

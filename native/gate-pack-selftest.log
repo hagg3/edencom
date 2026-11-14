@@ -1,0 +1,23 @@
+[pack] stock pack ./build/packs/eden/pack.json: compiles, equals the live tables
+[pack] ok   blocks: eden@611: block "stone": duplicate block id
+[pack] ok   blocks-too-many: eden@142: "blocks" has 513 blocks (at most 512)
+[pack] ok   head: eden@105: unknown key "textures"
+[pack] ok   head-missing: eden@0: missing "format"
+[pack] ok   json-bad-utf8: eden@37: JSON: invalid UTF-8
+[pack] ok   json-block-comment: eden@14: JSON: '/' that does not start a // comment
+[pack] ok   json-depth-33: eden@42: JSON: nesting deeper than 32
+[pack] ok   json-duplicate-key: eden@28: JSON: duplicate key
+[pack] ok   json-not-object: eden@0: pack.json must be an object
+[pack] ok   json-trailing-comma: eden@27: JSON: trailing comma
+[pack] ok   json-unterminated: eden@41: JSON: control character in string
+[pack] ok   mod-blocks: mod-blocks@167: block #0: must be an object
+[pack] ok   mod-deps: mod-deps@141: "requires" entry "Bad": must be <id> or <id>>=<version> (digits and dots)
+[pack] ok   mod-head: mod-head@142: warning: unknown key "sound_sets" (ignored)
+[pack] ok   mod-json: mod-json@49: JSON: trailing comma
+[pack] ok   mod-scripts: mod-scripts@72: script "../outside.lua": must be a relative path inside the pack ending in .lua
+[pack] ok   mod-scripts-only: blocks 0
+[pack] ok   mod-tiles: mod-tiles@55: tile "Bad": the name must match [a-z0-9_]{1,24}
+[pack] ok   sound-sets: eden@169: sound set "loud": unknown sound "kaboom"
+[pack] ok   sound-sets-empty: eden@55: "sound_sets" is empty (the first set is every block's default)
+[pack] ok   tiles: eden@102: tile "stone_again": atlas 1 index 5 is already tile "stone"
+[pack] 24 checks (21 fixtures), 0 failure(s) -> ALL PASS

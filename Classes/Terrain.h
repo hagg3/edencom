@@ -11,6 +11,7 @@
 
 
 #include <stdint.h>
+#include <atomic>
 #include "Texture2D.h"
 #include "Graphics.h"
 #include "TerrainChunk.h"
@@ -64,7 +65,7 @@ public:
     Liquids* liquids;
     Portal* portals;
     Firework* fireworks;
-    int counter;
+    std::atomic<int> counter;   // QA.7: columns loaded; the load pthread counts, the menu's progress reads
     
     Terrain();
     ~Terrain();
@@ -85,7 +86,7 @@ public:
     int getLand(int x,int z,int y);
     int getColor(int x,int z,int y);
     void refreshChunksInRadius(int x,int z,int y,int radius);
-    void warpToPoint(float x,float z,float y);
+    bool warpToPoint(float x,float z,float y);   // QA.5: false = the save failed, nothing moved
     void blocktntexplode(int x,int z,int y,int type);
     void addToUpdateList(int cx,int cy,int cz);
     void addToUpdateList2(int cx,int cy,int cz);
@@ -95,7 +96,8 @@ public:
     void render();
     void render2();
     void unloadTerrain(bool exitToMenu);
-    void warpToHome();
+    bool warpToHome();   // QA.5: as warpToPoint
+    bool anyChunkModified();   // QA.5: an edit in the window that no commit holds
     void clearBlocks();
     void colort(float r,float g,float b);
     void endDynamics(bool endLiquids);
@@ -107,6 +109,10 @@ public:
     int dynamicsOutsideWindow();
     // --evict-selftest's bug-put-back switches (gate 6): skip the evict-save / the node dropping.
     static bool testNoEvictSave, testNoDropDynamics;
+    // --console-selftest's QA.9 bug-put-back switch: a whole-window re-mesh request is unbudgeted again.
+    static bool testUnbudgetedRemesh;
+    static int meshPassWorst;            // most budget-counted chunks one mesh pass took (the harness zeroes it)
+    static const int meshChunkBudget;    // BULK_RELOAD_CHUNK_BUDGET
     void startDynamics();
     void explodeBlock(int x,int z,int y);
     void allocateMemory();

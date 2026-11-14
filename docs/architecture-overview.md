@@ -1,11 +1,13 @@
 # Architecture Overview
 
-Eden: World Builder is a voxel building game for iOS (2010–2014 era), written in
-Objective-C++ against **OpenGL ES 1.1 (fixed-function)**. This repository is the 2.1.1
+Eden: World Builder is a voxel building game for iOS (2010–2014 era). This repository is its 2.1.1
 source release, ported as Emod to SDL3 + GL on macOS, Linux, Windows and iOS (`native/`, over the
-seam/shim layer in `port/`; see `../CLAUDE.md`). The engine still issues ES 1.1 calls; the port's
-translator (`port/src/shim/gl/`) runs them on ES3/GL. This file describes the engine; the stock iOS
-shell in the diagrams below (UIKit, `EAGLView`, CADisplayLink) is replaced on every port target.
+platform seams in `port/`). Today the engine is plain C++20 (no Objective-C in `Classes/`) and draws
+through its own renderer, `R::` (`Classes/Renderer.h`, GL backends in `port/src/render/`), on desktop
+GL 3.3+ / OpenGL ES 3.0; the original fixed-function ES 1.1 calls and the translator that replayed
+them are gone. The file names and diagrams below are labelled **stock** where they show the original
+iOS shell (UIKit, `EAGLView`, CADisplayLink), which every port target replaces. Read
+[docs/README.md](README.md) first for how the doc set maps onto the code.
 
 There is **no engine/game separation, no scene graph, and almost no abstraction layer**.
 The game is a set of singletons wired together through raw pointers and `extern` globals.

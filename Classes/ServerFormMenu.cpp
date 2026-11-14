@@ -26,6 +26,7 @@ static const int usage_id=18;   // distinct from Menu (7), SettingsMenu (3), GLD
 static const char* const kCharacters[7]={ "Green", "Moof", "Batty", "Nergle", "Stumpy", "Charger", "Stalker" };
 
 static ServerFormMenu* s_confirming=NULL;   // the form whose Delete confirm is up
+static ServerFormMenu* s_discarding=NULL;   // the form whose Discard changes? is up (UX.9)
 
 ServerFormMenu::ServerFormMenu(ServerListMenu* list){
     m_list=list;
@@ -80,6 +81,7 @@ void ServerFormMenu::open(Mode m){
     m_footShown=true;
     m_decHeld=m_incHeld=false;
     layout();
+    m_snap=snapshot();
     // Under a pointer the first field is one keystroke away; on touch the keyboard would cover the
     // screen unasked (New World's rule).
     if(GLW::touchFloor()==0.0f){
@@ -139,9 +141,31 @@ void ServerFormMenu::close(Outcome o){
     m_list->formClosed(o,m_row,thenJoin);
 }
 
+std::string ServerFormMenu::snapshot() const{
+    char c[16];
+    std::snprintf(c,sizeof(c),"%d",m_character);
+    return m_label.text()+'\n'+m_addr.text()+'\n'+m_pass.text()+'\n'+m_name.text()+'\n'+
+           (m_remember.on()?"1":"0")+'\n'+c;
+}
+
+bool ServerFormMenu::dirty() const{ return m_open&&snapshot()!=m_snap; }
+
+static void sf_discard_cb(int chosen){
+    ServerFormMenu* f=s_discarding;
+    s_discarding=NULL;
+    if(chosen==0&&f&&f->isOpen()) f->close(ServerFormMenu::OUT_BACK);
+}
+
+// UX.9: Back / Escape. A form with edits asks first (Escape in the dialog = its last button = Keep editing).
 bool ServerFormMenu::back(){
     if(!m_open) return false;
-    close(OUT_BACK);
+    if(GLDialog::active()) return true;
+    if(!dirty()){ close(OUT_BACK); return true; }
+    blurFields();
+    static const char* const kBtn[]={"Discard","Keep editing"};
+    s_discarding=this;
+    GLDialog::show("Discard changes?",NULL,kBtn,2,sf_discard_cb);
+    GLDialog::setDanger(0);
     return true;
 }
 
@@ -206,7 +230,7 @@ void ServerFormMenu::layout(){
     if(m_builtU!=u()||m_builtMode!=m_mode){
         m_builtU=u();
         m_builtMode=m_mode;
-        m_title.set(m_mode==MODE_ADD?"Add Server":m_mode==MODE_EDIT?"Edit Server":"Profile",du(32),UITextAlignmentCenter);
+        m_title.set(m_mode==MODE_ADD?"Add server":m_mode==MODE_EDIT?"Edit server":"Profile",du(32),UITextAlignmentCenter);
         m_back.setLabel("Back",du(20)); m_back.sizeToFit();
         m_save.setLabel("Save",du(20)); m_save.setTone(GLW::Button::TONE_POSITIVE); m_save.sizeToFit();
         m_del.setLabel("Delete",du(20)); m_del.setTone(GLW::Button::TONE_DANGER); m_del.sizeToFit();
@@ -428,7 +452,7 @@ void ServerFormMenu::update(float etime){
                 if(tf&&m_rowShown[k]>=0&&(tf->hit(mx,my)||(touch&&m_rowUi[k].hit(mx,my)))) focus=k;
             }
             if(focus<0) blurFields();
-            if(backHit){ close(OUT_BACK); return; }
+            if(backHit){ back(); return; }
             if(saveHit){ save(); return; }
             if(joinHit){ joinNow(); return; }
             if(delHit){
@@ -466,6 +490,7 @@ void ServerFormMenu::render(){
     R::begin2D(SCREEN_WIDTH * s, SCREEN_HEIGHT * s, 1.0f);   // ortho 0..w, 0..h, -1..1 over an identity modelview
 
     using namespace GLW;
+    Focus::screen(this, &m_save);   // UX.7
     fill(CGRectMake(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT), kScrim);
     bevel(m_panel, BEVEL_WINDOW);
     m_back.render();

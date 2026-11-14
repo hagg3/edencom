@@ -176,12 +176,6 @@ const char* eden_debug_heap(void) {
     return buf;
 }
 
-void eden_debug_heap_reset_peak(void) {
-    MemSample s = sample();
-    g_peakRss = s.rss;
-    g_peakFootprint = s.footprint;
-    g_peakAllocInUse = s.allocInUse;
-}
 
 // The web twin warns as linear memory approaches -sMAXIMUM_MEMORY, because there the cap is a hard
 // abort. Native has no such cap — it has the OS, which is a different failure with a different
@@ -196,21 +190,6 @@ void eden_heap_pressure_tick(void) {
     (void)sample();
 }
 
-// Web reports emmalloc's live-bytes statistic here to tell a leak from fragmentation. The macOS
-// allocator exposes the same distinction directly (`size_in_use` live, `max_size_in_use` its
-// high-water) and so does glibc (`uordblks` live, `fordblks` free-and-held). Windows has no such
-// statistic and reports commit charge instead — a trend, not a byte count; see this file's header.
-// Reported under the web twin's key names for the same one-parser reason.
-const char* eden_debug_alloc(void) {
-    static char buf[192];
-    MemSample s = sample();
-    std::snprintf(buf, sizeof(buf),
-        "{\"dynHeap\":%llu,\"freeDyn\":%llu,\"live\":%llu}",
-        (unsigned long long)s.allocMax,
-        (unsigned long long)(s.allocMax > s.allocInUse ? s.allocMax - s.allocInUse : 0),
-        (unsigned long long)s.allocInUse);
-    return buf;
-}
 
 // ---- N.4.9: where the footprint goes (--mem-trace) -------------------------------------------
 //
@@ -233,6 +212,8 @@ const char* eden_debug_alloc(void) {
 int g_eden_mem_trace = 0;
 extern "C" const char* eden_debug_gl_buffer_bytes(void);   // gl_state.cpp
 extern "C" const char* eden_debug_gl_tex_bytes(void);
+extern "C" int eden_native_audio_clip_count(void);   // SimpleAudioEngine_native.cpp (QA.18)
+extern "C" long long eden_native_audio_clip_bytes(void);
 static void eden_tex_probe_totals(const char* where);   // --mem-trace=2, below
 
 #if defined(__APPLE__)
@@ -396,6 +377,8 @@ extern "C" void eden_mem_trace(const char* where) {
     });
     std::printf("[eden-mem] %-22s gl buffers %s textures %s\n", where, eden_debug_gl_buffer_bytes(),
                 eden_debug_gl_tex_bytes());
+    std::printf("[eden-mem] %-22s audio clips %d (%.1f MB decoded PCM)\n", where,
+                eden_native_audio_clip_count(), eden_native_audio_clip_bytes() / MB);
     std::printf("[eden-mem] %-22s tags (dirty/resident/virtual MB, regions):", where);
     int shown = 0;
     for (const auto& e : v) {

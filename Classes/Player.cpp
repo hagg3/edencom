@@ -499,7 +499,7 @@ void Player::processInput(float etime){
                         
                         continue;
                     }
-					int type;
+					int type=-1;   // QA.23: the hitCustom branch leaves it unset; -1 is skipped below
                     if(point.x==-1)continue;
                     if(mode==MODE_BUILD){
                     if(World::getWorld->hud->build_size==0)

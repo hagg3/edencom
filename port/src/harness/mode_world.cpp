@@ -667,6 +667,7 @@ int run_classic_selftest() {
     g_selftestTag = "eden-classic";
     char d[512];
     const std::string& mut = g_opt.classicMutate;
+    if (!mutation_known("eden-classic", "--classic-mutate", mut, {"tables", "trunc", "noborder"})) return 2;
     classic_set_mutation(mut == "tables" ? 1 : mut == "trunc" ? 2 : mut == "noborder" ? 3 : 0);
 
     // ---- 1. 1.x exactness

@@ -18,8 +18,8 @@ One directory holding one `pack.json` and the PNGs it names by relative path:
 
 The pack `id` is its namespace: a block `stone` in pack `eden` is named `eden:stone` everywhere (the console,
 the world's `BLOCK_PALETTE`, the picker). `eden` is the bundled stock pack; `emod` is reserved for packs Emod
-ships; a mod pack may use neither. The bundle also carries `packs/emod_example/`, a template that is **not**
-loaded by default (D14), and `packs/wonders/`, the example every player gets in `Packs/` on first start (below).
+ships; a mod pack may use neither. Only `eden` is bundled. The example packs (`emod_example`, `wonders`) are
+downloads from the default catalogue (K.3-8, "Getting packs"); their sources are test fixtures in `port/tools/fixtures/packs/`.
 
 ### The stock pack `eden`
 
@@ -212,10 +212,7 @@ skips the whole pack. Every line goes to stderr as `[pack] ...` and to the conso
   six blocks that between them use every trait, an `eden:` tile, own tiles with an unpainted twin and one
   transparent block. Its art is drawn by `port/tools/example-pack-art.py`. To try it, copy the folder into
   `Documents/Packs/` and open a world, or run with `--packs=<bundle>/packs/emod_example`.
-- **The Wonder Blocks pack** `media/packs/wonders/` (bundled as `packs/wonders/`, **installed for every player**:
-  an interactive start copies it into `Packs/wonders/` once per Documents folder, `ContentPack::seedBundledPacks`,
-  recorded in `Packs/.bundled` so a player who removes it keeps it removed; harness runs never seed; gate:
-  `--mods-selftest` leg 9): the user-facing example, every feature reachable from the block picker with no console. 23 blocks on 26 tiles
+- **The Wonder Blocks pack** `port/tools/fixtures/packs/wonders/` (**not bundled or seeded since K.3-8**: install it from **Get Mods**; `seedBundledPacks` was removed; existing players keep their copy): the user-facing example, every feature reachable from the block picker with no console. 23 blocks on 26 tiles
   (Kenney's CC0 Voxel Pack plus Emod-drawn icons, `CREDITS.txt`; drawn by `port/tools/wonders-pack-art.py`):
   all faces, sides/top (logs, kits), a paintable tile with its twin (paint_brick), `color` tinting a full-colour
   or grey tile (slick_ice, bounce_pad, warp_pad), stock tiles only (vine_ladder), four transparent blocks, two
@@ -270,7 +267,7 @@ world mods) and `Classes/PackInstall` (zip install, catalogue). Gate: `eden_nati
   "author", "url", "sha256", "size", "requires"}]}`. An entry without a valid id, an `http(s)://` url or a 64-hex
   sha256, a duplicate id, or `eden`/`emod` is dropped (`PackInstall::parseCatalogue`). No catalogue is hosted yet.
 - **The screen** (K.3-5/6) that drives all of the above: `docs/ui.md` "The Mods screen". It lists `scanPacks`, toggles with `setPackEnabled`, reorders with
-  `movePack`, removes with `removePackFolder`, installs a picked zip or a catalogue entry with `installZip`; a world that uses an off or missing mod says so once on entry.
+  `movePack`, removes with `removePackFolder`, installs a picked zip or a catalogue entry with `installZip`; a world that uses an off or missing mod says so once on entry (`World::showModsNotice`, once the load is done: QA.7; `--mods-selftest` leg 9).
 
 ## Make your first block (player guide)
 
@@ -333,3 +330,11 @@ and re-imported with the palette intact.
 - CI (linux) boots with a broken stock pack (`--bundle=` a copy holding the `blocks` fixture) and requires exit 1.
 - `pack.py extract DUMP -o PACK.json` — the one-off that wrote `media/packs/eden/pack.json` from the K.2-2 dump.
   Kept so the derivation stays reviewable; the shipped file is hand-edited from K.2-3 on.
+
+## The default catalogue (K.3-8)
+
+`mods_catalogue_url` defaults to `https://hagg3.github.io/emod-packs/index.json`, the GitHub Pages site of the public repo
+`hagg3/emod-packs` (`packs/<id>/` sources, `dist/<id>-<version>.zip`, `index.json`, `build.py` to regenerate both).
+It serves `wonders` and `emod_example`. To publish a pack there: put the folder in `packs/`, bump its `version`, run
+`python3 build.py`, commit and push. The sources here in `port/tools/fixtures/packs/` are the CI fixtures and a copy;
+the repo is the published one. Clearing the setting hides Get Mods and stays cleared; *Reset* restores the default.

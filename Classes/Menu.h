@@ -138,6 +138,12 @@ public:
     void renderHome();
     void updateHome(float etime);
     void showHome(bool home);
+    // QA.22: Escape / the "menu" key over any menu screen, in ONE place (Menu.cpp's kBackScreens
+    // table, in priority order). Closes the topmost screen exactly as its Back does; falls through to
+    // "My Worlds -> home" last. 1 = consumed; 0 = nothing to close (home, loading, a dialog, play).
+    // A new screen adds one row there. testBackSkip (>= 0) leaves that row out: --ui-mutate=menuback.
+    bool back();
+    static int testBackSkip;
     int    firstVisibleRow();
     int    visibleRows();
 

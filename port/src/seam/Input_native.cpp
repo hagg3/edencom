@@ -44,6 +44,7 @@
 // grow an int/string row type first.
 
 #include "Input_native.h"
+#include "AppLifecycle.h"
 
 #include <SDL3/SDL.h>
 
@@ -68,17 +69,14 @@ void eden_click_end(int isBuild);
 void eden_hotbar_scroll(int dir);
 void eden_wheel_action(int dir);   // SRC.2: jump pulse in Srclike movement, else the hotbar
 void eden_select_hotbar_slot(int slot);
+void eden_hotbar_key(int n);            // Input.cpp (UX.8-5): number key (assign / activate)
+int  eden_hotbar_right_click(float x, float yUp);   // Input.cpp (UX.8-5)
 int  eden_pick_block_at_crosshair(void);
 void eden_tap_hud_button_begin(int which);
 int  eden_picker_page_step(int delta);   // Input.cpp (D.2p)
 void eden_tap_hud_button_end(int which);
-int  eden_settings_menu_back(void);      // Settings.cpp (U.3): Escape over the settings screen
-int  eden_new_world_menu_back(void);     // Menu.cpp (U.5): Escape over the New World screen
-int  eden_world_props_menu_back(void);   // Menu.cpp (H.15): Escape over World Properties
-int  eden_console_menu_back(void);       // Menu.cpp (C.3): Escape over the Console (blur, then close)
-int  eden_mods_menu_back(void);          // Menu.cpp (K.3-5)
-int  eden_menu_home_back(void);         // Menu.cpp (I.7): Escape on the world list -> the home screen
-int  eden_server_list_back(void);       // Menu.cpp (MP.6): Escape over the Multiplayer screen
+int  eden_menu_back(void);              // Menu.cpp (QA.22): Escape over any menu screen = Menu::back()
+int  eden_dialog_escape(void);            // Menu.cpp (UX.9): Escape over a GLDialog = its last button
 int  eden_chat_open(int slash);          // Menu.cpp (MP.7): the Console screen on its Chat tile, in a session
 int  eden_console_menu_toggle(void);     // Menu.cpp (C.3): the `console` key
 int  eden_ui_captures_keys(void);        // Menu.cpp (C.3): the Console owns the keyboard, field focused or not
@@ -101,6 +99,7 @@ int  eden_get_block_preview(void);
 void eden_toggle_build_size(void);
 void eden_toggle_hide_hud(void);
 void eden_take_screenshot(void);
+void eden_window_fullscreen_toggle(void);   // WindowState_native.cpp (UX.5)
 void eden_cycle_camera_view(void);   // H.12, Settings.cpp
 void eden_gl_context_get_drawable_size(int* width, int* height);
 void eden_native_gl_get_letterbox(int* x, int* y, int* w, int* h);
@@ -108,12 +107,9 @@ void eden_native_gl_get_letterbox(int* x, int* y, int* w, int* h);
 // The keybind model (Stage 5.2), in port/src/seam/Settings.cpp — a SHARED seam file, so this
 // is the same table the web build reads. Its codes are USB HID usage IDs, which is exactly what
 // SDL_Scancode values are; see the static_asserts below, which are this file's half of that claim.
-int  eden_keybind_count(void);
-int  eden_keybind_index(const char* action);
-int  eden_keybind_action_after(int prev, int code);
-int  eden_keybind_get(int i);
-int  eden_keybind_capture_feed(int code);
+// Declared in eden_settings.h (QA.19), with eden_settings_menu_back (U.3: Escape over the settings screen).
 }
+#include "eden_settings.h"
 
 // Classes/Globals.h's point space. The engine lays every HUD and menu element out in it, and it is
 // DERIVED (window aspect x ui_scale) and can change mid-session — so read it live, never cache it.
@@ -178,7 +174,7 @@ int  g_contAction[kMaxModelActions];   // model row -> Action, or -1
 int  g_miHotbar[9];
 int  g_miConsole = -1, g_miChat = -1, g_miChatCmd = -1;   // MP.7
 int  g_miMenu = -1, g_miBlockPicker = -1, g_miColorPicker = -1, g_miFireTool = -1;
-int  g_miFlyToggle = -1, g_miBlockPreview = -1, g_miBuildSize = -1, g_miHideHud = -1, g_miScreenshot = -1, g_miCameraView = -1;
+int  g_miFlyToggle = -1, g_miBlockPreview = -1, g_miBuildSize = -1, g_miHideHud = -1, g_miScreenshot = -1, g_miCameraView = -1, g_miFullscreen = -1;
 bool g_modelResolved = false;
 
 void resolve_model(void) {
@@ -210,6 +206,7 @@ void resolve_model(void) {
     g_miBuildSize    = eden_keybind_index("buildSize");
     g_miHideHud      = eden_keybind_index("hideHud");
     g_miScreenshot   = eden_keybind_index("screenshot");
+    g_miFullscreen   = eden_keybind_index("fullscreen");   // UX.5
     g_miCameraView   = eden_keybind_index("cameraView");
     // Resolved one by one rather than as "hotbar1 + n": the table's rows happen to be contiguous
     // today and nothing promises they stay that way.
@@ -676,7 +673,7 @@ int eden_native_input_debug_hold_active(void) { return g_hold.active ? 1 : 0; }
 // --text-input-selftest (no window) drives exactly the path a real keyboard does.
 namespace {
 // C.4: Classes/GLWidgets.h's EDEN_TEXT_KEY_* (that header is Objective-C++; this file is not).
-const char kKeyTab = 0x09, kKeyUp = 0x11, kKeyDown = 0x12;
+const char kKeyTab = 0x09, kKeyUp = 0x11, kKeyDown = 0x12, kKeyBackTab = 0x13;   // 0x13: Shift-Tab (UX.7)
 bool        g_textActive = false;
 std::string g_textQueue;
 bool        g_dropGrave = false;        // C.3: see SDL_EVENT_TEXT_INPUT
@@ -858,6 +855,41 @@ extern "C" int eden_ui_take_wheel(void) {
     g_uiWheel -= (float)n;
     return n;
 }
+// UX.7: the focus model scrolls a list with the wheel's own path (GLW::Focus, Classes/GLWidgets.h).
+extern "C" void eden_ui_push_wheel(int notches) { g_uiWheel += (float)notches; }
+
+// UX.7: the mouse pointer, for the kit's hover tint. Point space, y UP. Known only from a real mouse
+// motion with the cursor free; a finger, a held button, mouse-look or the cursor leaving the window
+// all mean "no pointer", so a touch never leaves a tint behind.
+static bool  g_ptrValid = false, g_ptrDown = false;
+static float g_ptrX = 0.0f, g_ptrY = 0.0f;
+static int   g_ptrOverride = -1;           // --ui-selftest: 0/1 force the answer, -1 the real one
+extern "C" int eden_ui_pointer(float* x, float* y) {
+    if (x) *x = g_ptrX;
+    if (y) *y = g_ptrY;
+    if (g_ptrOverride >= 0) return g_ptrOverride;
+    return (g_ptrValid && !g_ptrDown && !g_relativeMouse) ? 1 : 0;
+}
+void eden_native_debug_set_pointer(float x, float yUp, int valid) {
+    g_ptrX = x; g_ptrY = yUp; g_ptrOverride = valid;
+}
+extern "C" int  eden_ui_focus_key(int key);    // Classes/GLWidgets.cpp (GLW::Focus::key)
+extern "C" void eden_ui_focus_frame(void);
+// GLW::Focus::Key's numbers.
+enum { kFocusTab = 1, kFocusBackTab, kFocusUp, kFocusDown, kFocusLeft, kFocusRight, kFocusReturn, kFocusSpace, kFocusPointer };
+static int focus_key_for(const SDL_Event& e) {
+    switch (e.key.scancode) {
+        case SDL_SCANCODE_TAB:      return (e.key.mod & SDL_KMOD_SHIFT) ? kFocusBackTab : kFocusTab;
+        case SDL_SCANCODE_UP:       return kFocusUp;
+        case SDL_SCANCODE_DOWN:     return kFocusDown;
+        case SDL_SCANCODE_LEFT:     return kFocusLeft;
+        case SDL_SCANCODE_RIGHT:    return kFocusRight;
+        case SDL_SCANCODE_RETURN:
+        case SDL_SCANCODE_KP_ENTER: return kFocusReturn;
+        case SDL_SCANCODE_SPACE:    return kFocusSpace;
+        default:                    return 0;
+    }
+}
 
 void eden_native_input_init(SDL_Window* window) {
     g_window = window;
@@ -917,12 +949,19 @@ void eden_native_input_handle_event(const SDL_Event& e) {
                 else if (sc == SDL_SCANCODE_ESCAPE) { if (!e.key.repeat) g_textQueue += '\x1b'; }
                 // C.4: a hardware keyboard's completion and history keys (the Console). Up/Down
                 // repeat, so holding one walks the history; a field not in code mode drops them.
-                else if (sc == SDL_SCANCODE_TAB)  { if (!e.key.repeat) g_textQueue += kKeyTab; }
+                else if (sc == SDL_SCANCODE_TAB)  { if (!e.key.repeat) g_textQueue += (e.key.mod & SDL_KMOD_SHIFT) ? kKeyBackTab : kKeyTab; }
                 else if (sc == SDL_SCANCODE_UP)   g_textQueue += kKeyUp;
                 else if (sc == SDL_SCANCODE_DOWN) g_textQueue += kKeyDown;
                 return;
             }
-            if (e.key.repeat) return;          // held keys are state, not repeated edges
+            // UX.7: over a kit screen (cursor free, GLW::Focus live) Tab, the arrows, Return and Space
+            // are the focus model's, whatever they are bound to in play. Arrows and Tab repeat.
+            const int focusKey = g_relativeMouse ? 0 : focus_key_for(e);
+            if (e.key.repeat) {                // held keys are state, not repeated edges
+                if (focusKey && focusKey != kFocusReturn && focusKey != kFocusSpace && eden_keybind_capture_active() < 0)
+                    eden_ui_focus_key(focusKey);
+                return;
+            }
             // Stage 5.3: the GL keybinds screen arms the model's one capture slot and the next
             // key belongs to IT, not to the game. This has to sit ahead of every dispatch below
             // — including the continuous ones — or binding a key would also walk the player.
@@ -931,6 +970,7 @@ void eden_native_input_handle_event(const SDL_Event& e) {
             // mean anything while the picker is up, and then nothing else is bound to them.
             if (e.key.scancode == SDL_SCANCODE_LEFTBRACKET  && eden_picker_page_step(-1)) return;
             if (e.key.scancode == SDL_SCANCODE_RIGHTBRACKET && eden_picker_page_step(1))  return;
+            if (focusKey && eden_ui_focus_key(focusKey)) return;
             resolve_model();
             // ITERATE, do not take the first match. "One key, two actions" is shipped
             // configuration (Ctrl is flyDown AND crouch out of the box) and a rebind can create
@@ -956,7 +996,7 @@ void eden_native_input_handle_event(const SDL_Event& e) {
                 // 2=colours, 7=fire/burn.
                 // U.3: over the settings screen the menu key is its Back, not a HUD tap (which
                 // the screen claimed as a touch of its own and dropped). U.5: likewise New World.
-                if      (mi == g_miMenu)         { if (!eden_console_menu_back() && !eden_settings_menu_back() && !eden_new_world_menu_back() && !eden_world_props_menu_back() && !eden_server_list_back() && !eden_mods_menu_back() && !eden_menu_home_back()) hud_tap(0); }
+                if      (mi == g_miMenu)         { if (!eden_menu_back()) hud_tap(0); }
                 else if (mi == g_miConsole)      { if (eden_console_menu_toggle() && eden_ui_captures_keys()) g_dropGrave = true; }
                 else if (mi == g_miChat)         { if (eden_chat_open(0)) g_dropChat = 't'; }
                 else if (mi == g_miChatCmd)      { if (eden_chat_open(1)) g_dropChat = '/'; }
@@ -968,10 +1008,11 @@ void eden_native_input_handle_event(const SDL_Event& e) {
                 else if (mi == g_miBuildSize)    eden_toggle_build_size();
                 else if (mi == g_miHideHud)      eden_toggle_hide_hud();
                 else if (mi == g_miScreenshot)   eden_take_screenshot();
+                else if (mi == g_miFullscreen)   eden_window_fullscreen_toggle();   // UX.5
                 else if (mi == g_miCameraView)   eden_cycle_camera_view();
                 else {
                     for (int n = 0; n < 9; ++n)
-                        if (mi == g_miHotbar[n]) { eden_select_hotbar_slot(n); break; }
+                        if (mi == g_miHotbar[n]) { eden_hotbar_key(n); break; }
                 }
             }
             return;
@@ -1003,6 +1044,7 @@ void eden_native_input_handle_event(const SDL_Event& e) {
                 // as a pointer MOVE so a drag (the world list scrolls by dragging) works.
                 float x, y;
                 window_to_point(e.motion.x, e.motion.y, &x, &y);
+                g_ptrValid = true; g_ptrX = x; g_ptrY = SCREEN_HEIGHT - y;   // UX.7 (hover)
                 eden_input_pointer_event(1, kMouseIdentity, x, y);
             }
             return;
@@ -1013,6 +1055,9 @@ void eden_native_input_handle_event(const SDL_Event& e) {
             if (!g_relativeMouse) {
                 float x, y;
                 window_to_point(e.button.x, e.button.y, &x, &y);
+                if (e.button.button == SDL_BUTTON_RIGHT && eden_hotbar_right_click(x, SCREEN_HEIGHT - y)) return;   // UX.8-5: clear a slot
+                g_ptrDown = true;                        // UX.7: no hover while a button is held,
+                eden_ui_focus_key(kFocusPointer);        // and a click hides the focus ring
                 eden_input_pointer_event(0, kMouseIdentity, x, y);
                 return;
             }
@@ -1027,6 +1072,7 @@ void eden_native_input_handle_event(const SDL_Event& e) {
 
         case SDL_EVENT_MOUSE_BUTTON_UP: {
             if (is_synthetic_mouse(e.button.which)) return;
+            g_ptrDown = false;
             const bool isBuild = (e.button.button == SDL_BUTTON_RIGHT);
             // The hold ends on its button's release WHEREVER the cursor is: the press that began it
             // can open a dialog or a picker, which drops capture before this release arrives.
@@ -1073,6 +1119,8 @@ void eden_native_input_handle_event(const SDL_Event& e) {
             if (is_synthetic_finger(e.tfinger.touchID)) return;
             const bool down   = (e.type == SDL_EVENT_FINGER_DOWN);
             const bool ending = (e.type == SDL_EVENT_FINGER_UP || e.type == SDL_EVENT_FINGER_CANCELED);
+            g_ptrValid = false;                          // UX.7: a finger is not a pointer to hover with
+            if (down) eden_ui_focus_key(kFocusPointer);
             const int slot = finger_slot(e.tfinger.fingerID, down);
             if (slot < 0) return;                       // ninth finger, or a move with no begin
             const int phase = down ? 0 : (ending ? (e.type == SDL_EVENT_FINGER_UP ? 2 : 3) : 1);
@@ -1105,6 +1153,10 @@ void eden_native_input_handle_event(const SDL_Event& e) {
             return;
         }
 
+        case SDL_EVENT_WINDOW_MOUSE_LEAVE:
+            g_ptrValid = false;
+            return;
+
         case SDL_EVENT_GAMEPAD_ADDED:
             gamepad_open(e.gdevice.which);
             return;
@@ -1130,16 +1182,24 @@ void eden_native_input_handle_event(const SDL_Event& e) {
 }
 
 void eden_native_input_tick() {
+    // UX.7: the kit's focus model acts on this frame's keys (and ends a synthetic tap) before the
+    // engine reads its touches.
+    eden_ui_focus_frame();
     // Before recompute_move(), because that is what consumes the factor this updates.
     eden_movement_tick();
     // Before recompute_move() as well, and for the same reason eden-gamepad.js's tick() runs
     // before eden-st.html's: the stick axes it records are read by recompute_move() below, so a
     // pad moved this frame is acted on this frame rather than one late.
     gamepad_tick();
+    // QA.14 (A2-03): not while a world loads. The load pthread is placing the player (pos, yaw), and
+    // nothing reads these writes until the world is in; the first tick after the load re-sends them
+    // (rule 3 below is "every frame"), so a key held through "Loading World..." still acts.
+    if (!eden_world_loading()) {
     // Rule 3: every frame, unconditionally.
     recompute_move();
     eden_set_fly_thrust(g_down[A_JUMP] ? 1 : 0, g_down[A_FLYDOWN] ? 1 : 0);
     eden_set_crouch(g_down[A_CROUCH] ? 1 : 0);
+    }
 
     // The deferred halves of the synthetic-touch pairs (rule 2).
     if (g_jumpFrames > 0 && --g_jumpFrames == 0 && !g_down[A_JUMP]) eden_set_jump(0);

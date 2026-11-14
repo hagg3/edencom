@@ -275,8 +275,9 @@ void ServerListMenu::layout(){
     if(m_sel<0&&n>0) m_sel=0;
 
     char nm[32];
-    std::string prof=eden_mp_profile_name(nm,sizeof(nm))?std::string("Playing as ")+nm:std::string("Set your name");
-    if(prof!=m_profileName){ m_profileName=prof; m_profile.setLabel(prof.c_str(),du(20)); m_profile.sizeToFit(); }
+    std::string prof=eden_mp_profile_name(nm,sizeof(nm))?std::string("Profile: ")+nm:std::string("Set a name first");   // UX.4 (U10)
+    m_hasName=eden_mp_profile_name(nm,sizeof(nm))!=0;
+    if(prof!=m_profileName){ m_profileName=prof; m_profile.setLabel(prof.c_str(),du(20)); m_profile.setIcon(UIICON_USERS); m_profile.sizeToFit(); }
 
     const RailFrame f=railFrame();
     m_panel=f.panel;
@@ -339,7 +340,7 @@ void ServerListMenu::layout(){
     m_save.setRect(m_edit.rect());
     m_save.setEnabled(hasSel&&m_tab==1);
     m_refresh.setEnabled(m_tab==1?m_mmPending==0:(n>0&&m_pending==0));
-    m_join.setEnabled(hasSel&&m_rows[m_sel].status!=EDEN_MP_ST_UNKNOWN_HOST);
+    m_join.setEnabled(m_hasName&&hasSel&&m_rows[m_sel].status!=EDEN_MP_ST_UNKNOWN_HOST);   // UX.4 (U10): the Profile button beside it says why
     m_emptyAdd.setRect(CGRectMake(m_list.origin.x+(m_list.size.width-m_emptyAdd.fitWidth())*0.5f,
                                   m_list.origin.y+m_list.size.height*0.5f-barH-du(6),0,barH));
 
@@ -726,8 +727,10 @@ void ServerListMenu::render(){
     using namespace GLW;
     if(m_connecting){
         // Over the menu backdrop, not the list (UI plan §6).
+        Focus::screen(&m_cancel,&m_cancel);   // UX.7: its own owner, so the list's focus does not carry over
         renderConnecting();
     }else{
+        Focus::screen(this,&m_join);   // UX.7: Return = Join
         fill(CGRectMake(0,0,SCREEN_WIDTH,SCREEN_HEIGHT),kScrim);
         bevel(m_panel,BEVEL_WINDOW);
         m_back.render();
@@ -756,13 +759,14 @@ void ServerListMenu::render(){
             const RowUi& ui=m_rowUi[s];
             const CGRect R=ui.rect;
             if(idx==m_sel){ fill(R,kSelTint); fill(R.origin.x,R.origin.y,4*u(),R.size.height,kSelBar); }
+            Focus::row(this,s,R,idx==m_sel);   // UX.7: these rows are drawn here, not by GLW::ListRow
             if(s<vis-1&&idx<n-1) fill(R.origin.x,R.origin.y,R.size.width,u(),rgb(0x000000,0.28f));
             const bool dim=r.status==EDEN_MP_ST_CACHED||r.status==EDEN_MP_ST_PROBING;
             const float tx=R.origin.x+du(10);
             const float topY=R.origin.y+R.size.height-du(5);
             ui.title.draw(tx,topY,kText);
             const Color subC=dim?kTextMuted:r.status==EDEN_MP_ST_FULL?kTextWarn:r.status==EDEN_MP_ST_UNKNOWN_HOST?kTextError
-                            :(r.status==EDEN_MP_ST_NOT_RUNNING||r.status==EDEN_MP_ST_NO_ANSWER)?kTextMuted:kTextSecondary;
+                            :(r.status==EDEN_MP_ST_NOT_RUNNING||r.status==EDEN_MP_ST_NO_ANSWER)?kTextHint:kTextSecondary;
             ui.sub.draw(tx+du(14),R.origin.y+du(5)+ui.sub.height(),subC);
             // The right column on the title's line: players, ping bars + ms, the lock.
             const Color rc=dim?kTextMuted:kText;
@@ -772,7 +776,7 @@ void ServerListMenu::render(){
                 const float isz=du(18);
                 const int id=r.locked==1?UIICON_LOCK:UIICON_LOCK_OPEN;
                 icon(id,CGRectMake(x,lineMid-isz*0.5f,isz,isz),rc);
-                if(r.locked<0) ui.q.draw(x+isz,lineMid+ui.q.height()*0.5f,rc);
+                // UX.2 (P9): an unknown lock has no "?" suffix; the open-lock glyph is drawn alone
             }
             x-=sl_pingW();
             if(m_tab==1){}   // a matchmaker gives no ping (UI plan §2.3)

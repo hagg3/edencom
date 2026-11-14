@@ -141,6 +141,7 @@ std::set<std::string> mp_docs_listing() {
 
 int run_mp_replay() {
     g_selftestTag = "eden-mp-replay";
+    if (!mutation_known("eden-mp-replay", "--mp-mutate", g_opt.mpMutate, {"noevictcommit", "nolandhook", "noreconcile", "echo"})) return 2;
     MpWorld::testNoEvictCommit = g_opt.mpMutate == "noevictcommit";
     MpWorld::testNoLandHook = g_opt.mpMutate == "nolandhook";
     MpWorld::testNoReconcile = g_opt.mpMutate == "noreconcile";
@@ -1001,6 +1002,27 @@ int run_mp_join() {
                     (unsigned long long)w.hash, w.cells, w.ox, w.oz, MpWorld::overlayCells(), s.regionsSent, s.repliesComplete,
                     s.reconciles);
         if (g_opt.mpEdits || !g_opt.mpHold.empty()) mp_live_edits(w);
+        if (g_opt.mpUnfocusSecs > 0) {
+            // QA.8 (U9): an unfocused window keeps the session: the idle branch pumps it at its wait
+            // timeout, so after N s the link is still up, nothing queued is left behind and no
+            // Disconnected dialog is waiting; the loop slept (<= 20 passes/s) the whole time.
+            const int p0 = g_idleMpPumps;
+            const int passes = run_unfocused(g_opt.mpUnfocusSecs * 1000.0, nullptr);
+            const int pumps = g_idleMpPumps - p0;
+            char d[128];
+            std::snprintf(d, sizeof d, "(%d s: %d loop passes, %d session pumps)", g_opt.mpUnfocusSecs, passes, pumps);
+            std::printf("[eden-mp-join] unfocused %s\n", d);
+            check(passes >= 0 && passes <= 20 * g_opt.mpUnfocusSecs, "unfocused: the loop sleeps (<= 20 passes/s)", d);
+            check(pumps >= 3 * g_opt.mpUnfocusSecs, "unfocused: the session is pumped at the wait timeout", d);
+            tick(30);
+            check(MpWorld::active() && MpWorld::link() && !GLDialog::active() && game_mode() == 1,
+                  "unfocused: the session is still connected and playing afterwards", d);
+            const MpWorld::Stats s2 = MpWorld::stats();
+            const int r0 = s2.reconciles;
+            MpWorld::reaskRegion();
+            check(tick_until([r0] { return MpWorld::stats().reconciles > r0; }, 3000, "a REGION after the unfocused spell"),
+                  "unfocused: the server still answers a REGION afterwards", d);
+        }
         tick(g_opt.frames);
         check(quit_to_menu() && !MpWorld::active() && !MpWorld::link(), "leaving the session closes it", "");
     }

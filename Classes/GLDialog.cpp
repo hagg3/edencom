@@ -41,7 +41,7 @@ bool GLDialog::active() {
 void GLDialog::reset() {
     m_title.clear();
     m_body.clear();
-    for (int j = 0; j < GLDIALOG_MAX_BUTTONS; j++) m_btn[j].setPressed(false);
+    for (int j = 0; j < GLDIALOG_MAX_BUTTONS; j++) { m_btn[j].setPressed(false); m_btn[j].setTone(GLW::Button::TONE_DEFAULT); }
     m_field.blur();                // stops the platform's text input (the iOS keyboard goes away)
     if (m_field.secure()) { m_field.setSecure(false); m_field.setKind(EDEN_TEXT_KIND_PLAIN); }
     m_field.setText("");           // MP.6: a password does not outlive its prompt
@@ -67,6 +67,11 @@ void GLDialog::show(const char* title, const char* body,
     d->m_bodyText  = body  ? body  : "";
     for (int j = 0; j < n; j++) d->m_btn[j].setLabel(buttons[j] ? buttons[j] : "");
     d->layout();
+}
+
+void GLDialog::setDanger(int j) {
+    GLDialog* d = getDialog();
+    if (d->m_active && j >= 0 && j < d->m_nButtons) d->m_btn[j].setTone(GLW::Button::TONE_DANGER);
 }
 
 void GLDialog::dismiss() { getDialog()->reset(); }
@@ -214,10 +219,21 @@ void GLDialog::update(float etime) {
     }
 }
 
+bool GLDialog::escape() {
+    GLDialog* d = getDialog();
+    if (!d->m_active) return false;
+    if (!d->m_hasField) d->choose(d->m_nButtons - 1);
+    return true;
+}
+
 void GLDialog::render() {
     if (!m_active) return;
 
     GLW::begin2D();
+    // UX.7: the dialog draws last, so it takes the focus from the screen under it. Return is button 0
+    // only where that was already the rule (a prompt) or there is nothing else to choose; a two-button
+    // confirm (Delete / Cancel) wants its button focused first.
+    GLW::Focus::screen(this, (m_hasField || m_nButtons == 1) ? &m_btn[0] : NULL);
 
     GLW::fill(CGRectMake(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT), GLW::kScrim);
     GLW::bevel(m_panel, GLW::BEVEL_WINDOW);

@@ -214,6 +214,46 @@ bool eden_fs_sync_dir(const std::string& dir) {
     return ok;
 #endif
 }
+// ---- QA.17: small-file durability (eden_fs.h) -----------------------------------------------
+#if defined(_WIN32)
+// Declared by hand: windows.h stays out of this TU (BOOL clash with eden_base.h). Same types as winbase.h.
+extern "C" __declspec(dllimport) int __stdcall MoveFileExW(const wchar_t*, const wchar_t*, unsigned long);
+#endif
+bool eden_fs_sync_file(FILE* f) {
+    if (!f || fflush(f) != 0) return false;
+#if defined(_WIN32)
+    return _commit(_fileno(f)) == 0;
+#else
+    return fsync(fileno(f)) == 0;   // A2-06: Apple's F_BARRIERFSYNC is a Stage T leg (measure on the Air 2 first)
+#endif
+}
+bool eden_fs_replace_atomic(const std::string& from, const std::string& to) {
+#if defined(_WIN32)
+    return MoveFileExW(P(from).c_str(), P(to).c_str(), 0x1 /*REPLACE_EXISTING*/ | 0x8 /*WRITE_THROUGH*/) != 0;
+#else
+    if (rename(from.c_str(), to.c_str()) != 0) return false;
+    size_t s = to.find_last_of('/');
+    (void)eden_fs_sync_dir(s == std::string::npos ? "." : s == 0 ? "/" : to.substr(0, s));
+    return true;
+#endif
+}
+bool eden_fs_write_atomic(const std::string& path, const void* data, size_t n) {
+    const std::string tmp = path + ".tmp";
+    FILE* fp;
+#if defined(_WIN32)
+    fp = _wfopen(P(tmp).c_str(), L"wb");
+#else
+    fp = fopen(tmp.c_str(), "wb");
+#endif
+    if (!fp) return false;
+    bool ok = n == 0 || fwrite(data, 1, n, fp) == n;
+    ok = eden_fs_sync_file(fp) && ok;
+    ok = fclose(fp) == 0 && ok;
+    if (ok && eden_fs_replace_atomic(tmp, path)) return true;
+    x_remove(tmp);
+    return false;
+}
+
 bool eden_fs_copy(const std::string& from, const std::string& to) { return x_copy(from, to); }
 bool eden_fs_create_empty(const std::string& path) {
     FILE* fp;

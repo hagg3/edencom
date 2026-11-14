@@ -84,7 +84,9 @@ option(EDEN_F3_HOOKS "Compile the F.3 timing hooks and the scripted warp/walk dr
 
 # G.2s: ASan + UBSan (the `sanitize` job in native.yml). Applied to eden_native's own sources only, not SDL.
 # -fno-sanitize-recover makes the first UB report fatal, so a gate fails on it instead of logging past it.
-option(EDEN_SANITIZE "Build with -fsanitize=address,undefined (CI's sanitizer leg)." OFF)
+# ON = ASan + UBSan (CI's sanitize job); "thread" = TSan (QA.7, CI's tsan job). ASan and TSan can't share a binary.
+option(EDEN_WERROR_INIT "QA.23: make an uninitialised read or a constructor reorder a build error (CI linux leg only)." OFF)
+set(EDEN_SANITIZE "OFF" CACHE STRING "OFF, ON (address,undefined) or thread (TSan)")
 
 # ---------------------------------------------------------------------------------------------
 # SDL3
@@ -136,12 +138,9 @@ message(STATUS "Eden: ${_eden_engine_count} engine sources")
 # port/src/shim/foundation/ since G.3 holds no Foundation: only portable C++ the seams and the engine
 # share on every target.
 #   md5.cpp     — eden_file_md5_hex (replaced the stock Classes/md5.c); plain stdio + RFC-1321.
-#   save_backup.cpp — Phase N Stage 2: the previous-save ".bak" rules. Portable C++ — stdio plus
-#                     g_save_inplace_threshold.
 # (eden_fs.cpp and platform_shims.cpp are in EDEN_SHARED_OTHER below.)
 set(EDEN_SHARED_FOUNDATION
   md5.cpp
-  save_backup.cpp
 )
 list(TRANSFORM EDEN_SHARED_FOUNDATION PREPEND "${EDEN_PORT_DIR}/src/shim/foundation/")
 
@@ -176,7 +175,6 @@ set(EDEN_SHARED_SEAM
   LoadFailure.cpp
   AppLifecycle.cpp
   Menu.cpp
-  Storage.cpp
   Input.cpp
 )
 list(TRANSFORM EDEN_SHARED_SEAM PREPEND "${EDEN_PORT_DIR}/src/seam/")
@@ -208,13 +206,14 @@ set(EDEN_SHARED_OTHER
 # ---------------------------------------------------------------------------------------------
 # G.4: the --*-selftest harness, one file per mode group (port/src/harness/harness.h)
 set(EDEN_HARNESS_SOURCES main core mode_boot mode_shots mode_world mode_props mode_cmds mode_light mode_mp
-  mode_look power mode_display mode_input mode_ui mode_browser mode_session mode_render mode_folders mode_registry mode_content mode_packs mode_mods mode_lua mode_weather)
+  mode_look power mode_display mode_input mode_ui mode_browser mode_session mode_render mode_folders mode_registry mode_content mode_packs mode_mods mode_hotbar mode_lua mode_weather)
 list(TRANSFORM EDEN_HARNESS_SOURCES PREPEND "${EDEN_PORT_DIR}/src/harness/")
 list(TRANSFORM EDEN_HARNESS_SOURCES APPEND ".cpp")
 set(EDEN_NATIVE_SOURCES
   ${EDEN_HARNESS_SOURCES}
   ${EDEN_PORT_DIR}/src/seam/App.cpp
   ${EDEN_PORT_DIR}/src/seam/DisplayMode_native.cpp
+  ${EDEN_PORT_DIR}/src/seam/WindowState_native.cpp
   ${EDEN_PORT_DIR}/src/seam/Input_native.cpp
   ${EDEN_PORT_DIR}/src/seam/HeapProbe_native.cpp
   ${EDEN_PORT_DIR}/src/seam/seam_link_stubs_native.cpp
@@ -464,6 +463,7 @@ set_property(SOURCE "${EDEN_PARENT_DIR}/Classes/TerrainGenerator.cpp" APPEND PRO
 # only behind `defined(__APPLE__)`.
 target_compile_definitions(eden_native PRIVATE
   EMOD_VERSION_STRING="${EMOD_VERSION}"
+  EDEN_SOURCE_ROOT="${EDEN_PARENT_DIR}"
   $<$<BOOL:${EDEN_DIAGNOSTICS}>:EDEN_DIAGNOSTICS=1>
   $<$<BOOL:${EDEN_F3_HOOKS}>:EDEN_F3_HOOKS=1>
 )
@@ -530,6 +530,9 @@ target_compile_options(eden_native PRIVATE
   $<$<COMPILE_LANGUAGE:CXX>:-Wno-c++11-narrowing>
   $<$<COMPILE_LANGUAGE:CXX>:-Wno-register>
   -Wno-macro-redefined
+  # QA.23 (A5-06): warnings on, minus the two that are noise (98 seam designated tables, 42 stock params)
+  -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers
+  $<$<BOOL:${EDEN_WERROR_INIT}>:-Werror=sometimes-uninitialized;-Werror=uninitialized;-Werror=reorder-ctor>
   # 2010-era C/C++ that has been getting away with type punning since -O0 never exploited it —
   # the same call web-port-final:web/CMakeLists.txt makes for its Release build, made unconditionally here
   # because native has no -O0 tree that would hide it.
@@ -551,7 +554,12 @@ else()
 endif()
 # (W.3's Windows `-Wl,--allow-multiple-definition` went in G.3: the duplicate it allowed was the GNU ObjC
 # runtime's per-function weak class-ref alias, and no ObjC is compiled off Apple any more.)
-if(EDEN_SANITIZE)
+if(EDEN_SANITIZE STREQUAL "thread")
+  # QA.7: TSan for the world-load thread and the network threads. Suppressions for what QA.14 still owes:
+  # port/tools/tsan-suppressions.txt (TSAN_OPTIONS=suppressions=...).
+  target_compile_options(eden_native PRIVATE -fsanitize=thread -fno-omit-frame-pointer -g)
+  target_link_options(eden_native PRIVATE -fsanitize=thread)
+elseif(EDEN_SANITIZE)
   # -fno-omit-frame-pointer + -g for readable reports out of a Release (-O2) build. vptr is off: it was
   # useless against the shim's hand-written ObjC runtime (gone in G.3); turning it on is a separate change.
   target_compile_options(eden_native PRIVATE -fsanitize=address,undefined -fno-sanitize=vptr

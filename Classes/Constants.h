@@ -130,7 +130,6 @@ void eden_set_save_inplace_threshold(unsigned long long bytes);
 // the save was writing anyway. Default TRUE; a probe sets it FALSE to A/B that cost, and it is
 // the one-flag rollback if a world ever turns out to dirty enough columns for it to hurt.
 extern int g_save_journal_columns;
-void eden_set_save_journal_columns(int on);
 #ifdef __cplusplus
 }
 #endif

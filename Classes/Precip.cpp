@@ -16,7 +16,7 @@
 #include "Globals.h"
 
 extern "C" int eden_atmo_tier(void);      // port/src/seam/Settings.cpp (AT.1a): 0 Off, 1 Low, 2 High
-extern "C" int eden_atmo_element(int e);  // 0 = atmo.precip
+extern "C" int eden_atmo_element(int e);  // AT_PRECIP, AT_SPLASH (Weather.h)
 extern int g_offcx,g_offcz;               // GBLOCK reads them (Terrain.cpp)
 extern TerrainChunk** chunkTablec;
 extern block8* blockarray;
@@ -127,7 +127,7 @@ void syncCache(int x0,int z0){
 }
 
 bool enabled(){
-    return eden_atmo_tier()>0&&eden_atmo_element(0)&&Weather::active();
+    return eden_atmo_element(AT_PRECIP)&&Weather::active();
 }
 }
 
@@ -194,7 +194,7 @@ void render(){
     g_drawn=n;
 
     // AT.2c: splashes (High, atmo.splash). The same seeds and map, flat quads on the columns' tops.
-    if(!snow&&eden_atmo_tier()>=2&&eden_atmo_element(1)){
+    if(!snow&&eden_atmo_tier()>=2&&eden_atmo_element(AT_SPLASH)){
         int m=(int)(SPLASH_HIGH*amount+0.5f);
         if(m>SPLASH_HIGH)m=SPLASH_HIGH;
         if(m>0){

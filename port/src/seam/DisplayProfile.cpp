@@ -161,7 +161,6 @@ extern "C" const EdenProfile* eden_profile_get(int id) {
     return &kProfiles[id];
 }
 
-extern "C" void eden_set_low_memory(int on) { g_low_memory = (on != 0); }
 extern "C" int eden_low_memory(void) { return g_low_memory ? 1 : 0; }
 
 extern "C" const EdenProfile* eden_profile_active(void) {

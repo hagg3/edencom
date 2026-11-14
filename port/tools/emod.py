@@ -95,6 +95,12 @@ FH_FMT = '<8sHHIQ36sI'           # 64 B
 RH28_FMT = '<4sBBHiiIII'         # first 28 B of a record header; crc32 follows
 COMMIT_FMT = '<IIIIQ'            # seq, count, crc_of_crcs, reserved, prev_commit_offset (24 B)
 SUMMARY_FMT = '<IIHHI'           # live_columns, next_ord, band_or, reserved, reserved (16 B)
+# QA.4 (A3-03): the most a record of each type may declare it decodes to (RecordHeader aux; a COLUMN's
+# is popcount(mask) x BAND). Larger = "does not decode" (damage), checked before decoding. Mirrors
+# Classes/EdenWorldStore.h record_decoded_max() and docs/emod-file-format.md "Reading"; others MAX_PAYLOAD.
+DECODED_MAX = {T_COLUMN: 16 * BAND, T_WORLD_HEADER: EDEN_HEADER, T_CREATURES: MAX_SLOTS * ENT,
+               T_SIGN_TRAILER: TRAILER_MAX, T_SUMMARY: 16, T_COMMIT: 24, T_GENERATOR: GENERATOR_LEN,
+               T_BLOCK_PALETTE: 8 + PALETTE_MAX * PALETTE_ENTRY, T_SKY_CLOCK: SKY_CLOCK_LEN, T_WEATHER: WEATHER_LEN}
 
 # PROVENANCE flags: each names one reason an export cannot be byte-identical to the source.
 PF_NONCANONICAL_LAYOUT = 1       # columns not packed from offset 192 at full stride, or dead bytes
@@ -862,6 +868,13 @@ class Rec:
         return self.off + REC_HEADER
 
 
+RESYNC_BUDGET_BASE = 64 << 20
+
+
+def resync_budget(size):
+    return 4 * size + RESYNC_BUDGET_BASE
+
+
 class Store:
     """Scan + commit evaluation, per docs/emod-file-format.md "Reading"."""
 
@@ -881,6 +894,8 @@ class Store:
         self.last_commit = None
         self.last_seq = 0
         self.flags = 0
+        self.resync_left = self.resync_charged = self.resync_attempts = 0
+        self.resync_out = False
         self.fh_ok = self._file_header()
         if self.fh_ok:
             self._scan()
@@ -916,7 +931,7 @@ class Store:
         return True
 
     # -- framing
-    def _frame(self, p):
+    def _frame(self, p, resync=False):
         b, n = self.buf, self.size
         if p + REC_HEADER > n or b[p:p + 4] != TAG:
             return None
@@ -926,6 +941,14 @@ class Store:
         end = p + REC_HEADER + plen + pad8(REC_HEADER + plen)
         if end > n:
             return None
+        if resync:                                   # QA.13: charged before the CRC; see _scan
+            charge = REC_HEADER + plen
+            if charge > self.resync_left:
+                self.resync_out = True
+                return None
+            self.resync_left -= charge
+            self.resync_charged += charge
+            self.resync_attempts += 1
         c = struct.unpack_from('<I', b, p + 28)[0]
         if self.check_crc and crc32(b[p:p + 28], b[p + REC_HEADER:p + REC_HEADER + plen]) != c:
             return None
@@ -935,6 +958,10 @@ class Store:
         return r
 
     def _scan(self):
+        # QA.13 (spec "Reading" rule 2): resync candidates share a budget of 4 x file size + 64 MiB, each
+        # charged 32 + payload_len once it would be CRC'd. The first that does not fit ends the scan:
+        # [p, EOF) is one damaged span, and that is damage. Byte for byte EdenWorldStore::scan.
+        self.resync_left = resync_budget(self.size)
         p = FILE_HEADER
         while p < self.size:
             r = self._frame(p)
@@ -943,8 +970,11 @@ class Store:
                 p = r.end
                 continue
             q = self.buf.find(TAG, p + 1)
-            while q != -1 and not (q % 8 == 0 and self._frame(q)):
+            while q != -1 and not (q % 8 == 0 and (self._frame(q, True) or self.resync_out)):
                 q = self.buf.find(TAG, q + 1)
+            if self.resync_out:
+                self.damage.append('resync budget spent at @%d: [%d, %d) is one damaged span' % (q, p, self.size))
+                q = -1
             if q == -1:
                 q = self.size
             self.spans.append((p, q))
@@ -1022,6 +1052,9 @@ class Store:
             exp = popcount(r.mask) * BAND
         else:
             exp = r.aux
+        if exp > DECODED_MAX.get(r.type, MAX_PAYLOAD):
+            raise ValueError('%s declares %d decoded bytes, over its ceiling %d'
+                             % (TYPE_NAMES.get(r.type, 'type %d' % r.type), exp, DECODED_MAX.get(r.type, MAX_PAYLOAD)))
         return Store.decode_payload(r.codec, p, exp)
 
     @staticmethod
@@ -1674,6 +1707,31 @@ def append_batch(path, columns=None, creatures=None, header=None, codec=C_ZSTD, 
         w.commit()
         f.flush()
         os.fsync(f.fileno())
+
+
+def hostile(path, what):
+    """QA.2 gate input: append one committed batch whose WORLD_HEADER (spawn/home/yaw) or first CREATURES slot holds
+    a value no sane save writes. what: header-nan | header-1e30 | header-inf | creature-nan (vel and angle; pos = the spawn)."""
+    st = open_emod(path)
+    _, hdr, _ = st.decode_live(('T', T_WORLD_HEADER))
+    _, cre, _ = st.decode_live(('T', T_CREATURES))
+    st.close()
+    hdr, cre = bytearray(hdr), bytearray(cre)
+    nan, big, inf = float('nan'), 1e30, float('inf')
+    if what.startswith('header-'):
+        v = {'header-nan': nan, 'header-1e30': big, 'header-inf': inf}[what]
+        struct.pack_into('<ffffff', hdr, 4, v, v, v, v, v, v)   # pos xyz, home xyz
+        struct.pack_into('<f', hdr, 28, v)                      # yaw
+        append_batch(path, header=bytes(hdr))
+    elif what == 'creature-nan':
+        for i in range(60):
+            cre[i:i + 1] = b'\0'
+        px, py, pz = struct.unpack_from('<3f', hdr, 4)   # in the resident window, so the creature is simulated
+        struct.pack_into('<7f', cre, 0, px, py, pz, nan, nan, nan, nan)   # EntityData: pos, vel (NaN), angle (NaN)
+        struct.pack_into('<ii', cre, 28, 0, 1)   # type 0, colour 1
+        append_batch(path, creatures=bytes(cre))
+    else:
+        die('hostile: unknown kind ' + what)
 
 
 # ================================================================== compaction (the engine's, byte for byte)
@@ -2382,6 +2440,77 @@ def palette_selftest(work):
     return ok
 
 
+def ceiling_selftest():
+    """QA.4: a record declaring more decoded bytes than its type's DECODED_MAX does not decode (the
+    native --emod-selftest "decode ceilings" section is the same rule)."""
+    st = Store.__new__(Store)
+    def rec(t, aux, payload):
+        r = Rec()
+        r.off, r.type, r.codec, r.mask, r.aux, r.plen = 0, t, C_NONE, 0, aux, len(payload)
+        st.buf = bytes(REC_HEADER) + payload
+        return r
+    def decodes(r):
+        try:
+            st.decode(r); return True
+        except ValueError:
+            return False
+    ok = decodes(rec(T_CREATURES, MAX_SLOTS * ENT, bytes(MAX_SLOTS * ENT)))
+    ok &= not decodes(rec(T_CREATURES, (MAX_SLOTS + 1) * ENT, bytes((MAX_SLOTS + 1) * ENT)))
+    ok &= not decodes(rec(T_CREATURES, 1 << 30, bytes(64)))
+    ok &= DECODED_MAX[T_SIGN_TRAILER] == 1 << 20 and DECODED_MAX[T_BLOCK_PALETTE] == 8 + 128 * 68
+    ok &= DECODED_MAX.get(T_PROVENANCE, MAX_PAYLOAD) == MAX_PAYLOAD
+    print('  400 slots decode, 401 and a 1 GiB claim do not: %s' % ('ok' if ok else 'FAILED'))
+    return ok
+
+
+def resync_tail(size, n):
+    """QA.13: n bytes for the end of a `size`-byte file: a tag every 8 bytes, each record claiming the rest of
+    the file (the audit's A3-05 input; --emod-selftest's resync_tail writes the same bytes)."""
+    total = size + n
+    return b''.join(TAG + struct.pack('<I', (total - c - 16) & 0xffffffff) for c in range(size, total - 7, 8)).ljust(n, b'\0')
+
+
+def resync_expect(p, size):
+    """The spec's rule restated: (charged, attempts, exhausted) for a resync_tail starting at p."""
+    left, charged, attempts = resync_budget(size), 0, 0
+    for q in range(p + 8, size - REC_HEADER + 1, 8):
+        c = size - q
+        if c > left:
+            return charged, attempts, True
+        left -= c; charged += c; attempts += 1
+    return charged, attempts, False
+
+
+def resync_selftest(work):
+    """QA.13: a 4 MiB tail of tags opens in under 1 s, charged exactly what the rule says; a 16 KiB one (under the
+    budget) reads as before. The native --emod-selftest "resync budget" section asserts the same."""
+    need_zstd()
+    src = make_fixtures(os.path.join(work, 'fixtures'))[0][0]
+    base = os.path.join(work, 'base.emod')
+    convert(src, base, epoch=0, quiet=True)
+    blob = open(base, 'rb').read()
+    s0 = state_digest(base)
+    ok = True
+    for n, out in ((16 << 10, False), (4 << 20, True)):
+        p = os.path.join(work, 'tail.emod')
+        open(p, 'wb').write(blob + resync_tail(len(blob), n))
+        t0 = time.time()
+        st = open_emod(p)
+        dt = time.time() - t0
+        want = resync_expect(len(blob), len(blob) + n)
+        got = (st.resync_charged, st.resync_attempts, st.resync_out)
+        good = (got == want and want[2] == out and st.resync_charged <= resync_budget(st.size) and dt < 1.0 and
+                bool(st.damage) == out and st.tail_bytes == n and st.truncate_at == len(blob) and
+                state_digest_store(st) == s0)
+        st.close()
+        print('  %d B tail: open %.0f ms, %d attempts, %d B charged, exhausted=%s: %s' % (
+            n, dt * 1000, got[1], got[0], got[2], 'ok' if good else 'FAILED (want %s)' % (want,)))
+        ok &= good
+    import shutil
+    shutil.rmtree(work)
+    return ok
+
+
 def selftest(work):
     ok = True
     for p, ident in make_fixtures(os.path.join(work, 'fixtures')):
@@ -2403,6 +2532,10 @@ def selftest(work):
             os.remove(m); os.remove(b)
     print('== block palette (K.1-2)')
     ok &= palette_selftest(os.path.join(work, 'palette'))
+    print('== decode ceilings (QA.4)')
+    ok &= ceiling_selftest()
+    print('== resync budget (QA.13)')
+    ok &= resync_selftest(os.path.join(work, 'resync'))
     print('== corrupt gate')
     ok &= corrupt_gate(os.path.join(work, 'gate'))
     print('SELFTEST %s' % ('PASSED' if ok else 'FAILED'))
@@ -2435,6 +2568,7 @@ def main():
     bk = sub.add_parser('bake-default'); bk.add_argument('world'); bk.add_argument('-o')
     bk.add_argument('--level', type=int, default=19); bk.add_argument('--epoch', type=int)
     vd = sub.add_parser('verify-default'); vd.add_argument('eden'); vd.add_argument('emod')
+    ho = sub.add_parser('hostile'); ho.add_argument('world'); ho.add_argument('kind')
     s = sub.add_parser('selftest'); s.add_argument('--work', default='emod-work')
     g = sub.add_parser('corrupt-gate'); g.add_argument('--no-crc', action='store_true'); g.add_argument('--work', default='emod-work')
     a = ap.parse_args(argv)
@@ -2466,6 +2600,9 @@ def main():
         need_zstd()
         ents = [parse_entry_arg(e) for e in a.palette_entry]
         compact(a.world, a.set_palette_flag, palette_payload(ents) if ents else None)
+    elif a.cmd == 'hostile':
+        need_zstd()
+        hostile(a.world, a.kind)
     elif a.cmd == 'trailer':
         sys.exit(0 if trailer_cmd(a.world, a.check, a.records, a.diff) else 1)
     elif a.cmd == 'roundtrip':

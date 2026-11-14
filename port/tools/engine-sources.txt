@@ -6,7 +6,6 @@ Classes/ColorUtil.cpp
 Classes/ContentPack.cpp
 Classes/ModsMenu.cpp
 Classes/PackInstall.cpp
-Classes/error.c
 Classes/FileManager.cpp
 Classes/FileManagerHelper.cpp
 Classes/Fire.cpp
@@ -15,7 +14,6 @@ Classes/Frustum.cpp
 Classes/Gamepad.cpp
 Classes/Geometry.cpp
 Classes/Globals.cpp
-Classes/glue.c
 Classes/Graphics.cpp
 Classes/hashmap.cpp
 Classes/Hud.cpp
@@ -30,7 +28,6 @@ Classes/Model.cpp
 Classes/Player.cpp
 Classes/Portal.cpp
 Classes/project.c
-Classes/registry.c
 Classes/Resources.cpp
 Classes/SettingsMenu.cpp
 Classes/SpecialEffects.cpp
@@ -68,6 +65,8 @@ Classes/Console.cpp
 Classes/ConsoleMenu.cpp
 Classes/MpWorld.cpp
 Classes/ChatFeed.cpp
+Classes/BlockIcon.cpp
+Classes/Hotbar.cpp
 Classes/ServerListMenu.cpp
 Classes/ServerFormMenu.cpp
 Classes/TouchLook.cpp

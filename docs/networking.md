@@ -28,8 +28,13 @@ non-blocking seam, `eden_net_fetch/poll/body/error/release` — implemented nati
 `port/src/seam/Net_native.cpp` over a backend chosen at build time: `AppleNet_native.mm`
 (NSURLSession, macOS/iOS), `NetWinHttp_native.cpp` (Windows), `NetCurl_native.cpp` (libcurl, Linux),
 or `NetNone_native.cpp` ("no network" — a Linux build without libcurl; Get Worlds is then not offered). A body kept in
-memory (no `destPath`: the list and preview fetches) is capped at 32 MB (Q.6, `kMaxMemoryBody`); a world download goes
-to a file and is not capped. It speaks the stock protocol to BOTH official services and adds the
+memory (no `destPath`: the list and preview fetches) is capped at 32 MB (Q.6, `kMaxMemoryBody`); a download goes
+to a file. **Download ceilings (QA.15, A3-07):** `eden_net_fetch(url, dest, maxBytes)`; `Net_native.cpp`'s `on_data` (shared by every backend and the fixture path) aborts a job past `maxBytes` (Get Worlds 4 GB, Get Mods 32 MB; 0 = none for a file, 32 MB for a memory body), on a body longer than its own Content-Length, and when the destination volume drops under 32 MB free (rechecked every 8 MB; `EDEN_TEST_FREE_BYTES` overrides). The `.part` is removed and the job's error says why. Gate: `--net-selftest` `legDownloadCeilings`. **A preview PNG is sized from its IHDR before anything else (QA.4, A3-04):** a side over
+2048 px (`PREVIEW_MAX_SIDE`, `WorldBrowser::previewTooBig`) is refused unwritten and undecoded and the pane says
+"preview missing" (a 200 KB 8192×8192 PNG of zeros would otherwise decode to 268 MB, and plain-`http://` hosts let
+anyone on the network serve one). Behind it, `STBI_MAX_DIMENSIONS 8192` in `port/src/seam/Texture2D.cpp` refuses any image
+wider or taller than 8192 px (the bundled art tops out at 4096). Gate: `--browser-selftest`.
+It speaks the stock protocol to BOTH official services and adds the
 community archive:
 
 | Source | List | World | Preview |
@@ -105,7 +110,11 @@ Plain C++ in `port/src/net/` (no `Classes/` includes; compiled into `eden_native
   `MpSession::eventBytes` against `worldQueueCapBytes` (256 MB), together with what the consumer reports it still holds
   (`setHeldBytes`; the join flow passes `MpWorld::heldBytes()` = `MpWorld`'s queued events + the burst/reconcile cell sets
   every pump). So the cap spans drains, including while the load pthread runs and `MpWorld` cannot drain. Past it:
-  `TooMuchData`.
+  `TooMuchData`. **The side queue is capped too (QA.8, A3-08):** chat, peer movement, pongs count `sizeof(MpSideEvent)` +
+  text + name against `sideQueueCapBytes` (4 MB) until drained; past it, `TooMuchData` (Stage and the terminal Error are
+  exempt). An unfocused desktop window keeps draining it: the host loop's idle branch calls `eden_mp_idle_pump`
+  (`MpLink_native.cpp`; docs/execution-flow.md). Gates: `--mp-selftest` flood leg (consumer paused vs draining),
+  `--mp-join=… --mp-unfocus=60` against a local edenserver.
 - **Stopping (Q.6, F20).** `stop()` joins the thread. `detach()` (a session owned by a `std::shared_ptr`, as
   `MpLink_native.cpp`'s is) signals and lets go: the thread holds its own reference, finishes a connect or DNS lookup
   alone (`getaddrinfo` has no timeout), closes the socket and frees the session. So the Connecting window's Cancel never
@@ -181,7 +190,7 @@ Plan §5-§7; code `Classes/MpWorld.cpp` (second half), `Terrain::setCellState`,
 - **The pacer** (VuencLink `region.rs`'s rules): the point is `128·floor(p/128+½)` on each axis, switched when the player is
   more than 72 blocks from it; re-asked every time it becomes current (never deduplicated); one request in flight; 750 ms
   after a reply ends; no frame within 3 s = *unanswered* (not empty), re-asked after the gap, 3 times, then left until the
-  point changes; points outside 0..0xFFFFFF never sent. `serverSpawn` (a mid-session `SPAWN`) warps and sets the point.
+  point changes; points outside 0..0xFFFFFF never sent. `serverSpawn` (a mid-session `SPAWN`) warps and sets the point. QA.2: `parseNum` rejects non-finite numbers (a `SPAWN:nan:…`, `POS`, `VEL`, `POSVEL` line is dropped as malformed) and `serverSpawn` ignores a spawn beyond ±10,000,000 (the console's `=N` ceiling).
 - **Reconcile** (§6.3) when a reply that answered our `REGION` is applied: every cell of the columns within ±208 of the point
   that the burst didn't name (nor an `ACTION` relayed inside it) goes back to flat — resident columns are committed first,
   then written cell by cell under the budget; non-resident ones lose the entries in one pass. Spared: cells
@@ -293,7 +302,7 @@ The home **Multiplayer** tile opens `Classes/ServerListMenu` (list, detail pane,
 - **Join**: `eden_mp_join` → `MpLink_native`, whose stages (`EDEN_MP_JOIN_*`: Connecting, Joining, Receiving world,
   Loading world + %, Playing, Failed + `EDEN_MP_ERR_*` + sentence) drive the Connecting window. A locked row without a
   remembered password prompts first (secure field, "Join and remember"); a wrong password marks the row locked and prompts
-  again. Cancel works until Loading. Escape/Back goes form → cancel join → home (`eden_server_list_back`).
+  again. Cancel works until Loading. Escape/Back goes form → cancel join → home (`Menu::back()`).
 - **Harness**: `--mp-mock` / `eden_mp_servers_mock(1)` is a 7-row fixture with canned probe results (no sockets, nothing
   written; 2 = empty list). `--shot` captures `mp-*`; `--ui-selftest` drives add/validate/save, profile-first join,
   Connecting + Cancel against a silent listener, delete, the secure prompt and the keyboard rule; `--mp-selftest` covers
@@ -303,7 +312,7 @@ The home **Multiplayer** tile opens `Classes/ServerListMenu` (list, detail pane,
 
 ## Matchmakers (Stage MP, MP.8)
 
-- **Setting**: Experiments › Matchmakers, `mp_matchmakers`, the port's first **`KIND_TEXT`** row (`Settings.cpp`: value in
+- **Setting**: Experiments › Matchmakers, `mp_matchmakers` (K.3-8: defaults to `45.79.193.87`, port 27020; a stored empty string turns it off; `Settings.cpp textDefault`, mirrored in `MpServers_native.cpp mmSetting`), the port's first **`KIND_TEXT`** row (`Settings.cpp`: value in
   `g_text[]`, persisted as an NSString under the key, `eden_settings_text` / `eden_settings_set_text`; not a Console cvar, and
   `eden_settings_set` ignores it). Comma-separated `host[:port]`, default port **27020**, ≤ 8 addresses, ≤ 512 bytes, empty = off.
   `SettingsMenu` shows a button ("None, Add" / "2 addresses, Edit") that opens `GLDialog::prompt`; Save validates the whole list
@@ -363,7 +372,7 @@ Moved from `port/CLAUDE.md` (2026-10-20). `port/src/net/`: `NetSock` (TCP, POSIX
   builder, `--mp-hold=FILE` watcher) and a recorder socket against one (converge, relayed once, no echo, the sign round-trips).
   MP.6: `ServerList` (servers.txt format, address/name rules, `INFO` probe, `ServerProber` worker pool), reached from
   the screens via the C seam `Classes/MpServers.h` = `../port/src/seam/MpServers_native.cpp`; Escape on the list is
-  `eden_server_list_back()` (Menu.cpp); `--mp-mock` is the canned fixture. MP.8: `fetchMatchList`/`MatchFetcher`/`parseMatchmakers` in the same file, `eden_mp_matchmaker*` in the seam, and `Settings.cpp`'s first `KIND_TEXT` row (`mp_matchmakers`; not a cvar). MP.7: `Classes/ChatFeed` + the Console screen's Chat/Players tiles; keybinds `chat` (T) and `chatCommand` (/) dispatch `eden_chat_open` (Menu.cpp); the UI atlas grew to 512x512 (`ui-icons.py`).
+  `Menu::back()`'s `servers` row (Menu.cpp); `--mp-mock` is the canned fixture. MP.8: `fetchMatchList`/`MatchFetcher`/`parseMatchmakers` in the same file, `eden_mp_matchmaker*` in the seam, and `Settings.cpp`'s first `KIND_TEXT` row (`mp_matchmakers`; not a cvar). MP.7: `Classes/ChatFeed` + the Console screen's Chat/Players tiles; keybinds `chat` (T) and `chatCommand` (/) dispatch `eden_chat_open` (Menu.cpp); the UI atlas grew to 512x512 (`ui-icons.py`).
 
 ## Client files (stock; seam-excluded on the port)
 - `Classes/ShareUtil.mm` — endpoint knowledge and orchestration. Current endpoints
@@ -402,8 +411,8 @@ Moved from `port/CLAUDE.md` (2026-10-20). `port/src/net/`: `NetSock` (TCP, POSIX
 ## Server side (not in this repo)
 The upstream source tree carries the Java servlets (`List2.java`, `UploadMap2.java`, `Report.java`,
 `Moderate.java` under `edenweb/src`, deployed on a bundled Jetty, plus `jetty9/` and the old
-website); this repo does not. Here only `tools/eden2/src/List2.java` and `UploadMap2.java` (with an
-`Archive.zip`) survive. Useful as the ground truth for request/response formats if you rebuild
+website); this repo does not. Here only `List2.java` and `UploadMap2.java` (with an `Archive.zip`) survive, in
+`archive/stock-unbuilt/tools/eden2/src/` (moved from the root 2026-11-10; not in the public mirror). Useful as the ground truth for request/response formats if you rebuild
 the service; the community keeps a compatible service alive (this fork's modified
 download path targets it).
 

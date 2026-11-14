@@ -365,6 +365,13 @@ void NewWorldMenu::layout(){
     float heights[NW_MAX_ROWS];
     for(int k=0;k<m_nRows;k++){
         const int r=m_rowIdx[k];
+        if(kRows[r].kind==NW_CHOICE){
+            // UX.2 (B1): the option group lives in the control column (at most 60 % of the row), so
+            // FT.9's fit rule shrinks the labels instead of the group running past the row.
+            const int n=std::min(kRows[r].nOpts,(int)NW_MAX_OPTS);
+            const float colW=C.size.width*0.6f-du(10)-du(5)*(n-1);
+            for(int j=0;j<n;j++){ m_opt[r][j].setMaxWidth(std::max(colW/n,du(64))); }
+        }
         float cw,ch;
         controlSize(r,&cw,&ch);
         m_row[k].build(kRows[r].title,hintFor(r),C.size.width,cw,ch);
@@ -582,6 +589,7 @@ void NewWorldMenu::render(){
     GLW::begin2D();
 
     using namespace GLW;
+    Focus::screen(this, &m_play);   // UX.7
     fill(CGRectMake(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT), kScrim);
     bevel(m_panel, BEVEL_WINDOW);
     m_back.render();

@@ -1,0 +1,487 @@
+[eden] documents=/Users/sam/emod/native/gate-docs/fit-selftest
+[eden] bundle=./build
+[eden-gl] desktop GL context live (1136x640 px) â€” 4.1 Metal - 89.4 / GLSL 4.10
+[eden-gl] pick viewport now 2272x1280 (engine point space x scale).
+[eden-display] profile=desktop ui_scale=125% layout=adaptive -> 1136x640 points (aspect 1.775, snap 1 px/pt)
+Texture2D: './build/ipad~colorpick_background.png' decoded 582x511 (canvas 582x511) fmt=1 center-rgba=(237,237,237,227)
+Texture2D: './build/ipad~menu_autojump.png' decoded 310x50 (canvas 310x50) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/ipad~eden_menu_header.png' decoded 591x175 (canvas 591x175) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~arrow_left.png' decoded 82x207 (canvas 82x207) fmt=1 center-rgba=(255,213,65,255)
+Texture2D: './build/ipad~arrow_right.png' decoded 82x207 (canvas 82x207) fmt=1 center-rgba=(255,213,63,255)
+Texture2D: './build/ipad~create_world.png' decoded 116x138 (canvas 116x138) fmt=1 center-rgba=(162,179,162,255)
+Texture2D: './build/ipad~delete_world.png' decoded 119x130 (canvas 119x130) fmt=1 center-rgba=(201,195,195,255)
+Texture2D: './build/ipad~share_world.png' decoded 141x132 (canvas 141x132) fmt=1 center-rgba=(51,179,51,255)
+Texture2D: './build/ipad~ground.png' decoded 1024x39 (canvas 1024x39) fmt=1 center-rgba=(68,142,63,255)
+Texture2D: './build/ipad~world_selected.png' decoded 130x130 (canvas 130x130) fmt=1 center-rgba=(175,175,175,255)
+Texture2D: './build/ipad~world_unselected.png' decoded 115x115 (canvas 115x115) fmt=1 center-rgba=(123,123,123,255)
+Texture2D: './build/ipad~load_world.png' decoded 120x126 (canvas 120x126) fmt=1 center-rgba=(11,42,11,255)
+Texture2D: './build/ipad~options.png' decoded 387x162 (canvas 387x162) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: './build/ipad~arrow_up.png' decoded 97x38 (canvas 97x38) fmt=1 center-rgba=(255,213,66,255)
+Texture2D: './build/ipad~arrow_down.png' decoded 97x38 (canvas 97x38) fmt=1 center-rgba=(255,212,61,255)
+Texture2D: './build/ipad~back.png' decoded 108x102 (canvas 108x102) fmt=1 center-rgba=(206,173,13,255)
+Texture2D: './build/ipad~menu_shared_worlds.png' decoded 504x47 (canvas 504x47) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~menu_cancel.png' decoded 313x60 (canvas 313x60) fmt=1 center-rgba=(0,0,0,128)
+Texture2D: './build/ipad~menu_health.png' decoded 219x49 (canvas 219x49) fmt=1 center-rgba=(0,0,0,187)
+Texture2D: './build/ipad~menu_music.png' decoded 185x49 (canvas 185x49) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~menu_off.png' decoded 169x50 (canvas 169x50) fmt=1 center-rgba=(90,90,90,255)
+Texture2D: './build/ipad~menu_on.png' decoded 169x50 (canvas 169x50) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/ipad~menu_options.png' decoded 348x63 (canvas 348x63) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: './build/ipad~menu_save.png' decoded 215x64 (canvas 215x64) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~menu_send.png' decoded 209x60 (canvas 209x60) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~menu_sound_effects.png' decoded 462x49 (canvas 462x49) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/menu_text_box.png' decoded 300x45 (canvas 300x45) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/ipad~sky.png' decoded 1024x768 (canvas 1024x768) fmt=4 center-rgba=(246,166,146,255)
+Texture2D: './build/ipad~pinwheel.png' decoded 1578x1578 (canvas 1578x1578) fmt=8 center-rgba=(128,128,128,64)
+Texture2D: './build/ipad~menu_text_load.png' decoded 210x62 (canvas 210x62) fmt=1 center-rgba=(0,0,0,192)
+Texture2D: './build/ipad~menu_text_back.png' decoded 211x62 (canvas 211x62) fmt=1 center-rgba=(0,0,0,128)
+Texture2D: './build/ipad~shared_world_selected.png' decoded 80x80 (canvas 80x80) fmt=1 center-rgba=(174,174,174,255)
+Texture2D: './build/ipad~shared_world_unselected.png' decoded 75x75 (canvas 75x75) fmt=1 center-rgba=(123,123,123,255)
+Texture2D: './build/ipad~menu_fast.png' decoded 149x45 (canvas 149x45) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~menu_best.png' decoded 150x45 (canvas 150x45) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~menu_creatures.png' decoded 338x49 (canvas 338x49) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/ipad~treelayerleft.png' decoded 835x456 (canvas 835x456) fmt=1 center-rgba=(90,39,35,255)
+Texture2D: './build/ipad~treelayerright.png' decoded 835x456 (canvas 835x456) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/re[eden-p1] tick 0: World::update(0.0249 s) entered
+[eden-p1] tick 0: World::update returned (retinaSwap=0)
+[eden-p1] tick 1: World::update(0.0855 s) entered
+[eden-p1] tick 1: World::update returned (retinaSwap=0)
+[eden-p1] tick 2: World::update(0.0045 s) entered
+[eden-p1] tick 2: World::update returned (retinaSwap=0)
+[eden-browser] preview fetch failed (status -1)
+[eden-stage1] TIMEOUT waiting for a preview (1500 frames)
+port_flag.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(245,55,55,255)
+Texture2D: './build/atlas.png' decoded 32x4096 (canvas 32x4096) fmt=4 center-rgba=(53,91,27,255)
+Texture2D: './build/atlas2.png' decoded 32x4096 (canvas 32x4096) fmt=1 center-rgba=(0,0,0,0)
+[eden-fit] home: every control inside                     PASS  0 of 7 outside 0,0 1136x640
+[eden-fit] home: no controls overlap                      PASS
+[eden-fit] menu: every control inside                     PASS  0 of 5 outside 0,0 1136x640
+[eden-fit] menu: no controls overlap                      PASS
+[eden-fit] menu-focus: every control inside               PASS  0 of 5 outside 0,0 1136x640
+[eden-fit] menu-focus: no controls overlap                PASS
+[eden-fit] browser: every control inside                  PASS  0 of 20 outside 0,0 1136x640
+[eden-fit] browser: no controls overlap                   PASS
+Texture2D: '/Users/sam/emod/native/gate-docs/fit-selftest/.emod-preview.png' decoded 568x320 (canvas 568x320) fmt=1 center-rgba=(61,130,226,255)
+[eden-fit] browser-current: every control inside          PASS  0 of 24 outside 0,0 1136x640
+[eden-fit] browser-current: no controls overlap           PASS
+[eden-fit] mods: every control inside                     PASS  0 of 12 outside 0,0 1136x640
+[eden-fit] mods: no controls overlap                      PASS
+[eden-fit] mods-skipped: every control inside             PASS  0 of 12 outside 0,0 1136x640
+[eden-fit] mods-skipped: no controls overlap              PASS
+[eden-fit] mods-refused: every control inside             PASS  0 of 12 outside 0,0 1136x640
+[eden-fit] mods-refused: no controls overlap              PASS
+[eden-fit] mods-get: every control inside                 PASS  0 of 8 outside 0,0 1136x640
+[eden-fit] mods-get: no controls overlap                  PASS
+Texture2D: './build/ui_icons.png' decoded 512x512 (canvas 512x512) fmt=1 center-rgba=(255,255,255,0)
+[eden-fit] mp-list: every control inside                  PASS  0 of 9 outside 0,0 1136x640
+[eden-fit] mp-list: no controls overlap                   PASS
+[eden-fit] mp-list-matchmakers: every control inside      PASS  0 of 9 outside 0,0 1136x640
+[eden-fit] mp-list-matchmakers: no controls overlap       PASS
+[eden-fit] mp-form-add: every control inside              PASS  0 of 7 outside 0,0 1136x640
+[eden-fit] mp-form-add: no controls overlap               PASS
+[eden-fit] mp-form-edit: every control inside             PASS  0 of 10 outside 0,0 1136x640
+[eden-fit] mp-form-edit: no controls overlap              PASS
+[eden-fit] mp-form-keyboard: every control inside         PASS  0 of 5 outside 0,0 1136x640
+[eden-fit] mp-form-keyboard: no controls overlap          PASS
+[eden-fit] mp-profile: every control inside               PASS  0 of 6 outside 0,0 1136x640
+[eden-fit] mp-profile: no controls overlap                PASS
+[eden-fit] mp-password: every control inside              PASS  0 of 13 outside 0,0 1136x640
+[eden-fit] mp-password: no controls overlap               PASS
+[eden-fit] mp-connecting: every control inside            PASS  0 of 1 outside 0,0 1136x640
+[eden-fit] mp-connecting: no controls overlap             PASS
+[eden-fit] mp-error-refused: every control inside         PASS  0 of 12 outside 0,0 1136x640
+[eden-fit] mp-error-refused: no controls overlap          PASS
+[eden-fit] mp-error-name: every control inside            PASS  0 of 11 outside 0,0 1136x640
+[eden-fit] mp-error-name: no controls overlap             PASS
+[eden-fit] mp-list-empty: every control inside            PASS  0 of 10 outside 0,0 1136x640
+[eden-fit] mp-list-empty: no controls overlap             PASS
+[eden-fit] newworld: every control inside                 PASS  0 of 7 outside 0,0 1136x640
+[eden-fit] newworld: no controls overlap                  PASS
+[eden-fit] newworld-flat: every control inside            PASS  0 of 7 outside 0,0 1136x640
+[eden-fit] newworld-flat: no controls overlap             PASS
+[eden-fit] newworld-classic: every control inside         PASS  0 of 15 outside 0,0 1136x640
+[eden-fit] newworld-classic: no controls overlap          PASS
+[eden-fit] newworld-classic-64: every control inside      PASS  0 of 17 outside 0,0 1136x640
+[eden-fit] newworld-classic-64: no controls overlap       PASS
+[eden-fit] settings: every control inside                 PASS  0 of 13 outside 0,0 1136x640
+[eden-fit] settings: no controls overlap                  PASS
+[eden-fit] settings-audio: every control inside           PASS  0 of 12 outside 0,0 1136x640
+[eden-fit] settings-audio: no controls overlap            PASS
+[eden-fit] settings-controls: every control inside        PASS  0 of 13 outside 0,0 1136x640
+[eden-fit] settings-controls: no controls overlap         PASS
+[eden-fit] settings-keys: every control inside            PASS  0 of 12 outside 0,0 1136x640
+[eden-fit] settings-keys: no controls overlap             PASS
+[eden-fit] settings-video: every control inside           PASS  0 of 23 outside 0,0 1136x640
+[eden-fit] settings-video: no controls overlap            PASS
+[eden-fit] settings-experiments: every control inside     PASS  0 of 14 outside 0,0 1136x640
+[eden-fit] settings-experiments: no controls overlap      PASS
+[eden-fit] settings-world: every control inside           PASS  0 of 15 outside 0,0 1136x640
+[eden-fit] settings-world: no controls overlap            PASS
+[eden-fit] settings-experiments-srclike: every control inside PASS  0 of 12 outside 0,0 1136x640
+[eden-fit] settings-experiments-srclike: no controls overlap PASS
+[eden-fit] settings-video-atmosphere: every control inside PASS  0 of 12 outside 0,0 1136x640
+[eden-fit] settings-video-atmosphere: no controls overlap PASS
+[eden-fit] settings-experiments-online: every control inside PASS  0 of 5 outside 0,0 1136x640
+[eden-fit] settings-experiments-online: no controls overlap PASS
+[eden-fit] settings-world-weather: every control inside   PASS  0 of 6 outside 0,0 1136x640
+[eden-fit] settings-world-weather: no controls overlap    PASS
+world height set to 64 (4 bands, 32768 B per column record)
+window radius set to 9 (288 x 288 blocks, 324 columns)
+allocated and zeroed chunksTexture2D: './build/ipad~moof_icon.png' decoded 64x64 (canvas 64x64) fmt=1 center-rgba=(0,90,185,255)
+Texture2D: './build/ipad~build.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(140,143,139,255)
+Texture2D: './build/ipad~destroy.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(177,139,89,255)
+Texture2D: './build/ipad~burn.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(228,132,59,255)
+Texture2D: './build/ipad~save.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(128,128,128,255)
+Texture2D: './build/ipad~cancel.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(238,105,105,255)
+Texture2D: './build/ipad~home.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(193,193,193,255)
+Texture2D: './build/ipad~jump.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(121,215,237,255)
+Texture2D: './build/smoke_tex.png' decoded 32x32 (canvas 32x32) fmt=1 center-rgba=(67,67,67,255)
+Texture2D: './build/ipad~analog_top.png' decoded 88x88 (canvas 88x88) fmt=1 center-rgba=(119,119,119,255)
+Texture2D: './build/ipad~analog_bottom.png' decoded 88x88 (canvas 88x88) fmt=1 center-rgba=(186,186,186,255)
+Texture2D: './build/ipad~camera.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(41,86,80,255)
+Texture2D: './build/ipad~block_border.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(27,26,25,0)
+Texture2D: './build/block_background.png' decoded 402x282 (canvas 402x282) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/ipad~palette.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(133,145,217,255)
+Texture2D: './build/block_border_pressed.png' decoded 38x38 (canvas 38x38) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/color_border_pressed.png' decoded 32x32 (canvas 32x32) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/ipad~color_border.png' decoded 64x64 (canvas 64x64) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/sky_box.png' decoded 128x512 (canvas 128x512) fmt=1 center-rgba=(127,172,232,255)
+Texture2D: './build/ipad~triangle_border_pressed.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(27,26,25,255)
+Texture2D: './build/ipad~triangle_border.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: './build/ipad~build2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(220,220,220,255)
+Texture2D: './build/ipad~build3.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(183,183,183,255)
+Texture2D: './build/ipad~destroy_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(177,139,89,255)
+Texture2D: './build/ipad~paint_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(133,145,217,255)
+Texture2D: './build/ipad~build2_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(220,220,220,255)
+Texture2D: './build/ipad~build3_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(183,183,183,255)
+Texture2D: './build/ipad~burn_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(228,132,59,255)
+Texture2D: './build/ipad~jump_depressed.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(179,179,179,255)
+Texture2D: './build/Moof_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(31,106,182,255)
+Texture2D: './build/Moof_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(202,18,10,255)
+Texture2D: './build/Moof_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(31,106,182,255)
+Texture2D: './build/Batty_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(122,74,192,255)
+Texture2D: './build/Batty_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(211,4,0,255)
+Texture2D: './build/Batty_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(122,74,192,255)
+Texture2D: './build/Green_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(62,136,66,255)
+Texture2D: './build/Green_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(128,15,0,255)
+Texture2D: './build/Green_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(62,136,66,255)
+Texture2D: './build/Nergle_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(65,46,65,255)
+Texture2D: './build/Nergle_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(106,6,0,255)
+Texture2D: './build/Nergle_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(65,46,65,255)
+Texture2D: './build/Stumpy_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(202,96,1,255)
+Texture2D: './build/Stumpy_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(192,5,1,255)
+Texture2D: './build/Stumpy_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(202,96,1,255)
+Texture2D: './build/shadow.png' decoded 64x64 (canvas 64x64) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: './build/menu_icon.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(115,160,34,255)
+Texture2D: './build/door.png' decoded 32x64 (canvas 32x64) fmt=1 center-rgba=(85,53,15,255)
+Texture2D: './build/sky_box_bw.png' decoded 128x512 (canvas 128x512) fmt=1 center-rgba=(253,253,253,255)
+Texture2D: './build/golden_cube.png' decoded 64x64 (canvas 64x64) fmt=4 center-rgba=(254,218,92,255)
+Texture2D: './build/golden_cube_bw.png' decoded 64x64 (canvas 64x64) fmt=4 center-rgba=(243,243,243,255)
+Texture2D: './build/door_mask.png' decoded 32x64 (canvas 32x64) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/flower_tex.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/portal.png' decoded 64x128 (canvas 64x128) fmt=1 center-rgba=(100,100,100,255)
+Texture2D: './build/ipad~sphere_map.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(157,157,157,255)
+Texture2D: './build/ipad~build2_top.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/ipad~buildplus.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/portal_twirl.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(146,146,146,255)
+Texture2D: './build/ipad~build3_top.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(115,115,115,77)
+Texture2D: './build/blocktoggle1.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(156,156,156,255)
+Texture2D: './build/blocktoggle2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,40,40,255)
+Texture2D: './build/flower_icon.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(18,99,120,255)
+Texture2D: './build/ipad~block_border2.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(27,26,25,0)
+Texture2D: './build/ipad~block_border_pressed2.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(27,26,25,0)
+Texture2D: './build/ipad~triangle_border2.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~triangle_border_pressed2.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~build_under2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(220,220,220,255)
+Texture2D: './build/ipad~build_over2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(60,60,60,0)
+Texture2D: './build/ipad~build2_active2.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(220,220,220,255)
+Texture2D: './build/ipad~build2_under2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(182,182,182,255)
+Texture2D: './build/ipad~build3_top2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(116,116,116,77)
+Texture2D: './build/ipad~build3_active2.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(182,182,182,255)
+Texture2D: './build/digits.png' decoded 250x32 (canvas 250x32) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/goldcube_icon.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(250,205,105,255)
+Texture2D: './build/portal_icon2.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(120,120,120,255)
+Texture2D: './build/door_icon2.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(95,60,17,255)
+Texture2D: './build/Charger_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(201,0,0,255)
+Texture2D: './build/Charger_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(201,0,0,255)
+Texture2D: './build/Charger_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(208,24,24,255)
+Texture2D: './build/Stalker_Default.png' decoded 512x512 (canvas 512x512) fmt=4 center-rgba=(182,0,0,255)
+Texture2D: './build/Stalker_Default.png' decoded 512x512 (canvas 512x512) fmt=4 center-rgba=(182,0,0,255)
+Texture2D: './build/Stalker_Blink.png' decoded 512x512 (canvas 512x512) fmt=4 center-rgba=(182,0,0,255)
+Texture2D: './build/Moof_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Flame_512.png' decoded 512x512 (canvas 512x512) fmt=1 center-rgba=(68,21,5,0)
+Texture2D: './build/text_numbers.png' decoded 512x32 (canvas 512x32) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~paint_mask.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/goldcube_icon_mask.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/flower_icon_mask.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/door_icon2_mask.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/portal_icon2_mask.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/goldcube_icon_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(250,205,105,255)
+Texture2D: './build/flower_icon_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(18,99,120,255)
+Texture2D: './build/door_icon2_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(95,60,17,255)
+Texture2D: './build/portal_icon2_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(120,120,120,255)
+Texture2D: './build/ipad~block_border_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(27,26,25,0)
+Texture2D: './build/ipad~triangle_border_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(27,26,25,255)
+Texture2D: './build/Moof_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Moof_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Batty_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Batty_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Green_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Green_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Nergle_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Nergle_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Stumpy_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Stumpy_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+[eden-stage1] open_world "shot"  first-load 61 ms
+[eden-fit] hud: every control inside                      PASS  0 of 0 outside 0,0 1136x640
+[eden-fit] hud: no controls overlap                       PASS
+[eden-shot] icons legend: row-major, block id 1..127, then painted stone/grass/wood_ramp1/wood_side3/tnt/flower, mod block x2, missing(200), swatch x2, empty
+[eden-fit] hud-status: every control inside               PASS  0 of 0 outside 0,0 1136x640
+[eden-fit] hud-status: no controls overlap                PASS
+[eden-fit] picker-blocks: every control inside            PASS  0 of 2 outside 0,0 1136x640
+[eden-fit] picker-blocks: no controls overlap             PASS
+Texture2D: './build/sign_icon.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(186,123,59,255)
+Texture2D: './build/cmd_block_V2_icon.png' decoded 32x32 (canvas 32x32) fmt=1 center-rgba=(56,58,56,255)
+[eden-fit] picker-blocks-p2: every control inside         PASS  0 of 2 outside 0,0 1136x640
+[eden-fit] picker-blocks-p2: no controls overlap          PASS
+derp: 117
+blocktype:117
+[eden-fit] hud-newblock: every control inside             PASS  0 of 0 outside 0,0 1136x640
+[eden-fit] hud-newblock: no controls overlap              PASS
+blocktype:1000
+[eden-fit] hud-sign: every control inside                 PASS  0 of 0 outside 0,0 1136x640
+[eden-fit] hud-sign: no controls overlap                  PASS
+[eden-fit] picker-blocks-p2-sign: every control inside    PASS  0 of 2 outside 0,0 1136x640
+[eden-fit] picker-blocks-p2-sign: no controls overlap     PASS
+[eden-fit] sign-prompt: every control inside              PASS  0 of 5 outside 0,0 1136x640
+[eden-fit] sign-prompt: no controls overlap               PASS   O
+blocktype:1001
+[eden-fit] hud-cmd: every control inside                  PASS  0 of 0 outside 0,0 1136x640
+[eden-fit] hud-cmd: no controls overlap                   PASS
+[eden-fit] cmd-prompt: every control inside               PASS  0 of 3 outside 0,0 1136x640
+[eden-fit] cmd-prompt: no controls overlap                PASS
+[eden-fit] picker-colors: every control inside            PASS  0 of 0 outside 0,0 1136x640
+[eden-fit] picker-colors: no controls overlap             PASS
+Texture2D: './build/console_button.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(36,36,36,255)
+[eden-shot] in_menu=1
+[eden-fit] pausemenu: every control inside                PASS  0 of 6 outside 0,0 1136x640
+[eden-fit] pausemenu-settings: every control inside       PASS  0 of 19 outside 0,0 1136x640
+[eden-fit] pausemenu-settings: no controls overlap        PASS
+[eden-fit] console: every control inside                  PASS  0 of 9 outside 0,0 1136x640
+[eden-fit] console: no controls overlap                   PASS
+[eden-fit] console-complete: every control inside         PASS  0 of 9 outside 0,0 1136x640
+[eden-fit] console-complete: no controls overlap          PASS
+[eden-fit] console-variables: every control inside        PASS  0 of 4 outside 0,0 1136x640
+[eden-fit] console-variables: no controls overlap         PASS
+[eden-fit] console-help: every control inside             PASS  0 of 4 outside 0,0 1136x640
+[eden-fit] console-help: no controls overlap              PASS
+[eden-fit] console-strip: every control inside            PASS  0 of 4 outside 0,0 1136x640
+[eden-fit] console-strip: no controls overlap             PASS
+[eden-fit] console-keyboard: every control inside         PASS  0 of 9 outside 0,0 1136x640
+[eden-fit] console-keyboard: no controls overlap          PASS
+[eden-fit] console-keyboard-tall: every control inside    PASS  0 of 3 outside 0,0 1136x640
+[eden-fit] console-keyboard-tall: no controls overlap     PASS
+[eden-fit] dialog: every control inside                   PASS  0 of 9 outside 0,0 1136x640
+[eden-fit] dialog: no controls overlap                    PASS
+Texture2D: './build/ipad~menu_autojump.png' decoded 310x50 (canvas 310x50) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/ipad~eden_menu_header.png' decoded 591x175 (canvas 591x175) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~arrow_left.png' decoded 82x207 (canvas 82x207) fmt=1 center-rgba=(255,213,65,255)
+Texture2D: './build/ipad~arrow_right.png' decoded 82x207 (canvas 82x207) fmt=1 center-rgba=(255,213,63,255)
+Texture2D: './build/ipad~create_world.png' decoded 116x138 (canvas 116x138) fmt=1 center-rgba=(162,179,162,255)
+Texture2D: './build/ipad~delete_world.png' decoded 119x130 (canvas 119x130) fmt=1 center-rgba=(201,195,195,255)
+Texture2D: './build/ipad~share_world.png' decoded 141x132 (canvas 141x132) fmt=1 center-rgba=(51,179,51,255)
+Texture2D: './build/ipad~ground.png' decoded 1024x39 (canvas 1024x39) fmt=1 center-rgba=(68,142,63,255)
+Texture2D: './build/ipad~world_selected.png' decoded 130x130 (canvas 130x130) fmt=1 center-rgba=(175,175,175,255)
+Texture2D: './build/ipad~world_unselected.png' decoded 115x115 (canvas 115x115) fmt=1 center-rgba=(123,123,123,255)
+Texture2D: './build/ipad~load_world.png' decoded 120x126 (canvas 120x126) fmt=1 center-rgba=(11,42,11,255)
+Texture2D: './build/ipad~options.png' decoded 387x162 (canvas 387x162) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: './build/ipad~arrow_up.png' decoded 97x38 (canvas 97x38) fmt=1 center-rgba=(255,213,66,255)
+Texture2D: './build/ipad~arrow_down.png' decoded 97x38 (canvas 97x38) fmt=1 center-rgba=(255,212,61,255)
+Texture2D: './build/ipad~back.png' decoded 108x102 (canvas 108x102) fmt=1 center-rgba=(206,173,13,255)
+Texture2D: './build/ipad~menu_shared_worlds.png' decoded 504x47 (canvas 504x47) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~menu_cancel.png' decoded 313x60 (canvas 313x60) fmt=1 center-rgba=(0,0,0,128)
+Texture2D: './build/ipad~menu_health.png' decoded 219x49 (canvas 219x49) fmt=1 center-rgba=(0,0,0,187)
+Texture2D: './build/ipad~menu_music.png' decoded 185x49 (canvas 185x49) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~menu_off.png' decoded 169x50 (canvas 169x50) fmt=1 center-rgba=(90,90,90,255)
+Texture2D: './build/ipad~menu_on.png' decoded 169x50 (canvas 169x50) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/ipad~menu_options.png' decoded 348x63 (canvas 348x63) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: './build/ipad~menu_save.png' decoded 215x64 (canvas 215x64) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~menu_send.png' decoded 209x60 (canvas 209x60) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~menu_sound_effects.png' decoded 462x49 (canvas 462x49) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/menu_text_box.png' decoded 300x45 (canvas 300x45) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/ipad~sky.png' decoded 1024x768 (canvas 1024x768) fmt=4 center-rgba=(246,166,146,255)
+Texture2D: './build/ipad~pinwheel.png' decoded 1578x1578 (canvas 1578x1578) fmt=8 center-rgba=(128,128,128,64)
+Texture2D: './build/ipad~menu_text_load.png' decoded 210x62 (canvas 210x62) fmt=1 center-rgba=(0,0,0,192)
+Texture2D: './build/ipad~menu_text_back.png' decoded 211x62 (canvas 211x62) fmt=1 center-rgba=(0,0,0,128)
+Texture2D: './build/ipad~shared_world_selected.png' decoded 80x80 (canvas 80x80) fmt=1 center-rgba=(174,174,174,255)
+Texture2D: './build/ipad~shared_world_unselected.png' decoded 75x75 (canvas 75x75) fmt=1 center-rgba=(123,123,123,255)
+Texture2D: './build/ipad~menu_fast.png' decoded 149x45 (canvas 149x45) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~menu_best.png' decoded 150x45 (canvas 150x45) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~menu_creatures.png' decoded 338x49 (canvas 338x49) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/ipad~treelayerleft.png' decoded 835x456 (canvas 835x456) fmt=1 center-rgba=(90,39,35,255)
+Texture2D: './build/ipad~treelayerright.png' decoded 835x456 (canvas 835x456) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/report_flag.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(245,55,55,255)
+[eden-fit] menu-world: every control inside               PASS  0 of 8 outside 0,0 1136x640
+[eden-fit] menu-world: no controls overlap                PASS
+[eden-fit] rename: every control inside                   PASS  0 of 11 outside 0,0 1136x640
+[eden-fit] rename: no controls overlap                    PASS   O
+[eden-fit] props-world-nophoto: every control inside      PASS  0 of 6 outside 0,0 1136x640
+[eden-fit] props-world-nophoto: no controls overlap       PASS
+world height set to 64 (4 bands, 32768 B per column record)
+window radius set to 9 (288 x 288 blocks, 324 columns)
+allocated and zeroed chunksTexture2D: './build/ipad~moof_icon.png' decoded 64x64 (canvas 64x64) fmt=1 center-rgba=(0,90,185,255)
+Texture2D: './build/ipad~build.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(140,143,139,255)
+Texture2D: './build/ipad~destroy.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(177,139,89,255)
+Texture2D: './build/ipad~burn.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(228,132,59,255)
+Texture2D: './build/ipad~save.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(128,128,128,255)
+Texture2D: './build/ipad~cancel.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(238,105,105,255)
+Texture2D: './build/ipad~home.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(193,193,193,255)
+Texture2D: './build/ipad~jump.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(121,215,237,255)
+Texture2D: './build/smoke_tex.png' decoded 32x32 (canvas 32x32) fmt=1 center-rgba=(67,67,67,255)
+Texture2D: './build/ipad~analog_top.png' decoded 88x88 (canvas 88x88) fmt=1 center-rgba=(119,119,119,255)
+Texture2D: './build/ipad~analog_bottom.png' decoded 88x88 (canvas 88x88) fmt=1 center-rgba=(186,186,186,255)
+Texture2D: './build/ipad~camera.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(41,86,80,255)
+Texture2D: './build/ipad~block_border.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(27,26,25,0)
+Texture2D: './build/block_background.png' decoded 402x282 (canvas 402x282) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/ipad~palette.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(133,145,217,255)
+Texture2D: './build/block_border_pressed.png' decoded 38x38 (canvas 38x38) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/color_border_pressed.png' decoded 32x32 (canvas 32x32) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/ipad~color_border.png' decoded 64x64 (canvas 64x64) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/sky_box.png' decoded 128x512 (canvas 128x512) fmt=1 center-rgba=(127,172,232,255)
+Texture2D: './build/ipad~triangle_border_pressed.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(27,26,25,255)
+Texture2D: './build/ipad~triangle_border.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: './build/ipad~build2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(220,220,220,255)
+Texture2D: './build/ipad~build3.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(183,183,183,255)
+Texture2D: './build/ipad~destroy_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(177,139,89,255)
+Texture2D: './build/ipad~paint_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(133,145,217,255)
+Texture2D: './build/ipad~build2_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(220,220,220,255)
+Texture2D: './build/ipad~build3_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(183,183,183,255)
+Texture2D: './build/ipad~burn_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(228,132,59,255)
+Texture2D: './build/ipad~jump_depressed.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(179,179,179,255)
+Texture2D: './build/Moof_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(31,106,182,255)
+Texture2D: './build/Moof_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(202,18,10,255)
+Texture2D: './build/Moof_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(31,106,182,255)
+Texture2D: './build/Batty_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(122,74,192,255)
+Texture2D: './build/Batty_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(211,4,0,255)
+Texture2D: './build/Batty_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(122,74,192,255)
+Texture2D: './build/Green_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(62,136,66,255)
+Texture2D: './build/Green_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(128,15,0,255)
+Texture2D: './build/Green_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(62,136,66,255)
+Texture2D: './build/Nergle_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(65,46,65,255)
+Texture2D: './build/Nergle_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(106,6,0,255)
+Texture2D: './build/Nergle_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(65,46,65,255)
+Texture2D: './build/Stumpy_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(202,96,1,255)
+Texture2D: './build/Stumpy_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(192,5,1,255)
+Texture2D: './build/Stumpy_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(202,96,1,255)
+Texture2D: './build/shadow.png' decoded 64x64 (canvas 64x64) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: './build/menu_icon.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(115,160,34,255)
+Texture2D: './build/door.png' decoded 32x64 (canvas 32x64) fmt=1 center-rgba=(85,53,15,255)
+Texture2D: './build/sky_box_bw.png' decoded 128x512 (canvas 128x512) fmt=1 center-rgba=(253,253,253,255)
+Texture2D: './build/golden_cube.png' decoded 64x64 (canvas 64x64) fmt=4 center-rgba=(254,218,92,255)
+Texture2D: './build/golden_cube_bw.png' decoded 64x64 (canvas 64x64) fmt=4 center-rgba=(243,243,243,255)
+Texture2D: './build/door_mask.png' decoded 32x64 (canvas 32x64) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/flower_tex.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/portal.png' decoded 64x128 (canvas 64x128) fmt=1 center-rgba=(100,100,100,255)
+Texture2D: './build/ipad~sphere_map.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(157,157,157,255)
+Texture2D: './build/ipad~build2_top.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/ipad~buildplus.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/portal_twirl.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(146,146,146,255)
+Texture2D: './build/ipad~build3_top.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(115,115,115,77)
+Texture2D: './build/blocktoggle1.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(156,156,156,255)
+Texture2D: './build/blocktoggle2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,40,40,255)
+Texture2D: './build/flower_icon.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(18,99,120,255)
+Texture2D: './build/ipad~block_border2.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(27,26,25,0)
+Texture2D: './build/ipad~block_border_pressed2.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(27,26,25,0)
+Texture2D: './build/ipad~triangle_border2.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~triangle_border_pressed2.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~build_under2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(220,220,220,255)
+Texture2D: './build/ipad~build_over2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(60,60,60,0)
+Texture2D: './build/ipad~build2_active2.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(220,220,220,255)
+Texture2D: './build/ipad~build2_under2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(182,182,182,255)
+Texture2D: './build/ipad~build3_top2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(116,116,116,77)
+Texture2D: './build/ipad~build3_active2.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(182,182,182,255)
+Texture2D: './build/digits.png' decoded 250x32 (canvas 250x32) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/goldcube_icon.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(250,205,105,255)
+Texture2D: './build/portal_icon2.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(120,120,120,255)
+Texture2D: './build/door_icon2.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(95,60,17,255)
+Texture2D: './build/Charger_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(201,0,0,255)
+Texture2D: './build/Charger_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(201,0,0,255)
+Texture2D: './build/Charger_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(208,24,24,255)
+Texture2D: './build/Stalker_Default.png' decoded 512x512 (canvas 512x512) fmt=4 center-rgba=(182,0,0,255)
+Texture2D: './build/Stalker_Default.png' decoded 512x512 (canvas 512x512) fmt=4 center-rgba=(182,0,0,255)
+Texture2D: './build/Stalker_Blink.png' decoded 512x512 (canvas 512x512) fmt=4 center-rgba=(182,0,0,255)
+Texture2D: './build/Moof_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Flame_512.png' decoded 512x512 (canvas 512x512) fmt=1 center-rgba=(68,21,5,0)
+Texture2D: './build/text_numbers.png' decoded 512x32 (canvas 512x32) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~paint_mask.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/goldcube_icon_mask.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/flower_icon_mask.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/door_icon2_mask.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/portal_icon2_mask.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/goldcube_icon_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(250,205,105,255)
+Texture2D: './build/flower_icon_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(18,99,120,255)
+Texture2D: './build/door_icon2_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(95,60,17,255)
+Texture2D: './build/portal_icon2_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(120,120,120,255)
+Texture2D: './build/ipad~block_border_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(27,26,25,0)
+Texture2D: './build/ipad~triangle_border_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(27,26,25,255)
+Texture2D: './build/Moof_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Moof_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Batty_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Batty_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Green_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Green_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Nergle_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Nergle_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Stumpy_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Stumpy_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/ipad~menu_autojump.png' decoded 310x50 (canvas 310x50) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/ipad~eden_menu_header.png' decoded 591x175 (canvas 591x175) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~arrow_left.png' decoded 82x207 (canvas 82x207) fmt=1 center-rgba=(255,213,65,255)
+Texture2D: './build/ipad~arrow_right.png' decoded 82x207 (canvas 82x207) fmt=1 center-rgba=(255,213,63,255)
+Texture2D: './build/ipad~create_world.png' decoded 116x138 (canvas 116x138) fmt=1 center-rgba=(162,179,162,255)
+Texture2D: './build/ipad~delete_world.png' decoded 119x130 (canvas 119x130) fmt=1 center-rgba=(201,195,195,255)
+Texture2D: './build/ipad~share_world.png' decoded 141x132 (canvas 141x132) fmt=1 center-rgba=(51,179,51,255)
+Texture2D: './build/ipad~ground.png' decoded 1024x39 (canvas 1024x39) fmt=1 center-rgba=(68,142,63,255)
+Texture2D: './build/ipad~world_selected.png' decoded 130x130 (canvas 130x130) fmt=1 center-rgba=(175,175,175,255)
+Texture2D: './build/ipad~world_unselected.png' decoded 115x115 (canvas 115x115) fmt=1 center-rgba=(123,123,123,255)
+Texture2D: './build/ipad~load_world.png' decoded 120x126 (canvas 120x126) fmt=1 center-rgba=(11,42,11,255)
+Texture2D: './build/ipad~options.png' decoded 387x162 (canvas 387x162) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: './build/ipad~arrow_up.png' decoded 97x38 (canvas 97x38) fmt=1 center-rgba=(255,213,66,255)
+Texture2D: './build/ipad~arrow_down.png' decoded 97x38 (canvas 97x38) fmt=1 center-rgba=(255,212,61,255)
+Texture2D: './build/ipad~back.png' decoded 108x102 (canvas 108x102) fmt=1 center-rgba=(206,173,13,255)
+Texture2D: './build/ipad~menu_shared_worlds.png' decoded 504x47 (canvas 504x47) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~menu_cancel.png' decoded 313x60 (canvas 313x60) fmt=1 center-rgba=(0,0,0,128)
+Texture2D: './build/ipad~menu_health.png' decoded 219x49 (canvas 219x49) fmt=1 center-rgba=(0,0,0,187)
+Texture2D: './build/ipad~menu_music.png' decoded 185x49 (canvas 185x49) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~menu_off.png' decoded 169x50 (canvas 169x50) fmt=1 center-rgba=(90,90,90,255)
+Texture2D: './build/ipad~menu_on.png' decoded 169x50 (canvas 169x50) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/ipad~menu_options.png' decoded 348x63 (canvas 348x63) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: './build/ipad~menu_save.png' decoded 215x64 (canvas 215x64) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~menu_send.png' decoded 209x60 (canvas 209x60) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~menu_sound_effects.png' decoded 462x49 (canvas 462x49) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/menu_text_box.png' decoded 300x45 (canvas 300x45) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/ipad~sky.png' decoded 1024x768 (canvas 1024x768) fmt=4 center-rgba=(246,166,146,255)
+Texture2D: './build/ipad~pinwheel.png' decoded 1578x1578 (canvas 1578x1578) fmt=8 center-rgba=(128,128,128,64)
+Texture2D: './build/ipad~menu_text_load.png' decoded 210x62 (canvas 210x62) fmt=1 center-rgba=(0,0,0,192)
+Texture2D: './build/ipad~menu_text_back.png' decoded 211x62 (canvas 211x62) fmt=1 center-rgba=(0,0,0,128)
+Texture2D: './build/ipad~shared_world_selected.png' decoded 80x80 (canvas 80x80) fmt=1 center-rgba=(174,174,174,255)
+Texture2D: './build/ipad~shared_world_unselected.png' decoded 75x75 (canvas 75x75) fmt=1 center-rgba=(123,123,123,255)
+Texture2D: './build/ipad~menu_fast.png' decoded 149x45 (canvas 149x45) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~menu_best.png' decoded 150x45 (canvas 150x45) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~menu_creatures.png' decoded 338x49 (canvas 338x49) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/ipad~treelayerleft.png' decoded 835x456 (canvas 835x456) fmt=1 center-rgba=(90,39,35,255)
+Texture2D: './build/ipad~treelayerright.png' decoded 835x456 (canvas 835x456) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/report_flag.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(245,55,55,255)
+Texture2D: '/Users/sam/emod/native/gate-docs/fit-selftest/Worlds/1794590929-kftm/photo.png' decoded 960x640 (canvas 960x640) fmt=4 center-rgba=(255,255,255,255)
+[eden-fit] props-world: every control inside              PASS  0 of 6 outside 0,0 1136x640
+[eden-fit] props-world: no controls overlap               PASS
+[eden-fit] props-terrain: every control inside            PASS  0 of 4 outside 0,0 1136x640
+[eden-fit] props-terrain: no controls overlap             PASS
+[eden-fit] ALL PASS (0 failure(s)) at 1136x640 points, touch floor 0

@@ -287,7 +287,7 @@ Experiments › *Srclike movement* (`srclike_movement`, default off) and its chi
   wheel pulse; it runs once per tick and consumes the pulse, so a notch in the air is spent (a frame with no tick
   keeps it for the next tick). The tick jumps only when grounded. Autojump (`autojump_option`) is ignored in the mode.
 - **Wheel**: a captured-mouse notch goes through `eden_wheel_action` (`Input.cpp`): jump pulse in the mode (not
-  while flying/noclip), else `eden_hotbar_scroll`. Gamepad shoulders and number keys still change the hotbar.
+  while flying/noclip), else `eden_hotbar_scroll`. Gamepad shoulders and number keys still change the hotbar (`Classes/Hotbar`, `docs/ui.md` "Hotbar model"; scroll skips empty slots).
 - **Crouch** is implied: `wantCrouch` ORs `SrclikeMove::enabled()` with *Crouch mode*.
 - **`move.*` cvars** (SX.6: bridged from the `move_*` Settings rows; `bridgeMove` is gone): accelerate 5, airaccelerate 100, friction 4,
   stopspeed 75, gravity 800, maxvelocity 3500, tickrate 66.67 (SRC.1 §4.1). Read by SRC.4.

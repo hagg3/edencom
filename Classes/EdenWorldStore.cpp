@@ -661,6 +661,7 @@ void EdenWorldStore::close() {
     std::memset(bandCount_, 0, sizeof bandCount_);
     liveRecordBytes_ = 0;
     openMs_ = 0;
+    resyncLeft_ = 0; resyncCharged_ = 0; resyncAttempts_ = 0; resyncOut_ = false;
     codec_ = C_ZSTD;
     batch_.clear(); batchRecs_.clear();
 }
@@ -736,7 +737,9 @@ bool EdenWorldStore::create(const char* path, int bands, uint64_t createdUnix) {
 }
 
 // Framing (step 2): tag, payload_len <= 16 MiB, the record + padding inside the file, CRC.
-bool EdenWorldStore::frame(uint64_t p, Rec* r, std::vector<uint8_t>& buf) {
+// `resync` (QA.13): a resync candidate that gets as far as the CRC is charged 32 + payload_len against
+// the open's budget first; one that does not fit sets resyncOut_ and is not tried (scan() ends there).
+bool EdenWorldStore::frame(uint64_t p, Rec* r, std::vector<uint8_t>& buf, bool resync) {
     if (p + REC_HEADER > size_) return false;
     uint8_t h[REC_HEADER];
     if (!readAt(p, h, REC_HEADER) || std::memcmp(h, kTag, 4) != 0) return false;
@@ -744,6 +747,11 @@ bool EdenWorldStore::frame(uint64_t p, Rec* r, std::vector<uint8_t>& buf) {
     if (plen > MAX_PAYLOAD) return false;
     uint64_t end = p + recSize(plen);
     if (end > size_) return false;
+    if (resync) {
+        uint64_t charge = REC_HEADER + (uint64_t)plen;
+        if (charge > resyncLeft_) { resyncOut_ = true; return false; }
+        resyncLeft_ -= charge; resyncCharged_ += charge; resyncAttempts_++;
+    }
     uint32_t padn = pad8(REC_HEADER + (uint64_t)plen);
     if (headerOnly_) {
         r->off = p; r->end = end;
@@ -773,6 +781,9 @@ void EdenWorldStore::scan() {
     std::vector<uint8_t>& buf = scratch_;
     std::vector<uint8_t> win;
     uint64_t p = FILE_HEADER;
+    // QA.13 (audit A3-05): every resync candidate used to re-CRC up to the rest of the file, so a file
+    // of nothing but tags opened in quadratic time (1 MiB = 7.9 s). The budget makes an open linear.
+    resyncLeft_ = resyncBudget(size_);
     while (p < size_) {
         Rec r;
         if (frame(p, &r, buf)) {
@@ -780,10 +791,11 @@ void EdenWorldStore::scan() {
             p = r.end;
             continue;
         }
-        // resync: the next 8-aligned offset at which a record frames, or EOF
+        // resync: the next 8-aligned offset at which a record frames, or EOF (also EOF once a
+        // candidate does not fit the budget)
         uint64_t q = p + 8, found = size_;
         const size_t W = 1 << 16;
-        while (q + 4 <= size_ && found == size_) {
+        while (q + 4 <= size_ && found == size_ && !resyncOut_) {
             size_t n = (size_t)std::min<uint64_t>(W, size_ - q);
             win.resize(n);
             if (!readAt(q, win.data(), n)) break;
@@ -791,7 +803,12 @@ void EdenWorldStore::scan() {
             for (; i + 4 <= n; i += 8) {
                 if (std::memcmp(win.data() + i, kTag, 4) == 0) {
                     Rec t;
-                    if (frame(q + i, &t, buf)) { found = q + i; break; }
+                    if (frame(q + i, &t, buf, true)) { found = q + i; break; }
+                    if (resyncOut_) {
+                        damage_.push_back(fmt("resync budget spent at @%llu: [%llu, %llu) is one damaged span",
+                                              (unsigned long long)(q + i), (unsigned long long)p, (unsigned long long)size_));
+                        break;
+                    }
                 }
             }
             if (found == size_) q += i;
@@ -919,7 +936,7 @@ void EdenWorldStore::apply(const Rec& r) {
 // =============================================================================================
 bool EdenWorldStore::decodeEntry(const Entry& e, std::vector<uint8_t>& out) {
     size_t expect = e.type == T_COLUMN ? (size_t)popcount16(e.mask) * BAND : e.aux;
-    if (expect > (size_t)MAX_PAYLOAD * 64) return false;
+    if (expect > record_decoded_max(e.type)) return false;   // QA.4: before any allocation
     scratch2_.resize(e.plen);
     if (!readAt(e.off + REC_HEADER, scratch2_.data(), e.plen)) return false;
     out.resize(expect);

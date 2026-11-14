@@ -236,6 +236,7 @@ int run_sky_shot() {
     const Site site = build_site(player_state());
     SkyCycle::setEnabled(true);
     SkyCycle::setLocked(true);   // the clock holds still; setTime still sets it
+    Terrain::testUnbudgetedRemesh = g_opt.consoleMutate == "flipburst";   // QA.9 reference: the flip in one frame
     const Pose poses[2] = { { -4.0f, 4.0f, 6.0f, 0.0f, 3.0f }, { -4.0f, 4.0f, 6.0f, 0.0f, 40.0f } };
     const char* names[2] = { "level", "up" };
     hold_pose(site, poses[0], 240);
@@ -581,6 +582,19 @@ int run_render_selftest() {
         const long n0 = rnull::draws();
         R::beginFrame(); R::draw2D(g, 0, {1, 1, 1, 1}); R::endFrame();
         check(rnull::draws() == n0 + 1, "null backend: a draw is counted", "");
+        // QA.24: R::counts() counts draws/verts per category, and creates/uploads, whatever the backend.
+        R::resetCounts();
+        const R::Tex ct = R::texCreate(td, nullptr);
+        const R::Buf cb = R::bufCreate(R::BK_VERTEX, R::U_STATIC);
+        R::bufData(cb, v, sizeof v); R::bufSubData(cb, 0, v, sizeof v);
+        R::texUpdate(ct, 0, 0, 1, 1, R::TF_RGBA8, v);
+        R::beginFrame(); R::draw2D(g, 0, {1, 1, 1, 1}); R::draw2D(g, 0, {1, 1, 1, 1}); R::endFrame();
+        const R::Counts& cn = R::counts();
+        std::snprintf(d, sizeof d, "draws(other) %ld verts %ld tex %ld/%ld buf %ld/%ld", cn.draws[9], cn.verts[9], cn.texCreates, cn.texUpdates,
+                      cn.bufCreates, cn.bufUploads);
+        check(cn.draws[9] == 2 && cn.verts[9] == 6 && cn.texCreates == 1 && cn.texUpdates == 1 && cn.bufCreates == 1 && cn.bufUploads == 2,
+              "R::counts: draws, vertices, creates and uploads are counted", d);
+        R::texDestroy(ct); R::bufDestroy(cb);
     }
 
     // Negative self-checks: each invariant must notice its own violation.
@@ -621,7 +635,7 @@ int run_render_selftest() {
     tick(20);
     eden_console_menu_open();
     tick(20);
-    eden_console_menu_back();
+    eden_menu_back();
     tick(20);
     invariants_clean("pause menu + console");
     quit_to_menu();

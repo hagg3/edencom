@@ -1,0 +1,239 @@
+[eden] documents=/Users/sam/emod/native/gate-docs/look-noclear
+[eden] bundle=./build
+[eden-gl] no canvas — staying headless (--headless).
+[eden-gl] pick viewport now 1816x1024 (engine point space x scale).
+[eden-display] profile=desktop ui_scale=125% layout=adaptive -> 908x512 points (aspect 1.773, snap 0 px/pt)
+[eden-gl] pick viewport now 1136x640 (engine point space x scale).
+[eden-display] profile=touch ui_scale=200% layout=adaptive -> 568x320 points (aspect 1.775, snap 0 px/pt)
+[eden-p1] tick 0: World::update(0.0066 s) entered
+[eden-p1] tick 0: World::update returned (retinaSwap=0)
+[eden-p1] tick 1: World::update(0.0019 s) entered
+[eden-p1] tick 1: World::update returned (retinaSwap=0)
+[eden-p1] tick 2: World::update(0.0013 s) entered
+[eden-p1] tick 2: World::update returned (retinaSwap=0)
+Texture2D: './build/colorpick_background.png' decoded 582x511 (canvas 582x511) fmt=1 center-rgba=(237,237,237,227)
+Texture2D: './build/menu_autojump.png' decoded 167x24 (canvas 167x24) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/arrow_left.png' decoded 36x89 (canvas 36x89) fmt=1 center-rgba=(255,198,0,255)
+Texture2D: './build/arrow_right.png' decoded 36x89 (canvas 36x89) fmt=1 center-rgba=(255,198,0,255)
+Texture2D: './build/create_world.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(174,174,174,255)
+Texture2D: './build/delete_world.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(200,200,200,255)
+Texture2D: './build/share_world.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(174,174,174,255)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/world_selected.png' decoded 86x85 (canvas 86x85) fmt=1 center-rgba=(183,183,183,255)
+Texture2D: './build/world_unselected.png' decoded 86x85 (canvas 86x85) fmt=1 center-rgba=(118,118,118,255)
+Texture2D: './build/load_world.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(174,174,174,255)
+Texture2D: './build/options.png' decoded 180x62 (canvas 180x62) fmt=1 center-rgba=(8,9,7,255)
+Texture2D: './build/arrow_up.png' decoded 89x36 (canvas 89x36) fmt=1 center-rgba=(255,198,0,255)
+Texture2D: './build/arrow_down.png' decoded 89x36 (canvas 89x36) fmt=1 center-rgba=(255,198,0,255)
+Texture2D: './build/back.png' decoded 40x30 (canvas 40x30) fmt=1 center-rgba=(255,198,0,255)
+Texture2D: './build/menu_shared_worlds.png' decoded 280x29 (canvas 280x29) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/menu_cancel.png' decoded 151x31 (canvas 151x31) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/menu_music.png' decoded 108x28 (canvas 108x28) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/menu_options.png' decoded 246x44 (canvas 246x44) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: './build/menu_save.png' decoded 102x31 (canvas 102x31) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/menu_send.png' decoded 101x30 (canvas 101x30) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/menu_sound_effects.png' decoded 271x30 (canvas 271x30) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/menu_text_box.png' decoded 300x45 (canvas 300x45) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/menu_text_load.png' decoded 103x31 (canvas 103x31) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/menu_text_back.png' decoded 101x31 (canvas 101x31) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/shared_world_selected.png' decoded 40x40 (canvas 40x40) fmt=1 center-rgba=(180,180,180,255)
+Texture2D: './build/shared_world_unselected.png' decoded 37x37 (canvas 37x37) fmt=1 center-rgba=(115,115,115,255)
+Texture2D: './build/menu_fast.png' decoded 81x24 (canvas 81x24) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/menu_best.png' decoded 82x24 (canvas 82x24) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/menu_creatures.png' decoded 192x25 (canvas 192x25) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/report_flag.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(245,55,55,255)
+Texture2D: './build/atlas.png' decoded 32x4096 (canvas 32x4096) fmt=4 center-rgba=(53,91,27,255)
+Texture2D: './build/atlas2.png' decoded 32x4096 (canvas 32x4096) fmt=1 center-rgba=(0,0,0,0)
+[eden-look] mutation: noclear
+world height set to 64 (4 bands, 32768 B per column record)
+window radius set to 9 (288 x 288 blocks, 324 columns)
+allocated and zeroed chunksTexture2D: './build/ipad~moof_icon.png' decoded 64x64 (canvas 64x64) fmt=1 center-rgba=(0,90,185,255)
+Texture2D: './build/ipad~build.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(140,143,139,255)
+Texture2D: './build/ipad~destroy.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(177,139,89,255)
+Texture2D: './build/ipad~burn.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(228,132,59,255)
+Texture2D: './build/ipad~save.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(128,128,128,255)
+Texture2D: './build/ipad~cancel.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(238,105,105,255)
+Texture2D: './build/ipad~home.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(193,193,193,255)
+Texture2D: './build/ipad~jump.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(121,215,237,255)
+Texture2D: './build/smoke_tex.png' decoded 32x32 (canvas 32x32) fmt=1 center-rgba=(67,67,67,255)
+Texture2D: './build/ipad~analog_top.png' decoded 88x88 (canvas 88x88) fmt=1 center-rgba=(119,119,119,255)
+Texture2D: './build/ipad~analog_bottom.png' decoded 88x88 (canvas 88x88) fmt=1 center-rgba=(186,186,186,255)
+Texture2D: './build/ipad~camera.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(41,86,80,255)
+Texture2D: './build/ipad~block_border.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(27,26,25,0)
+Texture2D: './build/block_background.png' decoded 402x282 (canvas 402x282) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/ipad~palette.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(133,145,217,255)
+Texture2D: './build/block_border_pressed.png' decoded 38x38 (canvas 38x38) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/color_border_pressed.png' decoded 32x32 (canvas 32x32) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/ipad~color_border.png' decoded 64x64 (canvas 64x64) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/sky_box.png' decoded 128x512 (canvas 128x512) fmt=1 center-rgba=(127,172,232,255)
+Texture2D: './build/ipad~triangle_border_pressed.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(27,26,25,255)
+Texture2D: './build/ipad~triangle_border.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: './build/ipad~build2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(220,220,220,255)
+Texture2D: './build/ipad~build3.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(183,183,183,255)
+Texture2D: './build/ipad~destroy_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(177,139,89,255)
+Texture2D: './build/ipad~paint_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(133,145,217,255)
+Texture2D: './build/ipad~build2_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(220,220,220,255)
+Texture2D: './build/ipad~build3_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(183,183,183,255)
+Texture2D: './build/ipad~burn_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(228,132,59,255)
+Texture2D: './build/ipad~jump_depressed.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(179,179,179,255)
+Texture2D: './build/Moof_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(31,106,182,255)
+Texture2D: './build/Moof_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(202,18,10,255)
+Texture2D: './build/Moof_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(31,106,182,255)
+Texture2D: './build/Batty_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(122,74,192,255)
+Texture2D: './build/Batty_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(211,4,0,255)
+Texture2D: './build/Batty_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(122,74,192,255)
+Texture2D: './build/Green_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(62,136,66,255)
+Texture2D: './build/Green_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(128,15,0,255)
+Texture2D: './build/Green_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(62,136,66,255)
+Texture2D: './build/Nergle_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(65,46,65,255)
+Texture2D: './build/Nergle_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(106,6,0,255)
+Texture2D: './build/Nergle_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(65,46,65,255)
+Texture2D: './build/Stumpy_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(202,96,1,255)
+Texture2D: './build/Stumpy_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(192,5,1,255)
+Texture2D: './build/Stumpy_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(202,96,1,255)
+Texture2D: './build/shadow.png' decoded 64x64 (canvas 64x64) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: './build/menu_icon.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(115,160,34,255)
+Texture2D: './build/door.png' decoded 32x64 (canvas 32x64) fmt=1 center-rgba=(85,53,15,255)
+Texture2D: './build/sky_box_bw.png' decoded 128x512 (canvas 128x512) fmt=1 center-rgba=(253,253,253,255)
+Texture2D: './build/golden_cube.png' decoded 64x64 (canvas 64x64) fmt=4 center-rgba=(254,218,92,255)
+Texture2D: './build/golden_cube_bw.png' decoded 64x64 (canvas 64x64) fmt=4 center-rgba=(243,243,243,255)
+Texture2D: './build/door_mask.png' decoded 32x64 (canvas 32x64) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/flower_tex.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/portal.png' decoded 64x128 (canvas 64x128) fmt=1 center-rgba=(100,100,100,255)
+Texture2D: './build/ipad~sphere_map.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(157,157,157,255)
+Texture2D: './build/ipad~build2_top.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/ipad~buildplus.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/portal_twirl.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(146,146,146,255)
+Texture2D: './build/ipad~build3_top.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(115,115,115,77)
+Texture2D: './build/blocktoggle1.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(156,156,156,255)
+Texture2D: './build/blocktoggle2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,40,40,255)
+Texture2D: './build/flower_icon.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(18,99,120,255)
+Texture2D: './build/ipad~block_border2.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(27,26,25,0)
+Texture2D: './build/ipad~block_border_pressed2.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(27,26,25,0)
+Texture2D: './build/ipad~triangle_border2.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~triangle_border_pressed2.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~build_under2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(220,220,220,255)
+Texture2D: './build/ipad~build_over2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(60,60,60,0)
+Texture2D: './build/ipad~build2_active2.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(220,220,220,255)
+Texture2D: './build/ipad~build2_under2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(182,182,182,255)
+Texture2D: './build/ipad~build3_top2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(116,116,116,77)
+Texture2D: './build/ipad~build3_active2.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(182,182,182,255)
+Texture2D: './build/digits.png' decoded 250x32 (canvas 250x32) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/goldcube_icon.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(250,205,105,255)
+Texture2D: './build/portal_icon2.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(120,120,120,255)
+Texture2D: './build/door_icon2.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(95,60,17,255)
+Texture2D: './build/Charger_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(201,0,0,255)
+Texture2D: './build/Charger_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(201,0,0,255)
+Texture2D: './build/Charger_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(208,24,24,255)
+Texture2D: './build/Stalker_Default.png' decoded 512x512 (canvas 512x512) fmt=4 center-rgba=(182,0,0,255)
+Texture2D: './build/Stalker_Default.png' decoded 512x512 (canvas 512x512) fmt=4 center-rgba=(182,0,0,255)
+Texture2D: './build/Stalker_Blink.png' decoded 512x512 (canvas 512x512) fmt=4 center-rgba=(182,0,0,255)
+Texture2D: './build/Moof_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Flame_512.png' decoded 512x512 (canvas 512x512) fmt=1 center-rgba=(68,21,5,0)
+Texture2D: './build/text_numbers.png' decoded 512x32 (canvas 512x32) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~paint_mask.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/goldcube_icon_mask.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/flower_icon_mask.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/door_icon2_mask.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/portal_icon2_mask.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/goldcube_icon_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(250,205,105,255)
+Texture2D: './build/flower_icon_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(18,99,120,255)
+Texture2D: './build/door_icon2_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(95,60,17,255)
+Texture2D: './build/portal_icon2_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(120,120,120,255)
+Texture2D: './build/ipad~block_border_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(27,26,25,0)
+Texture2D: './build/ipad~triangle_border_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(27,26,25,255)
+Texture2D: './build/Moof_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Moof_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Batty_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Batty_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Green_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Green_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Nergle_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Nergle_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Stumpy_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Stumpy_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+[eden-stage1] open_world "look-selftest"  first-load 51 ms
+look.trace id=41 cam=1 dur=0.04s events=91 frames=31 multi=96.8% maxev=3 slop_frames=4 slop_pt=12.0 look_frames=27 raw_pt=90.0 applied_pt=78.0 lost=0.0% err=0.0% zero=0.0% (0/26) dt_p50=1.4ms dt_p99=1.4ms win_per_pt=0.000 pt_scale=1.000 slop_win=12.0 deg_per_pt=0.500 smooth=0.00 glide=0.00
+look.trace id=42 cam=1 dur=0.14s events=102 frames=102 multi=0.0% maxev=1 slop_frames=0 slop_pt=12.0 look_frames=102 raw_pt=50.0 applied_pt=38.0 lost=0.0% err=0.0% zero=0.0% (0/101) dt_p50=1.4ms dt_p99=1.5ms win_per_pt=0.000 pt_scale=1.000 slop_win=12.0 deg_per_pt=0.500 smooth=0.00 glide=0.00
+look.trace id=43 cam=1 dur=0.07s events=121 frames=16 multi=93.8% maxev=8 slop_frames=1 slop_pt=12.0 look_frames=15 raw_pt=100.0 applied_pt=88.0 lost=0.0% err=0.0% zero=0.0% (0/14) dt_p50=1.5ms dt_p99=1.6ms win_per_pt=0.000 pt_scale=1.000 slop_win=12.0 deg_per_pt=0.500 smooth=0.50 glide=0.00
+look.trace id=44 cam=1 dur=0.14s events=121 frames=31 multi=96.8% maxev=4 slop_frames=3 slop_pt=12.0 look_frames=28 raw_pt=100.0 applied_pt=88.0 lost=0.0% err=0.0% zero=0.0% (0/27) dt_p50=1.5ms dt_p99=1.7ms win_per_pt=0.000 pt_scale=1.000 slop_win=12.0 deg_per_pt=0.500 smooth=0.50 glide=0.00
+look.trace id=45 cam=1 dur=0.26s events=121 frames=61 multi=98.4% maxev=2 slop_frames=7 slop_pt=12.0 look_frames=54 raw_pt=100.0 applied_pt=88.0 lost=0.0% err=0.0% zero=0.0% (0/53) dt_p50=1.4ms dt_p99=1.6ms win_per_pt=0.000 pt_scale=1.000 slop_win=12.0 deg_per_pt=0.500 smooth=0.50 glide=0.00
+look.trace id=46 cam=1 dur=0.02s events=121 frames=16 multi=93.8% maxev=8 slop_frames=1 slop_pt=12.0 look_frames=15 raw_pt=100.0 applied_pt=88.0 lost=0.0% err=0.0% zero=0.0% (0/14) dt_p50=1.4ms dt_p99=1.4ms win_per_pt=0.000 pt_scale=1.000 slop_win=12.0 deg_per_pt=0.500 smooth=0.50 glide=0.00
+look.trace id=47 cam=1 dur=0.04s events=121 frames=31 multi=96.8% maxev=4 slop_frames=3 slop_pt=12.0 look_frames=28 raw_pt=100.0 applied_pt=88.0 lost=0.0% err=0.0% zero=0.0% (0/27) dt_p50=1.4ms dt_p99=1.4ms win_per_pt=0.000 pt_scale=1.000 slop_win=12.0 deg_per_pt=0.500 smooth=0.50 glide=0.00
+look.trace id=48 cam=1 dur=0.08s events=121 frames=61 multi=98.4% maxev=2 slop_frames=7 slop_pt=12.0 look_frames=54 raw_pt=100.0 applied_pt=88.0 lost=0.0% err=0.0% zero=0.0% (0/53) dt_p50=1.3ms dt_p99=1.5ms win_per_pt=0.000 pt_scale=1.000 slop_win=12.0 deg_per_pt=0.500 smooth=0.50 glide=0.00
+look.trace id=49 cam=1 dur=0.01s events=7 frames=7 multi=0.0% maxev=1 slop_frames=6 slop_pt=42.0 look_frames=1 raw_pt=42.0 applied_pt=0.0 lost=0.0% err=0.0% zero=0.0% (0/0) dt_p50=1.3ms dt_p99=1.7ms win_per_pt=0.000 pt_scale=1.000 slop_win=12.0 deg_per_pt=0.500 smooth=0.00 glide=0.00
+look.trace id=50 cam=1 dur=0.03s events=21 frames=21 multi=0.0% maxev=1 slop_frames=6 slop_pt=12.0 look_frames=15 raw_pt=40.0 applied_pt=28.0 lost=0.0% err=0.0% zero=0.0% (0/14) dt_p50=1.3ms dt_p99=1.8ms win_per_pt=0.000 pt_scale=1.000 slop_win=12.0 deg_per_pt=0.500 smooth=0.00 glide=0.00
+look.trace id=51 cam=1 dur=0.04s events=31 frames=31 multi=0.0% maxev=1 slop_frames=3 slop_pt=12.0 look_frames=28 raw_pt=120.0 applied_pt=108.0 lost=0.0% err=0.0% zero=0.0% (0/27) dt_p50=1.4ms dt_p99=1.4ms win_per_pt=0.000 pt_scale=1.000 slop_win=12.0 deg_per_pt=0.500 smooth=0.00 glide=0.00
+look.trace id=52 cam=1 dur=0.05s events=31 frames=31 multi=0.0% maxev=1 slop_frames=3 slop_pt=12.0 look_frames=28 raw_pt=120.0 applied_pt=108.0 lost=0.0% err=0.0% zero=0.0% (0/27) dt_p50=1.4ms dt_p99=1.6ms win_per_pt=0.000 pt_scale=1.000 slop_win=12.0 deg_per_pt=0.500 smooth=0.00 glide=0.20
+look.trace id=53 cam=1 dur=0.05s events=31 frames=31 multi=0.0% maxev=1 slop_frames=3 slop_pt=12.0 look_frames=28 raw_pt=120.0 applied_pt=108.0 lost=0.0% err=0.0% zero=0.0% (0/27) dt_p50=1.4ms dt_p99=1.4ms win_per_pt=0.000 pt_scale=1.000 slop_win=12.0 deg_per_pt=0.500 smooth=0.00 glide=0.20
+look.trace id=54 cam=1 dur=0.03s events=11 frames=11 multi=0.0% maxev=1 slop_frames=4 slop_pt=12.0 look_frames=7 raw_pt=30.0 applied_pt=18.0 lost=0.0% err=0.0% zero=0.0% (0/6) dt_p50=1.4ms dt_p99=1.6ms win_per_pt=0.000 pt_scale=1.000 slop_win=12.0 deg_per_pt=0.500 smooth=0.00 glide=0.20
+look.trace id=55 cam=1 dur=0.05s events=31 frames=31 multi=0.0% maxev=1 slop_frames=3 slop_pt=12.0 look_frames=28 raw_pt=120.0 applied_pt=108.0 lost=0.0% err=0.0% zero=0.0% (0/27) dt_p50=1.6ms dt_p99=1.6ms win_per_pt=0.000 pt_scale=1.000 slop_win=12.0 deg_per_pt=0.500 smooth=0.00 glide=0.10
+look.trace id=56 cam=1 dur=0.05s events=31 frames=31 multi=0.0% maxev=1 slop_frames=3 slop_pt=12.0 look_frames=28 raw_pt=120.0 applied_pt=108.0 lost=0.0% err=0.0% zero=0.0% (0/27) dt_p50=1.6ms dt_p99=1.7ms win_per_pt=0.000 pt_scale=1.000 slop_win=12.0 deg_per_pt=0.500 smooth=0.00 glide=0.60
+look.trace id=57 cam=1 dur=0.04s events=21 frames=21 multi=0.0% maxev=1 slop_frames=0 slop_pt=12.0 look_frames=21 raw_pt=40.0 applied_pt=108.0 lost=-200.0% err=100.0% zero=100.0% (20/20) dt_p50=1.6ms dt_p99=1.8ms win_per_pt=0.000 pt_scale=1.000 slop_win=12.0 deg_per_pt=0.500 smooth=0.00 glide=0.00
+look.trace id=58 cam=0 dur=0.06s events=34 frames=34 multi=0.0% maxev=1 slop_frames=3 slop_pt=6.0 look_frames=31 raw_pt=66.0 applied_pt=0.0 lost=0.0% err=100.0% zero=100.0% (30/30) dt_p50=1.5ms dt_p99=1.7ms win_per_pt=0.000 pt_scale=1.000 slop_win=12.0 deg_per_pt=0.500 smooth=0.00 glide=0.00
+look.trace id=59 cam=0 dur=0.07s events=11 frames=11 multi=0.0% maxev=1 slop_frames=0 slop_pt=0.0 look_frames=11 raw_pt=30.0 applied_pt=0.0 lost=0.0% err=100.0% zero=100.0% (10/10) dt_p50=1.6ms dt_p99=1.7ms win_per_pt=0.000 pt_scale=1.000 slop_win=12.0 deg_per_pt=0.500 smooth=0.00 glide=0.00
+look.trace id=60 cam=1 dur=0.10s events=71 frames=71 multi=0.0% maxev=1 slop_frames=2 slop_pt=12.0 look_frames=69 raw_pt=320.0 applied_pt=308.0 lost=0.0% err=0.0% zero=0.0% (0/68) dt_p50=1.4ms dt_p99=1.6ms win_per_pt=0.000 pt_scale=1.000 slop_win=12.0 deg_per_pt=0.500 smooth=0.00 glide=0.00
+look.trace id=63 cam=0 dur=0.00s events=1 frames=1 multi=0.0% maxev=1 slop_frames=0 slop_pt=0.0 look_frames=1 raw_pt=0.0 applied_pt=0.0 lost=0.0% err=0.0% zero=0.0% (0/0) dt_p50=1.5ms dt_p99=1.5ms win_per_pt=0.000 pt_scale=1.000 slop_win=12.0 deg_per_pt=0.500 smooth=0.00 glide=0.00
+look.trace id=62 cam=1 dur=0.06s events=36 frames=36 multi=0.0% maxev=1 slop_frames=6 slop_pt=12.0 look_frames=30 raw_pt=70.0 applied_pt=58.0 lost=0.0% err=0.0% zero=0.0% (0/29) dt_p50=1.6ms dt_p99=1.8ms win_per_pt=0.000 pt_scale=1.000 slop_win=12.0 deg_per_pt=0.500 smooth=0.00 glide=0.00
+look.trace id=61 cam=1 dur=0.07s events=1 frames=1 multi=0.0% maxev=1 slop_frames=0 slop_pt=12.0 look_frames=1 raw_pt=0.0 applied_pt=308.0 lost=0.0% err=0.0% zero=0.0% (0/0) dt_p50=1.6ms dt_p99=1.8ms win_per_pt=0.000 pt_scale=1.000 slop_win=12.0 deg_per_pt=0.500 smooth=0.00 glide=0.00
+look.trace id=64 cam=1 dur=0.09s events=61 frames=61 multi=0.0% maxev=1 slop_frames=6 slop_pt=12.0 look_frames=55 raw_pt=120.0 applied_pt=108.0 lost=0.0% err=0.0% zero=0.0% (0/54) dt_p50=1.5ms dt_p99=1.7ms win_per_pt=0.000 pt_scale=1.000 slop_win=12.0 deg_per_pt=0.500 smooth=0.00 glide=0.00
+[eden-gl] pick viewport now 1136x852 (engine point space x scale).
+[eden-display] profile=touch ui_scale=200% layout=adaptive -> 568x426 points (aspect 1.333, snap 0 px/pt)
+look.trace id=65 cam=1 dur=0.05s events=31 frames=31 multi=0.0% maxev=1 slop_frames=6 slop_pt=6.7 look_frames=25 raw_pt=33.3 applied_pt=26.6 lost=0.0% err=0.0% zero=0.0% (0/24) dt_p50=1.5ms dt_p99=1.8ms win_per_pt=0.000 pt_scale=1.803 slop_win=12.0 deg_per_pt=0.500 smooth=0.00 glide=0.00
+look.trace id=66 cam=1 dur=0.05s events=31 frames=31 multi=0.0% maxev=1 slop_frames=6 slop_pt=6.7 look_frames=25 raw_pt=33.3 applied_pt=26.6 lost=0.0% err=0.0% zero=0.0% (0/24) dt_p50=1.5ms dt_p99=1.5ms win_per_pt=0.000 pt_scale=1.803 slop_win=12.0 deg_per_pt=0.500 smooth=0.00 glide=0.00
+[eden-look] step 0: the trace counts 91 events, 31 frames, 30 multi-event, 27 look frames PASS  events 91 frames 31 multi 30 look_frames 27 lost 0.00%
+[eden-look] step 0: the trace sees nothing lost            PASS  events 91 frames 31 multi 30 look_frames 27 lost 0.00%
+[eden-look] step 1: a 3-events-per-frame drag turns its whole travel, every frame (smoothing 0 = raw) PASS  turned 39.000 deg (want 39.000), worst frame -1 off by 0.0000
+[eden-look] step 2: a 0.3-point/frame drag turns every frame by the same amount (no staircase) PASS  per-frame step 0.1500..0.1500 deg (want 0.1500), total 18.999 (want 18.999), trace zero 0/101
+[eden-look] step 2: and loses nothing                      PASS  per-frame step 0.1500..0.1500 deg (want 0.1500), total 18.999 (want 18.999), trace zero 0/101
+[eden-look] step 4: held still, the filter settles on the travel PASS  30 Hz: 42.971 deg at the motion's end, 44.000 held, 44.000 released (want 44.000)
+[eden-look] step 4: released after the hold, nothing is left over PASS  30 Hz: 42.971 deg at the motion's end, 44.000 held, 44.000 released (want 44.000)
+[eden-look] step 4: held still, the filter settles on the travel PASS  60 Hz: 42.972 deg at the motion's end, 44.000 held, 44.000 released (want 44.000)
+[eden-look] step 4: released after the hold, nothing is left over PASS  60 Hz: 42.972 deg at the motion's end, 44.000 held, 44.000 released (want 44.000)
+[eden-look] step 4: held still, the filter settles on the travel PASS  120 Hz: 42.972 deg at the motion's end, 44.000 held, 44.000 released (want 44.000)
+[eden-look] step 4: released after the hold, nothing is left over PASS  120 Hz: 42.972 deg at the motion's end, 44.000 held, 44.000 released (want 44.000)
+[eden-look] step 4: released mid-motion, the flush leaves no remainder PASS  30 Hz: 42.971 deg at the motion's end, 42.971 held, 44.000 released (want 44.000)
+[eden-look] step 4: released mid-motion, the flush leaves no remainder PASS  60 Hz: 42.972 deg at the motion's end, 42.972 held, 44.000 released (want 44.000)
+[eden-look] step 4: released mid-motion, the flush leaves no remainder PASS  120 Hz: 42.972 deg at the motion's end, 42.972 held, 44.000 released (want 44.000)
+[eden-look] step 4: smoothing 0.5 actually filters (the camera trails the finger) PASS  lag at the motion's end, 60 Hz: 1.028 deg
+[eden-look] step 5: a 6-point wiggle is a tap: one block where it aimed, no turn at any point PASS  blocks 1260 -> 1261, target 66288,21,66286 now 2, largest turn 0.000 deg, pitch -25.000
+[eden-look] step 6: a 40-point drag turns past the slop and builds nothing FAIL  blocks 1261 -> 1262, release target 66288,21,66287 now 2, turned 14.000 deg (want 14.000)
+[eden-look] step 7: glide off, the camera stops on release PASS  glide 0: +0.000 deg after 0.1 s, +0.000 after 1 s, +0.000 after 1.5 s
+[eden-look] step 7: glide on, it keeps turning and stops within 1 s PASS  glide 1: +9.298 deg after 0.1 s, +29.977 after 1 s, +29.977 after 1.5 s
+[eden-look] step 7: a touch-down catches a glide           PASS  0.0000 deg in the 10 frames after the touch-down
+[eden-look] step 7: the glide slider sets how far it coasts PASS  coast after release: half-life 0.1 s +13.639 deg, 0.6 s +90.896 deg
+[eden-look] step 8: a drag on the joystick pad turns nothing PASS  pad [20,20,88,88], turned 0.0000 deg
+[eden-look] step 8: a second world finger stops a look that has not latched yet (num > 1) PASS  one finger 0.000 deg (want 0.000), then 0.0000 with two down
+[eden-look] step 8: pitch clamps at +80 and turns back at once PASS  pitch 80.000 at the top, 70.000 after 20 points back (want 70.000)
+[eden-look] step 8b: the look keeps turning after another finger taps (L.7) PASS  turned 20.000 deg in the 20 frames after the tap (want 20.000)
+[eden-look] step 9: an out-and-back drag turns the whole way back PASS  turned -26.000 deg (want -26.000)
+[eden-look] step 3: a 60-window-point swipe turns the same per window point at any size and UI scale PASS  1024x768 ui 4: 568x426 points, 1.803 window pt/pt, 0.50 deg/pt, turned 24.000 (want 24.000)
+[eden-look] step 3: a 60-window-poi[eden-gl] pick viewport now 1388x640 (engine point space x scale).
+[eden-display] profile=touch ui_scale=200% layout=adaptive -> 694x320 points (aspect 2.169, snap 0 px/pt)
+look.trace id=67 cam=1 dur=0.05s events=31 frames=31 multi=0.0% maxev=1 slop_frames=5 slop_pt=9.8 look_frames=26 raw_pt=48.9 applied_pt=39.1 lost=0.0% err=0.0% zero=0.0% (0/25) dt_p50=1.5ms dt_p99=1.7ms win_per_pt=0.000 pt_scale=1.228 slop_win=12.0 deg_per_pt=0.650 smooth=0.00 glide=0.00
+[eden-gl] pick viewport now 1708x788 (engine point space x scale).
+[eden-display] profile=touch ui_scale=150% layout=adaptive -> 854x394 points (aspect 2.168, snap 0 px/pt)
+look.trace id=68 cam=1 dur=0.05s events=31 frames=31 multi=0.0% maxev=1 slop_frames=5 slop_pt=12.0 look_frames=26 raw_pt=60.2 applied_pt=48.1 lost=0.0% err=0.0% zero=0.0% (0/25) dt_p50=1.4ms dt_p99=1.5ms win_per_pt=0.000 pt_scale=0.997 slop_win=12.0 deg_per_pt=0.650 smooth=0.00 glide=0.00
+[eden-gl] pick viewport now 1388x640 (engine point space x scale).
+[eden-display] profile=touch ui_scale=200% layout=adaptive -> 694x320 points (aspect 2.169, snap 0 px/pt)
+[eden-gl] pick viewport now 1136x852 (engine point space x scale).
+[eden-display] profile=touch ui_scale=200% layout=adaptive -> 568x426 points (aspect 1.333, snap 0 px/pt)
+look.trace id=69 cam=1 dur=0.05s events=31 frames=31 multi=0.0% maxev=1 slop_frames=6 slop_pt=3.3 look_frames=25 raw_pt=16.6 applied_pt=13.3 lost=0.0% err=0.0% zero=0.0% (0/24) dt_p50=1.4ms dt_p99=1.6ms win_per_pt=0.000 pt_scale=3.606 slop_win=12.0 deg_per_pt=0.500 smooth=0.00 glide=0.00
+nt swipe turns the same per window point at any size and UI scale PASS  1024x768 ui 3: 568x426 points, 1.803 window pt/pt, 0.50 deg/pt, turned 24.000 (want 24.000)
+[eden-look] step 3: a 60-window-point swipe turns the same per window point at any size and UI scale PASS  852x393 ui 4: 694x320 points, 1.228 window pt/pt, 0.65 deg/pt, turned 31.200 (want 31.200)
+[eden-look] step 3: a 60-window-point swipe turns the same per window point at any size and UI scale PASS  852x393 ui 3: 854x394 points, 0.997 window pt/pt, 0.65 deg/pt, turned 31.200 (want 31.200)
+[eden-look] step 3: a 60-window-point swipe turns the same per window point at any size and UI scale PASS  2048x1536 ui 4: 568x426 points, 3.606 window pt/pt, 0.50 deg/pt, turned 24.000 (want 24.000)
+[eden-look] step 3: the sizes really do differ in window points per engine point PASS  TOUCH_PT_SCALE 0.997..3.606
+[eden-look] FAILURES (1 failure(s))

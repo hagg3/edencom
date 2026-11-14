@@ -498,6 +498,9 @@ item 3, because the bulk path still runs it for teleports. Plan and gates:
      in chunks rather than columns so it stays flat at 256z, where a column is 4× the bytes and
      4× the mesh work. The file handle is reopened per slice, because an autosave in between
      renames a `.savetmp` over it.
+     The same budget also limits the mesh pass while `bulk_reload_active` **or `window_remesh_owed`**
+     (QA.9: a whole-window re-mesh request outside a reload, i.e. the day/night flip and sky painting;
+     `terrain_requestWindowRemesh`). Otherwise the mesh pass is unbudgeted (edits, explosions, a load).
      **Since Stage R / R.2b (2026-10-03) a landed column is charged its *occupied* chunks**
      (non-`typesEmpty` bands, at least 1), not `CHUNKS_PER_COLUMN`, and a frame reads at most the 64z
      column count (`BULK_RELOAD_CHUNK_BUDGET/4` = 24). Emptiness is only known after the read, so the

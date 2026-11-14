@@ -1,0 +1,224 @@
+[eden] documents=/Users/sam/emod/native/gate-docs/srclike-selftest
+[eden] bundle=./build
+[eden-gl] no canvas — staying headless (--headless).
+[eden-gl] pick viewport now 1816x1024 (engine point space x scale).
+[eden-display] profile=desktop ui_scale=125% layout=adaptive -> 908x512 points (aspect 1.773, snap 0 px/pt)
+[eden-p1] tick 0: World::update(0.0065 s) entered
+[eden-p1] tick 0: World::update returned (retinaSwap=0)
+[eden-p1] tick 1: World::update(0.0019 s) entered
+[eden-p1] tick 1: World::update returned (retinaSwap=0)
+[eden-p1] tick 2: World::update(0.0013 s) entered
+[eden-p1] tick 2: World::update returned (retinaSwap=0)
+Texture2D: './build/colorpick_background.png' decoded 582x511 (canvas 582x511) fmt=1 center-rgba=(237,237,237,227)
+Texture2D: './build/menu_autojump.png' decoded 167x24 (canvas 167x24) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/arrow_left.png' decoded 36x89 (canvas 36x89) fmt=1 center-rgba=(255,198,0,255)
+Texture2D: './build/arrow_right.png' decoded 36x89 (canvas 36x89) fmt=1 center-rgba=(255,198,0,255)
+Texture2D: './build/create_world.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(174,174,174,255)
+Texture2D: './build/delete_world.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(200,200,200,255)
+Texture2D: './build/share_world.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(174,174,174,255)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/world_selected.png' decoded 86x85 (canvas 86x85) fmt=1 center-rgba=(183,183,183,255)
+Texture2D: './build/world_unselected.png' decoded 86x85 (canvas 86x85) fmt=1 center-rgba=(118,118,118,255)
+Texture2D: './build/load_world.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(174,174,174,255)
+Texture2D: './build/options.png' decoded 180x62 (canvas 180x62) fmt=1 center-rgba=(8,9,7,255)
+Texture2D: './build/arrow_up.png' decoded 89x36 (canvas 89x36) fmt=1 center-rgba=(255,198,0,255)
+Texture2D: './build/arrow_down.png' decoded 89x36 (canvas 89x36) fmt=1 center-rgba=(255,198,0,255)
+Texture2D: './build/back.png' decoded 40x30 (canvas 40x30) fmt=1 center-rgba=(255,198,0,255)
+Texture2D: './build/menu_shared_worlds.png' decoded 280x29 (canvas 280x29) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/menu_cancel.png' decoded 151x31 (canvas 151x31) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/menu_music.png' decoded 108x28 (canvas 108x28) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/menu_options.png' decoded 246x44 (canvas 246x44) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: './build/menu_save.png' decoded 102x31 (canvas 102x31) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/menu_send.png' decoded 101x30 (canvas 101x30) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/menu_sound_effects.png' decoded 271x30 (canvas 271x30) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/menu_text_box.png' decoded 300x45 (canvas 300x45) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/menu_text_load.png' decoded 103x31 (canvas 103x31) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/menu_text_back.png' decoded 101x31 (canvas 101x31) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/shared_world_selected.png' decoded 40x40 (canvas 40x40) fmt=1 center-rgba=(180,180,180,255)
+Texture2D: './build/shared_world_unselected.png' decoded 37x37 (canvas 37x37) fmt=1 center-rgba=(115,115,115,255)
+Texture2D: './build/menu_fast.png' decoded 81x24 (canvas 81x24) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/menu_best.png' decoded 82x24 (canvas 82x24) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/menu_creatures.png' decoded 192x25 (canvas 192x25) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/report_flag.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(245,55,55,255)
+Texture2D: './build/atlas.png' decoded 32x4096 (canvas 32x4096) fmt=4 center-rgba=(53,91,27,255)
+Texture2D: './build/atlas2.png' decoded 32x4096 (canvas 32x4096) fmt=1 center-rgba=(0,0,0,0)
+world height set to 64 (4 bands, 32768 B per column record)
+window radius set to 9 (288 x 288 blocks, 324 columns)
+allocated and zeroed chunksTexture2D: './build/ipad~moof_icon.png' decoded 64x64 (canvas 64x64) fmt=1 center-rgba=(0,90,185,255)
+Texture2D: './build/ipad~build.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(140,143,139,255)
+Texture2D: './build/ipad~destroy.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(177,139,89,255)
+Texture2D: './build/ipad~burn.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(228,132,59,255)
+Texture2D: './build/ipad~save.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(128,128,128,255)
+Texture2D: './build/ipad~cancel.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(238,105,105,255)
+Texture2D: './build/ipad~home.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(193,193,193,255)
+Texture2D: './build/ipad~jump.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(121,215,237,255)
+Texture2D: './build/smoke_tex.png' decoded 32x32 (canvas 32x32) fmt=1 center-rgba=(67,67,67,255)
+Texture2D: './build/ipad~analog_top.png' decoded 88x88 (canvas 88x88) fmt=1 center-rgba=(119,119,119,255)
+Texture2D: './build/ipad~analog_bottom.png' decoded 88x88 (canvas 88x88) fmt=1 center-rgba=(186,186,186,255)
+Texture2D: './build/ipad~camera.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(41,86,80,255)
+Texture2D: './build/ipad~block_border.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(27,26,25,0)
+Texture2D: './build/block_background.png' decoded 402x282 (canvas 402x282) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/ipad~palette.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(133,145,217,255)
+Texture2D: './build/block_border_pressed.png' decoded 38x38 (canvas 38x38) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/color_border_pressed.png' decoded 32x32 (canvas 32x32) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/ipad~color_border.png' decoded 64x64 (canvas 64x64) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/sky_box.png' decoded 128x512 (canvas 128x512) fmt=1 center-rgba=(127,172,232,255)
+Texture2D: './build/ipad~triangle_border_pressed.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(27,26,25,255)
+Texture2D: './build/ipad~triangle_border.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: './build/ipad~build2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(220,220,220,255)
+Texture2D: './build/ipad~build3.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(183,183,183,255)
+Texture2D: './build/ipad~destroy_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(177,139,89,255)
+Texture2D: './build/ipad~paint_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(133,145,217,255)
+Texture2D: './build/ipad~build2_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(220,220,220,255)
+Texture2D: './build/ipad~build3_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(183,183,183,255)
+Texture2D: './build/ipad~burn_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(228,132,59,255)
+Texture2D: './build/ipad~jump_depressed.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(179,179,179,255)
+Texture2D: './build/Moof_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(31,106,182,255)
+Texture2D: './build/Moof_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(202,18,10,255)
+Texture2D: './build/Moof_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(31,106,182,255)
+Texture2D: './build/Batty_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(122,74,192,255)
+Texture2D: './build/Batty_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(211,4,0,255)
+Texture2D: './build/Batty_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(122,74,192,255)
+Texture2D: './build/Green_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(62,136,66,255)
+Texture2D: './build/Green_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(128,15,0,255)
+Texture2D: './build/Green_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(62,136,66,255)
+Texture2D: './build/Nergle_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(65,46,65,255)
+Texture2D: './build/Nergle_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(106,6,0,255)
+Texture2D: './build/Nergle_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(65,46,65,255)
+Texture2D: './build/Stumpy_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(202,96,1,255)
+Texture2D: './build/Stumpy_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(192,5,1,255)
+Texture2D: './build/Stumpy_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(202,96,1,255)
+Texture2D: './build/shadow.png' decoded 64x64 (canvas 64x64) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: './build/menu_icon.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(115,160,34,255)
+Texture2D: './build/door.png' decoded 32x64 (canvas 32x64) fmt=1 center-rgba=(85,53,15,255)
+Texture2D: './build/sky_box_bw.png' decoded 128x512 (canvas 128x512) fmt=1 center-rgba=(253,253,253,255)
+Texture2D: './build/golden_cube.png' decoded 64x64 (canvas 64x64) fmt=4 center-rgba=(254,218,92,255)
+Texture2D: './build/golden_cube_bw.png' decoded 64x64 (canvas 64x64) fmt=4 center-rgba=(243,243,243,255)
+Texture2D: './build/door_mask.png' decoded 32x64 (canvas 32x64) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/flower_tex.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/portal.png' decoded 64x128 (canvas 64x128) fmt=1 center-rgba=(100,100,100,255)
+Texture2D: './build/ipad~sphere_map.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(157,157,157,255)
+Texture2D: './build/ipad~build2_top.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/ipad~buildplus.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/portal_twirl.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(146,146,146,255)
+Texture2D: './build/ipad~build3_top.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(115,115,115,77)
+Texture2D: './build/blocktoggle1.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(156,156,156,255)
+Texture2D: './build/blocktoggle2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,40,40,255)
+Texture2D: './build/flower_icon.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(18,99,120,255)
+Texture2D: './build/ipad~block_border2.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(27,26,25,0)
+Texture2D: './build/ipad~block_border_pressed2.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(27,26,25,0)
+Texture2D: './build/ipad~triangle_border2.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~triangle_border_pressed2.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~build_under2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(220,220,220,255)
+Texture2D: './build/ipad~build_over2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(60,60,60,0)
+Texture2D: './build/ipad~build2_active2.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(220,220,220,255)
+Texture2D: './build/ipad~build2_under2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(182,182,182,255)
+Texture2D: './build/ipad~build3_top2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(116,116,116,77)
+Texture2D: './build/ipad~build3_active2.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(182,182,182,255)
+Texture2D: './build/digits.png' decoded 250x32 (canvas 250x32) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/goldcube_icon.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(250,205,105,255)
+Texture2D: './build/portal_icon2.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(120,120,120,255)
+Texture2D: './build/door_icon2.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(95,60,17,255)
+Texture2D: './build/Charger_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(201,0,0,255)
+Texture2D: './build/Charger_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(201,0,0,255)
+Texture2D: './build/Charger_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(208,24,24,255)
+Texture2D: './build/Stalker_Default.png' decoded 512x512 (canvas 512x512) fmt=4 center-rgba=(182,0,0,255)
+Texture2D: './build/Stalker_Default.png' decoded 512x512 (canvas 512x512) fmt=4 center-rgba=(182,0,0,255)
+Texture2D: './build/Stalker_Blink.png' decoded 512x512 (canvas 512x512) fmt=4 center-rgba=(182,0,0,255)
+Texture2D: './build/Moof_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Flame_512.png' decoded 512x512 (canvas 512x512) fmt=1 center-rgba=(68,21,5,0)
+Texture2D: './build/text_numbers.png' decoded 512x32 (canvas 512x32) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~paint_mask.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/goldcube_icon_mask.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/flower_icon_mask.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/door_icon2_mask.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/portal_icon2_mask.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/goldcube_icon_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(250,205,105,255)
+Texture2D: './build/flower_icon_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(18,99,120,255)
+Texture2D: './build/door_icon2_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(95,60,17,255)
+Texture2D: './build/portal_icon2_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(120,120,120,255)
+Texture2D: './build/ipad~block_border_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(27,26,25,0)
+Texture2D: './build/ipad~triangle_border_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(27,26,25,255)
+Texture2D: './build/Moof_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Moof_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Batty_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Batty_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Green_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Green_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Nergle_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Nergle_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Stumpy_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Stumpy_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+[eden-stage1] open_world "srclike-selftest"  first-load 51 ms
+Texture2D: '<image>' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(198,202,133,255)
+Texture2D: '<image>' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(182,166,120,255)
+Texture2D: '<image>' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(133,136,90,255)
+[eden-srclike] mode off: wheel scrolls the hotbar, no jump pulse PASS  hotbar 4, pulse 0
+[eden-srclike] Experiments rows reach SrclikeMove             PASS  enabled+autobhop 1, autobhop after off 0
+[eden-srclike] mode on: wheel leaves the hotbar; three notches in one frame are one press PASS  hotbar 3, first take 1 second take 0, presses +1
+[eden-srclike] wheel on the ground: one hop of ~1.1 blocks    PASS  apex 1.19 blocks, presses +1
+[eden-srclike] wheel in the air is spent, not banked for the landing PASS  airborne notch: presses +1, apex stayed 1.19, grounded 1 after landing + 30 frames
+[eden-srclike] a notch right after landing hops again         PASS  landed at y 55.93, next apex 1.16
+[eden-srclike] held jump hops once; with Auto-bhop it repeats PASS  3 s of held jump: Auto-bhop off 1 hop(s), on 5
+[eden-srclike] autojump climbs the step in stock, is off in Srclike movement PASS  step 1 block high: feet 1.11 above the floor with the mode off, 0.01 on
+[eden-srclike] usercmd carries raw +-1 key axes and the view yaw PASS  W (1.00,0.00)  W+D (1.00,1.00)  D (0.00,1.00)  none (0.00,0.00)  yaw 0.0
+[eden-srclike] Srclike movement implies crouch; off, Crouch mode off still means no crouch PASS  box height standing 1.85, Ctrl in the mode 0.93, Ctrl with mode and Crouch mode off 1.85
+[eden-srclike] move.* cvars: SRC.1 defaults, settable, resettable PASS  defaults ok 1, airaccelerate set -> 10, gravity set -> 600, after reset 100 / 800
+[eden-srclike] trace room built on the toroidal wrap seam     PASS  T_SIZE 288, seam x=z=65664 (mod T 0, mod 16 0), floor y 54
+[eden-srclike] brushes match stock makeRamp/makeSide vertex for vertex PASS  0 of 32 ramp/side ids differ (first -1)
+[eden-srclike] drop onto a cube floor across the wrap seam stops one DIST_EPSILON above it PASS  frac 0.249219 n(0.000,0.000,1.000) end(2555571.8919,2555571.8919,2140.5718) ss0 as0 type 2 @65663,65663,54
+[eden-srclike] ground probe from rest hits at 0; exact contact is start-solid PASS  rest: frac 0.000000 n(0.000,0.000,1.000) end(2555571.8919,2555571.8919,2140.5718) ss0 as0 type 2 @65663,65663,54 | touch ss 1
+[eden-srclike] slide along a cube floor across seams is clear PASS  level: frac 1.000000 n(0.000,0.000,0.000) end(2555688.6486,2555688.6486,2140.5718) ss0 as0 type -1 @0,0,0 | dip: frac 1.000000 ss 0
+[eden-srclike] axis walls in four directions: stop hw + DIST_EPSILON short, axial normal PASS  +x 2555714.5633/2555714.5633 -x 2555429.2204/2555429.2204 +y 2555714.5633/2555714.5633 -y 2555429.2204/2555429.2204 (got/want)
+[eden-srclike] ceiling: hull top stops one DIST_EPSILON under it PASS  frac 0.382901 n(0.000,0.000,-1.000) end(2555902.7027,2555902.7027,2185.2660) ss0 as0 type 2 @65672,65672,58
+[eden-srclike] ramps, 4 orientations: drop on the slope, run up it, hit the back face PASS  0 of 4 orientations wrong
+[eden-srclike] side-ramps, 4 orientations: diagonal face hit from the missing corner PASS  0 of 4 orientations wrong
+[eden-srclike] outer corner: diagonal stops on both faces, a 1 u graze misses PASS  at corner: frac 0.464682 n(-1.000,0.000,0.000) end(2555714.5633,2555792.4012,2140.5718) ss0 as0 type 2 @65668,65670,55 | graze frac 1.000000
+[eden-srclike] start-solid / all-solid                        PASS  in: frac 0.000000 n(0.000,0.000,0.000) end(2555747.0270,2555824.8649,2140.5718) ss1 as1 type 2 @65668,65670,55 | out: frac 1.000000 n(0.000,0.000,0.000) end(2555630.2703,2555824.8649,2140.5718) ss1 as0 type 2 @65668,65670,55
+[eden-srclike] walls either side of the toroidal/chunk seam, x and z PASS  x: slot T-1 0.0000 (cell 65663) slot 0 0.0000 (cell 65664); y: slot 0 0.0000 (cell 65664) slot T-1 from +y 0.0000 (cell 65663)
+[eden-srclike] liquids, doors, flowers, golden cubes are not solid; ladders are PASS  type:fraction 20:1.000 23:1.000 66:1.000 73:1.000 71:1.000 18:0.333
+[eden-srclike] long diagonal fall over many cells lands on the floor PASS  frac 0.857028 n(0.000,0.000,1.000) end(2555671.9245,2555708.1081,2140.5718) ss0 as0 type 2 @65666,65667,54
+[eden-srclike] trace cost: 0.281 us per trace (ground probe + 52 u run; sink 20000)
+[eden-srclike] move rooms built (floor slab, ramp walk, surf ramp) PASS  117 vectors from ../port/tools/fixtures/srclike-pm/vectors.txt; ramp id 24; floor y 52, ramp-walk row 65530, surf row 65546 base 48
+[eden-srclike] ground accel curve matches the model           PASS  after 1/2/5/10/20 ticks 17.075/29.650/67.375/124.817/198.533 (want 17.076/29.651/67.378/124.822/198.539); 50/90/100% at 9/22/27 (want 9/22/27); 67-tick distance 195.615 (want 195.626)
+[eden-srclike] stop distance and time match the model         PASS  from maxspeed 35 ticks 44.698 u (want 35, 44.698); from 400 44 ticks 85.193 u (want 44, 85.193)
+[eden-srclike] jump apex and airtime match the model          PASS  apex 45.019 u, airtime 45 ticks (want 45.020, 45)
+[eden-srclike] perfect air strafe gain matches the model (sqrt(v^2 + 900 n)) PASS  aa100 350.428, aa10 350.428 (want 350.428, 350.428)
+[eden-srclike] strafe-bhop gain per hop matches the model     PASS  landings 303.9 364.5 416.3 ... 675.9 (want 303.9 364.5 416.3 ... 675.9), 45.0 ticks/hop, 0 friction ticks; final pos -57.7,-15.5 blocks from start
+[eden-srclike] bhop retention per hop matches the model (0.94^late) PASS   late 0: 400.00..400.00 (want 400.00..400.00) late 1: 376.00..293.57 (want 376.00..293.56) late 3: 332.24..158.12 (want 332.23..158.12)
+[eden-srclike] surf: speed kept along the ramp, slide / climb match the model PASS  no input: vx 800.00 dz -202.013 downslope 568.50 ground 0 (want 800.00 -202.033 568.53 0)  hold: vx 800.00 dz 17.882 downslope -21.63 ground 0 (want 800.00 17.882 -21.63 0)  
+[eden-srclike] walk up / down a 45-degree ramp at full speed, grounded throughout PASS  up: ground 150/150 height 155.707 min 227.68 mean 227.68 (want 150 155.707 227.68 227.68)  down: ground 150/150 height 0.031 min 227.68 mean 227.68 (want 150 0.031 227.68 227.68)  
+[eden-srclike] landing on a ramp: the surf rule (U2) decides ground like the model PASS  fast_along: ground 0 first -1 (want 0 -1)  slow: ground 15 first 16 (want 15 16)  fast_uphill: ground 25 first 6 (want 25 6)  
+[eden-srclike] tick cost: 0.704 us per tick (surfing, holding into the ramp)
+[eden-srclike] mode on from a stock rest: lifted off the start-solid contact, grounded, 66.67 ticks/s PASS  stock feet 53.0000 (floor 53), source feet 53.0000, state lift 0.00015 u, onground 1, 66 ticks in 60 frames
+[eden-srclike] frame driver: walk speed reached; interpolated motion is smooth at 60 and 144 Hz PASS  60 Hz: speed 5.850 b/s (want 5.850), worst step off by 0.000% (double), 0.0037 block (float pos, ulp 0.0039)  144 Hz: speed 5.850 b/s (want 5.850), worst step off by 0.000% (double), 0.0023 block (float pos, ulp 0.0039)  
+[eden-srclike] teleport re-seeds the tick state; an outside velocity is adopted PASS  after teleport pos 65546.500,65530.500 state x 65547.234; adopted vel 7.520 b/s (friction-decayed from 8), moved 0.602 blocks in 6 frames
+[eden-srclike] a real-frame jump peaks at the model apex and lands PASS  take-off 1.479 u above the floor (grounded 1), apex 44.969 u above it (model 45.020), landed 1 at 0.360 u
+[eden-srclike] C2 eye height stands 64 u, ducks 28 u, camera uses it PASS  eye over feet: stand 1.644 (want 1.644), ducked 0.719 (want 0.719), back 1.644; cam->py==eyeY 1
+[eden-srclike] C5 pitch clamps at +-89 in the mode            PASS  pitch after looking up 89.00, down -89.00 (limit 89)
+[eden-srclike] C6 degrees per count = sens x 0.022            PASS  100 counts at CS sens 2.0 turned 4.400 deg (want 4.400)
+[eden-srclike] E1 golden cube pickup from the Srclike path    PASS  cubes 10 -> 11, block now 0
+[eden-srclike] E2 lava burns                                  PASS  life 0.685
+[eden-srclike] E3 landing clears jumping                      PASS  onground=1 jumping=0
+[eden-srclike] E4 below the world pops back                   PASS  y 67.00
+[eden-srclike] W1 swim up in a pool at the SRC.1 rate         PASS  start level 3, steady vz 107.66 u/s (want 107.66), left deep water after 99 ticks
+[eden-srclike] W2 sinks at about the -60 wish x 0.8           PASS  vz -48.00 (want ~ -48)
+[eden-srclike] W3 water-jump lifts the swimmer onto the ledge PASS  waterjump fired 1, landed tick 49, x 65541.02 blocks, z 2140.6 u (ledge top 2140.5)
+[eden-srclike] L1 W on a ladder climbs at ~200 u/s            PASS  onLadder 1, rose 93.0 u in 40 ticks (want ~ 120)
+[eden-srclike] L2 releasing the key lets go (stock needs input) PASS
+[eden-srclike] L3 jump leaves the ladder with a kick          PASS  z 2170.5 -> 2178.4, vz 74.2
+[eden-srclike] I1 ice stops much later than stone             PASS  stone 1.15 blocks, ice 10.17 blocks
+[eden-srclike] T1 trampoline rebounds to the drop height      PASS  bounced 1, rebound peak 110.4 u (drop 3 blocks = 116.8 u)
+[eden-srclike] ALL PASS (0 failure(s))

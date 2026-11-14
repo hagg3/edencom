@@ -26,10 +26,9 @@
 //  (the DOM panel owns settings there). It is the native build's real settings UI, and the
 //  fallback for any future host without a DOM.
 //
-//  load()/save()/getNewWorldName() and `properties[]` are UNCHANGED — they own the five
-//  engine-backed toggles' meaning and the prefs round-trip (eden_prefs, G.2b-1), and Settings.cpp's ENG_*
-//  mapping still indexes `properties[]`. All value writes here go through eden_settings_set(),
-//  which does the clamp + engine commit + the music-tune side effect + the port-settings re-apply.
+//  QA.19: the five stock toggles are ordinary rows of that table (stock prefs names kept); `properties[]`
+//  and save() are gone and load() runs once, at construction. All value writes here go through eden_settings_set(),
+//  which clamps, applies (the row's kBindings[] entry) and persists.
 //
 
 #include "SettingsMenu.h"
@@ -53,39 +52,8 @@
 #include <cstdio>
 #include <cstring>
 
-// The shared settings table, as scalars (Settings.cpp). Declared here rather than via a header
-// to match the eden_menu_take_pending_world_height / eden_report_load_failure convention — a
-// from-scratch iOS build supplies its own stub.
-extern "C" {
-    int         eden_settings_count(void);
-    const char* eden_settings_label(int i);
-    const char* eden_settings_key(int i);
-    const char* eden_settings_group(int i);
-    const char* eden_settings_page(int i);          // SX.1: display placement, "" = the group's tab
-    const char* eden_settings_page_target(int i);   // SX.1: KIND_PAGE's page id
-    const char* eden_settings_hint(int i);
-    int         eden_settings_parent(int i);        // U.2: the toggle row this one depends on, or -1
-    int         eden_settings_kind(int i);          // 0 toggle, 1 range, 2 enum
-    float       eden_settings_min(int i);
-    float       eden_settings_max(int i);
-    float       eden_settings_step(int i);
-    float       eden_settings_def(int i);   // SX.2
-    int         eden_settings_enum_count(int i);
-    const char* eden_settings_enum_label(int i, int j);
-    int         eden_settings_native_hidden(int i);
-    float       eden_settings_get(int i);
-    void        eden_settings_set(int i, float v);
-    float       eden_settings_toggle(int i);
-    const char* eden_settings_text(int i);
-    void        eden_settings_set_text(int i, const char* text);
-    void        eden_move_tuning_reset(void);   // SRC.8b
-    void        eden_weather_tuning_reset(void);   // SX.6
-    const char* eden_settings_cvar(int i);          // SX.6: KIND_CVAR's variable name
-    int         eden_settings_scope(int i);         // SX.6: 0 always, 1 world in play, 2 no world
-    int         eden_settings_loaded(void);
-    void        eden_settings_menu_close(void);
-    void        eden_keybind_reset_all(void);
-}
+// The shared settings table, as scalars (Settings.cpp).
+#include "eden_settings.h"   // QA.19: one header for the accessors (port/src/seam/Settings.cpp)
 
 enum { SM_KIND_TOGGLE = 0, SM_KIND_RANGE = 1, SM_KIND_ENUM = 2, SM_KIND_TEXT = 4, SM_KIND_PAGE = 5, SM_KIND_HEADING = 6, SM_KIND_CVAR = 7 };
 enum { SM_SCOPE_ALWAYS = 0, SM_SCOPE_WORLD = 1, SM_SCOPE_NO_WORLD = 2 };
@@ -172,49 +140,16 @@ static const char* sm_hint(int si){
     return eden_settings_hint(si);
 }
 
-enum  {
-
-	//S_LEFTY_MODE=1,
-	S_PLAY_MUSIC=4,
-	S_PLAY_SOUND=3,
-    S_HEALTH=2,
-	S_AUTOJUMP=1,
-    S_CREATURES=0,
-};
-static const char* pnames[NUM_PROP]={
-	[S_HEALTH]="Health",
-	[S_PLAY_MUSIC]="Music",
-	[S_PLAY_SOUND]="Sound Effects",
-	[S_AUTOJUMP]="Autojump",
-    [S_CREATURES]="Creatures"
-};
-static const int pdefaults[NUM_PROP]={
-	[S_HEALTH]=true,
-	[S_PLAY_MUSIC]=true,
-	[S_PLAY_SOUND]=true,
-	[S_AUTOJUMP]=true,
-    [S_CREATURES]=true,
-};
 extern float SCREEN_WIDTH;
 extern float SCREEN_HEIGHT;
 extern float P_ASPECT_RATIO;
 
 // ---------------------------------------------------------------------------------------------
 SettingsMenu::SettingsMenu(){
-	for(int i=0;i<NUM_PROP;i++){
-		properties[i].name=pnames[i];
-		properties[i].value=pdefaults[i];
-		properties[i].tex=NULL;
-	}
-
 	rect_settings.size.width=246;
 	rect_settings.size.height=45;
 	rect_settings.origin.x=SCREEN_WIDTH/2-rect_settings.size.width/2;
 	rect_settings.origin.y=SCREEN_HEIGHT-rect_settings.size.height-3;
-
-    if(LOW_MEM_DEVICE){
-        properties[S_CREATURES].value=false;
-    }
 
     m_built=false;
     m_builtWorld=-1;
@@ -805,20 +740,17 @@ void SettingsMenu::update(float etime){
     }
 }
 
+// QA.19: runs once, from the constructor. The five stock toggles are rows of Settings.cpp's table, read and
+// applied here through eden_settings_boot_stock() so the title tune (World's ctor, next) obeys Music; the
+// whole model loads later in eden_settings_init. invertcam/use_joystick are boot values only: their rows
+// (Invert look, the input profile) set them when the model loads. Stock's save() re-ran this after every
+// toggle, and these two lines then stomped the port's rows (A4-02).
 void SettingsMenu::load(){
-    for(int i=0;i<NUM_PROP;i++){
-		properties[i].value=eden_prefs_get_int(properties[i].name,properties[i].value);
-	}
 	world_counter=eden_prefs_get_int("new_world_counter",0);
-	Resources::getResources->playmusic=properties[S_PLAY_MUSIC].value;
-	Resources::getResources->playsound=properties[S_PLAY_SOUND].value;
-   World::getWorld->player->autojump_option=properties[S_AUTOJUMP].value;
-    World::getWorld->player->health_option=properties[S_HEALTH].value;
+    eden_settings_boot_stock();
 	World::getWorld->player->invertcam=false;
 	World::getWorld->hud->use_joystick=true;
     World::getWorld->terrain->tgen->genCaves=false;
-    World::getWorld->bestGraphics=properties[S_AUTOJUMP].value;
-    CREATURES_ON=MpWorld::gateCreatures(properties[S_CREATURES].value);   // MP.3a: never in a session
 
     World::getWorld->bestGraphics=true;
     if(LOW_MEM_DEVICE||LOW_GRAPHICS){
@@ -828,14 +760,6 @@ void SettingsMenu::load(){
     if(IS_WIDESCREEN){
         World::getWorld->bestGraphics=true;
     }
-}
-void SettingsMenu::save(){
-	for(int i=0;i<NUM_PROP;i++){
-		eden_prefs_set_int(properties[i].name,properties[i].value);
-	}
-	eden_prefs_sync();
-    this->load();
-
 }
 void SettingsMenu::showKeybinds(){
     selectTab(SM_TAB_KEYS);
@@ -950,6 +874,7 @@ void SettingsMenu::render(){
     GLW::begin2D();
 
     using namespace GLW;
+    Focus::screen(this);   // UX.7: no default action here (Return acts on the focused control)
     fill(CGRectMake(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT), kScrim);
     bevel(m_panel, BEVEL_WINDOW);
 

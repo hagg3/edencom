@@ -17,6 +17,7 @@
 #include "FileManagerHelper.h"
 #include "World.h"
 #include <cstddef>   // offsetof, renameWorld
+#include <cmath>     // QA.2 isfinite
 #include "EdenWorldStore.h"   // emod::eden_detect_bands -- a .eden's height (S.3b)
 #include "EdenWorldSource.h"  // the raw .eden bytes out of a .eden / .gz / .zip (S.5)
 #include "EdenWorldExport.h"  // X.9: Legacy64z export for the .emod "Convert to 64z"
@@ -31,12 +32,11 @@
 #include "port/src/shim/foundation/platform_shims.h"   // G.2b-4: eden_platform_documents_root
 #include "SkyCycle.h"                                 // DN.2: the SKY_CLOCK record
 #include "Weather.h"                                  // AT.1b: the WEATHER record
+#include "Hotbar.h"                                   // UX.8-3: the hotbar.json sidecar
 #include "BlockRegistry.h"                            // K.1-3: the BLOCK_PALETTE record
 
 // See FileManager.h. Both NULL on web — its Foundation shim already answers both questions the
 // way this port wants — and both installed by the native entry point.
-void (*eden_save_backup_hook)(const char* worldFilePath) = NULL;
-const char* (*eden_documents_root_hook)(void) = NULL;
 
 #include <vector>
 #include <algorithm>
@@ -88,6 +88,7 @@ static void fm_resetGenerator();
 void fm_setNewWorldGenerator(const ClassicGen& g);
 static Vector fm_classicSpawn(const ClassicGen& g);
 static void fm_generatorToast();
+static void fm_damageNotice();
 
 
 
@@ -215,33 +216,8 @@ FileManager::FileManager(){
     sessionWorld=false;
     imgHash.clear();
     convertingWorld=false;
-	// PORT SEAM (Phase N Stage 2). Was NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,
-	// NSUserDomainMask, YES) + [paths objectAtIndex:0]. On WEB that is byte-identical — the
-	// Foundation shim's NSSearchPathForDirectoriesInDomains does nothing but return
-	// eden_platform_documents_root() in a one-element array. On NATIVE it is the difference
-	// between "wherever real Foundation says Documents is" and a directory the host chooses:
-	// ~/Library/Application Support/Eden, or whatever --docs= names. Asking the seam directly is
-	// also what makes the two targets agree about where saves are, which the save-interchange
-	// criterion cares about. See docs/save-load.md.
-	// PORT SEAM (Phase N Stage 2). Stock behaviour is the `else` branch, byte for byte — including
-	// on web, where the Foundation shim's NSSearchPathForDirectoriesInDomains already answers with
-	// eden_platform_documents_root() and hands back an immortal string it owns.
-	//
-	// THE HOOK IS NOT COSMETIC AND THE ELSE BRANCH MUST STAY. Replacing this whole thing with
-	// `[[NSString stringWithUTF8String:seam] retain]` was tried and it BROKE THE WEB BUILD — six
-	// headless suites died inside a later FileManager::readDirectory() as a bare wasm "function
-	// signature mismatch" with nothing naming NSString, i.e. `documents` had been freed under it.
-	// The shim's array is deliberately immortal for exactly this pointer (see the comment in
-	// port/src/shim/foundation/NSFileManager.mm); a shim-autoreleased string plus a retain is not
-	// the same thing. So web keeps the path it already had, and only a host that installs the hook
-	// — native, where this is real Foundation and real refcounting — takes the other branch.
-	if (eden_documents_root_hook) {
-		documents = eden_documents_root_hook();
-	} else {
-		// G.2b-4: web is retired and NSSearchPathForDirectoriesInDomains with it; the shim answered it
-		// with this same seam, so the warning above is history. Every native host installs the hook.
-		documents = eden_platform_documents_root();
-	}
+	// The save directory is the platform seam's (~/Library/Application Support/Emod, or --docs=); see docs/save-load.md.
+	documents = eden_platform_documents_root();
     docs=documents;
     printg("!!!!!! %s\n",documents.c_str());
 	oldOffsetX=oldOffsetZ=chunkOffsetX=chunkOffsetZ=-1;
@@ -318,8 +294,8 @@ bool FileManager::deleteWorld(const std::string& nameIn){
 	
 	
 }
-void FileManager::saveWorld(){
-    this->saveWorld(World::getWorld->player->pos);
+bool FileManager::saveWorld(){
+    return this->saveWorld(World::getWorld->player->pos);
     
     
 }
@@ -529,10 +505,8 @@ void FileManager::writeGenToDisk(){
 
 // (Stage S / S.8, 2026-10-11: the B5 rollback journal, the whole-file scratch copy and every other `.eden` save
 // path are gone -- an `.emod` save is an append + commit record, see saveEmodWorld.)
-void FileManager::saveWorld(Vector warp){
-    //[TestFlight passCheckpoint:[NSString stringWithFormat:@"header_size:%d",(int)sizeof(WorldFileHeader)]];
+bool FileManager::saveWorld(Vector warp){
     F3Scope _f3save(&g_f3.save_ms); g_f3.save_calls++;
-    printf("sizeof(WFH)=%d",(int)sizeof(WorldFileHeader));
 	World::getWorld->terrain->endDynamics(true);
 	//[World::getWorld->terrain updateAllImportantChunks];
 	writeDirectory=false;
@@ -541,20 +515,55 @@ void FileManager::saveWorld(Vector warp){
 	// MP.3a: a session commits to RAM (engine plan §3.2); nothing reaches disk.
 	if(sessionWorld){
 		this->commitSession(warp);
-		return;
+		Hotbar::get().saveIfDirty();   // UX.8-3: no folder, so prefs' hotbar.last only
+		return true;
 	}
 	std::string file_name=documents+"/"+name;
 	// Stage S / S.4: an `.emod` world appends a committed batch instead of rewriting a file -- no
 	// scratch copy, journal, backup slot or threshold apply (docs/save-load.md, "`.emod` worlds").
 	if(isEmodName(ter->world_name)){
-		this->saveEmodWorld(warp);
-		return;
+		const bool ok=this->saveEmodWorld(warp);
+		Hotbar::get().saveIfDirty();   // UX.8-3: after the save, so a new world's folder exists
+		return ok;
 	}
 	// S.8: nothing but an `.emod` is saved. A world that is not one never gets here (loadWorld refuses it).
-	printg("saveWorld: %s is not an .emod -- not saved\n",file_name.c_str());
+	return this->saveFailed(file_name+" is not an .emod");
 }
 float g_seconds_since_save=0;
 float g_autosave_seconds=60;
+int g_save_failures=0;
+int g_save_test_ignore=0;
+
+// QA.5 (A2-01): a failed save used to be a printg, which is `{}` in Release, and Save & Quit then tore
+// the world down anyway. Now it is a stderr line (the first of a run of failures, then every 30th, so a
+// stream retrying against a full disk does not flood the log) and the HUD's status line.
+bool FileManager::saveFailed(const std::string& why){
+    g_save_failures++;
+    saveFailing_=true;
+    lastSaveError_=why;
+    saveFailedAtMs_=eden_platform_now_ms();
+    if(saveFailStreak_++%30==0)
+        fprintf(stderr,"emod: save failed: %s (%d in a row; the world stays open, nothing committed is lost)\n",
+                why.c_str(),saveFailStreak_);
+    World* w=World::getWorld;
+    if(w&&w->hud&&w->hud->sb){
+        // The store says "disk full?" for every write error; the other reasons are bugs or a damaged
+        // file and are on stderr in full.
+        bool full=why.find("disk full")!=std::string::npos;
+        w->hud->sb->setStatus(full?"Could not save: the device may be full. Free some space, then save again."
+                                  :"Could not save this world: "+why,6);
+    }
+    return false;
+}
+void FileManager::saveCommitted(){
+    if(saveFailing_)fprintf(stderr,"emod: save committed again after %d failure(s)\n",saveFailStreak_);
+    saveFailing_=false;
+    saveFailStreak_=0;
+    lastSaveError_.clear();
+}
+bool FileManager::saveHeld() const{
+    return saveFailing_&&eden_platform_now_ms()-saveFailedAtMs_<SAVE_RETRY_HOLD_MS;
+}
 // B.5b-1b. Stock had no save that left dynamics running: every save -- including the one in front
 // of each walk reload, i.e. every ~128 blocks walked -- put out every fire and stopped every flow.
 // Under ring streaming a column leaves the window every few seconds of walking, so the evict-save
@@ -562,19 +571,19 @@ float g_autosave_seconds=60;
 // as the block it still is, a flowing one as the liquid it already is. What made stopping them
 // load-bearing in stock was the toroidal aliasing after a reload, and the ring handles that per
 // column instead (Terrain::dropDynamicsInColumn, before the column is overwritten).
-void FileManager::saveWorldKeepDynamics(){
+bool FileManager::saveWorldKeepDynamics(){
     F3Scope _f3save(&g_f3.save_ms); g_f3.save_calls++;
 	writeDirectory=false;
 	const std::string& name=World::getWorld->terrain->world_name;
 	if(sessionWorld){   // MP.3a: the evict-save and the autosave, to RAM
 		if(!MpWorld::testNoEvictCommit)this->commitSession(World::getWorld->player->pos);
-		return;
+		return true;
 	}
+	if(saveHeld())return false;   // QA.5: the last one failed moments ago
 	if(isEmodName(World::getWorld->terrain->world_name)){
-		this->saveEmodWorld(World::getWorld->player->pos);
-		return;
+		return this->saveEmodWorld(World::getWorld->player->pos);
 	}
-	printg("saveWorld: %s is not an .emod -- not saved\n",name.c_str());
+	return this->saveFailed(name+" is not an .emod");
 }
 // Rows actually WRITTEN by the pass below -- `count` is incremented for every row considered,
 // including the ones the offset check rejects, so it cannot be used to find the directory's end.
@@ -594,6 +603,28 @@ static int fm_scanOutside(any_t passedIn,any_t col){
 	ColumnIndex* ci=(ColumnIndex*)col;
 	if(ci&&fm_columnOutsideSquare(ci->x,ci->z))*(bool*)passedIn=true;
 	return MAP_OK;
+}
+// QA.2 (A3-02): a header's floats come from a file anyone can hand us (a corrupt legacy save, a crafted
+// `.eden`, a hand-edited `.emod`). A NaN or huge position reaches `(int)floorf` (UB) and a window origin
+// that wraps `chunkOffset+2*r`. Clamped at read time, on the in-memory copy only: the 192 raw bytes on
+// disk are never rewritten here (rule 5), a bad value is replaced in whatever normal commit follows.
+// Same ceiling as the console's `=N` coordinates (CmdScript `coord`).
+static bool fm_finiteWithin(float v){return std::isfinite(v)&&fabsf(v)<=10000000.0f;}
+static bool fm_validPos(const Vector& v){return fm_finiteWithin(v.x)&&fm_finiteWithin(v.y)&&fm_finiteWithin(v.z);}
+static void fm_sanitizeHeader(WorldFileHeader* h){
+	if(!fm_validPos(h->home)){
+		fprintf(stderr,"[eden] header: home is not finite/in range, using the default\n");   // not printg: silent in Release, and the QA.2 gate greps it
+		h->home.x=4096*CHUNK_SIZE+CHUNK_SIZE/2;   // the default map's centre (generateDefaultWorld)
+		h->home.z=4096*CHUNK_SIZE+CHUNK_SIZE/2;
+		h->home.y=T_HEIGHT-10;
+	}
+	if(!fm_validPos(h->pos)){
+		fprintf(stderr,"[eden] header: spawn is not finite/in range, using home\n");
+		h->pos.x=BLOCK_SIZE*(h->home.x+.5f);
+		h->pos.y=BLOCK_SIZE*(h->home.y+1);
+		h->pos.z=BLOCK_SIZE*(h->home.z+.5f);
+	}
+	if(!std::isfinite(h->yaw))h->yaw=0;
 }
 static bool fm_headerOutside(WorldFileHeader* h){
 	return fm_blockOutsideSquare(h->pos.x,h->pos.z)||fm_blockOutsideSquare(h->home.x,h->home.z);
@@ -1086,6 +1117,9 @@ void FileManager::readColumn(int cx,int cz,EdenFile* rcfile){
 				fprintf(stderr,"emod: column (%d,%d) damaged and has no earlier version -- loaded as air (not marked modified)\n",cx,cz);
 				emodMask=0;
 			}
+			// QA.17: in play this is the main thread; during a load it may be the load thread, and
+			// finishLoadOnMain shows the notice instead.
+			if(rr!=emod::EdenWorldStore::READ_OK&&World::getWorld&&World::getWorld->doneLoading==0)fm_damageNotice();
 		}else
 		{ double _t=f3_now(); if(rcfile)rcfile->seek((long long)colIndex->chunk_offset); _f3rd+=f3_now()-_t; }   // G.2b-2: EdenFile; null = a nil handle (no-op)
         TerrainChunk* columns[CHUNKS_PER_COLUMN_MAX];
@@ -1112,7 +1146,7 @@ void FileManager::readColumn(int cx,int cz,EdenFile* rcfile){
             bounds[4]=(cy+1)*CHUNK_SIZE;
             bounds[5]=(cz+1)*CHUNK_SIZE;
             
-            TerrainChunk* chunk;
+            TerrainChunk* chunk=nullptr;
              //issue #3 continued
             TerrainChunk* old=ter->chunkTable[threeToOne(cx,cy,cz)];
             if(old){chunk=old;
@@ -1799,7 +1833,10 @@ void FileManager::loadWorld(const std::string& nameIn,bool fromArchive){
         return;
     }
     imgHash.clear();
-    World::getWorld->player->reset();
+    firstSaveOwed=false;
+    // QA.14: not from the load pthread (it raced the input tick's Player::setSpeed/fly thrust);
+    // World::loadWorld's doneLoading==2 branch resets the player on the main thread once the load is in.
+    if(!loadOnThread)World::getWorld->player->reset();
 	if(sessionWorld){
         this->loadSessionWorld();   // MP.3a: no file, no convert gate, no directory
     }else if(!worldExists(name,fromArchive)){
@@ -1976,9 +2013,9 @@ void FileManager::loadWorld(const std::string& nameIn,bool fromArchive){
         }
         
         LoadModels2();
-		this->saveWorld();
-		//[ter unloadTerrain:FALSE];
-		//[self loadWorld:name];
+        // QA.14: the first save is finishLoadOnMain's (saveWorld -> Terrain::endDynamics ->
+        // Resources::endBurn reaches the audio the main thread is ticking).
+        firstSaveOwed=true;
 	}else if(isEmodName(nameIn)){
         if(!this->loadEmodWorld(nameIn))return;
     }else{
@@ -2000,14 +2037,29 @@ void FileManager::loadWorld(const std::string& nameIn,bool fromArchive){
         Graphics::setZFAR(120);
     }
 
-    Input::getInput()->clearAll();
-    World::getWorld->effects->clearAllEffects();
-    World::getWorld->hud->worldLoaded();
-    fm_generatorToast();   // H.4: a GENERATOR record from a newer Emod
+    if(!loadOnThread)this->finishLoadOnMain();
 	updateSkyColor1(World::getWorld->player,true);
     extern bool loaded_new_terrain;
     loaded_new_terrain=true;
 
+}
+// QA.14 (A2-03): the tail of a load that touches state the main thread uses while the menu is still up
+// (touches, effects, HUD, audio), so it always runs there: straight from loadWorld on an inline load,
+// from World::loadWorld's doneLoading==2 branch (thread joined, load not failed) on a threaded one.
+void FileManager::finishLoadOnMain(){
+    if(firstSaveOwed){   // a new world's first save: creates the `.emod`
+        firstSaveOwed=false;
+        this->saveWorld();
+    }
+    Input::getInput()->clearAll();
+    World::getWorld->effects->clearAllEffects();
+    World::getWorld->hud->worldLoaded();
+    {   // UX.8-3: the world's hotbar (its folder's hotbar.json; a loose key or a session keeps prefs' hotbar.last)
+        const std::string dir=sessionWorld?std::string():worldDirOf(World::getWorld->terrain->world_name);
+        Hotbar::get().load(dir.empty()?dir:documents+"/"+dir);
+    }
+    fm_generatorToast();   // H.4: a GENERATOR record from a newer Emod
+    fm_damageNotice();     // QA.17: after the generator toast, so the damage line is the one left showing
 }
 
 
@@ -2284,6 +2336,17 @@ static void fm_setupGenerator(TerrainGenerator* tg,emod::EdenWorldStore* st,cons
     fm_generatorPending=src!=WP_GEN_RECORD;
 }
 // The void columns' one-time toast, once the HUD is up (FileManager::loadWorld's tail).
+// QA.17 (A2-06, U8 = notice only): a damaged `.emod` used to say so on stderr alone, invisible on a device,
+// while compaction stays off and the file grows by every save. Once per load, on the main thread: from
+// finishLoadOnMain (damage found by open or by the load's column reads) or from a column read in play.
+static bool fm_damageNoticeShown=false;
+static void fm_damageNotice(){
+    if(fm_damageNoticeShown||!emodStore||!emodStore->damaged())return;
+    World* w=World::getWorld;
+    if(!w||!w->hud||!w->hud->sb)return;
+    fm_damageNoticeShown=true;
+    w->hud->sb->setStatus("Part of this world's file is damaged: playing what survives. Export it to keep a clean copy.",8);
+}
 static void fm_generatorToast(){
     if(!fm_generatorVoidToast)return;
     fm_generatorVoidToast=false;
@@ -2335,6 +2398,7 @@ bool FileManager::loadEmodWorld(const std::string& nameIn){
     Player* player=World::getWorld->player;
     std::string path=docs+"/"+nameIn;
     emod::EdenWorldStore* st=new emod::EdenWorldStore();
+    fm_damageNoticeShown=false;   // QA.17: once per load
     if(!st->open(path.c_str(),true)){
         std::string why="unreadable .emod world: "+st->error();
         delete st;
@@ -2406,6 +2470,7 @@ bool FileManager::loadEmodWorld(const std::string& nameIn){
     emodHeader=(WorldFileHeader*)malloc(sizeof(WorldFileHeader));
     memcpy(emodHeader,&raw[0],sizeof(WorldFileHeader));
     sfh=emodHeader;
+    fm_sanitizeHeader(sfh);   // QA.2
     // The header version is kept verbatim (never normalised): it is not a height marker.
     file_version=sfh->version;
     // The `.eden` loader's one-time v3 -> v4 upgrade, the same three fields (a converted v3 world
@@ -2596,7 +2661,7 @@ bool FileManager::preparePaletteAllocation(std::string* why){
     return !BlockRegistry::locked();
 }
 
-void FileManager::saveEmodWorld(Vector warp){
+bool FileManager::saveEmodWorld(Vector warp){
     Terrain* ter=World::getWorld->terrain;
     const std::string& name=ter->world_name;
     std::string path=docs+"/"+name;
@@ -2610,9 +2675,9 @@ void FileManager::saveEmodWorld(Vector warp){
             ?st->open(path.c_str(),true)
             :st->create(path.c_str(),g_world_height>=T_HEIGHT_MAX?16:4,(uint64_t)time(NULL));
         if(!ok){
-            printg("saveWorld: could not open %s: %s -- SKIPPING this save\n",path.c_str(),st->error().c_str());
+            std::string why="could not open "+path+": "+st->error();
             delete st;
-            return;
+            return saveFailed(why);
         }
         emodStore=st;
     }
@@ -2670,16 +2735,21 @@ void FileManager::saveEmodWorld(Vector warp){
                 memcpy(&col[(size_t)cy*emod::BAND+CHUNK_SIZE3*sizeof(block8)],c->pcolors,CHUNK_SIZE3*sizeof(color8));
             }
             if(!emodStore->putColumn(cx,cz,&col[0])){
-                printg("saveWorld: could not stage column (%d,%d): %s\n",cx,cz,emodStore->error().c_str());
+                std::string why=strf("could not stage column (%d,%d): %s",cx,cz,emodStore->error().c_str());
                 emodStore->abortBatch();
-                return;
+                return saveFailed(why);
             }
             saved.push_back(std::make_pair(cx,cz));
         }
     }
     SaveModels();
-    emodStore->putRecord(emod::T_CREATURES,creatureData,sizeof(EntityData)*(size_t)MAX_CREATURES_SAVED);
-    emodStore->putRecord(emod::T_WORLD_HEADER,&h,sizeof(h));
+    // QA.5: these two were unchecked; a commit without them would be a silent half-save.
+    if(!emodStore->putRecord(emod::T_CREATURES,creatureData,sizeof(EntityData)*(size_t)MAX_CREATURES_SAVED)||
+       !emodStore->putRecord(emod::T_WORLD_HEADER,&h,sizeof(h))){
+        std::string why="could not stage the header or creatures: "+emodStore->error();
+        emodStore->abortBatch();
+        return saveFailed(why);
+    }
     // Stage D / D.3a: an edited trailer is a new SIGN_TRAILER record in this batch (an empty one
     // removes it). Untouched, nothing is written: the last committed record stays live.
     // H.4: the GENERATOR record, once: a new Classic world's first save, a legacy world's next.
@@ -2689,9 +2759,9 @@ void FileManager::saveEmodWorld(Vector warp){
         unsigned char rec[CLASSIC_RECORD_BYTES];
         classic_encode_record(ter->tgen->classic,rec);
         if(!emodStore->putRecord(emod::T_GENERATOR,rec,sizeof(rec))){
-            printg("saveWorld: could not stage the generator record: %s\n",emodStore->error().c_str());
+            std::string why="could not stage the generator record: "+emodStore->error();
             emodStore->abortBatch();
-            return;
+            return saveFailed(why);
         }
     }
     // DN.2: the day/night clock, when it or its lock moved since the load or the last commit. Exit and
@@ -2702,9 +2772,9 @@ void FileManager::saveEmodWorld(Vector warp){
         uint8_t rec[SkyCycle::RECORD_BYTES];
         SkyCycle::encode(rec);
         if(!emodStore->putRecord(emod::T_SKY_CLOCK,rec,sizeof(rec))){
-            printg("saveWorld: could not stage the sky clock: %s\n",emodStore->error().c_str());
+            std::string why="could not stage the sky clock: "+emodStore->error();
             emodStore->abortBatch();
-            return;
+            return saveFailed(why);
         }
     }
     // AT.1b (plan P7): the weather, the same way: only into a batch that commits anyway, only once it
@@ -2715,9 +2785,9 @@ void FileManager::saveEmodWorld(Vector warp){
         uint8_t rec[Weather::RECORD_BYTES];
         Weather::encode(rec);
         if(!emodStore->putRecord(emod::T_WEATHER,rec,sizeof(rec))){
-            printg("saveWorld: could not stage the weather: %s\n",emodStore->error().c_str());
+            std::string why="could not stage the weather: "+emodStore->error();
             emodStore->abortBatch();
-            return;
+            return saveFailed(why);
         }
     }
     // K.1-3: a palette that gained ids since the load or the last commit. The file is flagged already
@@ -2727,25 +2797,26 @@ void FileManager::saveEmodWorld(Vector warp){
     if(paletteSaving){
         std::vector<uint8_t> pb=BlockRegistry::encode();
         if(!emodStore->paletteFlag()||!emodStore->putRecord(emod::T_BLOCK_PALETTE,&pb[0],pb.size())){
-            fprintf(stderr,"saveWorld: could not stage the block palette (%s) -- save skipped\n",
-                    emodStore->paletteFlag()?emodStore->error().c_str():"file not flagged");
+            std::string why=std::string("could not stage the block palette: ")+
+                    (emodStore->paletteFlag()?emodStore->error().c_str():"file not flagged");
             emodStore->abortBatch();
-            return;
+            return saveFailed(why);
         }
     }
     bool trailerSaving=worldTrailer.dirty();
     if(trailerSaving){
         std::vector<uint8_t> t=worldTrailer.encode();
         if(!emodStore->putRecord(emod::T_SIGN_TRAILER,t.empty()?NULL:&t[0],t.size())){
-            printg("saveWorld: could not stage the sign trailer: %s\n",emodStore->error().c_str());
+            std::string why="could not stage the sign trailer: "+emodStore->error();
             emodStore->abortBatch();
-            return;
+            return saveFailed(why);
         }
     }
     if(!emodStore->commitBatch()){
-        printg("saveWorld: .emod commit failed (%s) -- save skipped, last commit intact\n",emodStore->error().c_str());
-        return;
+        // The store rolled back to the last commit; the `modified` flags below stay set ("flags survive").
+        return saveFailed(emodStore->error());
     }
+    saveCommitted();
     if(trailerSaving)trailerSaved();
     if(paletteSaving)BlockRegistry::markSaved();
     if(generatorSaving)fm_generatorPending=false;
@@ -2759,6 +2830,7 @@ void FileManager::saveEmodWorld(Vector warp){
     if(!emodHeader)emodHeader=(WorldFileHeader*)malloc(sizeof(WorldFileHeader));
     memcpy(emodHeader,&h,sizeof(h));
     sfh=emodHeader;
+    return true;
 }
 
 // ---- converting a `.eden` (S.5) -----------------------------------------------------------------
@@ -2923,7 +2995,6 @@ bool FileManager::removeOriginal(const std::string& emodName){
 // (rolled back by the next scan) or the world in that dir (rolled forward). No marker: every scan
 // adopts whatever loose `.emod` it finds, so a world an older build made is picked up later.
 static const char* const kAdoptJournal=".adopt";
-extern "C" int eden_storage_import_active(void);   // port/src/seam/Storage.cpp: an import job is live
 static std::map<std::string,std::string> adoptedKeys;   // loose name -> key, this process (the harness maps names)
 
 // EDEN_TEST_ADOPT_KILL_AFTER=<n>: _Exit(86) after the n-th mutating step of adoption or recovery
@@ -3039,7 +3110,7 @@ static std::string fm_rollForward(const std::string& dirName,const std::string& 
 }
 
 static bool fm_adoptBusy(){
-    if((single&&single->conversionActive())||eden_storage_import_active())return true;
+    if((single&&single->conversionActive()))return true;
     return WorldBrowser::anyBusy();   // not via World::getWorld->menu: Menu's constructor scans before it is set
 }
 

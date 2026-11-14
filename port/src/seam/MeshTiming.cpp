@@ -66,43 +66,9 @@ unsigned g_ioCount = 0;
 
 } // namespace
 
-// C linkage, called from the NSFileHandle shim (a different TU) around its fread(). A tiny
-// accumulator function rather than an exported data symbol so there is no mangled-name coupling.
-extern "C" void eden_mt_note_io(double ms) {
-    g_ioMs += ms;
-    g_ioCount++;
-    if (ms > g_ioMsMax) g_ioMsMax = ms;
-}
 
 extern "C" {
 
-// Zero every counter — call before a sampling window so eden_debug_mesh_timing() reports only
-// that window rather than a cumulative-since-boot figure.
-void eden_debug_mesh_timing_reset(void) {
-    g_uploadMs = g_uploadMsMax = g_readMs = g_readMsMax = 0.0;
-    g_ioMs = g_ioMsMax = 0.0;
-    g_uploadCount = g_readCount = g_ioCount = 0;
-    __atomic_store_n(&g_meshNs, (uint64_t)0, __ATOMIC_RELAXED);
-    __atomic_store_n(&g_meshNsMax, (uint64_t)0, __ATOMIC_RELAXED);
-    __atomic_store_n(&g_meshCount, 0u, __ATOMIC_RELAXED);
-}
 
-// Static buffer, same shape as DebugState.cpp's other JSON exports (that file is
-// EDEN_DIAGNOSTICS-only; this export deliberately is not, so it stays reachable in build-rel).
-const char* eden_debug_mesh_timing(void) {
-    static char buf[1024];
-    snprintf(buf, sizeof(buf),
-        "{\"meshMs\":%.3f,\"meshCount\":%u,\"meshMsMax\":%.3f,"
-        "\"uploadMs\":%.3f,\"uploadCount\":%u,\"uploadMsMax\":%.3f,"
-        "\"readMs\":%.3f,\"readCount\":%u,\"readMsMax\":%.3f,"
-        "\"ioMs\":%.3f,\"ioCount\":%u,\"ioMsMax\":%.3f}",
-        (double)__atomic_load_n(&g_meshNs, __ATOMIC_RELAXED) / 1e6,
-        __atomic_load_n(&g_meshCount, __ATOMIC_RELAXED),
-        (double)__atomic_load_n(&g_meshNsMax, __ATOMIC_RELAXED) / 1e6,
-        g_uploadMs, g_uploadCount, g_uploadMsMax,
-        g_readMs, g_readCount, g_readMsMax,
-        g_ioMs, g_ioCount, g_ioMsMax);
-    return buf;
-}
 
 } // extern "C"

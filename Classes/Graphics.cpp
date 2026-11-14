@@ -275,7 +275,7 @@ void Graphics::setFogColor(const float clr[4]){
     s_fogColor.r=clr[0]; s_fogColor.g=clr[1]; s_fogColor.b=clr[2]; s_fogColor.a=clr[3];
 }
 extern "C" int eden_atmo_tier(void);      // port/src/seam/Settings.cpp (AT.1a): 0 Off, 1 Low, 2 High
-extern "C" int eden_atmo_element(int e);  // 4 = atmo.height_fog, 6 = atmo.water_tint, 7 = atmo.glint
+extern "C" int eden_atmo_element(int e);  // AT_HEIGHT_FOG, AT_WATER_TINT, AT_GLINT (Weather.h)
 // AT.8: the camera is in a liquid and Video > Atmosphere is on (Off = the stock look: only the HUD fill).
 static const float UNDERWATER_FOG_END=24.0f;   // AT.11: 24 (was 28)
 static float clampf(float x,float a,float b){return x<a?a:x>b?b:x;}
@@ -319,7 +319,7 @@ void Graphics::applyWorldFog(){
 }
 void Graphics::applyHeightFog(){
     float params[4];
-    if(underwaterFog()||eden_atmo_tier()<2||!eden_atmo_element(4)||!Weather::heightFog(params)){ R::heightFogOff(); return; }
+    if(underwaterFog()||eden_atmo_tier()<2||!eden_atmo_element(AT_HEIGHT_FOG)||!Weather::heightFog(params)){ R::heightFogOff(); return; }
     // world y of an eye-space point: the view is a rotation (x a uniform scale) and a translation, so
     // y = (column 1 of its 3x3) . (eye - t) / |column 1|^2, t the view's translation (column-major m).
     const float* m=R::mv().top().m;
@@ -333,7 +333,7 @@ void Graphics::applyHeightFog(){
 // tier's sun glint (AT.11: texel sparkles along the sun's path, the EDEN_WATER_GLINT twins), as R::setWaterTint on the transparent chunk draws. Call with the camera's view on the stack
 // (before the blocks' x0.25 push). Off under water (the fog covers it) and with the element off.
 void Graphics::applyWaterTint(){
-    if(!eden_atmo_element(6)||underwaterFog()){ R::waterTintOff(); return; }
+    if(!eden_atmo_element(AT_WATER_TINT)||underwaterFog()){ R::waterTintOff(); return; }
     const float* m=R::mv().top().m;
     float up[3]={m[4],m[5],m[6]};
     const float un=sqrtf(up[0]*up[0]+up[1]*up[1]+up[2]*up[2]);
@@ -342,7 +342,7 @@ void Graphics::applyWaterTint(){
     if(Weather::active()&&!SkyCycle::enabled())Weather::greySky(rgb);
     const float tint[4]={rgb[0],rgb[1],rgb[2],0.30f};
     float sun[4]={0,0,0,0};
-    if(eden_atmo_tier()>=2&&eden_atmo_element(7)){
+    if(eden_atmo_tier()>=2&&eden_atmo_element(AT_GLINT)){
         Vector s;
         float day;
         if(SkyCycle::enabled()){

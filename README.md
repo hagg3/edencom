@@ -56,7 +56,7 @@ Your worlds are saved here, and are never shared with the old Eden app's data:
 - **A new world format, `.emod`.** Saves are append-only and checksummed, so a crash mid-save can't
   corrupt a world. Old `.eden` worlds still import and export.
 - **The default world ships as `Eden.emod`**, baked from the original `Eden.eden` map.
-- **Extras behind settings:** adjustable render distance and a fly mode (Settings › Experiments).
+- **Extras behind settings:** adjustable render distance and a fly mode (Settings › Video › *Render distance*, Settings › Gameplay › *Allow fly*).
 - The engine draws through its own renderer (`R::`) on desktop GL 3.3+ / OpenGL ES 3.0; the old ES 1.1 calls and the translator that replayed them are gone.
 
 ## Building
@@ -84,7 +84,7 @@ Where things live:
 
 | Path | What's there |
 |---|---|
-| `Classes/`, `Lighting.cpp` | The Eden engine, now plain C++. Editable; the untouched import is tagged `pristine-engine`. |
+| `Classes/`, `Lighting.cpp` | The Eden engine, now plain C++. Editable; the stock 2.1.1 source is [BarrelDevelopment/EdenWorldBuilder](https://github.com/BarrelDevelopment/EdenWorldBuilder). |
 | `port/` | The shared port layer: the renderer backends (`R::` over GL), platform seams (app/boot, input, audio, networking), small portable helpers, the test harness, and build and format tools. |
 | `native/` | The SDL3 app: window, input, audio, file I/O, networking, and the CMake build. |
 | `docs/` | Engine reference. Voxel storage, meshing, lighting, save formats, worldgen and so on. |
@@ -97,11 +97,12 @@ toroidal arrays, block ids are full at 127 and can't be renumbered, and several 
 to disk byte-for-byte. The pitfalls doc covers all of it.
 
 The docs were written for the original iOS target. The engine internals in them are accurate; the
-build and platform framing is out of date. `git diff pristine-engine -- Classes/` shows exactly what
-this fork has changed in the engine.
+build and platform framing is out of date. Diff `Classes/` against
+[BarrelDevelopment/EdenWorldBuilder](https://github.com/BarrelDevelopment/EdenWorldBuilder) to see what this fork has changed in the engine.
 
 There's no test framework. The binary tests itself: run it with one of the `--*-selftest` flags
-(`--emod-selftest`, `--touch-selftest`, and so on) and CI runs the lot on every platform. Linux, Windows and
+(`--emod-selftest`, `--touch-selftest`, and so on; `eden_native --help` lists them all, and
+`.github/scripts/run-gate.sh` plus the Linux job in `.github/workflows/native.yml` is the full gate) and CI runs the lot on every platform. Linux, Windows and
 iOS builds only exist in CI, so for those the workflow is your test run.
 
 ## Licence
@@ -109,12 +110,17 @@ iOS builds only exist in CI, so for those the workflow is your test run.
 Emod is a fork of Eden: World Builder's source code, which Ari Ronen reportedly released in 2018 under
 the **GNU General Public License v3** (taken from community records; not yet confirmed in writing by Ari,
 ROADMAP LG.1). Emod as a whole is therefore distributed under the [GPL v3](COPYING), with its source here.
-Emod's own files (`port/`, `native/`, `cmake/`, CI, tools, our changes in `Classes/`) are also available
+Emod's own files (`port/`, `native/`, CI, tools, our changes in `Classes/`) are also available
 on their own under the [MIT licence](LICENSE), which is GPL-compatible. The Eden assets (textures, sounds,
 models, the default map) are (c) Ari Ronen / Kingly Games, and whether the GPL grant covers them is
 unconfirmed. Music credit: Kevin MacLeod ([incompetech.com](https://incompetech.com), CC BY 4.0).
 [`NOTICE`](NOTICE) has the split, the credits and the third-party notices; the same text is in the game's
 **About** screen (home screen, bottom left).
+
+## Contributing
+
+For now, please open an **issue** on this repository (bugs, ideas, feedback). Pull requests are not
+being accepted yet; a contribution route will be announced here once it exists.
 
 ## Policy
 

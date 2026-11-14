@@ -7,6 +7,7 @@
 
 #include <chrono>
 #include <math.h>
+#include <cmath>
 #include <string.h>
 #include <string>
 #include "CreatureModel.h"
@@ -632,7 +633,7 @@ void addMoreCreaturesIfNeeded(){
         int ly=-1;
         //guys[gc].pos=Vec3f(arc4random()%25+90,arc4random()%5+32,T_HEIGHT);
         for(int i=0;i<20;i++){
-        guys[gc].pos=Vec3f(arc4random()%T_SIZE+World::getWorld->fm->chunkOffsetX*CHUNK_SIZE,T_HEIGHT-15,arc4random()%T_SIZE+World::getWorld->fm->chunkOffsetZ*CHUNK_SIZE);
+        guys[gc].pos=Vec3f((int)(arc4random()%T_SIZE)+World::getWorld->fm->chunkOffsetX*CHUNK_SIZE,T_HEIGHT-15,(int)(arc4random()%T_SIZE)+World::getWorld->fm->chunkOffsetZ*CHUNK_SIZE);   // QA.2 (A2-05): int, or a negative offset wraps the uint32 sum
             for(int y=T_HEIGHT-1;y>0;y--){
                 int t=getLandc(guys[gc].pos.x,guys[gc].pos.z,y);
                 if(t>0){
@@ -759,6 +760,12 @@ void addMoreCreaturesIfNeeded(){
     
     
 }
+// QA.2 (A3-02): a creature record with a NaN/huge pos, vel or angle reaches `(int)` casts in CheckCollision.
+static bool creatureFinite(const EntityData& e){
+    const float v[7]={e.pos.x,e.pos.y,e.pos.z,e.vel.x,e.vel.y,e.vel.z,e.angle};
+    for(int i=0;i<7;i++)if(!std::isfinite(v[i])||fabsf(v[i])>10000000.0f)return false;
+    return true;
+}
 void LoadModels2(){
     int gc=0;
     int totalactive=0;
@@ -772,7 +779,7 @@ void LoadModels2(){
     guys[PLAYER_BODY].model_type=-1;   // H.12
     for(int i=0;i<MAX_REMOTE_BODIES;i++)guys[REMOTE_BODY(i)].model_type=-1;   // MP.5
     for(int i=0;i<MAX_CREATURES_SAVED;i++){
-        if( creatureData[i].type>-1&&creatureData[i].type<NUM_CREATURES&&creatureData[i].color>=0&&creatureData[i].color<256){
+        if( creatureData[i].type>-1&&creatureData[i].type<NUM_CREATURES&&creatureData[i].color>=0&&creatureData[i].color<256&&creatureFinite(creatureData[i])){
             
             ResetModel(gc);
             

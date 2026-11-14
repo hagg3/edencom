@@ -4,7 +4,7 @@
 // own worker thread running the platform's blocking GET (NetBackend_native.h). The contract the
 // engine sees is declared in Classes/WorldBrowser.h:
 //
-//   eden_net_fetch(url, destPath)  -> job id (0 = could not start)
+//   eden_net_fetch(url, destPath, maxBytes) -> job id (0 = could not start)
 //   eden_net_poll(job, &got, &total) -> 0 running, 1 done, -1 failed (total -1 = unknown)
 //   eden_net_body(job, &len)       -> the bytes, when destPath was NULL
 //   eden_net_error(job)            -> a short sentence, when it failed
@@ -38,8 +38,14 @@
 #include <string>
 #include <thread>
 #include <vector>
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <sys/statvfs.h>
+#endif
 
 #include "../../../port/src/shim/foundation/platform_shims.h"
+#include "../../../port/src/shim/foundation/eden_fs.h"   // eden_fs_sync_file / eden_fs_replace_atomic (QA.17)
 
 namespace {
 
@@ -52,6 +58,9 @@ struct Job {
     std::string err;                      // written by the worker before state leaves 0
     std::vector<unsigned char> body;      // likewise
     FILE* f = nullptr;
+    long long maxBytes = 0;               // QA.15 (A3-07): body ceiling; 0 = the in-memory default (files: none)
+    long long nextFreeCheck = 0;          // file jobs: recheck the volume every 8 MB
+    const char* abortMsg = nullptr;       // set by on_data when it refuses (a string literal)
 };
 
 std::mutex g_mu;
@@ -74,16 +83,45 @@ void on_total(void* ctx, long long t) { static_cast<Job*>(ctx)->total.store(t); 
 // download to a file is not capped here.
 const size_t kMaxMemoryBody = size_t(32) << 20;
 
+// QA.15 (A3-07): a file download stops at `maxBytes`, at a body longer than its own Content-Length,
+// and when the volume it writes to drops under kFreeFloor (checked every 8 MB).
+const unsigned long long kFreeFloor = 32ull << 20;
+
+unsigned long long free_bytes_at(const std::string& path) {
+    std::string dir = path;
+    const size_t s = dir.find_last_of("/\\");
+    dir = s == std::string::npos ? "." : dir.substr(0, s ? s : 1);
+    if (const char* e = std::getenv("EDEN_TEST_FREE_BYTES")) if (*e) return std::strtoull(e, nullptr, 10);
+#if defined(_WIN32)
+    ULARGE_INTEGER avail;
+    if (!GetDiskFreeSpaceExA(dir.c_str(), &avail, NULL, NULL)) return ~0ull;
+    return avail.QuadPart;
+#else
+    struct statvfs sv;
+    if (statvfs(dir.c_str(), &sv) != 0) return ~0ull;
+    return (unsigned long long)sv.f_bavail * (unsigned long long)sv.f_frsize;
+#endif
+}
+
 int on_data(void* ctx, const void* data, size_t n) {
     Job* j = static_cast<Job*>(ctx);
+    const long long after = j->got.load() + (long long)n;
+    const long long total = j->total.load();
+    if (total >= 0 && after > total) { j->abortMsg = "the server sent more than it promised"; return 0; }
     if (j->f) {
+        if (j->maxBytes > 0 && after > j->maxBytes) { j->abortMsg = "the download is too big"; return 0; }
+        if (after >= j->nextFreeCheck) {
+            j->nextFreeCheck = after + (8ll << 20);
+            if (free_bytes_at(j->part) < kFreeFloor) { j->abortMsg = "stopped: the disk is nearly full"; return 0; }
+        }
         if (std::fwrite(data, 1, n, j->f) != n) return 0;
     } else {
-        if (j->body.size() + n > kMaxMemoryBody) return 0;   // Q.6: a list or preview, never a world
+        const size_t cap = j->maxBytes > 0 ? (size_t)j->maxBytes : kMaxMemoryBody;
+        if (j->body.size() + n > cap) { j->abortMsg = "the reply is too big"; return 0; }   // Q.6: a list or preview, never a world
         const unsigned char* p = static_cast<const unsigned char*>(data);
         j->body.insert(j->body.end(), p, p + n);
     }
-    j->got.fetch_add((long long)n);
+    j->got.store(after);
     return 1;
 }
 
@@ -110,7 +148,7 @@ bool fetch_fixture(const std::string& root, Job* j, int* status, char* err, int 
     bool ok = true;
     while ((n = std::fread(buf, 1, sizeof(buf), in)) > 0) {
         if (j->cancel.load()) { std::snprintf(err, errcap, "cancelled"); ok = false; break; }
-        if (!on_data(j, buf, n)) { std::snprintf(err, errcap, "could not write the download"); ok = false; break; }
+        if (!on_data(j, buf, n)) { std::snprintf(err, errcap, "%s", j->abortMsg ? j->abortMsg : "could not write the download"); ok = false; break; }
     }
     std::fclose(in);
     *status = ok ? 200 : 0;
@@ -166,18 +204,21 @@ void run(std::shared_ptr<Job> j, std::string root) {
                                          err, sizeof(err)) != 0;
     }
     if (j->f) {
+        // QA.17 (A2-08): the .part is on disk before it takes the real name, and the rename replaces in one
+        // step (the old remove-then-rename left no file at all if the app died between them, and the
+        // remove ran on POSIX too).
+        if (ok && !eden_fs_sync_file(j->f)) { ok = false; std::snprintf(err, sizeof(err), "could not write the download"); }
         if (std::fclose(j->f) != 0 && ok) { ok = false; std::snprintf(err, sizeof(err), "could not write the download"); }
         j->f = nullptr;
         if (ok) {
-            std::remove(j->dest.c_str());            // Windows' rename() will not replace
-            if (std::rename(j->part.c_str(), j->dest.c_str()) != 0) {
+            if (!eden_fs_replace_atomic(j->part, j->dest)) {
                 ok = false;
                 std::snprintf(err, sizeof(err), "could not move the download into place");
             }
         }
         if (!ok) std::remove(j->part.c_str());
     }
-    if (!ok) j->err = err[0] ? err : "the download failed";
+    if (!ok) j->err = j->abortMsg ? j->abortMsg : err[0] ? err : "the download failed";
     j->state.store(ok ? 1 : -1);
 }
 
@@ -200,10 +241,11 @@ int eden_net_available(void) {
     return (!fixture_root().empty() || eden_net_backend_available()) ? 1 : 0;
 }
 
-int eden_net_fetch(const char* url, const char* destPath) {
+int eden_net_fetch(const char* url, const char* destPath, long long maxBytes) {
     if (!url || !*url || !eden_net_available()) return 0;
     auto j = std::make_shared<Job>();
     j->url = url;
+    j->maxBytes = maxBytes;
     if (destPath && *destPath) { j->dest = destPath; j->part = j->dest + ".part"; }
     int id;
     {

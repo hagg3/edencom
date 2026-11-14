@@ -14,6 +14,7 @@
 #include <string>
 #include <SDL3/SDL.h>
 #include "../eden_app_identity.h"   // Emod is not Eden: see that file
+#include "../../../port/src/shim/foundation/eden_fs.h"   // eden_fs_write_atomic (QA.17)
 
 namespace {
 
@@ -67,24 +68,23 @@ void load() {
     }
 }
 
-// Whole-file rewrite through a scratch file + rename: a crash mid-write leaves the previous file.
+// Whole-file rewrite through eden_fs_write_atomic (QA.17, A2-08): a crash, a full disk or a short write
+// leaves the previous file. It used to rename an unchecked scratch file over it (a full disk lost every
+// setting) and, on Windows, remove the old file first. The in-memory table keeps the new value either way.
 void flush() {
     const std::string p = current_path();
     if (p.empty() || g_ephemeral) return;
-    std::string tmp = p + ".tmp";
-    FILE* f = fopen(tmp.c_str(), "wb");
-    if (!f) return;
+    std::string out;
     for (const auto& kv : g_table) {
-        fwrite(kv.first.data(), 1, kv.first.size(), f);
-        fputc('\t', f);
-        fwrite(kv.second.data(), 1, kv.second.size(), f);
-        fputc('\n', f);
+        out += kv.first;
+        out += '\t';
+        out += kv.second;
+        out += '\n';
     }
-    fclose(f);
-#if defined(_WIN32)
-    remove(p.c_str());   // Windows' rename fails onto an existing file
-#endif
-    rename(tmp.c_str(), p.c_str());   // a failed rename leaves the old file: the safe direction
+    if (!eden_fs_write_atomic(p, out.data(), out.size())) {
+        static int failures = 0;   // stderr: printg compiles out of Release; a slider drag can call this a lot
+        if (failures++ % 50 == 0) fprintf(stderr, "emod: could not write %s (disk full?): settings kept in memory only\n", p.c_str());
+    }
 }
 
 }  // namespace

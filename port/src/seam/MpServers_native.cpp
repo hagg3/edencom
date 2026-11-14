@@ -155,7 +155,7 @@ MatchFetcher& fetcher() {
 
 std::string mmSetting() {
     const char* c = eden_prefs_get_str("mp_matchmakers");
-    return c ? c : "";
+    return c ? c : "45.79.193.87";   // K.3-8: the shipped default (Settings.cpp textDefault); a stored "" stays off
 }
 
 void mmReload() {

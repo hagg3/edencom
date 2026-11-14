@@ -1,0 +1,606 @@
+[eden] documents=/Users/sam/emod/native/gate-docs/weather-selftest
+[eden] bundle=./build
+[eden-gl] no canvas — staying headless (--headless).
+[eden-gl] pick viewport now 1816x1024 (engine point space x scale).
+[eden-display] profile=desktop ui_scale=125% layout=adaptive -> 908x512 points (aspect 1.773, snap 0 px/pt)
+[eden-p1] tick 0: World::update(0.0062 s) entered
+[eden-p1] tick 0: World::update returned (retinaSwap=0)
+[eden-p1] tick 1: World::update(0.0019 s) entered
+[eden-p1] tick 1: World::update returned (retinaSwap=0)
+[eden-p1] tick 2: World::update(0.0013 s) entered
+[eden-p1] tick 2: World::update returned (retinaSwap=0)
+Texture2D: './build/colorpick_background.png' decoded 582x511 (canvas 582x511) fmt=1 center-rgba=(237,237,237,227)
+Texture2D: './build/menu_autojump.png' decoded 167x24 (canvas 167x24) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/arrow_left.png' decoded 36x89 (canvas 36x89) fmt=1 center-rgba=(255,198,0,255)
+Texture2D: './build/arrow_right.png' decoded 36x89 (canvas 36x89) fmt=1 center-rgba=(255,198,0,255)
+Texture2D: './build/create_world.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(174,174,174,255)
+Texture2D: './build/delete_world.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(200,200,200,255)
+Texture2D: './build/share_world.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(174,174,174,255)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/world_selected.png' decoded 86x85 (canvas 86x85) fmt=1 center-rgba=(183,183,183,255)
+Texture2D: './build/world_unselected.png' decoded 86x85 (canvas 86x85) fmt=1 center-rgba=(118,118,118,255)
+Texture2D: './build/load_world.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(174,174,174,255)
+Texture2D: './build/options.png' decoded 180x62 (canvas 180x62) fmt=1 center-rgba=(8,9,7,255)
+Texture2D: './build/arrow_up.png' decoded 89x36 (canvas 89x36) fmt=1 center-rgba=(255,198,0,255)
+Texture2D: './build/arrow_down.png' decoded 89x36 (canvas 89x36) fmt=1 center-rgba=(255,198,0,255)
+Texture2D: './build/back.png' decoded 40x30 (canvas 40x30) fmt=1 center-rgba=(255,198,0,255)
+Texture2D: './build/menu_shared_worlds.png' decoded 280x29 (canvas 280x29) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/menu_cancel.png' decoded 151x31 (canvas 151x31) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/menu_music.png' decoded 108x28 (canvas 108x28) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/menu_options.png' decoded 246x44 (canvas 246x44) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: './build/menu_save.png' decoded 102x31 (canvas 102x31) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/menu_send.png' decoded 101x30 (canvas 101x30) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/menu_sound_effects.png' decoded 271x30 (canvas 271x30) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/menu_text_box.png' decoded 300x45 (canvas 300x45) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/menu_text_load.png' decoded 103x31 (canvas 103x31) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/menu_text_back.png' decoded 101x31 (canvas 101x31) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/shared_world_selected.png' decoded 40x40 (canvas 40x40) fmt=1 center-rgba=(180,180,180,255)
+Texture2D: './build/shared_world_unselected.png' decoded 37x37 (canvas 37x37) fmt=1 center-rgba=(115,115,115,255)
+Texture2D: './build/menu_fast.png' decoded 81x24 (canvas 81x24) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/menu_best.png' decoded 82x24 (canvas 82x24) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/menu_creatures.png' decoded 192x25 (canvas 192x25) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/report_flag.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(245,55,55,255)
+Texture2D: './build/atlas.png' decoded 32x4096 (canvas 32x4096) fmt=4 center-rgba=(53,91,27,255)
+Texture2D: './build/atlas2.png' decoded 32x4096 (canvas 32x4096) fmt=1 center-rgba=(0,0,0,0)
+world height set to 64 (4 bands, 32768 B per column record)
+window radius set to 9 (288 x 288 blocks, 324 columns)
+allocated and zeroed chunksTexture2D: './build/ipad~moof_icon.png' decoded 64x64 (canvas 64x64) fmt=1 center-rgba=(0,90,185,255)
+Texture2D: './build/ipad~build.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(140,143,139,255)
+Texture2D: './build/ipad~destroy.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(177,139,89,255)
+Texture2D: './build/ipad~burn.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(228,132,59,255)
+Texture2D: './build/ipad~save.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(128,128,128,255)
+Texture2D: './build/ipad~cancel.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(238,105,105,255)
+Texture2D: './build/ipad~home.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(193,193,193,255)
+Texture2D: './build/ipad~jump.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(121,215,237,255)
+Texture2D: './build/smoke_tex.png' decoded 32x32 (canvas 32x32) fmt=1 center-rgba=(67,67,67,255)
+Texture2D: './build/ipad~analog_top.png' decoded 88x88 (canvas 88x88) fmt=1 center-rgba=(119,119,119,255)
+Texture2D: './build/ipad~analog_bottom.png' decoded 88x88 (canvas 88x88) fmt=1 center-rgba=(186,186,186,255)
+Texture2D: './build/ipad~camera.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(41,86,80,255)
+Texture2D: './build/ipad~block_border.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(27,26,25,0)
+Texture2D: './build/block_background.png' decoded 402x282 (canvas 402x282) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/ipad~palette.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(133,145,217,255)
+Texture2D: './build/block_border_pressed.png' decoded 38x38 (canvas 38x38) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/color_border_pressed.png' decoded 32x32 (canvas 32x32) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/ipad~color_border.png' decoded 64x64 (canvas 64x64) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/sky_box.png' decoded 128x512 (canvas 128x512) fmt=1 center-rgba=(127,172,232,255)
+Texture2D: './build/ipad~triangle_border_pressed.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(27,26,25,255)
+Texture2D: './build/ipad~triangle_border.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: './build/ipad~build2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(220,220,220,255)
+Texture2D: './build/ipad~build3.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(183,183,183,255)
+Texture2D: './build/ipad~destroy_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(177,139,89,255)
+Texture2D: './build/ipad~paint_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(133,145,217,255)
+Texture2D: './build/ipad~build2_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(220,220,220,255)
+Texture2D: './build/ipad~build3_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(183,183,183,255)
+Texture2D: './build/ipad~burn_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(228,132,59,255)
+Texture2D: './build/ipad~jump_depressed.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(179,179,179,255)
+Texture2D: './build/Moof_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(31,106,182,255)
+Texture2D: './build/Moof_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(202,18,10,255)
+Texture2D: './build/Moof_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(31,106,182,255)
+Texture2D: './build/Batty_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(122,74,192,255)
+Texture2D: './build/Batty_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(211,4,0,255)
+Texture2D: './build/Batty_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(122,74,192,255)
+Texture2D: './build/Green_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(62,136,66,255)
+Texture2D: './build/Green_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(128,15,0,255)
+Texture2D: './build/Green_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(62,136,66,255)
+Texture2D: './build/Nergle_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(65,46,65,255)
+Texture2D: './build/Nergle_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(106,6,0,255)
+Texture2D: './build/Nergle_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(65,46,65,255)
+Texture2D: './build/Stumpy_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(202,96,1,255)
+Texture2D: './build/Stumpy_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(192,5,1,255)
+Texture2D: './build/Stumpy_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(202,96,1,255)
+Texture2D: './build/shadow.png' decoded 64x64 (canvas 64x64) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: './build/menu_icon.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(115,160,34,255)
+Texture2D: './build/door.png' decoded 32x64 (canvas 32x64) fmt=1 center-rgba=(85,53,15,255)
+Texture2D: './build/sky_box_bw.png' decoded 128x512 (canvas 128x512) fmt=1 center-rgba=(253,253,253,255)
+Texture2D: './build/golden_cube.png' decoded 64x64 (canvas 64x64) fmt=4 center-rgba=(254,218,92,255)
+Texture2D: './build/golden_cube_bw.png' decoded 64x64 (canvas 64x64) fmt=4 center-rgba=(243,243,243,255)
+Texture2D: './build/door_mask.png' decoded 32x64 (canvas 32x64) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/flower_tex.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/portal.png' decoded 64x128 (canvas 64x128) fmt=1 center-rgba=(100,100,100,255)
+Texture2D: './build/ipad~sphere_map.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(157,157,157,255)
+Texture2D: './build/ipad~build2_top.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/ipad~buildplus.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/portal_twirl.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(146,146,146,255)
+Texture2D: './build/ipad~build3_top.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(115,115,115,77)
+Texture2D: './build/blocktoggle1.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(156,156,156,255)
+Texture2D: './build/blocktoggle2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,40,40,255)
+Texture2D: './build/flower_icon.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(18,99,120,255)
+Texture2D: './build/ipad~block_border2.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(27,26,25,0)
+Texture2D: './build/ipad~block_border_pressed2.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(27,26,25,0)
+Texture2D: './build/ipad~triangle_border2.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~triangle_border_pressed2.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~build_under2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(220,220,220,255)
+Texture2D: './build/ipad~build_over2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(60,60,60,0)
+Texture2D: './build/ipad~build2_active2.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(220,220,220,255)
+Texture2D: './build/ipad~build2_under2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(182,182,182,255)
+Texture2D: './build/ipad~build3_top2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(116,116,116,77)
+Texture2D: './build/ipad~build3_active2.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(182,182,182,255)
+Texture2D: './build/digits.png' decoded 250x32 (canvas 250x32) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/goldcube_icon.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(250,205,105,255)
+Texture2D: './build/portal_icon2.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(120,120,120,255)
+Texture2D: './build/door_icon2.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(95,60,17,255)
+Texture2D: './build/Charger_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(201,0,0,255)
+Texture2D: './build/Charger_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(201,0,0,255)
+Texture2D: './build/Charger_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(208,24,24,255)
+Texture2D: './build/Stalker_Default.png' decoded 512x512 (canvas 512x512) fmt=4 center-rgba=(182,0,0,255)
+Texture2D: './build/Stalker_Default.png' decoded 512x512 (canvas 512x512) fmt=4 center-rgba=(182,0,0,255)
+Texture2D: './build/Stalker_Blink.png' decoded 512x512 (canvas 512x512) fmt=4 center-rgba=(182,0,0,255)
+Texture2D: './build/Moof_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Flame_512.png' decoded 512x512 (canvas 512x512) fmt=1 center-rgba=(68,21,5,0)
+Texture2D: './build/text_numbers.png' decoded 512x32 (canvas 512x32) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~paint_mask.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/goldcube_icon_mask.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/flower_icon_mask.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/door_icon2_mask.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/portal_icon2_mask.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/goldcube_icon_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(250,205,105,255)
+Texture2D: './build/flower_icon_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(18,99,120,255)
+Texture2D: './build/door_icon2_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(95,60,17,255)
+Texture2D: './build/portal_icon2_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(120,120,120,255)
+Texture2D: './build/ipad~block_border_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(27,26,25,0)
+Texture2D: './build/ipad~triangle_border_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(27,26,25,255)
+Texture2D: './build/Moof_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Moof_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Batty_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Batty_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Green_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Green_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Nergle_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Nergle_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Stumpy_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Stumpy_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+[eden-stage1] open_world "weather-selftest"  first-load 48 ms
+Texture2D: '<image>' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(198,202,133,255)
+[eden-weather] weather, atmosphere, reduce_flashing rows exist PASS
+[eden-weather] the nine atmo element rows exist               PASS
+[eden-weather] Weather is Gameplay (default off), Atmosphere and Reduce flashing are Video PASS
+[eden-weather] element rows are shown (Atmosphere details page) with the three user rows PASS
+[eden-weather] Weather and Reduce flashing start off          PASS  tier 2, weather 0, reduce 0
+[eden-weather] a tier change sets the element rows (Off none, Low the Low set, High all but the opt-in cloud shadows) PASS  tier 2
+[eden-weather] a tier change sets the element rows (Off none, Low the Low set, High all but the opt-in cloud shadows) PASS  tier 1
+[eden-weather] a tier change sets the element rows (Off none, Low the Low set, High all but the opt-in cloud shadows) PASS  tier 0
+[eden-weather] an element switched on by hand reads on under Low PASS
+[eden-weather] tier Off gates every element                   PASS
+[eden-weather] an element switched on under Off reads Custom and draws PASS
+[eden-weather] the next tier change rewrites a hand-set element PASS
+[eden-weather] --atmo=off overrides the tier and stores nothing PASS
+[eden-weather] --atmo=low reads the Low table, not the stored elements PASS
+[eden-weather] --weather=snow turns weather on for the run    PASS
+[eden-weather] --weather=off (the pin) beats the stored toggle PASS
+[eden-weather] no override: the stored toggle                 PASS
+[eden-weather] Graphics preset Low sets Atmosphere Off        PASS
+[eden-weather] preset High sets Atmosphere High               PASS
+[eden-weather] preset Default sets the device default (High off iOS) PASS
+[eden-weather] moving Atmosphere by hand drops the preset to Custom PASS
+[eden-weather] preset stays coherent after the tier returns   PASS
+[eden-weather] splash row exists                              PASS
+[eden-weather] editing an element row sets Atmosphere to Custom PASS
+[eden-weather] Custom gates like High; the element decides    PASS
+[eden-weather] restoring the rows snaps Custom back to High   PASS
+[eden-weather] tier Off still gates every element             PASS
+[eden-weather] atmo.*, video.atmosphere, gameplay.weather, video.reduce_flashing are cvars PASS
+[eden-weather] a seed walks the same weather twice            PASS  spells 89/89/115 changes 66 rng a0ca1cb4585a0835/c40ed662337b48a8
+[eden-weather] another seed walks other weather               PASS  spells 89/89/115 changes 66 rng a0ca1cb4585a0835/c40ed662337b48a8
+[eden-weather] every change is one step; rain via overcast, storm only from rain PASS  580 changes, 0 skips, 0 storms not from rain; days clear 120.8 overcast 40.0 rain 28.8 storm 10.5
+[eden-weather] time shares near the plan's 0.60 / 0.20 / 0.15 / 0.05 PASS  4000 days: clear 0.597 overcast 0.203 rain 0.150 storm 0.050
+[eden-weather] Storms Off never storms; Often storms more than Normal PASS  storm days Off 0.0 Normal 75.6 Often 159.9
+[eden-weather] Weather frequency Often has less clear sky than Rare PASS  clear days Rare 1136 Often 572
+[eden-weather] setTransitions refuses jumps (a matrix of only jumps leaves it clear) PASS
+[eden-weather] the same spells per in-game day at any Day length PASS  spells over 30 days: 10-min day 113, 60-min day 113
+[eden-weather] a day is 20 min while the cycle is off         PASS
+[eden-weather] intensity eases at 1/45 per s to the kind's target; a locked spell never ends PASS  after 10 s 0.2222, after 50 s 0.7000, left 1000.0
+[eden-weather] the pause menu and Weather off both stop it (off: inactive, untouched) PASS
+[eden-weather] clear: lightMul 1, skyGrey 0, fogScale 1, precip 0 exactly PASS
+[eden-weather] overcast 0.7 and dry; a storm 0.55 with full precipitation PASS  overcast light 0.700 precip 0.000; storm light 0.550 grey 1.000 fog 0.600 precip 1.000
+[eden-weather] --weather= forces the kind at full strength (snow = rain + the snow flag), never saved PASS
+[eden-weather] eden_default_region maps the bed picker's cells PASS  default seed 1, cell 0,1
+[eden-weather] nothing falls while clear or merely overcast   PASS
+[eden-weather] rain below the snowline, snow at and above it  PASS  (2,2) low 1 high 2 (snowline 0.75)
+[eden-weather] default map: the snow mountain snows, the pyramid and the oasis stay dry (even high up) PASS  snow mountain 2 pyramid 3 oasis(high) 3
+[eden-weather] the weather.snowline cvar moves the line (default 0.75) PASS  snowline 0.2 -> 2 at 19; reset -> 0.75
+[eden-weather] a forced snow spell snows everywhere, dry regions too PASS
+[eden-weather] the next set() clears the snow flag            PASS
+[eden-weather] encode -> decode round trip (kind, locked + snow flags, intensity, seconds left, spells, RNG; reserved bytes 0) PASS
+[eden-weather] load() restores the state, and a just-loaded world needs no save PASS
+[eden-weather] unknown flag bits and reserved bytes are ignored on read PASS
+[eden-weather] a malformed record loads as none               PASS  31 bytes: kind 0 intensity 0.00
+[eden-weather] a malformed record loads as none               PASS  33 bytes: kind 0 intensity 0.00
+[eden-weather] a malformed record loads as none               PASS  kind 4: kind 0 intensity 0.00
+[eden-weather] a malformed record loads as none               PASS  intensity NaN: kind 0 intensity 0.00
+[eden-weather] a malformed record loads as none               PASS  intensity 1.5: kind 0 intensity 0.00
+[eden-weather] a malformed record loads as none               PASS  intensity -0.1: kind 0 intensity 0.00
+[eden-weather] a malformed record loads as none               PASS  seconds left 0: kind 0 intensity 0.00
+[eden-weather] a malformed record loads as none               PASS  seconds left inf: kind 0 intensity 0.00
+[eden-weather] a malformed record loads as none               PASS  seconds left NaN: kind 0 intensity 0.00
+[eden-weather] a null record is refused                       PASS
+[eden-weather] a freshly seeded world needs no save           PASS
+[eden-weather] needsSave: 30 s left, a flag, the kind, 0.1 intensity; nothing smaller PASS  29 s 0, 30 s 1, same 0, lock 1, kind 1, +0.09 0, +0.11 1
+[eden-weather] reset() (no record, not yet run) needs no save PASS
+Texture2D: './build/console_button.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(36,36,36,255)
+Texture2D: './build/ipad~menu_autojump.png' decoded 310x50 (canvas 310x50) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/ipad~eden_menu_header.png' decoded 591x175 (canvas 591x175) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~arrow_left.png' decoded 82x207 (canvas 82x207) fmt=1 center-rgba=(255,213,65,255)
+Texture2D: './build/ipad~arrow_right.png' decoded 82x207 (canvas 82x207) fmt=1 center-rgba=(255,213,63,255)
+Texture2D: './build/ipad~create_world.png' decoded 116x138 (canvas 116x138) fmt=1 center-rgba=(162,179,162,255)
+Texture2D: './build/ipad~delete_world.png' decoded 119x130 (canvas 119x130) fmt=1 center-rgba=(201,195,195,255)
+Texture2D: './build/ipad~share_world.png' decoded 141x132 (canvas 141x132) fmt=1 center-rgba=(51,179,51,255)
+Texture2D: './build/ipad~ground.png' decoded 1024x39 (canvas 1024x39) fmt=1 center-rgba=(68,142,63,255)
+Texture2D: './build/ipad~world_selected.png' decoded 130x130 (canvas 130x130) fmt=1 center-rgba=(175,175,175,255)
+Texture2D: './build/ipad~world_unselected.png' decoded 115x115 (canvas 115x115) fmt=1 center-rgba=(123,123,123,255)
+Texture2D: './build/ipad~load_world.png' decoded 120x126 (canvas 120x126) fmt=1 center-rgba=(11,42,11,255)
+Texture2D: './build/ipad~options.png' decoded 387x162 (canvas 387x162) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: './build/ipad~arrow_up.png' decoded 97x38 (canvas 97x38) fmt=1 center-rgba=(255,213,66,255)
+Texture2D: './build/ipad~arrow_down.png' decoded 97x38 (canvas 97x38) fmt=1 center-rgba=(255,212,61,255)
+Texture2D: './build/ipad~back.png' decoded 108x102 (canvas 108x102) fmt=1 center-rgba=(206,173,13,255)
+Texture2D: './build/ipad~menu_shared_worlds.png' decoded 504x47 (canvas 504x47) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~menu_cancel.png' decoded 313x60 (canvas 313x60) fmt=1 center-rgba=(0,0,0,128)
+Texture2D: './build/ipad~menu_health.png' decoded 219x49 (canvas 219x49) fmt=1 center-rgba=(0,0,0,187)
+Texture2D: './build/ipad~menu_music.png' decoded 185x49 (canvas 185x49) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~menu_off.png' decoded 169x50 (canvas 169x50) fmt=1 center-rgba=(90,90,90,255)
+Texture2D: './build/ipad~menu_on.png' decoded 169x50 (canvas 169x50) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/ipad~menu_options.png' decoded 348x63 (canvas 348x63) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: './build/ipad~menu_save.png' decoded 215x64 (canvas 215x64) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~menu_send.png' decoded 209x60 (canvas 209x60) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~menu_sound_effects.png' decoded 462x49 (canvas 462x49) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/menu_text_box.png' decoded 300x45 (canvas 300x45) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/ipad~sky.png' decoded 1024x768 (canvas 1024x768) fmt=4 center-rgba=(246,166,146,255)
+Texture2D: './build/ipad~pinwheel.png' decoded 1578x1578 (canvas 1578x1578) fmt=8 center-rgba=(128,128,128,64)
+Texture2D: './build/ipad~menu_text_load.png' decoded 210x62 (canvas 210x62) fmt=1 center-rgba=(0,0,0,192)
+Texture2D: './build/ipad~menu_text_back.png' decoded 211x62 (canvas 211x62) fmt=1 center-rgba=(0,0,0,128)
+Texture2D: './build/ipad~shared_world_selected.png' decoded 80x80 (canvas 80x80) fmt=1 center-rgba=(174,174,174,255)
+Texture2D: './build/ipad~shared_world_unselected.png' decoded 75x75 (canvas 75x75) fmt=1 center-rgba=(123,123,123,255)
+Texture2D: './build/ipad~menu_fast.png' decoded 149x45 (canvas 149x45) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~menu_best.png' decoded 150x45 (canvas 150x45) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~menu_creatures.png' decoded 338x49 (canvas 338x49) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/ipad~treelayerleft.png' decoded 835x456 (canvas 835x456) fmt=1 center-rgba=(90,39,35,255)
+Texture2D: './build/ipad~treelayerright.png' decoded 835x456 (canvas 835x456) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/report_flag.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(245,55,55,255)
+[eden-weather] Weather off: the saved world has no WEATHER record PASS  /Users/sam/emod/native/gate-docs/weather-selftest/Worlds/1794591164-czzc/world.emod
+world height set to 64 (4 bands, 32768 B per column record)
+window radius set to 9 (288 x 288 blocks, 324 columns)
+allocated and zeroed chunksTexture2D: './build/ipad~moof_icon.png' decoded 64x64 (canvas 64x64) fmt=1 center-rgba=(0,90,185,255)
+Texture2D: './build/ipad~build.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(140,143,139,255)
+Texture2D: './build/ipad~destroy.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(177,139,89,255)
+Texture2D: './build/ipad~burn.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(228,132,59,255)
+Texture2D: './build/ipad~save.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(128,128,128,255)
+Texture2D: './build/ipad~cancel.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(238,105,105,255)
+Texture2D: './build/ipad~home.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(193,193,193,255)
+Texture2D: './build/ipad~jump.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(121,215,237,255)
+Texture2D: './build/smoke_tex.png' decoded 32x32 (canvas 32x32) fmt=1 center-rgba=(67,67,67,255)
+Texture2D: './build/ipad~analog_top.png' decoded 88x88 (canvas 88x88) fmt=1 center-rgba=(119,119,119,255)
+Texture2D: './build/ipad~analog_bottom.png' decoded 88x88 (canvas 88x88) fmt=1 center-rgba=(186,186,186,255)
+Texture2D: './build/ipad~camera.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(41,86,80,255)
+Texture2D: './build/ipad~block_border.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(27,26,25,0)
+Texture2D: './build/block_background.png' decoded 402x282 (canvas 402x282) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/ipad~palette.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(133,145,217,255)
+Texture2D: './build/block_border_pressed.png' decoded 38x38 (canvas 38x38) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/color_border_pressed.png' decoded 32x32 (canvas 32x32) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/ipad~color_border.png' decoded 64x64 (canvas 64x64) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/sky_box.png' decoded 128x512 (canvas 128x512) fmt=1 center-rgba=(127,172,232,255)
+Texture2D: './build/ipad~triangle_border_pressed.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(27,26,25,255)
+Texture2D: './build/ipad~triangle_border.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: './build/ipad~build2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(220,220,220,255)
+Texture2D: './build/ipad~build3.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(183,183,183,255)
+Texture2D: './build/ipad~destroy_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(177,139,89,255)
+Texture2D: './build/ipad~paint_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(133,145,217,255)
+Texture2D: './build/ipad~build2_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(220,220,220,255)
+Texture2D: './build/ipad~build3_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(183,183,183,255)
+Texture2D: './build/ipad~burn_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(228,132,59,255)
+Texture2D: './build/ipad~jump_depressed.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(179,179,179,255)
+Texture2D: './build/Moof_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(31,106,182,255)
+Texture2D: './build/Moof_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(202,18,10,255)
+Texture2D: './build/Moof_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(31,106,182,255)
+Texture2D: './build/Batty_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(122,74,192,255)
+Texture2D: './build/Batty_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(211,4,0,255)
+Texture2D: './build/Batty_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(122,74,192,255)
+Texture2D: './build/Green_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(62,136,66,255)
+Texture2D: './build/Green_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(128,15,0,255)
+Texture2D: './build/Green_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(62,136,66,255)
+Texture2D: './build/Nergle_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(65,46,65,255)
+Texture2D: './build/Nergle_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(106,6,0,255)
+Texture2D: './build/Nergle_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(65,46,65,255)
+Texture2D: './build/Stumpy_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(202,96,1,255)
+Texture2D: './build/Stumpy_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(192,5,1,255)
+Texture2D: './build/Stumpy_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(202,96,1,255)
+Texture2D: './build/shadow.png' decoded 64x64 (canvas 64x64) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: './build/menu_icon.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(115,160,34,255)
+Texture2D: './build/door.png' decoded 32x64 (canvas 32x64) fmt=1 center-rgba=(85,53,15,255)
+Texture2D: './build/sky_box_bw.png' decoded 128x512 (canvas 128x512) fmt=1 center-rgba=(253,253,253,255)
+Texture2D: './build/golden_cube.png' decoded 64x64 (canvas 64x64) fmt=4 center-rgba=(254,218,92,255)
+Texture2D: './build/golden_cube_bw.png' decoded 64x64 (canvas 64x64) fmt=4 center-rgba=(243,243,243,255)
+Texture2D: './build/door_mask.png' decoded 32x64 (canvas 32x64) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/flower_tex.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/portal.png' decoded 64x128 (canvas 64x128) fmt=1 center-rgba=(100,100,100,255)
+Texture2D: './build/ipad~sphere_map.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(157,157,157,255)
+Texture2D: './build/ipad~build2_top.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/ipad~buildplus.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/portal_twirl.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(146,146,146,255)
+Texture2D: './build/ipad~build3_top.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(115,115,115,77)
+Texture2D: './build/blocktoggle1.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(156,156,156,255)
+Texture2D: './build/blocktoggle2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,40,40,255)
+Texture2D: './build/flower_icon.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(18,99,120,255)
+Texture2D: './build/ipad~block_border2.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(27,26,25,0)
+Texture2D: './build/ipad~block_border_pressed2.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(27,26,25,0)
+Texture2D: './build/ipad~triangle_border2.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~triangle_border_pressed2.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~build_under2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(220,220,220,255)
+Texture2D: './build/ipad~build_over2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(60,60,60,0)
+Texture2D: './build/ipad~build2_active2.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(220,220,220,255)
+Texture2D: './build/ipad~build2_under2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(182,182,182,255)
+Texture2D: './build/ipad~build3_top2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(116,116,116,77)
+Texture2D: './build/ipad~build3_active2.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(182,182,182,255)
+Texture2D: './build/digits.png' decoded 250x32 (canvas 250x32) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/goldcube_icon.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(250,205,105,255)
+Texture2D: './build/portal_icon2.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(120,120,120,255)
+Texture2D: './build/door_icon2.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(95,60,17,255)
+Texture2D: './build/Charger_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(201,0,0,255)
+Texture2D: './build/Charger_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(201,0,0,255)
+Texture2D: './build/Charger_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(208,24,24,255)
+Texture2D: './build/Stalker_Default.png' decoded 512x512 (canvas 512x512) fmt=4 center-rgba=(182,0,0,255)
+Texture2D: './build/Stalker_Default.png' decoded 512x512 (canvas 512x512) fmt=4 center-rgba=(182,0,0,255)
+Texture2D: './build/Stalker_Blink.png' decoded 512x512 (canvas 512x512) fmt=4 center-rgba=(182,0,0,255)
+Texture2D: './build/Moof_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Flame_512.png' decoded 512x512 (canvas 512x512) fmt=1 center-rgba=(68,21,5,0)
+Texture2D: './build/text_numbers.png' decoded 512x32 (canvas 512x32) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~paint_mask.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/goldcube_icon_mask.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/flower_icon_mask.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/door_icon2_mask.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/portal_icon2_mask.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/goldcube_icon_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(250,205,105,255)
+Texture2D: './build/flower_icon_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(18,99,120,255)
+Texture2D: './build/door_icon2_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(95,60,17,255)
+Texture2D: './build/portal_icon2_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(120,120,120,255)
+Texture2D: './build/ipad~block_border_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(27,26,25,0)
+Texture2D: './build/ipad~triangle_border_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(27,26,25,255)
+Texture2D: './build/Moof_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Moof_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Batty_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Batty_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Green_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Green_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Nergle_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Nergle_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Stumpy_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Stumpy_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+[eden-stage1] open_world "weather-selftest"  first-load 46 ms
+Texture2D: '<image>' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(198,202,133,255)
+[eden-weather] a world without the record loads clear (seeded, nothing to save yet) PASS
+[eden-weather] 600 frames of a storm write nothing and dirty nothing (it waits for a save) PASS  file 3152 -> 3152 B, modified chunks 0 -> 0, intensity 0.03, needsSave 1
+Texture2D: './build/ipad~menu_autojump.png' decoded 310x50 (canvas 310x50) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/ipad~eden_menu_header.png' decoded 591x175 (canvas 591x175) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~arrow_left.png' decoded 82x207 (canvas 82x207) fmt=1 center-rgba=(255,213,65,255)
+Texture2D: './build/ipad~arrow_right.png' decoded 82x207 (canvas 82x207) fmt=1 center-rgba=(255,213,63,255)
+Texture2D: './build/ipad~create_world.png' decoded 116x138 (canvas 116x138) fmt=1 center-rgba=(162,179,162,255)
+Texture2D: './build/ipad~delete_world.png' decoded 119x130 (canvas 119x130) fmt=1 center-rgba=(201,195,195,255)
+Texture2D: './build/ipad~share_world.png' decoded 141x132 (canvas 141x132) fmt=1 center-rgba=(51,179,51,255)
+Texture2D: './build/ipad~ground.png' decoded 1024x39 (canvas 1024x39) fmt=1 center-rgba=(68,142,63,255)
+Texture2D: './build/ipad~world_selected.png' decoded 130x130 (canvas 130x130) fmt=1 center-rgba=(175,175,175,255)
+Texture2D: './build/ipad~world_unselected.png' decoded 115x115 (canvas 115x115) fmt=1 center-rgba=(123,123,123,255)
+Texture2D: './build/ipad~load_world.png' decoded 120x126 (canvas 120x126) fmt=1 center-rgba=(11,42,11,255)
+Texture2D: './build/ipad~options.png' decoded 387x162 (canvas 387x162) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: './build/ipad~arrow_up.png' decoded 97x38 (canvas 97x38) fmt=1 center-rgba=(255,213,66,255)
+Texture2D: './build/ipad~arrow_down.png' decoded 97x38 (canvas 97x38) fmt=1 center-rgba=(255,212,61,255)
+Texture2D: './build/ipad~back.png' decoded 108x102 (canvas 108x102) fmt=1 center-rgba=(206,173,13,255)
+Texture2D: './build/ipad~menu_shared_worlds.png' decoded 504x47 (canvas 504x47) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~menu_cancel.png' decoded 313x60 (canvas 313x60) fmt=1 center-rgba=(0,0,0,128)
+Texture2D: './build/ipad~menu_health.png' decoded 219x49 (canvas 219x49) fmt=1 center-rgba=(0,0,0,187)
+Texture2D: './build/ipad~menu_music.png' decoded 185x49 (canvas 185x49) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~menu_off.png' decoded 169x50 (canvas 169x50) fmt=1 center-rgba=(90,90,90,255)
+Texture2D: './build/ipad~menu_on.png' decoded 169x50 (canvas 169x50) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/ipad~menu_options.png' decoded 348x63 (canvas 348x63) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: './build/ipad~menu_save.png' decoded 215x64 (canvas 215x64) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~menu_send.png' decoded 209x60 (canvas 209x60) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~menu_sound_effects.png' decoded 462x49 (canvas 462x49) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/menu_text_box.png' decoded 300x45 (canvas 300x45) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/ipad~sky.png' decoded 1024x768 (canvas 1024x768) fmt=4 center-rgba=(246,166,146,255)
+Texture2D: './build/ipad~pinwheel.png' decoded 1578x1578 (canvas 1578x1578) fmt=8 center-rgba=(128,128,128,64)
+Texture2D: './build/ipad~menu_text_load.png' decoded 210x62 (canvas 210x62) fmt=1 center-rgba=(0,0,0,192)
+Texture2D: './build/ipad~menu_text_back.png' decoded 211x62 (canvas 211x62) fmt=1 center-rgba=(0,0,0,128)
+Texture2D: './build/ipad~shared_world_selected.png' decoded 80x80 (canvas 80x80) fmt=1 center-rgba=(174,174,174,255)
+Texture2D: './build/ipad~shared_world_unselected.png' decoded 75x75 (canvas 75x75) fmt=1 center-rgba=(123,123,123,255)
+Texture2D: './build/ipad~menu_fast.png' decoded 149x45 (canvas 149x45) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~menu_best.png' decoded 150x45 (canvas 150x45) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~menu_creatures.png' decoded 338x49 (canvas 338x49) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/ipad~treelayerleft.png' decoded 835x456 (canvas 835x456) fmt=1 center-rgba=(90,39,35,255)
+Texture2D: './build/ipad~treelayerright.png' decoded 835x456 (canvas 835x456) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/report_flag.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(245,55,55,255)
+[eden-weather] a save stages record 12 (32 B, codec 0)        PASS  clean 1 quit 1 in file 1: kind 3 flags 1 intensity 0.030 left 898.7
+world height set to 64 (4 bands, 32768 B per column record)
+window radius set to 9 (288 x 288 blocks, 324 columns)
+allocated and zeroed chunksTexture2D: './build/ipad~moof_icon.png' decoded 64x64 (canvas 64x64) fmt=1 center-rgba=(0,90,185,255)
+Texture2D: './build/ipad~build.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(140,143,139,255)
+Texture2D: './build/ipad~destroy.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(177,139,89,255)
+Texture2D: './build/ipad~burn.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(228,132,59,255)
+Texture2D: './build/ipad~save.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(128,128,128,255)
+Texture2D: './build/ipad~cancel.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(238,105,105,255)
+Texture2D: './build/ipad~home.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(193,193,193,255)
+Texture2D: './build/ipad~jump.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(121,215,237,255)
+Texture2D: './build/smoke_tex.png' decoded 32x32 (canvas 32x32) fmt=1 center-rgba=(67,67,67,255)
+Texture2D: './build/ipad~analog_top.png' decoded 88x88 (canvas 88x88) fmt=1 center-rgba=(119,119,119,255)
+Texture2D: './build/ipad~analog_bottom.png' decoded 88x88 (canvas 88x88) fmt=1 center-rgba=(186,186,186,255)
+Texture2D: './build/ipad~camera.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(41,86,80,255)
+Texture2D: './build/ipad~block_border.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(27,26,25,0)
+Texture2D: './build/block_background.png' decoded 402x282 (canvas 402x282) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/ipad~palette.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(133,145,217,255)
+Texture2D: './build/block_border_pressed.png' decoded 38x38 (canvas 38x38) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/color_border_pressed.png' decoded 32x32 (canvas 32x32) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/ipad~color_border.png' decoded 64x64 (canvas 64x64) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/sky_box.png' decoded 128x512 (canvas 128x512) fmt=1 center-rgba=(127,172,232,255)
+Texture2D: './build/ipad~triangle_border_pressed.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(27,26,25,255)
+Texture2D: './build/ipad~triangle_border.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: './build/ipad~build2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(220,220,220,255)
+Texture2D: './build/ipad~build3.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(183,183,183,255)
+Texture2D: './build/ipad~destroy_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(177,139,89,255)
+Texture2D: './build/ipad~paint_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(133,145,217,255)
+Texture2D: './build/ipad~build2_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(220,220,220,255)
+Texture2D: './build/ipad~build3_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(183,183,183,255)
+Texture2D: './build/ipad~burn_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(228,132,59,255)
+Texture2D: './build/ipad~jump_depressed.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(179,179,179,255)
+Texture2D: './build/Moof_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(31,106,182,255)
+Texture2D: './build/Moof_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(202,18,10,255)
+Texture2D: './build/Moof_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(31,106,182,255)
+Texture2D: './build/Batty_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(122,74,192,255)
+Texture2D: './build/Batty_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(211,4,0,255)
+Texture2D: './build/Batty_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(122,74,192,255)
+Texture2D: './build/Green_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(62,136,66,255)
+Texture2D: './build/Green_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(128,15,0,255)
+Texture2D: './build/Green_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(62,136,66,255)
+Texture2D: './build/Nergle_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(65,46,65,255)
+Texture2D: './build/Nergle_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(106,6,0,255)
+Texture2D: './build/Nergle_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(65,46,65,255)
+Texture2D: './build/Stumpy_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(202,96,1,255)
+Texture2D: './build/Stumpy_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(192,5,1,255)
+Texture2D: './build/Stumpy_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(202,96,1,255)
+Texture2D: './build/shadow.png' decoded 64x64 (canvas 64x64) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: './build/menu_icon.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(115,160,34,255)
+Texture2D: './build/door.png' decoded 32x64 (canvas 32x64) fmt=1 center-rgba=(85,53,15,255)
+Texture2D: './build/sky_box_bw.png' decoded 128x512 (canvas 128x512) fmt=1 center-rgba=(253,253,253,255)
+Texture2D: './build/golden_cube.png' decoded 64x64 (canvas 64x64) fmt=4 center-rgba=(254,218,92,255)
+Texture2D: './build/golden_cube_bw.png' decoded 64x64 (canvas 64x64) fmt=4 center-rgba=(243,243,243,255)
+Texture2D: './build/door_mask.png' decoded 32x64 (canvas 32x64) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/flower_tex.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/portal.png' decoded 64x128 (canvas 64x128) fmt=1 center-rgba=(100,100,100,255)
+Texture2D: './build/ipad~sphere_map.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(157,157,157,255)
+Texture2D: './build/ipad~build2_top.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/ipad~buildplus.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/portal_twirl.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(146,146,146,255)
+Texture2D: './build/ipad~build3_top.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(115,115,115,77)
+Texture2D: './build/blocktoggle1.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(156,156,156,255)
+Texture2D: './build/blocktoggle2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,40,40,255)
+Texture2D: './build/flower_icon.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(18,99,120,255)
+Texture2D: './build/ipad~block_border2.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(27,26,25,0)
+Texture2D: './build/ipad~block_border_pressed2.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(27,26,25,0)
+Texture2D: './build/ipad~triangle_border2.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~triangle_border_pressed2.png' decoded 76x76 (canvas 76x76) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~build_under2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(220,220,220,255)
+Texture2D: './build/ipad~build_over2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(60,60,60,0)
+Texture2D: './build/ipad~build2_active2.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(220,220,220,255)
+Texture2D: './build/ipad~build2_under2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(182,182,182,255)
+Texture2D: './build/ipad~build3_top2.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(116,116,116,77)
+Texture2D: './build/ipad~build3_active2.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(182,182,182,255)
+Texture2D: './build/digits.png' decoded 250x32 (canvas 250x32) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/goldcube_icon.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(250,205,105,255)
+Texture2D: './build/portal_icon2.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(120,120,120,255)
+Texture2D: './build/door_icon2.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(95,60,17,255)
+Texture2D: './build/Charger_Default.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(201,0,0,255)
+Texture2D: './build/Charger_Rage.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(201,0,0,255)
+Texture2D: './build/Charger_Blink.png' decoded 256x256 (canvas 256x256) fmt=4 center-rgba=(208,24,24,255)
+Texture2D: './build/Stalker_Default.png' decoded 512x512 (canvas 512x512) fmt=4 center-rgba=(182,0,0,255)
+Texture2D: './build/Stalker_Default.png' decoded 512x512 (canvas 512x512) fmt=4 center-rgba=(182,0,0,255)
+Texture2D: './build/Stalker_Blink.png' decoded 512x512 (canvas 512x512) fmt=4 center-rgba=(182,0,0,255)
+Texture2D: './build/Moof_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Flame_512.png' decoded 512x512 (canvas 512x512) fmt=1 center-rgba=(68,21,5,0)
+Texture2D: './build/text_numbers.png' decoded 512x32 (canvas 512x32) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/ipad~paint_mask.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/goldcube_icon_mask.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/flower_icon_mask.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/door_icon2_mask.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/portal_icon2_mask.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/goldcube_icon_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(250,205,105,255)
+Texture2D: './build/flower_icon_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(18,99,120,255)
+Texture2D: './build/door_icon2_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(95,60,17,255)
+Texture2D: './build/portal_icon2_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(120,120,120,255)
+Texture2D: './build/ipad~block_border_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(27,26,25,0)
+Texture2D: './build/ipad~triangle_border_active.png' decoded 128x128 (canvas 128x128) fmt=1 center-rgba=(27,26,25,255)
+Texture2D: './build/Moof_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Moof_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Batty_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Batty_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Green_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Green_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Nergle_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Nergle_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Stumpy_BlinkMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: './build/Stumpy_DefaultMASK.png' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(255,255,255,255)
+[eden-stage1] open_world "weather-selftest"  first-load 51 ms
+[lua console] lua: console:1: bad argument #1 to 'weather' (invalid option 'hail')
+[eden-audio] channel 5 -> rain_ambience.mp3 (loop=1, vol=0.00)
+[eden-audio] device open: 44100 Hz, 2 ch
+[eden-audio] channel 2 -> ambience_river.wav (loop=1, vol=0.00)
+[eden-audio] channel 1 -> ambience_underwater.wav (loop=1, vol=0.70)
+[eden-audio] channel 1 -> ambience_open.wav (loop=1, vol=0.00)
+[eden-weather] the weather round-trips through a reload       PASS  kind 3 locked 1 intensity 0.030/0.030
+Texture2D: '<image>' decoded 256x256 (canvas 256x256) fmt=1 center-rgba=(198,202,133,255)
+[eden-weather] weather is refused while Gameplay > Weather is off PASS
+[eden-weather] weather rain 100 starts rain for 100 s         PASS
+[eden-weather] weather snow = rain-level, snow everywhere     PASS
+[eden-weather] a bad kind or seconds changes nothing          PASS
+[eden-weather] weatherlock on locks the spell                 PASS
+[eden-weather] weatherlock needs on or off                    PASS
+[eden-weather] weatherlock off                                PASS
+[eden-weather] eden.weather(kind, secs) sets and returns kind first PASS  storm	0	false	none
+
+[eden-weather] eden.weatherlock(true) locks; eden.weather() reads locked PASS  storm	0	true	none
+
+[eden-weather] eden.weather refuses an unknown kind           PASS  lua: console:1: bad argument #1 to 'weather' (invalid option 'hail')
+
+[eden-weather] the weather event delivers (kind, previous)    PASS  seen = overcast<clear
+
+[eden-weather] Atmosphere Off: no rain texture or buffer (P12) PASS  live 0 drawn 0 cap 0
+[eden-weather] rain draws cap x intensity streaks from one texture + one buffer PASS  Low 750 (want 750), High 2000 (want 2000), amount 0.50, R resources +4
+[eden-weather] splashes: High draws SPLASH_HIGH x intensity seeds from the rain's own buffer; Low none PASS  High 600 (want 600), Low 0, R resources 1516 (rain only 1516)
+[eden-weather] G3: 600 frames of rain allocate, scan, upload and re-mesh nothing PASS  scans +0 uploads +0 dirty chunks 272 -> 272, R resources 1516 -> 1516, min drawn 2000
+[eden-weather] the column-top cache follows a roof placed and removed PASS  eye (65536,65536,29): top 18 -> roof 36 -> 18 (block was 0)
+[eden-weather] the cache follows the camera (a full box rescanned after a jump) PASS  new (65576,65536) top 29, old (65536,65536) top -1, scans +1024
+[eden-weather] Atmosphere back to Off frees the rain's texture and buffer PASS  live 0, R resources 1518 -> 1516
+[eden-weather] clear: no rain layer                           PASS
+[eden-weather] rain: layer 4 plays                            PASS  playing 1
+[eden-weather] clear again: layer 4 stopped after 3 s silent  PASS  playing 0
+[eden-weather] storm: strikes every 4-12 s, peak <= 1.5x, never dims, <= 2 flashes a second PASS  73 strikes in 600 s, peak 1.500, floor 1.000, max 2 flashes in 1 s
+[eden-weather] every strike gets a thunder one-shot           PASS  72 thunder for 73 strikes
+[eden-weather] thunder variations stay 0..2                   PASS
+[eden-weather] thunder follows its strike by 0.5-4 s          PASS  strike at 9.88 s, thunder at 10.77 s (delay 0.88)
+[eden-weather] Reduce flashing: dims to 0.85 and back, never brightens PASS  35 strikes, peak 1.000, floor 0.850
+[eden-weather] dry region: rarer strikes, distant thunder     PASS  dry 42 strikes vs storm 73; all thunder >= variation 1: 1
+[eden-weather] snow / no storm: no lightning                  PASS
+[eden-weather] weather off: flashMul is exactly 1             PASS
+Texture2D: './build/sky_sprites.png' decoded 32x16 (canvas 32x16) fmt=1 center-rgba=(236,238,244,255)
+[eden-weather] weather off: fog scale exactly 1, no mist, nothing culled (G1) PASS  fogScale 1.000 mist 0.000 cull 0.0 culled +0
+[eden-weather] clear: the dawn mist pulls the fog to 0.7 at sunrise only, and only with the cycle on PASS  noon 1.000 (mist 0.000), dawn 0.700 (mist 1.000), 0.40 1.000, cycle off at 0.26 1.000
+[eden-weather] height fog: stated on High with mist only (Low and a clear noon draw the plain program, P3) PASS  Low 0, High at dawn 1 (top 25.6 strength 0.85), High at noon 0
+[eden-weather] storm: fog x0.6, full mist, chunks past the pulled-in fog end culled (S3) PASS  fogScale 0.600 mist 1.000 cull at 69.0, culled +3370 in 10 frames
+[eden-weather] G3: 600 frames of mist allocate and re-mesh nothing PASS  dirty chunks 272 -> 272, R resources 1519 -> 1519
+[eden-weather] clear noon again: fog scale exactly 1, nothing culled PASS  fogScale 1.000 culled +0
+[eden-weather] Atmosphere Off: no cloud map or quad, nothing stated (P12) PASS  live 0 drawn 0 shadow 0 coverage 0.00
+[eden-weather] Low, weather off: the layer at the base coverage from one map + one quad, no shadows (P3) PASS  drawn 1 shadow 0 coverage 0.300 R resources +2 uploads +1
+[eden-weather] High: cloud shadows by day only (the layer stays at night), the plane above the world PASS  noon shadow 1 (strength 0.320), midnight shadow 0 (layer drawn 1), height 192
+[eden-weather] storm: the sky closes over (coverage > 0.9) and the shadows fade out PASS  storm coverage 0.950, shadow 0
+[eden-weather] G3: 600 frames of clouds + shadows allocate, upload and re-mesh nothing PASS  coverage 0.300, dirty chunks 272 -> 272, R resources 1519 -> 1519, uploads +0, frames drawn with shadows 600
+[eden-weather] Atmosphere back to Off frees the cloud map and quad PASS  live 0, R resources 1519 -> 1515 (rain's 2)
+[eden-weather] Atmosphere Off: no cap, an empty pool, nothing drawn (P12) PASS  cap 0 count 0 drawn 0
+[eden-weather] tier caps: Low <= 96, High <= 256              PASS  Low cap 96, High cap 256
+[eden-weather] High: 1000 forced spawns never pass the cap    PASS  accepted 255, count 256 (cap 256)
+[eden-weather] High -> Low sheds the surplus at once          PASS  count 78 after High -> Low (cap 96)
+[eden-weather] G3: 600 frames by day: bounded, no fireflies, no R resource of its own PASS  motes 63 fireflies 0 count 63 spawned 1265, R resources 1517 -> 1517
+[eden-weather] night: no new daylight mote spawns             PASS  motes at midnight start 61, max 61, now 0, count 79
+[eden-weather] Atmosphere back to Off empties the pool        PASS  count 0 drawn 0
+[eden-weather] Atmosphere Off at night: no halo, no glow texture (P12) PASS  halos 0 glows 0 glow texture 0
+[eden-weather] High at noon: no halos                         PASS  halos 0
+[eden-weather] High at midnight: a halo on each of the three lamps, one glow texture PASS  halos 3 glow texture 1
+[eden-weather] G3: 600 night frames: steady halos, nothing allocated or uploaded PASS  halos 3..3, R resources 1518 -> 1518, glow uploads +0
+[eden-weather] a lamp boxed in by stone loses its halo; open again it comes back PASS  halos walled in 2, open again 3
+[eden-weather] the lamp walk capped at 2 keeps the two nearest PASS  2 lamps: x 65540.5, 65543.5
+[eden-weather] Low at midnight: no halos (High only)          PASS  halos 0
+[eden-weather] Atmosphere back to Off frees the glow texture  PASS  glow texture 0
+[eden-weather] ALL PASS (0 failure(s))

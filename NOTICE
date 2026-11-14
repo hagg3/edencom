@@ -10,7 +10,7 @@ Emod is a fork of Eden: World Builder's source code. Per community records (old 
 posts), Ari Ronen released that source in 2018 under the GNU General Public License v3.
 This has NOT been confirmed in writing by Ari Ronen (ROADMAP LG.1). On that basis Emod as
 a whole - the combined, compiled program and every binary package - is distributed under
-the GPL v3 (see COPYING). Recipients get the source (github.com/hagg3/Emod) and the
+the GPL v3 (see COPYING). Recipients get the source (github.com/hagg3/edencom) and the
 GPL's freedoms. Emod's own files may also be used on their own under the MIT licence
 (section 2), which is GPL-compatible.
 
@@ -33,7 +33,7 @@ Removal on the rights holder's request: see README, "Policy".
 
 2. Emod's own work (MIT, see LICENSE; part of the GPL v3 whole)
 -------------------------------------
-Copyright (c) 2026 Emod contributors. This covers port/, native/, cmake/, the CI
+Copyright (c) 2026 Emod contributors. This covers port/, native/, the CI
 workflows, the build and format tools, the docs written for Emod, and the new
 files and modifications in Classes/ made by this project.
 
@@ -94,6 +94,9 @@ stb_image / stb_truetype (port/src/shim/vendor/) - public domain / MIT
 SDL3 (linked dynamically; shipped as libSDL3 / SDL3.dll in binary packages) - zlib
 licence, Copyright (c) Sam Lantinga and SDL contributors.
 
-Kenney "Voxel Pack" textures (media/packs/showcase/textures/, scaled to 32x32) - CC0 1.0
+Kenney "Voxel Pack" textures (port/tools/fixtures/packs/wonders/textures/, scaled to 32x32) - CC0 1.0
 (public domain dedication), Kenney Vleugels, www.kenney.nl. Credit is not required; see
-media/packs/showcase/CREDITS.txt.
+port/tools/fixtures/packs/wonders/CREDITS.txt.
+
+Rain ambience loop (media/new_sound/rain_ambience.mp3) - "Rain (loopable)" by Ylmir,
+OpenGameArt, CC0 1.0. Credit is not required; see media/new_sound/CREDITS-weather.txt.

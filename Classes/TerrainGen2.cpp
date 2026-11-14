@@ -2267,8 +2267,8 @@ void makeRiverTrees(int sx,int sz,int ex,int ez,int SEED){
 void makeTransition(int sx,int sz,int ex,int ez){
     for(int z=sz;z<ez;z++){
         int lh=0,rh=0;
-        int ltype,rtype;
-        int lcolor,rcolor;
+        int ltype=0,rtype=0;   // QA.23: a column with no solid block stays 0 (air, unpainted)
+        int lcolor=0,rcolor=0;
         for(int i=T_HEIGHT-1;i>=0;i--){
             if(BLOCK(sx-1,z,i)!=TYPE_NONE&&BLOCK(sx-1,z,i)!=TYPE_CLOUD){
                 lh=i+1;

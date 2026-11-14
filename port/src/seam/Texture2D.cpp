@@ -58,6 +58,9 @@
 #include "../shim/foundation/eden_fs.h"      // G.2b-1: eden_bundle_path / eden_path_is_absolute / EdenFile
 #include "../shim/foundation/eden_image.h"
 
+// QA.4 (A3-04): stb's default is 1 << 24 a side, so any PNG could ask for GBs; the bundled art is at most
+// 4096 px (atlas.png), Get Worlds previews are capped at 2048 before decoding (WorldBrowser.cpp).
+#define STBI_MAX_DIMENSIONS 8192
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_NO_STDIO   // we read the file ourselves (EdenFile since G.2b-1; NSData before)
 #include "stb_image.h"

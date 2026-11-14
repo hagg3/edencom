@@ -20,6 +20,7 @@
 #include "Input.h"
 #include "Util.h"
 #include "World.h"
+#include "Hud.h"
 #include "ChatFeed.h"     // MP.7: the Chat tab
 #include "MpServers.h"    // eden_mp_profile_name (the Players tab's own row)
 #include "Player.h"
@@ -68,7 +69,7 @@ static GLW::Color lineColor(int kind){
 ConsoleMenu::ConsoleMenu()
  : m_open(false), m_collapsed(false), m_tab(TAB_CONSOLE), m_railN(3), m_railSession(false), m_srcTab(0),
    m_fieldTab(0), m_fieldCode(true), m_titleTab(-1), m_follow(true), m_newBelow(false), m_lastSerial(0),
-   m_builtU(0), m_builtW(0), m_builtUOther(0), m_builtWOther(-1), m_labelsU(0), m_labelsCollapsed(false), m_builtMatchW(-1), m_histPos(-1), m_titleY(0),
+   m_builtU(0), m_builtW(0), m_labelsU(0), m_labelsCollapsed(false), m_builtMatchW(-1), m_histPos(-1), m_builtUOther(0), m_builtWOther(-1), m_titleY(0),
    m_touchScroll(-1), m_touchRail(-1), m_barDrag(false), m_downButton(CB_NONE), m_stripLines(3),
    m_autoStrip(false), m_noRail(false) {
     m_panel=m_content=m_bar=m_scrollArea=m_stripRect=m_inputRect=m_toolsRect=CGRectMake(0,0,0,0);
@@ -523,13 +524,21 @@ void ConsoleMenu::layout(){
         const float margin=du(12), top=safe.origin.y+safe.size.height;
         const float fieldH=m_field.heightForLines(1);
         const float rowH=std::max(fieldH,std::max(tf,du(30)));
-        const float panelW=safe.size.width-2*margin;
+        float panelW=safe.size.width-2*margin;
         int lines=m_stripLines;
         if(kb>0) while(lines>1&&pad+lh*lines+pad+rowH+pad>top-margin-kb-du(6)) lines--;
         const float textH=lh*lines;
         const float panelH=pad+textH+pad+rowH+pad;
         m_noRail=false;
         m_panel=CGRectMake(safe.origin.x+margin,top-margin-panelH,panelW,panelH);
+        // UX.2 (P4): the strip starts right of the HUD's gear when it would sit over it.
+        if(World::getWorld&&World::getWorld->hud){
+            const CGRect g=CGRectMake(World::getWorld->hud->rmenu.origin.x,World::getWorld->hud->rmenu.origin.y,World::getWorld->hud->rmenu.size.width,World::getWorld->hud->rmenu.size.height);
+            if(g.size.width>0&&g.origin.y+g.size.height>m_panel.origin.y&&g.origin.x+g.size.width>m_panel.origin.x&&g.origin.x<m_panel.origin.x+m_panel.size.width*0.5f){
+                const float nx=g.origin.x+g.size.width+du(6);
+                m_panel.size.width-=nx-m_panel.origin.x; m_panel.origin.x=nx; panelW=m_panel.size.width;
+            }
+        }
         // Expand and Back, top right (the lines' width stops short of them, see below). The auto
         // strip has no Expand: the keyboard's going expands it.
         const float bw=m_back.fitWidth(), cw=m_autoStrip?0.0f:m_collapse.fitWidth()+du(6);
@@ -857,6 +866,7 @@ void ConsoleMenu::render(){
     if(!m_open) return;
     layout();
     GLW::begin2D();
+    GLW::Focus::screen(this,NULL,false);   // UX.7: hover only; Tab and the arrows are the code field's
 
     if(strip()){
         // MP.14: translucent, so the game behind the bar stays visible; text stays dark on a light face.

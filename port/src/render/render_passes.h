@@ -24,7 +24,6 @@ extern "C" {
 void eden_render_pass_mark(int pass, int begin);   // Classes/PassTimers.h, while g_pass.track
 int  eden_render_pass_depth(void);
 int  eden_render_pass_innermost(void);             // -1 outside every pass
-int  eden_render_pass_is_open(int pass);
 int  eden_render_pass_unbalanced(void);            // ends that did not match (a --render-selftest invariant)
 void eden_render_pass_reset(void);
 const char* eden_render_pass_name(int pass);
@@ -32,7 +31,6 @@ const char* eden_render_pass_name(int pass);
 int  eden_render_draw_category(void);              // one EDEN_RC_* bit for a draw issued now
 const char* eden_render_category_name(int bit);
 void eden_render_set_draw_mask(unsigned mask);     // EDEN_RC_ALL = draw everything (the default)
-unsigned eden_render_draw_mask(void);
 int  eden_render_mask_active(void);                // mask != ALL: glClear also clears colour, see the shim
 int  eden_render_draw_allowed(void);
 #ifdef __cplusplus

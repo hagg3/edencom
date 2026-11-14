@@ -313,10 +313,24 @@ void cloudShadowOff() { ds().csOn = false; ds().csTex = 0; }
 bool originalLighting() { return g_originalLighting; }
 void setOriginalLighting(bool on) { g_originalLighting = on; }
 
+static Counts g_counts;
+const Counts& counts() { return g_counts; }
+void resetCounts() { g_counts = Counts(); }
+long drawsIn(int bit) { int i = 0; while (i < 9 && !((bit >> i) & 1)) ++i; return g_counts.draws[i]; }
+static void countDraw(const Geometry& g) {   // QA.24: per pass category, whatever the backend
+    int i = 0;
+    const int bit = eden_render_draw_category();
+    while (i < 9 && !((bit >> i) & 1)) ++i;
+    ++g_counts.draws[i];
+    g_counts.verts[i] += g.count;
+}
+
 Tex texCreate(const TexDesc& d, const void* px) {
+    ++g_counts.texCreates;
     return eden_gl_have_context() ? rgl::texCreate(d, px) : rnull::texCreate(d);
 }
 void texUpdate(Tex t, int x, int y, int w, int h, TexFormat f, const void* px) {
+    ++g_counts.texUpdates;
     if (eden_gl_have_context()) rgl::texUpdate(t, x, y, w, h, f, px);
 }
 void texDestroy(Tex t) {
@@ -326,12 +340,15 @@ void texSampling(Tex t, const TexDesc& d) {
     if (eden_gl_have_context()) rgl::texSampling(t, d);
 }
 Buf bufCreate(BufKind k, Usage u) {
+    ++g_counts.bufCreates;
     return eden_gl_have_context() ? rgl::bufCreate(k, u) : rnull::bufCreate();
 }
 void bufData(Buf b, const void* data, size_t bytes) {
+    ++g_counts.bufUploads;
     if (eden_gl_have_context()) rgl::bufData(b, data, bytes);
 }
 void bufSubData(Buf b, size_t offset, const void* data, size_t bytes) {
+    ++g_counts.bufUploads;
     if (eden_gl_have_context()) rgl::bufSubData(b, offset, data, bytes);
 }
 void bufDestroy(Buf b) {
@@ -393,30 +410,35 @@ void drawWorld(const Geometry& g, Tex t, const Rgba& tint, float alphaRef) {
     if (!eden_render_draw_allowed()) return;
     traceDraw(__builtin_return_address(0), "world", g, t, tint, alphaRef);
     noteDraw(true);
+    countDraw(g);
     if (eden_gl_have_context()) rgl::drawWorld(g, t, tint, alphaRef); else rnull::draw(g);
 }
 void draw2D(const Geometry& g, Tex t, const Rgba& tint) {
     if (!eden_render_draw_allowed()) return;
     traceDraw(__builtin_return_address(0), "ui", g, t, tint, -1.0f);
     noteDraw(true);
+    countDraw(g);
     if (eden_gl_have_context()) rgl::draw2D(g, t, tint); else rnull::draw(g);
 }
 void drawSprites(const Geometry& g, Tex t, const SpriteParams& p) {
     if (!eden_render_draw_allowed()) return;
     traceDraw(__builtin_return_address(0), "sprite", g, t, Rgba{1, 1, 1, 1}, -1.0f);
     noteDraw(true);
+    countDraw(g);
     if (eden_gl_have_context()) rgl::drawSprites(g, t, p); else rnull::draw(g);
 }
 void drawSkinned(const Geometry& g, Tex t, const Rgba& tint, const float* palette, int nmat, int bonesPerVertex) {
     if (!eden_render_draw_allowed()) return;
     traceDraw(__builtin_return_address(0), "skinned", g, t, tint, -1.0f);
     noteDraw(true);
+    countDraw(g);
     if (eden_gl_have_context()) rgl::drawSkinned(g, t, tint, palette, nmat, bonesPerVertex); else rnull::draw(g);
 }
 void drawLit(const Geometry& g, Tex t, const Rgba& tint) {
     if (!eden_render_draw_allowed()) return;
     traceDraw(__builtin_return_address(0), "lit", g, t, tint, -1.0f);
     noteDraw(true);
+    countDraw(g);
     if (!eden_gl_have_context()) { rnull::draw(g); return; }
     if (g_originalLighting) rgl::drawLit(g, t, tint);
     else rgl::drawWorld(g, t, tint, -1.0f);   // R8: OFF is today's unlit draw
@@ -426,6 +448,7 @@ void drawPrecip(const Geometry& g, const PrecipParams& p) {   // AT.2b
     if (!eden_render_draw_allowed()) return;
     traceDraw(__builtin_return_address(0), "precip", g, p.tops, p.color, -1.0f);
     noteDraw(true);
+    countDraw(g);
     if (eden_gl_have_context()) rgl::drawPrecip(g, p); else rnull::draw(g);
 }
 
@@ -433,6 +456,7 @@ void drawClouds(const Geometry& g, const CloudParams& p) {   // AT.6
     if (!eden_render_draw_allowed()) return;
     traceDraw(__builtin_return_address(0), "clouds", g, p.tex, p.lit, -1.0f);
     noteDraw(true);
+    countDraw(g);
     if (eden_gl_have_context()) rgl::drawClouds(g, p); else rnull::draw(g);
 }
 
@@ -453,7 +477,3 @@ const char* driverString(DriverString w) { return eden_gl_have_context() ? rgl::
 
 }  // namespace R
 
-// For the harness (--render-selftest).
-extern "C" void eden_render_set_contracts(int on) { setPassContracts(on != 0); }
-extern "C" const rcore::Invariants* eden_render_invariants(void) { return &inv(); }
-extern "C" void eden_render_reset_invariants(void) { inv() = Invariants(); }

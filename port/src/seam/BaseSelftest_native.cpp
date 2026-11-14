@@ -8,10 +8,20 @@
 #include "../../../port/src/shim/foundation/eden_prefs.h"
 #include "../../../port/src/shim/foundation/platform_shims.h"
 
+#include <csignal>
 #include <cstdio>
 #include <cstring>
 #include <string>
 #include <vector>
+#if !defined(_WIN32)
+#include <sys/resource.h>   // RLIMIT_FSIZE (QA.17)
+#endif
+
+extern "C" {   // port/src/seam/WindowState_native.cpp (UX.5)
+int  eden_window_prefs_load(int* x, int* y, int* w, int* h);
+void eden_window_prefs_save(int x, int y, int w, int h);
+int  eden_window_size_ok(int w, int h);
+}
 
 namespace {
 int g_fail = 0, g_n = 0;
@@ -168,6 +178,86 @@ void test_prefs(const std::string& dir) {
     eden_fs_remove(p);
     eden_fs_remove(p + ".tmp");
 }
+
+// UX.5 (I8): the remembered window rectangle round-trips through prefs, and a size this build
+// would not have allowed (narrower than 1.2:1, under the minimum) is not believed.
+void test_window_prefs(const std::string& dir) {
+    const std::string p = dir + "/window-prefs.txt";
+    eden_prefs_reset_for_test(p.c_str());
+    int x = 0, y = 0, w = 0, h = 0;
+    CHECK(!eden_window_prefs_load(&x, &y, &w, &h));                 // nothing stored
+    eden_window_prefs_save(-40, 25, 1280, 720);
+    eden_prefs_reset_for_test(p.c_str());                           // forget memory, re-read the file
+    CHECK(eden_window_prefs_load(&x, &y, &w, &h) && x == -40 && y == 25 && w == 1280 && h == 720);
+    CHECK(eden_window_size_ok(1136, 640) && eden_window_size_ok(3440, 1440));
+    CHECK(!eden_window_size_ok(375, 667) && !eden_window_size_ok(500, 400) && !eden_window_size_ok(700, 700));
+    eden_window_prefs_save(0, 0, 375, 667);                         // a portrait rectangle
+    eden_prefs_reset_for_test(p.c_str());
+    CHECK(!eden_window_prefs_load(&x, &y, &w, &h));
+    eden_prefs_reset_for_test(nullptr);
+    eden_fs_remove(p);
+    eden_fs_remove(p + ".tmp");
+}
+
+// QA.17 (A2-08): a prefs write that cannot finish (a full disk, in process: RLIMIT_FSIZE below the new
+// file's size, SIGXFSZ ignored so the write gets EFBIG) leaves the old file byte for byte, and no .tmp.
+// The old flush renamed its unchecked short scratch file over the good one. The in-memory value stays.
+void test_prefs_full_disk(const std::string& dir) {
+#if defined(_WIN32)
+    (void)dir;
+    printf("base-selftest: SKIP prefs under a file-size limit (no RLIMIT_FSIZE on Windows)\n");
+#else
+    const std::string p = dir + "/prefs-full.txt";
+    eden_prefs_reset_for_test(p.c_str());
+    for (int i = 0; i < 64; ++i) eden_prefs_set_int(strf("key%02d", i).c_str(), i * 3);
+    eden_prefs_set_str("s", "kept");
+    const long long before = eden_fs_size(p);
+    std::string old;
+    if (FILE* f = fopen(p.c_str(), "rb")) {
+        char buf[4096];
+        size_t n;
+        while ((n = fread(buf, 1, sizeof buf, f)) > 0) old.append(buf, n);
+        fclose(f);
+    }
+    CHECK(before > 512 && (long long)old.size() == before);
+    void (*oldSig)(int) = signal(SIGXFSZ, SIG_IGN);
+    struct rlimit lim0, lim;
+    getrlimit(RLIMIT_FSIZE, &lim0);
+    lim = lim0;
+    lim.rlim_cur = (rlim_t)(before / 2);   // the rewrite gets half-way: the old code's truncation
+    const bool limited = setrlimit(RLIMIT_FSIZE, &lim) == 0;
+    eden_prefs_set_str("s", "new value that must not reach the disk");   // no printing in the window
+    setrlimit(RLIMIT_FSIZE, &lim0);
+    signal(SIGXFSZ, oldSig);
+    CHECK(limited);
+    CHECK(eden_prefs_get_str("s") && std::string(eden_prefs_get_str("s")) == "new value that must not reach the disk");
+    std::string now;
+    if (FILE* f = fopen(p.c_str(), "rb")) {
+        char buf[4096];
+        size_t n;
+        while ((n = fread(buf, 1, sizeof buf, f)) > 0) now.append(buf, n);
+        fclose(f);
+    }
+    CHECK(now == old);                                              // the good file, untouched
+    CHECK(!eden_fs_exists(p + ".tmp"));                             // and no scratch left behind
+    eden_prefs_reset_for_test(p.c_str());                           // what the next launch reads
+    CHECK(eden_prefs_get_int("key63", 0) == 189 && eden_prefs_get_str("s") && std::string(eden_prefs_get_str("s")) == "kept");
+    // eden_fs_write_atomic directly: a write that fits replaces; one that doesn't leaves the target.
+    const std::string q = dir + "/atomic.txt";
+    CHECK(eden_fs_write_atomic(q, "first", 5) && eden_fs_size(q) == 5);
+    std::string big(4096, 'x');
+    signal(SIGXFSZ, SIG_IGN);
+    setrlimit(RLIMIT_FSIZE, &lim);
+    const bool wrote = eden_fs_write_atomic(q, big.data(), big.size());
+    setrlimit(RLIMIT_FSIZE, &lim0);
+    signal(SIGXFSZ, oldSig);
+    CHECK(!wrote && eden_fs_size(q) == 5 && !eden_fs_exists(q + ".tmp"));
+    CHECK(eden_fs_write_atomic(q, big.data(), big.size()) && eden_fs_size(q) == 4096);
+    eden_prefs_reset_for_test(nullptr);
+    eden_fs_remove(p);
+    eden_fs_remove(q);
+#endif
+}
 }  // namespace
 
 extern "C" int eden_base_selftest_run(const char* workDir) {
@@ -179,6 +269,8 @@ extern "C" int eden_base_selftest_run(const char* workDir) {
     test_files(dir);
     test_bundle();
     test_prefs(dir);
+    test_window_prefs(dir);
+    test_prefs_full_disk(dir);
     eden_fs_remove(dir);
     printf("base-selftest: %d checks, %d failed\n", g_n, g_fail);
     return g_fail ? 1 : 0;

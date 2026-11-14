@@ -140,10 +140,6 @@ void eden_native_gl_present(void) {
 
 int eden_gl_have_context(void) { return g_gl != nullptr ? 1 : 0; }
 
-// No lost-context concept on desktop GL. Kept because gl_context.h declares it
-// (plan rule 4: the eden_* C API is identical on every platform) and because a caller asking
-// "is the renderer lost?" deserves a real answer rather than a missing symbol.
-int eden_gl_context_is_lost(void) { return 0; }
 
 // Every glViewport in this file goes through here, so the origin cannot be forgotten in one of
 // them — which is exactly the shape of bug that produces "it draws, but clicks land elsewhere".
@@ -379,11 +375,6 @@ void eden_set_drawable_size(int width, int height) {
     eden_gl_context_set_drawable_size(width, height);
 }
 
-void eden_gl_context_bind_default_framebuffer(void) {
-    if (!eden_gl_have_context()) return;
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    eden_apply_viewport();
-}
 
 // ---- N.4.11: the scene pass at its own resolution -------------------------------------------
 //

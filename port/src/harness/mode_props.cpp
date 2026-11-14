@@ -1,5 +1,8 @@
 // G.4: split out of the old eden_main_native.cpp (see harness.h). Mode group "props".
 #include "harness.h"
+#include "../../../Classes/SrclikeMove.h"   // QA.19 --settings-selftest targets
+#include "../../../Classes/SkyCycle.h"
+#include "../../../Classes/Weather.h"
 
 using namespace harness;
 
@@ -273,6 +276,7 @@ int run_props_selftest() {
     std::string err;
     const std::string docs = eden_platform_documents_root();
     FileManager* fm = World::getWorld->fm;
+    if (!mutation_known("eden-props", "--props-mutate", g_opt.propsMutate, {"nogen"})) return 2;
     const bool mut = g_opt.propsMutate == "nogen";
     g_wp_test_skip_generator = mut;
     const int S = 4096 * 16 + 8;
@@ -589,6 +593,7 @@ int run_signs_selftest() {
     using namespace signs_test;
     g_selftestTag = "eden-signs";
     g_tickInput = true;   // the prompt's typed keys reach the field only through the input tick
+    if (!mutation_known("eden-signs", "--signs-mutate", g_opt.signsMutate, {"bottom", "nohook"})) return 2;
     SignTool::testAllowBottom = g_opt.signsMutate == "bottom";
     SignTool::testNoAnchorHook = g_opt.signsMutate == "nohook";
     char d[512];
@@ -1053,6 +1058,173 @@ int run_sign_shot() {
     eden_mem_trace("signs");
     capture("signs");
     return 0;
+}
+
+// ---------------------------------------------------------------------------------------------
+// --settings-selftest  (QA.19: settings apply as data)
+// ---------------------------------------------------------------------------------------------
+// Every value row set once through eden_settings_set (a fixed non-default per row, table order), then a dump
+// of every row's value and of every engine/port target the rows write. Two legs against one fixture pair
+// captured from the build BEFORE QA.19 (--settings-capture=<dir> writes both):
+//   set:      fresh defaults -> set every row -> the dump equals dump.txt;
+//   readback: the captured prefs file (stock rows under their stock names, port rows in thousandths) loaded
+//             as a boot would -> the dump equals dump.txt.
+extern "C" void  eden_prefs_reset_for_test(const char* path);
+extern "C" int   eden_get_crouch_enabled(void);
+extern "C" int   eden_get_block_preview(void);
+extern "C" int   eden_get_fly_allowed(void);
+}  // namespace g_props
+}  // namespace harness
+extern float eden_look_sensitivity, eden_srclike_sens, eden_fov_degrees, eden_view_distance, eden_render_distance,
+    eden_fps_normalize, eden_mouse_sensitivity_y, eden_hold_to_act, eden_hotbar_shown, eden_crosshair,
+    eden_render_scale, eden_fps_cap, eden_ui_scale, eden_display_layout,
+    eden_gamepad_enabled, eden_gamepad_look_sensitivity, eden_gamepad_deadzone,
+    eden_save_backup, eden_upgrade_256z;
+extern float FLY_ACCEL_MULT, FLY_MAX_SPEED, FLY_BRAKING, FLY_VERTICAL_MULT, NOCLIP_SPEED;
+extern float TOUCH_LOOK_SENS_X, TOUCH_LOOK_SENS_Y, TOUCH_LOOK_SMOOTH, TOUCH_LOOK_GLIDE;
+extern bool CREATURE_WALK_VOICES, DOUBLE_BRUSH, DEV_CONSOLE_ALLOWED, FIRE_MELTS_ICE, FIRE_CHARS_VINES;
+extern bool touchControlsSoundEnabled, nightAmbienceEnabled;
+namespace harness {
+namespace g_props {
+static void settings_set_all() {
+    int toggles = 0;   // every other toggle keeps its default, so a swapped pair of rows cannot read alike
+    for (int i = 0; i < eden_settings_count(); ++i) {
+        const int k = eden_settings_kind(i);
+        if (k != 0 && k != 1 && k != 2) continue;   // toggle, range, enum
+        const float d = eden_settings_def(i), lo = eden_settings_min(i), hi = eden_settings_max(i);
+        const float v = k == 0 ? ((toggles++ % 2) ? d : (d != 0.0f ? 0.0f : 1.0f)) : (d != hi ? hi : lo);
+        eden_settings_set(i, v);
+        if (!std::strcmp(eden_settings_key(i), "display_layout")) ++toggles;   // QA.21: the deleted legacy_menu toggle sat here; keeps the alternation (and dump.txt) unchanged
+    }
+}
+static std::string settings_dump() {
+    std::string o;
+    char b[160];
+    for (int i = 0; i < eden_settings_count(); ++i) {
+        const int k = eden_settings_kind(i);
+        if (k != 0 && k != 1 && k != 2) continue;
+        std::snprintf(b, sizeof(b), "row %s=%g\n", eden_settings_key(i), eden_settings_get(i));
+        o += b;
+    }
+    World* w = World::getWorld;
+    SrclikeMove::Tunables& t = SrclikeMove::tunables();
+    CocosDenshion::SimpleAudioEngine* ae = CocosDenshion::SimpleAudioEngine::sharedEngine();
+    struct { const char* n; double v; } tg[] = {
+        {"eden_look_sensitivity", eden_look_sensitivity}, {"eden_srclike_sens", eden_srclike_sens},
+        {"eden_fov_degrees", eden_fov_degrees}, {"eden_view_distance", eden_view_distance},
+        {"eden_render_distance", eden_render_distance}, {"eden_fps_normalize", eden_fps_normalize},
+        {"eden_mouse_sensitivity_y", eden_mouse_sensitivity_y}, {"eden_hold_to_act", eden_hold_to_act},
+        {"eden_hotbar_shown", eden_hotbar_shown}, {"eden_crosshair", eden_crosshair},
+        {"eden_render_scale", eden_render_scale},
+        {"eden_fps_cap", eden_fps_cap}, {"eden_ui_scale", eden_ui_scale},
+        {"eden_display_layout", eden_display_layout},
+        {"eden_gamepad_enabled", eden_gamepad_enabled}, {"eden_gamepad_look_sensitivity", eden_gamepad_look_sensitivity},
+        {"eden_gamepad_deadzone", eden_gamepad_deadzone}, {"eden_save_backup", eden_save_backup},
+        {"eden_upgrade_256z", eden_upgrade_256z},
+        {"FLY_ACCEL_MULT", FLY_ACCEL_MULT}, {"FLY_MAX_SPEED", FLY_MAX_SPEED}, {"FLY_BRAKING", FLY_BRAKING},
+        {"FLY_VERTICAL_MULT", FLY_VERTICAL_MULT}, {"NOCLIP_SPEED", NOCLIP_SPEED},
+        {"TOUCH_LOOK_SENS_X", TOUCH_LOOK_SENS_X}, {"TOUCH_LOOK_SENS_Y", TOUCH_LOOK_SENS_Y},
+        {"TOUCH_LOOK_SMOOTH", TOUCH_LOOK_SMOOTH}, {"TOUCH_LOOK_GLIDE", TOUCH_LOOK_GLIDE},
+        {"CREATURE_WALK_VOICES", CREATURE_WALK_VOICES}, {"DOUBLE_BRUSH", DOUBLE_BRUSH},
+        {"DEV_CONSOLE_ALLOWED", DEV_CONSOLE_ALLOWED}, {"FIRE_MELTS_ICE", FIRE_MELTS_ICE},
+        {"FIRE_CHARS_VINES", FIRE_CHARS_VINES}, {"touchControlsSoundEnabled", touchControlsSoundEnabled},
+        {"nightAmbienceEnabled", nightAmbienceEnabled},
+        {"g_autosave_seconds", g_autosave_seconds}, {"g_shadow_mode", (double)g_shadow_mode},
+        {"crouch", (double)eden_get_crouch_enabled()}, {"block_preview", (double)eden_get_block_preview()},
+        {"fly_allowed", (double)eden_get_fly_allowed()}, {"camera_view", (double)eden_get_camera_view()},
+        {"srclike.enabled", (double)SrclikeMove::enabled()}, {"srclike.autobhop", (double)SrclikeMove::autoBhop()},
+        {"move.accelerate", t.accelerate}, {"move.airaccelerate", t.airaccelerate}, {"move.friction", t.friction},
+        {"move.stopspeed", t.stopspeed}, {"move.gravity", t.gravity}, {"move.maxvelocity", t.maxvelocity},
+        {"move.tickrate", t.tickrate},
+        {"sky.enabled", (double)SkyCycle::enabled()}, {"sky.daylength", SkyCycle::dayLengthSeconds()},
+        {"weather.mistheight", Weather::mistHeight()}, {"R::originalLighting", (double)R::originalLighting()},
+        {"atmo.tier", (double)eden_atmo_tier()}, {"weather.enabled", (double)eden_weather_enabled()},
+        {"reduce_flashing", (double)eden_reduce_flashing()},
+        {"input.touch", (double)eden_effective_input_is_touch()},
+        {"audio.music", ae ? ae->getBackgroundMusicVolume() : -1}, {"audio.ambience", ae ? ae->getAmbienceVolume() : -1},
+        {"audio.effects", ae ? ae->getEffectsVolume() : -1},
+        // the five stock rows' targets, and what SettingsMenu::load() set besides
+        {"player.health_option", (double)w->player->health_option}, {"player.autojump_option", (double)w->player->autojump_option},
+        {"player.invertcam", (double)w->player->invertcam}, {"CREATURES_ON", (double)CREATURES_ON},
+        {"resources.playmusic", (double)Resources::getResources->playmusic},
+        {"resources.playsound", (double)Resources::getResources->playsound},
+        {"hud.use_joystick", (double)w->hud->use_joystick}, {"tgen.genCaves", (double)w->terrain->tgen->genCaves},
+        {"world.bestGraphics", (double)w->bestGraphics},
+    };
+    for (auto& e : tg) { std::snprintf(b, sizeof(b), "target %s=%g\n", e.n, e.v); o += b; }
+    return o;
+}
+static bool settings_write(const std::string& path, const std::string& s) {
+    std::FILE* f = std::fopen(path.c_str(), "wb");
+    if (!f) return false;
+    std::fwrite(s.data(), 1, s.size(), f);
+    return std::fclose(f) == 0;
+}
+static std::string settings_read(const std::string& path) {
+    std::string s;
+    std::FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return s;
+    char b[4096];
+    size_t n;
+    while ((n = std::fread(b, 1, sizeof(b), f)) > 0) s.append(b, n);
+    std::fclose(f);
+    return s;
+}
+static std::string settings_first_diff(const std::string& a, const std::string& b) {
+    size_t i = 0;
+    while (i < a.size() && i < b.size() && a[i] == b[i]) ++i;
+    const size_t s = a.rfind('\n', i == 0 ? 0 : i - 1);
+    const size_t st = s == std::string::npos ? 0 : s + 1;
+    return "got '" + a.substr(st, a.find('\n', st) - st) + "' want '" + b.substr(st, b.find('\n', st) - st) + "'";
+}
+int run_settings_selftest() {
+    g_selftestTag = "eden-settings";
+    if (!open_world("settings-selftest", g_opt.height)) return 1;
+    tick(5);
+    char d[512];
+    if (!g_opt.settingsCapture.empty()) {   // the pre-change capture: a prefs file and the dump
+        const std::string prefs = g_opt.settingsCapture + "/prefs";
+        std::remove(prefs.c_str());
+        eden_prefs_reset_for_test(prefs.c_str());
+        settings_set_all();
+        tick(2);
+        const bool ok = settings_write(g_opt.settingsCapture + "/dump.txt", settings_dump());
+        check(ok, "capture written", g_opt.settingsCapture.c_str());
+        eden_prefs_reset_for_test(nullptr);
+    } else {
+        const std::string fx = g_opt.settingsFixtures, want = settings_read(fx + "/dump.txt");
+        check(!want.empty(), "fixture dump.txt reads", fx.c_str());
+        // leg 1: set every row from fresh defaults
+        const std::string empty = g_opt.docs + "/prefs-empty";
+        std::remove(empty.c_str());
+        eden_prefs_reset_for_test(empty.c_str());
+        eden_settings_test_reinit();
+        settings_set_all();
+        tick(2);
+        std::string got = settings_dump();
+        std::snprintf(d, sizeof(d), "%s", got == want ? "" : settings_first_diff(got, want).c_str());
+        check(got == want, "set: every row's value and target match the pre-QA.19 dump", d);
+        // leg 2: the pre-change prefs file reads back (a copy: a load may persist migrations), from defaults
+        eden_prefs_reset_for_test(empty.c_str());
+        std::remove(empty.c_str());
+        eden_settings_test_reinit();
+        for (int i = 0; i < eden_settings_count(); ++i)
+            if (eden_settings_kind(i) <= 2) eden_settings_set(i, eden_settings_def(i));
+        std::remove(empty.c_str());
+        const std::string copy = g_opt.docs + "/prefs-old";
+        const std::string old = settings_read(fx + "/prefs");
+        check(!old.empty() && settings_write(copy, old), "fixture prefs copies", fx.c_str());
+        eden_prefs_reset_for_test(copy.c_str());
+        eden_settings_test_reinit();
+        tick(2);
+        got = settings_dump();
+        std::snprintf(d, sizeof(d), "%s", got == want ? "" : settings_first_diff(got, want).c_str());
+        check(got == want, "readback: a pre-QA.19 prefs file loads to the same values and targets", d);
+        eden_prefs_reset_for_test(nullptr);
+        if (g_opt.settingsDump) std::fputs(got.c_str(), stdout);
+    }
+    std::printf("[eden-settings] %s (%d failure(s))\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
+    return g_selftestFailures ? 1 : 0;
 }
 
 }  // namespace g_props

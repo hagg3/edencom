@@ -28,6 +28,7 @@
 extern float SCREEN_WIDTH;
 extern float SCREEN_HEIGHT;
 extern "C" float eden_ui_raster_density(void);   // port/src/seam/DisplayProfile.cpp
+extern "C" void eden_input_pointer_event(int phase, int identity, float x, float y);   // port/src/seam/Input.cpp (y DOWN)
 
 namespace GLW {
 
@@ -107,12 +108,54 @@ int debugControlsOutside(CGRect sr, char* buf, int cap, int* total, const std::v
     return bad;
 }
 
+// UX.2: two leaf controls (button, toggle, slider, stepper, field) drawn over each other by more than
+// 1 point on both axes. `excused` rects (the pause column under a screen opened from it) are skipped.
+int debugControlsOverlap(char* buf, int cap, const std::vector<CGRect>& excused) {
+    if (buf && cap > 0) buf[0] = 0;
+    auto leaf = [](const std::string& w) { return w != "row" && w != "scrollbar" && w != "rail"; };
+    auto skip = [&](const CGRect& r) {
+        const float e = 0.5f;
+        for (size_t j = 0; j < excused.size(); j++)
+            if (std::fabs(excused[j].origin.x - r.origin.x) < e && std::fabs(excused[j].origin.y - r.origin.y) < e &&
+                std::fabs(excused[j].size.width - r.size.width) < e && std::fabs(excused[j].size.height - r.size.height) < e) return true;
+        return false;
+    };
+    int bad = 0, n = 0;
+    for (size_t i = 0; i < g_dbgRects.size(); i++) {
+        if (!leaf(g_dbgRects[i].first) || skip(g_dbgRects[i].second)) continue;
+        for (size_t j = i + 1; j < g_dbgRects.size(); j++) {
+            if (!leaf(g_dbgRects[j].first) || skip(g_dbgRects[j].second)) continue;
+            const CGRect &a = g_dbgRects[i].second, &b = g_dbgRects[j].second;
+            const float ox = std::min(a.origin.x + a.size.width, b.origin.x + b.size.width) - std::max(a.origin.x, b.origin.x);
+            const float oy = std::min(a.origin.y + a.size.height, b.origin.y + b.size.height) - std::max(a.origin.y, b.origin.y);
+            if (ox <= 1.0f || oy <= 1.0f) continue;
+            if (ox >= std::min((float)a.size.width, (float)b.size.width) - 0.5f &&
+                oy >= std::min((float)a.size.height, (float)b.size.height) - 0.5f) continue;   // one inside the other (a Stepper's arrows)
+            if (bad++ < 4 && buf && n < cap)
+                n += snprintf(buf + n, cap - n, "%s%s[%.0f,%.0f %.0fx%.0f]x%s[%.0f,%.0f %.0fx%.0f]", bad > 1 ? " " : "",
+                              g_dbgRects[i].first.c_str(), a.origin.x, a.origin.y, a.size.width, a.size.height,
+                              g_dbgRects[j].first.c_str(), b.origin.x, b.origin.y, b.size.width, b.size.height);
+        }
+    }
+    return bad;
+}
+
 // A hit box: the explicit one if a screen set it, else the drawn rect.
 static bool inBox(CGRect drawn, CGRect hitBox, float x, float y) {
     const CGRect r = (hitBox.size.width > 0.0f && hitBox.size.height > 0.0f) ? hitBox : drawn;
     return x >= r.origin.x && x <= r.origin.x + r.size.width &&
            y >= r.origin.y && y <= r.origin.y + r.size.height;
 }
+
+// UX.7: what the controls' render() calls; the model is at the end of this file ("Focus + hover").
+enum { FI_BUTTON, FI_TAB, FI_TOGGLE, FI_SLIDER, FI_STEPPER, FI_ROW, FI_FIELD };
+static void focusAdd(const void* obj, int sub, int kind, CGRect r, bool sel = false, float ax = 0.0f, float bx = 0.0f);
+static void focusRing(const void* obj, int sub, CGRect r, bool inset = false);
+static void focusScroll(const void* sv, CGRect bar, bool up, bool down);
+static bool hoverAt(CGRect drawn, CGRect hitBox);
+static const void* s_focusGroup = NULL;   // set by a TabRail / IconRail around its tiles: one Tab stop
+static int s_focusSuppress = 0;           // > 0 inside a Stepper: its two buttons are not stops of their own
+static TextField* s_focused = NULL;       // the TextField with the caret
 
 // --- palette -------------------------------------------------------------------------------
 Color rgb(unsigned int hex, float a) {
@@ -137,6 +180,8 @@ const Color kText          = { 0.0f, 0.0f, 0.0f, 1.0f };
 const Color kTextSecondary = { 0.392f, 0.392f, 0.392f, 1.0f };         // #646464
 const Color kTextPressed   = { 0.788f, 0.788f, 0.788f, 1.0f };         // #c9c9c9
 const Color kTextMuted     = { 0x97/255.0f, 0x97/255.0f, 0x97/255.0f, 1.0f };   // --eden-gray-300
+// UX.4 (U5): hints, dates and headings: #6b6b6b on white is 5.3:1 (AA); kTextMuted stays for rows that are meant to look inert.
+const Color kTextHint      = { 0x6b/255.0f, 0x6b/255.0f, 0x6b/255.0f, 1.0f };
 const Color kWhite         = { 1.0f, 1.0f, 1.0f, 1.0f };
 const Color kBlack         = { 0.0f, 0.0f, 0.0f, 1.0f };
 const Color kTextError     = { 0xc0/255.0f, 0x39/255.0f, 0x2b/255.0f, 1.0f };   // --eden-red-500
@@ -389,6 +434,9 @@ static const float kToastNever = 1000.0f;   // statusbar.mm's `thresh`: never ex
 
 static float toastMaxTextWidth() { return safeRect().size.width - du(160); }
 
+static float g_toastLift = 0.0f;
+void Toast::setLift(float pts) { g_toastLift = pts; }
+
 Toast::Toast() : m_life(0), m_age(0), m_builtU(0) {}
 
 void Toast::show(const char* utf8, float seconds) {
@@ -427,7 +475,7 @@ CGRect Toast::rect() const {
     const float w = tw + 2 * du(12);
     const float h = m_label.height() + 2 * du(4);
     const CGRect sr = safeRect();   // I.2: above the home bar
-    return CGRectMake(sr.origin.x + (sr.size.width - w) * 0.5f, sr.origin.y + du(16), w, h);
+    return CGRectMake(sr.origin.x + (sr.size.width - w) * 0.5f, sr.origin.y + du(16) + g_toastLift, w, h);
 }
 
 void Toast::render() const {
@@ -556,6 +604,14 @@ void Button::render() const {
             insetBottomRight(in, 1*U, C(0x646464, 0.47f));
         }
     }
+    // UX.7: hover is a wash inside the keyline (lime on the grey face, white on a toned one).
+    if (m_enabled && !m_pressed && hoverAt(m_rect, m_hit)) {
+        const float U = u();
+        fill(m_rect.origin.x + 2*U, m_rect.origin.y + 2*U, m_rect.size.width - 4*U, m_rect.size.height - 4*U,
+             m_tone == TONE_DEFAULT ? C(0xc6f175, 0.40f) : C(0xffffff, 0.35f));
+    }
+    if (m_enabled) focusAdd(this, 0, s_focusGroup ? FI_TAB : FI_BUTTON, m_rect, m_pressed);
+    focusRing(this, 0, m_rect);
     // The icon takes the label's colour, so a press inverts it the way `currentColor` did.
     const Color ink = !m_enabled ? kKeyline
                     : m_pressed ? (m_tone == TONE_DANGER ? kWhite : kTextPressed) : kText;
@@ -637,6 +693,9 @@ void Toggle::render() const {
     if (!m_muted) insetTopLeft(CGRectMake(r.origin.x + 2*U, r.origin.y + 2*U, r.size.width - 4*U,
                                           r.size.height - 4*U), 2*U, C(0x2c2b2b, 0.30f));
     border(r, 2*U, m_muted ? kToggleMutedKeyline : kToggleKeyline);
+    if (hoverAt(m_rect, m_hit)) fill(r.origin.x + 2*U, r.origin.y + 2*U, r.size.width - 4*U, r.size.height - 4*U, C(0xc6f175, 0.30f));
+    focusAdd(this, 0, FI_TOGGLE, m_rect, m_on);
+    focusRing(this, 0, m_rect);
 }
 
 // --- Slider --------------------------------------------------------------------------------
@@ -723,6 +782,17 @@ void Slider::render() const {
     fill(t.origin.x, t.origin.y + t.size.height - band, t.size.width, band, kFaceTop);
     insetBottomRight(t, 2*U, C(0x646464, 0.47f));
     border(t, 2*U, kKeyline);
+    if (!m_dragging && hoverAt(m_rect, m_hit)) fill(t.origin.x + 2*U, t.origin.y + 2*U, t.size.width - 4*U, t.size.height - 4*U, C(0xc6f175, 0.55f));
+    // UX.7: Left / Right are taps one step either side of the thumb (a tap jumps the thumb: beginDrag).
+    {
+        const float tw = thumbW(m_rect), span = m_rect.size.width - tw, range = m_max - m_min;
+        const float st = m_step > 0.0f ? m_step : range / 20.0f;
+        const float x0 = m_rect.origin.x + tw * 0.5f;
+        const float lo = range > 0.0f ? x0 + span * (std::max(m_min, m_value - st) - m_min) / range : x0;
+        const float hi = range > 0.0f ? x0 + span * (std::min(m_max, m_value + st) - m_min) / range : x0;
+        focusAdd(this, 0, FI_SLIDER, m_rect, false, lo, hi);
+    }
+    focusRing(this, 0, m_rect);
 }
 
 // --- Stepper -------------------------------------------------------------------------------
@@ -776,8 +846,13 @@ void Stepper::render() const {
     if (!m_value.empty())
         m_value.drawCentered(well.origin.x + well.size.width * 0.5f,
                              well.origin.y + (well.size.height + m_value.height()) * 0.5f, m_muted ? kTextMuted : kText);
+    s_focusSuppress++;
     m_dec.render();
     m_inc.render();
+    s_focusSuppress--;
+    const CGRect d = m_dec.rect(), i = m_inc.rect();
+    focusAdd(this, 0, FI_STEPPER, m_rect, false, d.origin.x + d.size.width * 0.5f, i.origin.x + i.size.width * 0.5f);
+    focusRing(this, 0, m_rect);
 }
 
 // --- ListRow -------------------------------------------------------------------------------
@@ -803,19 +878,22 @@ void ListRow::render() const {
     if (m_selected) {
         fill(r, kSelectTint);
         fill(r.origin.x, r.origin.y, 4*U, r.size.height, kLime);
+    } else if (hoverAt(r, r)) {
+        fill(r, C(0xc6f175, 0.22f));           // UX.7: half the selection tint
     }
+    focusAdd(this, 0, FI_ROW, r, m_selected);
+    focusRing(this, 0, r, true);
     if (!m_last) fill(r.origin.x, r.origin.y, r.size.width, 1*U, C(0x000000, 0.28f));
     if (!m_title.empty())
         m_title.draw(r.origin.x + du(10), r.origin.y + (r.size.height + m_title.height()) * 0.5f, kText);
     if (!m_detail.empty() && m_title.width() + m_detail.width() + du(34) <= r.size.width)
         m_detail.draw(r.origin.x + r.size.width - du(10) - m_detail.width(),
-                      r.origin.y + (r.size.height + m_detail.height()) * 0.5f, kTextMuted);
+                      r.origin.y + (r.size.height + m_detail.height()) * 0.5f, kTextHint);
 }
 
 // --- ScrollView ----------------------------------------------------------------------------
-ScrollView::ScrollView() : m_pitch(30.0f), m_total(0), m_visible(1), m_first(0), m_thumbDrag(false),
-                           m_contentDrag(false), m_contentScrolling(false), m_dragY0(0), m_dragFirst0(0),
-                           m_viewH(0) {
+ScrollView::ScrollView() : m_pitch(30.0f), m_total(0), m_visible(1), m_first(0), m_viewH(0), m_thumbDrag(false),
+                           m_contentDrag(false), m_contentScrolling(false), m_dragY0(0), m_dragFirst0(0) {
     m_bar = CGRectMake(0, 0, 0, 0);
 }
 
@@ -984,6 +1062,8 @@ void ScrollView::render() const {
     fill(t.origin.x, t.origin.y + t.size.height - band, t.size.width, band, m_thumbDrag ? kFacePressed : kFaceTop);
     insetBottomRight(t, 2*U, C(0x646464, 0.47f));
     border(t, 2*U, kKeyline);
+    if (!m_thumbDrag && maxFirst() > 0 && hoverAt(t, t)) fill(t.origin.x + 2*U, t.origin.y + 2*U, t.size.width - 4*U, t.size.height - 4*U, C(0xc6f175, 0.55f));
+    focusScroll(this, m_bar, m_first > 0, m_first < maxFirst());
 }
 
 // --- TabRail -------------------------------------------------------------------------------
@@ -1012,11 +1092,13 @@ int TabRail::hit(float x, float y) const {
 }
 
 void TabRail::render() const {
+    s_focusGroup = this;                              // UX.7: the rail is one Tab stop
     for (int i = 0; i < m_n; i++) {
         Button& b = const_cast<Button&>(m_tabs[i]);   // pressed is presentation state only
         b.setPressed(i == m_sel || i == m_held);
         b.render();
     }
+    s_focusGroup = NULL;
 }
 
 // --- RailFrame (U.5) -----------------------------------------------------------------------
@@ -1136,6 +1218,13 @@ void IconRail::render() const {
         const CGRect t = tileRect(i);
         const bool down = m_enabled[i] && (i == m_sel || i == m_held);
         bevel(t, down ? BEVEL_PRESSED : BEVEL_RAISED);
+        if (m_enabled[i]) {                           // UX.7
+            if (!down && hoverAt(t, t)) fill(t.origin.x + 2*u(), t.origin.y + 2*u(), t.size.width - 4*u(), t.size.height - 4*u(), C(0xc6f175, 0.40f));
+            s_focusGroup = this;
+            focusAdd(this, i, FI_TAB, t, i == m_sel);
+            s_focusGroup = NULL;
+            focusRing(this, i, t);
+        }
         // Disabled is design-system.md's "solid chrome, grey ink": the CSS's grayscale(1) of an
         // already grey tile is exactly a muted icon.
         const Color ink = !m_enabled[i] ? kTextMuted : down ? kTextPressed : kText;
@@ -1235,7 +1324,6 @@ void progressBar(CGRect r, float frac, float phase) {
 }
 
 // --- TextField -----------------------------------------------------------------------------
-static TextField* s_focused = NULL;
 
 TextField::TextField() : m_pt(16.0f), m_maxBytes(49), m_lines(1), m_showingPlaceholder(false), m_code(false),
                          m_secure(false), m_kind(EDEN_TEXT_KIND_PLAIN) {
@@ -1358,8 +1446,11 @@ bool TextField::applyInput(const char* bytes, int n, Event* ev) {
             *ev = EV_CHANGED;
             continue;
         }
-        if (c == EDEN_TEXT_KEY_TAB || c == EDEN_TEXT_KEY_UP || c == EDEN_TEXT_KEY_DOWN) {
-            if (m_code) m_keys += (char)c;             // C.4: the screen's, via takeKey()
+        if (c == EDEN_TEXT_KEY_TAB || c == EDEN_TEXT_KEY_UP || c == EDEN_TEXT_KEY_DOWN || c == EDEN_TEXT_KEY_BACKTAB) {
+            if (m_code) m_keys += (char)(c == EDEN_TEXT_KEY_BACKTAB ? EDEN_TEXT_KEY_TAB : c);   // C.4: the screen's, via takeKey()
+            // UX.7: any other field hands them to the focus model (Tab leaves the field, Up/Down move).
+            else Focus::key(c == EDEN_TEXT_KEY_TAB ? Focus::K_TAB : c == EDEN_TEXT_KEY_BACKTAB ? Focus::K_BACKTAB
+                            : c == EDEN_TEXT_KEY_UP ? Focus::K_UP : Focus::K_DOWN);
             continue;
         }
         if (c < 0x20 || c == 0x7f) continue;          // other control bytes: not text
@@ -1406,11 +1497,318 @@ TextField::Event TextField::update() {
 void TextField::render() const {
     debugRecord("field", m_rect);
     fill(m_rect, kContentFace);
+    if (!focused() && hoverAt(m_rect, m_rect)) fill(m_rect, C(0xc6f175, 0.22f));   // UX.7
     bevel(m_rect, BEVEL_SUNKEN);
+    focusAdd(this, 0, FI_FIELD, m_rect);
+    focusRing(this, 0, m_rect);
     if (m_label.empty()) return;
     const float yTop = m_lines > 1 ? m_rect.origin.y + m_rect.size.height - du(5)   // top-aligned
                                    : m_rect.origin.y + (m_rect.size.height + m_label.height()) * 0.5f;
     m_label.draw(m_rect.origin.x + du(6), yTop, m_showingPlaceholder ? kPlaceholder : kText);
+}
+
+
+// --- Focus + hover (UX.7) -------------------------------------------------------------------
+// See GLWidgets.h. Two lists: s_col is being collected by this frame's render() calls, s_cur is what
+// the last frame drew and what the keys act on. frame() swaps them once a frame.
+namespace {
+struct FItem {
+    const void* obj; int sub, kind; CGRect r; bool sel;
+    float ax, bx;                 // slider / stepper: the x of a "less" and a "more" tap
+    const void* group;            // members of one group share a Tab stop
+    const void* sv;               // the ScrollView it scrolls with, if any
+    float cx() const { return r.origin.x + r.size.width * 0.5f; }
+    float cy() const { return r.origin.y + r.size.height * 0.5f; }
+};
+struct FScroll { const void* sv; bool up, down; };
+struct FList {
+    const void* owner; const Button* def; bool keys;
+    std::vector<FItem> items; std::vector<FScroll> svs; size_t svMark;
+    FList() : owner(NULL), def(NULL), keys(false), svMark(0) {}
+    void reset(const void* o, const Button* d, bool k) { owner = o; def = d; keys = k; items.clear(); svs.clear(); svMark = 0; }
+};
+FList s_col, s_cur;
+const void* s_fObj = NULL;        // the focused control (obj + sub), NULL = none
+int   s_fSub = 0;
+bool  s_ring = false;
+std::vector<int> s_keys;          // queued by key(), acted on in frame()
+int   s_tapFrames = 0;            // > 0: a synthetic tap is down; its release is that many frames away
+float s_tapX = 0, s_tapY = 0;
+const void* s_pendSv = NULL;      // a scroll was asked for: next frame focus that list's new edge row
+int   s_pendDir = 0;
+bool  s_ptrOk = false;
+float s_px = 0, s_py = 0;
+int   s_dbgRings = 0, s_dbgHovers = 0;
+const int kFocusTouch = -24;      // a synthetic identity (negative = not a real finger), unused elsewhere
+const Color kFocusRing = { 0x5b/255.0f, 0x8d/255.0f, 0x02/255.0f, 1.0f };   // --eden-green-700
+
+// Drawn under the owner that was on top last frame: the only controls that take input.
+bool interactiveNow() { return s_col.owner && s_col.owner == s_cur.owner && touchFloor() <= 0.0f; }
+
+const FItem* findItem(const void* obj, int sub) {
+    for (size_t i = 0; i < s_cur.items.size(); i++)
+        if (s_cur.items[i].obj == obj && s_cur.items[i].sub == sub) return &s_cur.items[i];
+    return NULL;
+}
+bool canScroll(const void* sv, bool down) {
+    for (size_t i = 0; i < s_cur.svs.size(); i++)
+        if (s_cur.svs[i].sv == sv) return down ? s_cur.svs[i].down : s_cur.svs[i].up;
+    return false;
+}
+void tapAt(float x, float y) {
+    s_tapX = x; s_tapY = y;
+    s_tapFrames = 2;              // >= 1 engine tick between the edges, with a frame of slack
+    eden_input_pointer_event(0, kFocusTouch, x, SCREEN_HEIGHT - y);
+}
+void tapItem(const FItem& it) { tapAt(it.cx(), it.cy()); }
+
+// `selectRows`: an arrow landing on a list row also selects it (a tap); Tab only moves the ring.
+void setFocus(const FItem& it, bool selectRows) {
+    if (s_focused && (const void*)s_focused != it.obj) s_focused->blur();
+    s_fObj = it.obj; s_fSub = it.sub; s_ring = true;
+    if (it.kind == FI_FIELD) { if ((const void*)s_focused != it.obj) tapItem(it); }   // the screen focuses it
+    else if (it.kind == FI_ROW && selectRows) tapItem(it);
+}
+
+// The Tab order: lines top to bottom (two controls share a line when their centres are within half
+// the smaller height), left to right inside a line; a group appears once, where its first member is,
+// and is entered at its selected member.
+void buildStops(std::vector<int>* stops) {
+    const std::vector<FItem>& it = s_cur.items;
+    std::vector<int> ord(it.size());
+    for (size_t i = 0; i < ord.size(); i++) ord[i] = (int)i;
+    std::stable_sort(ord.begin(), ord.end(), [&](int a, int b) { return it[a].cy() > it[b].cy(); });
+    for (size_t a = 0; a < ord.size();) {
+        size_t b = a + 1;
+        while (b < ord.size() && it[ord[a]].cy() - it[ord[b]].cy() <=
+               0.5f * std::min((float)it[ord[a]].r.size.height, (float)it[ord[b]].r.size.height)) b++;
+        std::stable_sort(ord.begin() + a, ord.begin() + b, [&](int x, int y) { return it[x].r.origin.x < it[y].r.origin.x; });
+        a = b;
+    }
+    stops->clear();
+    for (size_t i = 0; i < ord.size(); i++) {
+        const FItem& f = it[ord[i]];
+        if (!f.group) { stops->push_back(ord[i]); continue; }
+        bool seen = false;
+        for (size_t j = 0; j < i && !seen; j++) seen = it[ord[j]].group == f.group;
+        if (seen) continue;
+        int rep = ord[i];
+        for (size_t j = i; j < ord.size(); j++) if (it[ord[j]].group == f.group && it[ord[j]].sel) { rep = ord[j]; break; }
+        stops->push_back(rep);
+    }
+}
+
+void scrollList(const void* sv, bool down) {
+    eden_ui_push_wheel(down ? -1 : 1);   // wheel away (+) = earlier rows
+    s_pendSv = sv; s_pendDir = down ? 1 : -1;
+}
+
+void tabMove(const FItem* cur, int dir) {
+    std::vector<int> stops;
+    buildStops(&stops);
+    const int n = (int)stops.size();
+    if (n == 0) return;
+    int at = -1;
+    for (int i = 0; cur && i < n && at < 0; i++) {
+        const FItem& s = s_cur.items[stops[i]];
+        if ((cur->group && s.group == cur->group) || (s.obj == cur->obj && s.sub == cur->sub)) at = i;
+    }
+    const int next = at < 0 ? (dir > 0 ? 0 : n - 1) : (at + dir + n) % n;
+    const FItem& nx = s_cur.items[stops[next]];
+    // Leaving a scrolled page of controls (Settings) with more to show that way: show it instead.
+    if (cur && at >= 0 && cur->sv && cur->kind != FI_ROW && nx.sv != cur->sv && canScroll(cur->sv, dir > 0)) {
+        scrollList(cur->sv, dir > 0);
+        return;
+    }
+    setFocus(nx, false);
+}
+
+// The nearest control in direction k; `sv` non-NULL keeps the search inside that list.
+const FItem* pick(const FItem* cur, int k, const void* sv) {
+    const bool vert = (k == Focus::K_UP || k == Focus::K_DOWN);
+    const FItem* best = NULL;
+    float bestScore = 0.0f;
+    for (size_t i = 0; i < s_cur.items.size(); i++) {
+        const FItem& f = s_cur.items[i];
+        if (f.obj == cur->obj && f.sub == cur->sub) continue;
+        if (sv && f.sv != sv) continue;
+        const float d = k == Focus::K_DOWN ? cur->cy() - f.cy() : k == Focus::K_UP ? f.cy() - cur->cy()
+                      : k == Focus::K_LEFT ? cur->cx() - f.cx() : f.cx() - cur->cx();
+        if (d <= 1.0f) continue;
+        float gap, off;
+        if (vert) {
+            gap = std::max((float)cur->r.origin.x, (float)f.r.origin.x) -
+                  std::min((float)(cur->r.origin.x + cur->r.size.width), (float)(f.r.origin.x + f.r.size.width));
+            off = std::fabs(cur->cx() - f.cx());
+        } else {
+            gap = std::max((float)cur->r.origin.y, (float)f.r.origin.y) -
+                  std::min((float)(cur->r.origin.y + cur->r.size.height), (float)(f.r.origin.y + f.r.size.height));
+            off = std::fabs(cur->cy() - f.cy());
+        }
+        const float score = d + (vert ? 3.0f : 6.0f) * std::max(0.0f, gap) + 0.01f * off;
+        if (!best || score < bestScore) { best = &f; bestScore = score; }
+    }
+    return best;
+}
+
+void arrowMove(const FItem* cur, int k) {
+    const bool vert = (k == Focus::K_UP || k == Focus::K_DOWN);
+    if (!cur) {
+        // Nothing focused: Up/Down start from the list's selected row (so they move the selection at
+        // once), or take its first row; with no list, the first stop.
+        const FItem* sel = NULL; const FItem* top = NULL;
+        for (size_t i = 0; vert && i < s_cur.items.size(); i++) {
+            const FItem& f = s_cur.items[i];
+            if (f.kind != FI_ROW) continue;
+            if (f.sel && !sel) sel = &f;
+            if (!top || f.cy() > top->cy()) top = &f;
+        }
+        if (sel) cur = sel;
+        else if (top) { setFocus(*top, true); return; }
+        else { tabMove(NULL, 1); return; }
+    } else if (!vert && (cur->kind == FI_SLIDER || cur->kind == FI_STEPPER)) {
+        tapAt(k == Focus::K_LEFT ? cur->ax : cur->bx, cur->cy());
+        return;
+    }
+    const FItem* best = pick(cur, k, vert ? cur->sv : NULL);
+    if (!best && vert && cur->sv) {
+        if (canScroll(cur->sv, k == Focus::K_DOWN)) { scrollList(cur->sv, k == Focus::K_DOWN); return; }
+        best = pick(cur, k, NULL);          // the list's edge, nothing more to show: leave it
+    }
+    if (best) setFocus(*best, true);
+    else if (!s_fObj) { s_fObj = cur->obj; s_fSub = cur->sub; s_ring = true; }   // at least show where focus is
+}
+
+void handleKey(int k) {
+    const FItem* cur = s_fObj ? findItem(s_fObj, s_fSub) : NULL;
+    const bool own = cur != NULL;                                   // a control with the ring
+    if (!cur && s_focused) cur = findItem(s_focused, 0);            // else start from the field with the caret
+    switch (k) {
+    case Focus::K_TAB:     tabMove(cur, 1); break;
+    case Focus::K_BACKTAB: tabMove(cur, -1); break;
+    case Focus::K_UP: case Focus::K_DOWN: case Focus::K_LEFT: case Focus::K_RIGHT: arrowMove(cur, k); break;
+    case Focus::K_RETURN: {
+        const FItem* def = s_cur.def ? findItem(s_cur.def, 0) : NULL;
+        if (own && (cur->kind == FI_BUTTON || cur->kind == FI_TAB)) tapItem(*cur);
+        else if (def) tapItem(*def);
+        else if (own && (cur->kind == FI_TOGGLE || cur->kind == FI_ROW)) tapItem(*cur);
+        else if (own && cur->kind == FI_STEPPER) tapAt(cur->bx, cur->cy());
+        break;
+    }
+    case Focus::K_SPACE:
+        if (!own || cur->kind == FI_SLIDER) break;
+        if (cur->kind == FI_STEPPER) tapAt(cur->bx, cur->cy());
+        else tapItem(*cur);
+        break;
+    default: break;
+    }
+}
+}  // namespace
+
+static void focusAdd(const void* obj, int sub, int kind, CGRect r, bool sel, float ax, float bx) {
+    if (!s_col.owner || s_focusSuppress > 0 || r.size.width <= 0.0f || r.size.height <= 0.0f) return;
+    FItem it = { obj, sub, kind, r, sel, ax, bx, s_focusGroup, NULL };
+    s_col.items.push_back(it);
+}
+
+// A ScrollView's render(): everything drawn since the last one, beside its bar and left of it, scrolls
+// with it; its rows are one Tab stop.
+static void focusScroll(const void* sv, CGRect bar, bool up, bool down) {
+    if (!s_col.owner) return;
+    const float y0 = bar.origin.y, y1 = bar.origin.y + bar.size.height;
+    for (size_t i = s_col.svMark; i < s_col.items.size(); i++) {
+        FItem& f = s_col.items[i];
+        if (f.kind == FI_TAB || f.cy() < y0 || f.cy() > y1 || f.r.origin.x >= bar.origin.x) continue;
+        f.sv = sv;
+        if (f.kind == FI_ROW && !f.group) f.group = sv;
+    }
+    s_col.svMark = s_col.items.size();
+    FScroll s = { sv, up, down };
+    s_col.svs.push_back(s);
+}
+
+static void focusRing(const void* obj, int sub, CGRect r, bool inset) {
+    if (!s_ring || obj != s_fObj || sub != s_fSub || !s_cur.keys || !interactiveNow()) return;
+    const float U = u();
+    if (!inset) r = CGRectMake(r.origin.x - 4*U, r.origin.y - 4*U, r.size.width + 8*U, r.size.height + 8*U);
+    border(r, 2*U, kFocusRing);
+    s_dbgRings++;
+}
+
+static bool hoverAt(CGRect drawn, CGRect hitBox) {
+    if (!s_ptrOk || !interactiveNow() || !inBox(drawn, hitBox, s_px, s_py)) return false;
+    s_dbgHovers++;
+    return true;
+}
+
+void Focus::screen(const void* owner, const Button* defaultButton, bool keys) { s_col.reset(owner, defaultButton, keys); }
+
+void Focus::row(const void* obj, int sub, CGRect r, bool selected) {
+    if (!selected && hoverAt(r, r)) fill(r, C(0xc6f175, 0.22f));
+    focusAdd(obj, sub, FI_ROW, r, selected);
+    focusRing(obj, sub, r, true);
+}
+
+bool Focus::live() { return s_cur.owner && s_cur.keys && touchFloor() <= 0.0f; }
+
+bool Focus::key(int k) {
+    if (k == K_POINTER) { s_ring = false; s_fObj = NULL; return false; }
+    if (!live()) return false;
+    if (s_keys.size() < 8) s_keys.push_back(k);
+    return true;
+}
+
+void Focus::frame() {
+    float px = 0.0f, py = 0.0f;
+    s_ptrOk = touchFloor() <= 0.0f && eden_ui_pointer(&px, &py) != 0;
+    s_px = px; s_py = py;
+
+    std::swap(s_cur, s_col);
+    s_col.reset(NULL, NULL, false);
+    for (size_t i = 0; i < s_cur.items.size(); i++)        // rows outside any ScrollView: one stop too
+        if (s_cur.items[i].kind == FI_ROW && !s_cur.items[i].group) s_cur.items[i].group = s_cur.owner;
+
+    static const void* lastOwner = NULL;
+    if (s_cur.owner != lastOwner) {                        // another screen: focus starts over
+        lastOwner = s_cur.owner;
+        s_fObj = NULL; s_ring = false; s_pendSv = NULL;
+        s_keys.clear();
+    }
+    if (s_tapFrames > 0) {                                 // finish the tap first; keys wait their turn
+        if (--s_tapFrames == 0) eden_input_pointer_event(2, kFocusTouch, s_tapX, SCREEN_HEIGHT - s_tapY);
+        return;
+    }
+    if (!live()) { s_keys.clear(); s_pendSv = NULL; return; }
+    if (s_fObj && !findItem(s_fObj, s_fSub)) s_fObj = NULL;   // the control went away
+
+    if (s_pendSv) {                                        // the list scrolled last frame: take its new edge
+        const FItem* best = NULL;
+        for (size_t i = 0; i < s_cur.items.size(); i++) {
+            const FItem& f = s_cur.items[i];
+            if (f.sv != s_pendSv) continue;
+            if (!best || (s_pendDir > 0 ? f.cy() < best->cy() : f.cy() > best->cy())) best = &f;
+        }
+        s_pendSv = NULL;
+        if (best) setFocus(*best, true);
+    }
+    while (!s_keys.empty() && s_tapFrames == 0 && !s_pendSv) {
+        const int k = s_keys.front();
+        s_keys.erase(s_keys.begin());
+        handleKey(k);
+    }
+}
+
+bool Focus::focusedRect(CGRect* r) {
+    const FItem* f = s_fObj ? findItem(s_fObj, s_fSub) : NULL;
+    if (f && r) *r = f->r;
+    return f != NULL;
+}
+bool Focus::ringShown() { return s_ring && s_fObj != NULL; }
+int  Focus::stops() { std::vector<int> st; buildStops(&st); return (int)st.size(); }
+void Focus::debugCounts(int* rings, int* hovers, bool reset) {
+    if (rings) *rings = s_dbgRings;
+    if (hovers) *hovers = s_dbgHovers;
+    if (reset) s_dbgRings = s_dbgHovers = 0;
 }
 
 // --- Version tag -----------------------------------------------------------------------------
@@ -1418,7 +1816,7 @@ void TextField::render() const {
 #define EMOD_VERSION_STRING "dev"
 #endif
 
-void drawVersionTag() {
+void drawVersionTag(float xOffset) {
     static Label tag;
     static float builtU = 0.0f;
     if (tag.empty() || builtU != u()) {
@@ -1427,7 +1825,7 @@ void drawVersionTag() {
         builtU = u();
     }
     const CGRect sr = safeRect();   // I.2: clear of the island's corner
-    const float x = sr.origin.x + du(6), yTop = sr.origin.y + sr.size.height - du(6), o = u();
+    const float x = sr.origin.x + du(6) + xOffset, yTop = sr.origin.y + sr.size.height - du(6), o = u();
     Graphics::kitState();
     Pen::textured(true);
     tag.draw(x + o, yTop - o, kBlack);
@@ -1436,3 +1834,7 @@ void drawVersionTag() {
 }
 
 }  // namespace GLW
+
+// UX.7: the host's entry points (port/src/seam/Input_native.cpp).
+extern "C" int  eden_ui_focus_key(int key)  { return GLW::Focus::key(key) ? 1 : 0; }
+extern "C" void eden_ui_focus_frame(void)   { GLW::Focus::frame(); }

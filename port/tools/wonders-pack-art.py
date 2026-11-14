@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """wonders-pack-art.py -- draws the 32x32 tiles of the bundled Wonder Blocks example mod pack.
 
-  python3 -I port/tools/wonders-pack-art.py SRC_DIR media/packs/wonders/textures
+  python3 -I port/tools/wonders-pack-art.py SRC_DIR port/tools/fixtures/packs/wonders/textures
 
 SRC_DIR holds the original 48x48 PNGs of Kenney's Voxel Pack (CC0 1.0, Kenney Vleugels, www.kenney.nl), as
 mirrored in https://github.com/minetest-mods/voxelpack_by_kenney (fetch the names used in TILES below from its

@@ -31,6 +31,7 @@
 #include "../../../Classes/FileManager.h"
 #include "../shim/foundation/platform_shims.h"
 #include "AppLifecycle.h"
+#include "SimpleAudioEngine_native.h"
 
 // How many times eden_app_will_background() has actually written a world, and what the last call
 // answered. Diagnostics only — tools/headless-save-on-background-test.js asserts on them, because
@@ -49,6 +50,13 @@ extern "C" {
 //
 // EVERY GUARD BELOW IS LOAD-BEARING, and the reason is the same in each case: saveWorld() is
 // written for the in-play state machine and dereferences things that only exist there.
+int eden_world_loading(void) {
+    World* w = World::getWorld;
+    return w && w->doneLoading != 0;
+}
+void eden_world_load_join(void) {
+    if (World::getWorld) World::getWorld->joinLoadThread();
+}
 int eden_app_will_background(void) {
     World* w = World::getWorld;
     if (!w || !w->fm || !w->terrain || !w->menu) {
@@ -87,10 +95,24 @@ int eden_app_will_background(void) {
         return (g_last_status = EDEN_BG_BUSY);
     }
 
-    w->fm->saveWorld();
+    // QA.5: the app is going away, so a failed save cannot keep the world open; saveFailed has
+    // printed why, and the answer says so (the last commit is intact on disk).
+    if (!w->fm->saveWorld()) return (g_last_status = EDEN_BG_FAILED);
     ++g_background_saves;
     return (g_last_status = EDEN_BG_SAVED);
 }
+
+// QA.18 (A2-09): iOS/Android send a low-memory warning shortly before jetsam/LMK kills the process,
+// and a kill saves nothing. Save now (same policy and guards as going to the background; the app
+// stays in front, so the loop is NOT stopped) and give back the audio clip cache.
+static int g_low_memory_events = 0;
+int eden_app_low_memory(void) {
+    ++g_low_memory_events;
+    const int st = eden_app_will_background();
+    eden_native_audio_drop_clips();
+    return st;
+}
+int eden_app_low_memory_count(void) { return g_low_memory_events; }
 
 // Diagnostics for the headless test and the dev console. Not on any hot path.
 int eden_app_background_save_count(void) { return g_background_saves; }

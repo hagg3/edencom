@@ -340,6 +340,11 @@ A **batch** is one save: records that share one `seq`, followed by a `COMMIT` ca
 - The first batch has seq 1, and each later batch has seq = previous + 1.
 - **Every record of the batch is written before its COMMIT**, the whole batch is flushed, and then
   the file is `fsync`ed (`FlushFileBuffers` on Windows).
+  **On Apple, plain `fsync` does not order writes through the drive's cache** (`fsync(2)`): an app kill
+  is safe (the page cache survives), a power loss or panic can tear an earlier batch, which the reader
+  then treats as damage. `F_BARRIERFSYNC` would give the ordering this rule assumes; it is not used yet
+  (QA.17 left it for an Air 2 `--save-bench` measurement, ROADMAP Stage T). Damage is shown to the player
+  once per load (QA.17), never repaired silently.
 - **The next batch starts only after that `fsync` returns.** Only the last batch in a file can
   therefore be torn by a crash or power loss; the reading rules below rely on it.
 
@@ -375,6 +380,19 @@ they are, so they may be sparse.
 
    On success, continue at the record's end. On failure, `[p, q)` is a **damaged span**, where `q`
    is the next 8-aligned offset at which a record frames, or EOF.
+
+   **Resync budget** (QA.13, 2026-11-12). Finding `q` is bounded, so that opening a file costs time
+   linear in its size. Each open has a budget of **4 × file size + 64 MiB**. The candidates are the
+   8-aligned offsets from `p` + 8, in order. A candidate that passes the first three framing checks
+   is charged **32 + `payload_len`** bytes *before* its CRC is computed (in every mode, including
+   readers that skip the CRC); framing at `p` itself is never charged. The first candidate whose
+   charge exceeds what is left of the budget is not tried: the scan ends, `[p, EOF)` is one damaged
+   span, and this is **damage** (records after that point are not read, so the flag keeps compaction
+   from destroying them). A file reaches this only when it is already damaged far beyond what a crash
+   or bad sector produces: without the rule, a 1 MiB file made of tags that each claim the rest of
+   the file took 7.9 s to open, and the time grew with the square of the size. `EdenWorldStore::scan`
+   and `emod.py` `Store._scan` implement it identically (`--emod-selftest` "resync budget",
+   `emod.py selftest`).
 3. **Commits.** The *valid commits* C₁…Cₘ are the framed records that are COMMITs. Let Rₖ be the
    byte range from the end of Cₖ₋₁ (or offset 64) to the start of Cₖ, and Sₖ its seq.
    - **Batch(Cₖ)** = the framed records in Rₖ whose seq = Sₖ.
@@ -407,7 +425,13 @@ the only copy destroyed, and should offer export. A torn last batch or a tail is
 outcome and is not damage.
 
 **Decoding a live record** can still fail: a zstd checksum, a wrong decoded length, or a framing
-error inside the payload. When it does, the reader uses the newest **earlier applied** version of
+error inside the payload. It also fails, **before any buffer is sized**, when the decoded length the
+record declares (a COLUMN's popcount(band_mask) × 8,192, else `aux`) is over its type's ceiling
+(QA.4, 2026-11-11): COLUMN 131,072; WORLD_HEADER 192; CREATURES 24,000 (400 × 60); SIGN_TRAILER 1 MiB;
+SUMMARY 16; COMMIT 24; GENERATOR 28; BLOCK_PALETTE 8,712 (8 + 128 × 68); SKY_CLOCK 16; WEATHER 32;
+PROVENANCE, INDEX and every reserved type 16 MiB. These are the writer's own limits, so no conforming
+file is affected; without them a 36 KB file could make a reader allocate 1 GiB. (A new record type
+adds its row here, in `record_decoded_max()` (`Classes/EdenWorldStore.h`) and in `emod.py`'s `DECODED_MAX`.) When it does, the reader uses the newest **earlier applied** version of
 the same key, which is still in the file until compaction. For a column with no earlier version, it
 loads air **without marking the column modified**. It never substitutes the default map or the
 generator, because the next save would then overwrite a player's build. Either case is damage.

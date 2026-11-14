@@ -7,11 +7,20 @@
 Read [`../../docs/ui.md`](../../docs/ui.md) first — the custom-GL HUD/menu system (`Hud.cpp`/`Menu.cpp`) is authoritative for state and side effects; this page covers the port's settings tables, the derived point space and the seam accessors. Visual language: [design-system.md](design-system.md).
 
 ## Settings (`src/seam/Settings.cpp`)
-`SettingsMenu`'s data model (`properties[]`, `load()`, `save()`, `getNewWorldName`) stays authoritative; the GL screen (`Classes/SettingsMenu`) renders the C tables. (The web build `--wrap`ped its `update()`/`render()` to no-ops under a DOM panel — retired.)
+Every setting, the stock five (Health, Auto-jump, Creatures, Sound effects, Music) included, is a row of the C table below; the GL screen (`Classes/SettingsMenu`) renders it. `SettingsMenu` keeps only `getNewWorldName` and a construction-time `load()` (QA.19). (The web build `--wrap`ped its `update()`/`render()` to no-ops under a DOM panel — retired.)
 
 One C table, `kSettings[]` (`src/seam/Settings.cpp`), is the single source of
 truth for what the settings screen shows — `eden_settings_count()`/`_label()`… expose it and
-`Classes/SettingsMenu` renders it generically. **Add a setting in C.** About 40 rows (a few keys appear
+`Classes/SettingsMenu` renders it generically. **Add a setting in C: a `kSettings[]` row plus a `kBindings[]` entry**
+(QA.19, same file): `{ key, &float_target, apply, stock }`. `bind` gets the value copied in; `apply(i, v, commit)` is
+a hook (commit = a deliberate change, false = the load-time pass, which must not repeat one-shot actions such as a
+preset writing its knobs); `apply_none` marks a row read where used (`eden_weather_enabled`). A value row (toggle,
+range, enum) without an entry, or an entry naming no row, fails `--console-selftest` ("every settings value row is
+bound"; `--console-mutate=unbound` proves it), and init prints `[eden-settings] BINDINGS:`. `stock` is a stock 2.1
+prefs name: those five rows persist as 0/1 ints under "Health", "Autojump", "Creatures", "Sound effects", "Music" so
+old prefs read back; every other row persists in thousandths under its key. Callers include
+`port/src/seam/eden_settings.h` (every `eden_settings_*`/`eden_keybind_*` accessor; Settings.cpp includes it, so a
+signature drift is a compile error). Gate for what rows write: `--settings-selftest` (below). About 40 rows (a few keys appear
 twice under `#if` for per-platform defaults) in the groups `Gameplay`, `Audio`, `Controls`, `Video`,
 `Interface` (shown on the Video tab), `Experiments` (opt-in, non-stock: fly, `fps_normalize`,
 `crouch` — see [player-input-camera.md](player-input-camera.md) — fire rules,
@@ -20,10 +29,18 @@ tabs and the hidden web-only rows are in [../../docs/ui.md](../../docs/ui.md) (`
 are visible but inert on native: `crosshair` and `save_backup` since S.8
 (docs/save-load.md).
 
-**Trap**: `SettingsMenu::load()` hard-codes `player->invertcam = FALSE` and
-`hud->use_joystick = TRUE` on **every** load (`Classes/SettingsMenu.cpp`) — this is
-engine behavior, not a bug to fix. The port's own `eden_apply_port_settings()` must
-re-run after every `save()`/`load()` or these two values silently revert.
+**Stock five at boot (QA.19):** `SettingsMenu::load()` runs once, from its constructor, before `World`'s ctor
+starts the title tune; it calls `eden_settings_boot_stock()` so Music/Sound/Health/Auto-jump/Creatures apply from
+prefs then (the whole model loads frames later in `eden_settings_init`, which needs `menu->settings`). Its
+`invertcam = false` / `use_joystick = true` are boot values only. Until QA.19 a stock toggle called `save()`, which
+re-ran `load()` and stomped those two, so every port row was re-applied after it (`eden_apply_port_settings`, gone).
+
+**`--settings-selftest`** sets every value row once through `eden_settings_set` (toggles alternate between
+default and flipped, ranges/enums go to max, or min when max is the default) and dumps each row's value plus every
+engine/port target the rows write (`target …` lines); it must equal `port/tools/fixtures/settings/dump.txt`. Leg 2
+loads `fixtures/settings/prefs`, a prefs file written by the build BEFORE QA.19, from defaults: same dump. Both
+fixtures were captured with `--settings-capture=<dir>` on the pre-change tree; re-capture only for a deliberate change
+to what a row writes, and say so in the commit.
 
 Keybinds live in a second C table, `kKeybinds[]`, parallel to `kSettings[]` in the same file (a binding is a USB HID usage ID — the number SDL3 scancodes use, which fits in a float; see the file's header for why a *parallel* table). Persistence, defaults and the code↔action map are all in C (`eden_keybind_*`, `eden_keybind_code_table()`); `Classes/KeybindsMenu` is the rebind UI. (Through Stage 5.1 a JS `localStorage` blob owned them — retired.)
 See [conventions-and-pitfalls.md](conventions-and-pitfalls.md) #6.
@@ -33,11 +50,14 @@ See [conventions-and-pitfalls.md](conventions-and-pitfalls.md) #6.
 Since G.2b-1 every target keeps preferences in one flat file through `eden_prefs` (`port/src/shim/foundation/eden_prefs.h`, store `port/src/seam/Prefs_native.cpp`); before it, `NSUserDefaults` was Apple's on macOS/iOS and that file-backed store on Linux/Windows (the web version wrote `localStorage`). Mac/iPad settings reset once on the switch (accepted, de-ObjC plan D7).
 
 ## The menu key over the main menu (`src/seam/Menu.cpp`)
-`Input_native.cpp` sends the `menu` keybind (Escape) down a chain of `eden_*_back()` calls, each 1 when it
-consumed the key: Console → Settings → New World → World Properties → **`eden_menu_home_back()`** (I.7:
-the world list returns to the home screen; 0 on home, mid-load, under a `GLDialog`, or with any screen
-over the list) → otherwise the HUD's menu tap. A new screen over the main menu adds its `_back` before
-the home one. MP.6: **`eden_server_list_back()`** sits just before it (form → cancel a join → home).
+`Input_native.cpp` calls one seam function, `eden_menu_back()` (1 = consumed), for the `menu` keybind; if it
+returns 0 the key is the HUD's menu tap. It is `GLDialog::escape()` (UX.9: a dialog's last button) and then
+**`Menu::back()`** (QA.22, `Classes/Menu.cpp`): the `kBackScreens` table, in priority order (Console → Settings →
+New World → World Properties → Multiplayer → Mods), each `{name, flag, close}`; then the I.7 fallback: the
+world list returns to the home screen (0 on home, mid-load, under a dialog, or with any table screen open,
+which it reads from the same table). **A new screen over the main menu adds one row there**, nothing in the
+input backend or seam. Gate: `--ui-selftest` "QA.22" legs (each screen opened, Escape closes exactly it);
+`--ui-mutate=menuback` drops New World's row and must FAIL them.
 
 Text-input kinds (MP.6): `eden_text_input_start_kind(kind, …)` maps `EDEN_TEXT_KIND_CODE`/`USERNAME`/`PASSWORD`
 to SDL3's text-input types (password = `SDL_TEXTINPUT_TYPE_TEXT_PASSWORD_HIDDEN`, so the OS keyboard hides it and
@@ -166,8 +186,7 @@ P_ASPECT_RATIO = SCREEN_WIDTH / SCREEN_HEIGHT        # ALWAYS derived — see be
 - **A stock bug not reproduced:** `EAGLView initWithCoder:` only recomputes `P_ASPECT_RATIO`
   inside `if(IS_WIDESCREEN)`, leaving the other branch on an iPad 4:3 default that matched no live
   layout. This always derives it. (iPad's own 4:3 branch is *not* resurrected — it is commented out
-  in the original and never drove a live layout on any device. See
-  [`../../WORKING/archive/aspect-ratio-toggle-scope.md`](../../WORKING/archive/aspect-ratio-toggle-scope.md).)
+  in the original and never drove a live layout on any device.)
 
 Engine-side, this needed `Hud::layoutForScreen()` / `Menu::layoutForScreen()` (rect math lifted out
 of the constructors so it can run more than once, and kept idempotent) and
@@ -211,6 +230,21 @@ hardware (the native iOS build on an iPad Air 2, 2026-09-07 onward — the devic
 NSString under the row's key (`eden_settings_text` / `eden_settings_set_text`), with no float meaning; `eden_settings_set`,
 `eden_settings_reset_all` (clears it) and the Console bridge (`bridgeSettings` skips kind 4; `--console-selftest` gate 3 too) know it.
 `SettingsMenu` draws it as a `GLW::Button` that opens `GLDialog::prompt`. The only row is Experiments › Matchmakers (`mp_matchmakers`).
+
+## Focus + hover seam (UX.7)
+
+The kit's focus model is engine code (`GLW::Focus`, `../../docs/ui.md` "Keyboard focus and hover"); the
+host's part is four calls in `port/src/seam/Input_native.cpp`:
+
+- `eden_ui_focus_key(key)` (`GLW::Focus::Key` numbers): sent for Tab, Shift-Tab, the arrows, Return and
+  Space on key-down while the cursor is free, after the keybind capture and before the keybind dispatch;
+  1 = consumed. Arrows and Tab also repeat. `K_POINTER` (9) is sent on a mouse button or finger down and
+  hides the ring. While a text field has focus the keys go to the text queue instead (Shift-Tab is byte 0x13).
+- `eden_ui_focus_frame()`: first thing in `eden_native_input_tick()`.
+- `eden_ui_pointer(&x, &y)`: the hover pointer, point space y up; 1 only after a real mouse motion with the
+  cursor free and no button down (a finger event or `SDL_EVENT_WINDOW_MOUSE_LEAVE` clears it).
+  `eden_native_debug_set_pointer(x, yUp, valid)` forces it for `--ui-selftest` / `--shot` (-1 = real).
+- `eden_ui_push_wheel(n)`: adds notches to what `eden_ui_take_wheel()` returns.
 
 ## Console seam (C.3/C.4)
 

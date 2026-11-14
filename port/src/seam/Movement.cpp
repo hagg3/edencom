@@ -1,5 +1,4 @@
-// Movement.cpp — Phase 1 of the PC controls audit (see
-// /Users/sam/.claude/plans/please-run-an-audit-lovely-dongarra.md, finding F1/F2).
+// Movement.cpp — Phase 1 of the PC controls audit (findings F1/F2).
 //
 // ROOT CAUSE (F1): Classes/Player.mm:940-958 damps velocity with a PER-FRAME multiplier
 // (vel *= .90 on ground, etc.), not one scaled by etime. Acceleration IS etime-scaled
@@ -71,10 +70,6 @@ void eden_movement_tick(void) {
     g_haveLastTick = true;
 }
 
-float eden_movement_debug_k(void) {
-    double k = kDtRef / g_dtEMA;
-    return (float)std::clamp(k, (double)kMinK, (double)kMaxK);
-}
 
 // The scaling itself, kept as one shared implementation of
 // it (Phase N Stage 2). One caller now:

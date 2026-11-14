@@ -1,0 +1,430 @@
+[eden] documents=/Users/sam/Library/Application Support/Emod
+[eden] bundle=./build
+[eden-gl] no canvas — staying headless (--headless).
+[eden-gl] pick viewport now 1816x1024 (engine point space x scale).
+[eden-display] profile=desktop ui_scale=125% layout=adaptive -> 908x512 points (aspect 1.773, snap 0 px/pt)
+Texture2D: './build/colorpick_background.png' decoded 582x511 (canvas 582x511) fmt=1 center-rgba=(237,237,237,227)
+Texture2D: './build/menu_autojump.png' decoded 167x24 (canvas 167x24) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/arrow_left.png' decoded 36x89 (canvas 36x89) fmt=1 center-rgba=(255,198,0,255)
+Texture2D: './build/arrow_right.png' decoded 36x89 (canvas 36x89) fmt=1 center-rgba=(255,198,0,255)
+Texture2D: './build/create_world.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(174,174,174,255)
+Texture2D: './build/delete_world.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(200,200,200,255)
+Texture2D: './build/share_world.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(174,174,174,255)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/world_selected.png' decoded 86x85 (canvas 86x85) fmt=1 center-rgba=(183,183,183,255)
+Texture2D: './build/world_unselected.png' decoded 86x85 (canvas 86x85) fmt=1 center-rgba=(118,118,118,255)
+Texture2D: './build/load_world.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(174,174,174,255)
+Texture2D: './build/options.png' decoded 180x62 (canvas 180x62) fmt=1 center-rgba=(8,9,7,255)
+Texture2D: './build/arrow_up.png' decoded 89x36 (canvas 89x36) fmt=1 center-rgba=(255,198,0,255)
+Texture2D: './build/arrow_down.png' decoded 89x36 (canvas 89x36) fmt=1 center-rgba=(255,198,0,255)
+Texture2D: './build/back.png' decoded 40x30 (canvas 40x30) fmt=1 center-rgba=(255,198,0,255)
+Texture2D: './build/menu_shared_worlds.png' decoded 280x29 (canvas 280x29) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/menu_cancel.png' decoded 151x31 (canvas 151x31) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/menu_music.png' decoded 108x28 (canvas 108x28) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/menu_options.png' decoded 246x44 (canvas 246x44) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: './build/menu_save.png' decoded 102x31 (canvas 102x31) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/menu_send.png' decoded 101x30 (canvas 101x30) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/menu_sound_effects.png' decoded 271x30 (canvas 271x30) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/menu_text_box.png' decoded 300x45 (canvas 300x45) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/menu_text_load.png' decoded 103x31 (canvas 103x31) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/menu_text_back.png' decoded 101x31 (canvas 101x31) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/shared_world_selected.png' decoded 40x40 (canvas 40x40) fmt=1 center-rgba=(180,180,180,255)
+Texture2D: './build/shared_world_unselected.png' decoded 37x37 (canvas 37x37) fmt=1 center-rgba=(115,115,115,255)
+Texture2D: './build/menu_fast.png' decoded 81x24 (canvas 81x24) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/menu_best.png' decoded 82x24 (canvas 82x24) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/menu_creatures.png' decoded 192x25 (canvas 192x25) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/report_flag.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(245,55,55,255)
+Texture2D: './build/atlas.png' decoded 32x4096 (canvas 32x4096) fmt=4 center-rgba=(53,91,27,255)
+Texture2D: './build/atlas2.png' decoded 32x4096 (canvas 32x4096) fmt=1 center-rgba=(0,0,0,0)
+[eden-emod] == fixtures (../port/tools/fixtures/emod)
+[eden-emod] PASS fixture pack: expected.txt readable
+[eden-emod] PASS f64-basic.eden: stream conversion byte-identical to emod.py
+[eden-emod] PASS f64-basic.eden: state digest == emod.py's -- ffe2f6232999f9ecaf44d0273e403e6c3d618918b4a24e9cb326bc3f5e238d83
+[eden-emod] PASS f64-basic.eden: verify clean
+[eden-emod] PASS f64-basic.eden: compacting a fresh conversion reproduces it byte for byte
+[eden-emod] PASS f64-basic.zlib.emod: reads to emod.py's state -- ffe2f6232999f9ecaf44d0273e403e6c3d618918b4a24e9cb326bc3f5e238d83
+[eden-emod] PASS f64-basic.zlib.emod: pack file intact
+[eden-emod] PASS f64-basic.zlib.emod: verify clean
+[eden-emod] PASS f256-trailer.eden: stream conversion byte-identical to emod.py
+[eden-emod] PASS f256-trailer.eden: state digest == emod.py's -- 2a56457b68a62f3b5ae915b7045228d254bf2636a624188c186b3555c158ab6e
+[eden-emod] PASS f256-trailer.eden: verify clean
+[eden-emod] PASS f256-trailer.eden: compacting a fresh conversion reproduces it byte for byte
+[eden-emod] PASS f256-trailer.none.emod.gz: reads to emod.py's state -- 2a56457b68a62f3b5ae915b7045228d254bf2636a624188c186b3555c158ab6e
+[eden-emod] PASS f256-trailer.none.emod.gz: pack file intact
+[eden-emod] PASS f256-trailer.none.emod.gz: verify clean
+[eden-emod] PASS f256-trailer.2batch.emod: reads to emod.py's state -- 5b0f192380e8e700702bf1f4c27eb3b430d6e7aa7e01c47e47691c6b27cc2db1
+[eden-emod] PASS f256-trailer.2batch.emod: pack file intact
+[eden-emod] PASS f256-trailer.2batch.emod: verify clean
+[eden-emod] PASS f256-v6-noslots.eden: stream conversion byte-identical to emod.py
+[eden-emod] PASS f256-v6-noslots.eden: state digest == emod.py's -- d92c54c49729f997766db53562cc8059e10bb5f74cd9dc21f0185c23b9fb1c85
+[eden-emod] PASS f256-v6-noslots.eden: verify clean
+[eden-emod] PASS f256-v6-noslots.eden: compacting a fresh conversion reproduces it byte for byte
+[eden-emod] PASS f64-v2.eden: stream conversion byte-identical to emod.py
+[eden-emod] PASS f64-v2.eden: state digest == emod.py's -- 39eeaa445f20cc0b75df7b65a5c7e8969ca1d7861b6b897babf8f28f12bda9bf
+[eden-emod] PASS f64-v2.eden: verify clean
+[eden-emod] PASS f64-v2.eden: compacting a fresh conversion reproduces it byte for byte
+[eden-emod] PASS f256-shortspan.eden: stream conversion byte-identical to emod.py
+[eden-emod] PASS f256-shortspan.eden: state digest == emod.py's -- f6f87289c80e21e361de9e4a88a086376d70376c132f4ee8bf8e80ef9ea4b229
+[eden-emod] PASS f256-shortspan.eden: verify clean
+[eden-emod] PASS f256-shortspan.eden: compacting a fresh conversion reproduces it byte for byte
+[eden-emod] PASS f64-dead-dup.eden: stream conversion byte-identical to emod.py
+[eden-emod] PASS f64-dead-dup.eden: state digest == emod.py's -- e636d55ec27c83a037cca3509c0f5eb793d6d6e22f7f8eb8c7f60497a091093f
+[eden-emod] PASS f64-dead-dup.eden: verify clean
+[eden-emod] PASS f64-dead-dup.eden: compacting a fresh conversion reproduces it byte for byte
+[eden-emod] PASS f256-v2-signs.eden: stream conversion byte-identical to emod.py
+[eden-emod] PASS f256-v2-signs.eden: state digest == emod.py's -- e46b4a29bebcb201a019e25c507a5c7fe79e427f65b493e6493dd0ecf8a48540
+[eden-emod] PASS f256-v2-signs.eden: verify clean
+[eden-emod] PASS f256-v2-signs.eden: compacting a fresh conversion reproduces it byte for byte
+[eden-emod] PASS f256-v2-single.eden: stream conversion byte-identical to emod.py
+[eden-emod] PASS f256-v2-single.eden: state digest == emod.py's -- c0bfb40ea19ce8dac598d7806ea2922862066f73c2291b63635af96d3da2c957
+[eden-emod] PASS f256-v2-single.eden: verify clean
+[eden-emod] PASS f256-v2-single.eden: compacting a fresh conversion reproduces it byte for byte
+[eden-emod] PASS f256-bpl1.eden: stream conversion byte-identical to emod.py
+[eden-emod] PASS f256-bpl1.eden: state digest == emod.py's -- 0a25b10d23f60e4f72ec58ce6cf2ce55a9cbab468413826abf1c6bc12154cbdd
+[eden-emod] PASS f256-bpl1.eden: verify clean
+[eden-emod] PASS f256-bpl1.eden: compacting a fresh conversion reproduces it byte for byte
+[eden-emod] PASS f64-highbytes.emod: reads to emod.py's state -- af4dcec5c70580f36e56bf59a0f660da39a4e662111d3bdf9a88a8a7a9301ee3
+[eden-emod] PASS f64-highbytes.emod: pack file intact
+[eden-emod] PASS f64-highbytes.emod: verify clean
+[eden-emod] PASS f64-highbytes.emod: flag compaction byte-identical to emod.py's
+[eden-emod] PASS f64-highbytes.emod: flag compaction state == emod.py's
+[eden-emod] PASS f64-highbytes.emod: flag compaction verifies clean
+[eden-emod] PASS f256-palette.2batch.emod: reads to emod.py's state -- 98499f3011aabc5f702b8bbf9d3463f1c7da009de5b387d03f6e269354b4fb0f
+[eden-emod] PASS f256-palette.2batch.emod: pack file intact
+[eden-emod] PASS f256-palette.2batch.emod: verify clean
+[eden-emod] PASS f256-palette.2batch.emod: flag compaction byte-identical to emod.py's
+[eden-emod] PASS f256-palette.2batch.emod: flag compaction state == emod.py's
+[eden-emod] PASS f256-palette.2batch.emod: flag compaction verifies clean
+[eden-emod] PASS f256-bpl1-latent.eden: stream conversion byte-identical to emod.py
+[eden-emod] PASS f256-bpl1-latent.eden: state digest == emod.py's -- 1be27c05fcb1158eb9f41ba00b971e05126d6d4f7525bcf2b41cc15a50d35ecc
+[eden-emod] PASS f256-bpl1-latent.eden: verify clean
+[eden-emod] PASS f256-bpl1-latent.eden: compacting a fresh conversion reproduces it byte for byte
+[eden-emod] PASS f64-bpl1-latent.eden: stream conversion byte-identical to emod.py
+[eden-emod] PASS f64-bpl1-latent.eden: state digest == emod.py's -- c7de2a0e9f3ef0d39986778f3d076963628d6cd223ac27e2dad03c15109b6329
+[eden-emod] PASS f64-bpl1-latent.eden: verify clean
+[eden-emod] PASS f64-bpl1-latent.eden: compacting a fresh conversion reproduces it byte for byte
+[eden-emod] PASS f256-bpl1.eden.gz: own-format export byte-identical to emod.py's
+[eden-emod] PASS f256-bpl1-latent.eden.gz: own-format export byte-identical to emod.py's
+[eden-emod] PASS f64-bpl1-latent.eden.gz: own-format export byte-identical to emod.py's
+[eden-emod] PASS f256-palette.2batch.emod: own-format export byte-identical to emod.py's
+[eden-emod] PASS fixture pack has entries (22)
+[eden-emod] == synth: converter vs independently generated worlds
+[eden-emod] PASS s64-canonical: converts
+[eden-emod] PASS s64-canonical: every feed chunking (1/7/4096/1M) gives the same bytes
+[eden-emod] PASS s64-canonical: no temp files left
+[eden-emod] PASS s64-canonical: opens
+[eden-emod] PASS s64-canonical: 4 bands detected (want 4)
+[eden-emod] PASS s64-canonical: all 12 columns read back as the engine's view (0 wrong)
+[eden-emod] PASS s64-canonical: verify clean
+[eden-emod] PASS s64-canonical: WORLD_HEADER verbatim
+[eden-emod]    s64-canonical: 405600 B -> 8912 B, 12 columns (0 copied from the spill, 12 rebuilt), flags 0
+[eden-emod] PASS s64-canonical takes the rebuild path for every column
+[eden-emod] PASS s256-trailer: converts
+[eden-emod] PASS s256-trailer: every feed chunking (1/7/4096/1M) gives the same bytes
+[eden-emod] PASS s256-trailer: no temp files left
+[eden-emod] PASS s256-trailer: opens
+[eden-emod] PASS s256-trailer: 16 bands detected (want 16)
+[eden-emod] PASS s256-trailer: all 8 columns read back as the engine's view (0 wrong)
+[eden-emod] PASS s256-trailer: verify clean
+[eden-emod] PASS s256-trailer: WORLD_HEADER verbatim
+[eden-emod]    s256-trailer: 1073088 B -> 7232 B, 8 columns (8 copied from the spill, 0 rebuilt), flags 0
+[eden-emod] PASS s256-trailer takes the copy path for every column
+[eden-emod] PASS s256-offgrid: converts
+[eden-emod] PASS s256-offgrid: every feed chunking (1/7/4096/1M) gives the same bytes
+[eden-emod] PASS s256-offgrid: no temp files left
+[eden-emod] PASS s256-offgrid: opens
+[eden-emod] PASS s256-offgrid: 16 bands detected (want 16)
+[eden-emod] PASS s256-offgrid: all 6 columns read back as the engine's view (0 wrong)
+[eden-emod] PASS s256-offgrid: verify clean
+[eden-emod] PASS s256-offgrid: WORLD_HEADER verbatim
+[eden-emod]    s256-offgrid: 834720 B -> 5600 B, 6 columns (0 copied from the spill, 6 rebuilt), flags 0x1
+[eden-emod] PASS s256-offgrid: every column takes the rebuild path
+[eden-emod] PASS s256-short: converts
+[eden-emod] PASS s256-short: every feed chunking (1/7/4096/1M) gives the same bytes
+[eden-emod] PASS s256-short: no temp files left
+[eden-emod] PASS s256-short: opens
+[eden-emod] PASS s256-short: 16 bands detected (want 16)
+[eden-emod] PASS s256-short: all 4 columns read back as the engine's view (0 wrong)
+[eden-emod] PASS s256-short: verify clean
+[eden-emod] PASS s256-short: WORLD_HEADER verbatim
+[eden-emod]    s256-short: 524544 B -> 4160 B, 4 columns (1 copied from the spill, 3 rebuilt), flags 0x3
+[eden-emod] PASS s256-short: both paths, short span rebuilt
+[eden-emod] PASS s64-dead-dup: converts
+[eden-emod] PASS s64-dead-dup: every feed chunking (1/7/4096/1M) gives the same bytes
+[eden-emod] PASS s64-dead-dup: no temp files left
+[eden-emod] PASS s64-dead-dup: opens
+[eden-emod] PASS s64-dead-dup: 4 bands detected (want 4)
+[eden-emod] PASS s64-dead-dup: all 3 columns read back as the engine's view (0 wrong)
+[eden-emod] PASS s64-dead-dup: verify clean
+[eden-emod] PASS s64-dead-dup: WORLD_HEADER verbatim
+[eden-emod]    s64-dead-dup: 176112 B -> 3056 B, 3 columns (0 copied from the spill, 3 rebuilt), flags 0xd
+[eden-emod] PASS s256-v2: converts
+[eden-emod] PASS s256-v2: every feed chunking (1/7/4096/1M) gives the same bytes
+[eden-emod] PASS s256-v2: no temp files left
+[eden-emod] PASS s256-v2: opens
+[eden-emod] PASS s256-v2: 16 bands detected (want 16)
+[eden-emod] PASS s256-v2: all 5 columns read back as the engine's view (0 wrong)
+[eden-emod] PASS s256-v2: verify clean
+[eden-emod] PASS s256-v2: WORLD_HEADER verbatim
+[eden-emod]    s256-v2: 679728 B -> 5016 B, 5 columns (5 copied from the spill, 0 rebuilt), flags 0
+[eden-emod] PASS s256-v2 takes the copy path for every column
+[eden-emod] PASS s256-v2-single: converts
+[eden-emod] PASS s256-v2-single: every feed chunking (1/7/4096/1M) gives the same bytes
+[eden-emod] PASS s256-v2-single: no temp files left
+[eden-emod] PASS s256-v2-single: opens
+[eden-emod] PASS s256-v2-single: 16 bands detected (want 16)
+[eden-emod] PASS s256-v2-single: all 1 columns read back as the engine's view (0 wrong)
+[eden-emod] PASS s256-v2-single: verify clean
+[eden-emod] PASS s256-v2-single: WORLD_HEADER verbatim
+[eden-emod]    s256-v2-single: 131280 B -> 1296 B, 1 columns (1 copied from the spill, 0 rebuilt), flags 0
+[eden-emod] PASS s64-empty: converts
+[eden-emod] PASS s64-empty: every feed chunking (1/7/4096/1M) gives the same bytes
+[eden-emod] PASS s64-empty: no temp files left
+[eden-emod] PASS s64-empty: opens
+[eden-emod] PASS s64-empty: 4 bands detected (want 4)
+[eden-emod] PASS s64-empty: all 0 columns read back as the engine's view (0 wrong)
+[eden-emod] PASS s64-empty: verify clean
+[eden-emod] PASS s64-empty: WORLD_HEADER verbatim
+[eden-emod]    s64-empty: 12192 B -> 576 B, 0 columns (0 copied from the spill, 0 rebuilt), flags 0
+[eden-emod] == errors: refused inputs leave nothing behind
+[eden-emod] PASS legacy 1.x header refused as E_LEGACY, no temps
+[eden-emod] PASS truncated stream refused (E_DIR_OFFSET), no temps
+[eden-emod] PASS shorter than a header refused (E_SHORT), no temps
+[eden-emod] PASS temp-bytes cap aborts (E_CAP), no temps
+[eden-emod] PASS abort() mid-stream deletes the spill
+[eden-emod] PASS a non-.emod file is refused -- bad magic
+[eden-emod] PASS create(): nothing at the final path before the first commit
+[eden-emod] PASS a file header with no commit is refused (no world) -- no committed batch
+[eden-emod] == writer: create, append, ords, SUMMARY, compaction
+[eden-emod] PASS create()
+[eden-emod] PASS first batch without WORLD_HEADER/CREATURES refused
+[eden-emod] PASS first batch commits
+[eden-emod] PASS the world appears at its path only after the first commit
+[eden-emod] PASS key (0,0) refused (twoToOne key 0 is invalid)
+[eden-emod] PASS reopens
+[eden-emod] PASS ords 0,1,2 in put order
+[eden-emod] PASS second batch commits
+[eden-emod] PASS rewrite keeps ord 1, new column gets ord 3
+[eden-emod] PASS SUMMARY counts the live state
+[eden-emod] PASS a band-3-only column stores mask 0x8
+[eden-emod] PASS the newest version is read
+[eden-emod] PASS seq 1, 2
+[eden-emod] PASS verify clean after appends (SUMMARY exact, prev_commit chain)
+[eden-emod] PASS 40 more saves
+[eden-emod] PASS dead bytes accounted (36640 of 39384)
+[eden-emod] PASS compact()
+[eden-emod] PASS compaction keeps the state, 39384 -> 2744 B, one batch
+[eden-emod] PASS verify clean after compaction
+[eden-emod] PASS no .compact left
+[eden-emod] PASS appends continue after compaction
+[eden-emod] PASS a read-only open refuses writes and compaction
+[eden-emod] == SKY_CLOCK (DN.2): round trip, supersede, compaction, old readers, bad length
+[eden-emod] PASS create()
+[eden-emod] PASS a world with no clock commits
+[eden-emod] PASS no SKY_CLOCK until a save writes one
+[eden-emod] PASS putRecord refuses a 15-byte SKY_CLOCK
+[eden-emod] PASS putRecord takes 16 bytes
+[eden-emod] PASS clock + header batch commits (the exit/warp shape)
+[eden-emod] PASS reopens
+[eden-emod] PASS round trip: the clock reads back byte for byte
+[eden-emod] PASS type 11 is a known type (no reserved-type warning)
+[eden-emod] PASS the clock is not part of the state digest (like GENERATOR)
+[eden-emod] PASS verify clean with a SKY_CLOCK
+[eden-emod] PASS a newer clock commits
+[eden-emod] PASS the newest clock wins (flags bit 0 = locked kept)
+[eden-emod] PASS compact()
+[eden-emod] PASS compaction keeps the newest clock
+[eden-emod] PASS verify clean after compaction
+[eden-emod] PASS reopens
+[eden-emod] PASS a batch with a reserved-type record commits
+[eden-emod] PASS an unknown singleton is ignored: opens undamaged, state and clock unchanged, a warning
+[eden-emod] PASS compaction drops the unknown type, keeps SKY_CLOCK
+[eden-emod] PASS reopens
+[eden-emod] PASS a 15-byte SKY_CLOCK commits under the test hook
+[eden-emod] PASS a bad-length clock does not make the world unreadable
+[eden-emod] PASS it reads back as 15 bytes
+[eden-emod] PASS verify reports the SKY_CLOCK length -- SKY_CLOCK raw length 15 is not 16
+[eden-emod] == WEATHER (AT.1b): round trip, codec 0, compaction order, bad length
+[eden-emod] PASS create()
+[eden-emod] PASS a world with no weather commits
+[eden-emod] PASS no WEATHER until a save writes one
+[eden-emod] PASS putRecord refuses a 31-byte WEATHER
+[eden-emod] PASS putRecord takes 32 bytes
+[eden-emod] PASS weather + clock + header commits
+[eden-emod] PASS reopens
+[eden-emod] PASS round trip byte for byte
+[eden-emod] PASS type 12 is a known type
+[eden-emod] PASS the weather is not part of the state digest
+[eden-emod] PASS verify clean with a WEATHER
+[eden-emod] PASS a newer weather commits
+[eden-emod] PASS compact()
+[eden-emod] PASS compaction keeps the newest weather
+[eden-emod] PASS compaction writes WEATHER after SKY_CLOCK, before the columns
+[eden-emod] PASS WEATHER is stored codec 0
+[eden-emod] PASS verify clean after compaction
+[eden-emod] PASS a 31-byte WEATHER commits under the test hook
+[eden-emod] PASS a bad-length weather does not make the world unreadable
+[eden-emod] PASS verify reports the WEATHER length -- WEATHER raw length 31 is not 32
+[eden-emod] == fallback: a committed record that does not decode
+[eden-emod] PASS fallback fixture converted
+[eden-emod] PASS the resealed file opens with no framing damage
+[eden-emod] PASS an undecodable newest version falls back to the previous committed one
+[eden-emod] PASS an undecodable only version loads as air (never the default map)
+[eden-emod] PASS both set the damaged flag
+[eden-emod] PASS compaction is refused while damaged -- store is damaged: compaction is blocked (export first)
+[eden-emod] PASS verify reports it -- COLUMN (4000,4000) newest version does not decode; used the one 1 back
+[eden-emod] == decode ceilings (QA.4): an oversized CREATURES record is damage, never an allocation
+[eden-emod] PASS the ceiling table (emod.py DECODED_MAX, docs/emod-file-format.md)
+[eden-emod] PASS create()
+[eden-emod] PASS a world with 400 creature slots commits
+[eden-emod] PASS 400 slots (exactly the ceiling) read back undamaged
+[eden-emod] PASS create()
+[eden-emod] PASS a 401-slot CREATURES commits under the test hook
+[eden-emod] PASS the file frames and commits cleanly
+[eden-emod] PASS 401 slots (one over the ceiling) does not decode: READ_AIR_DAMAGED
+[eden-emod] PASS the 1 GiB-aux file frames and commits cleanly
+[eden-emod] PASS a CREATURES declaring 1 GiB does not decode: READ_AIR_DAMAGED
+[eden-emod] PASS and nothing was sized for it (buffer capacity 0 B < 1 MiB)
+[eden-emod] PASS verify reports it -- record type 3 does not decode in any version
+[eden-emod] PASS the world's columns still load
+[eden-emod] == resync budget (QA.13): a tail of tags that each claim the rest of the file opens in linear time
+[eden-emod] PASS create()
+[eden-emod] PASS a one-column world commits
+[eden-emod] PASS budget = 4 x file size + 64 MiB (emod.py resync_budget, the spec)
+[eden-emod]    16 KiB tail (under the budget: reads as before): open 3.4 ms, 2044 attempts, 16.0 MiB CRC'd of a 64.1 MiB budget
+[eden-emod] PASS 16 KiB tail (under the budget: reads as before) opens
+[eden-emod] PASS in under 1 s (3.4 ms)
+[eden-emod] PASS the budget does not run out
+[eden-emod] PASS charged exactly what the rule says (16768976 B in 2044 attempts) -- got 16768976 B in 2044
+[eden-emod] PASS a tail alone is not damage
+[eden-emod] PASS the tail is the whole appended region; truncation point = the world's end
+[eden-emod] PASS the world before it still loads
+[eden-emod] PASS header-only open stays cheap
+[eden-emod]    4 MiB tail (the gate): open 6.7 ms, 20 attempts, 80.0 MiB CRC'd of a 80.0 MiB budget
+[eden-emod] PASS 4 MiB tail (the gate) opens
+[eden-emod] PASS in under 1 s (6.7 ms)
+[eden-emod] PASS the budget runs out
+[eden-emod] PASS charged exactly what the rule says (83884400 B in 20 attempts) -- got 83884400 B in 20
+[eden-emod] PASS running out is damage (blocks compaction)
+[eden-emod] PASS the tail is the whole appended region; truncation point = the world's end
+[eden-emod] PASS the world before it still loads
+[eden-emod] PASS header-only open stays cheap
+[eden-emod] == palette: FileHeader flag bit 0 + BLOCK_PALETTE (K.1-2)
+[eden-emod] PASS palette bases converted
+[eden-emod] PASS putRecord refuses a BLOCK_PALETTE in an unflagged file (D14) -- BLOCK_PALETTE needs a flagged file: compact(true) first
+[eden-emod] PASS a palette is only given to the flag compaction -- a palette is only given to the flag compaction of an unflagged file
+[eden-emod] PASS flag compaction of a clean world: flag set, no latent bytes
+[eden-emod] PASS ... with an empty BLOCK_PALETTE (the flag <=> a live record)
+[eden-emod] PASS verify clean; the palette is part of the state digest
+[eden-emod] PASS putRecord takes a palette once flagged
+[eden-emod] PASS putRecord refuses a palette with drops id 129 (D8) -- BLOCK_PALETTE drops or changes id 129 (slots are never freed: D8)
+[eden-emod] PASS putRecord refuses a palette with changes id 128 (D8) -- BLOCK_PALETTE drops or changes id 128 (slots are never freed: D8)
+[eden-emod] PASS putRecord refuses a palette with id 127 -- BLOCK_PALETTE entry 0: id 127 < 128
+[eden-emod] PASS putRecord refuses a palette with the stock namespace -- BLOCK_PALETTE entry 0: name 'eden:stone' breaks namespace:path
+[eden-emod] PASS putRecord refuses a palette with an upper-case name -- BLOCK_PALETTE entry 0: name 'Mod:x' breaks namespace:path
+[eden-emod] PASS putRecord refuses a palette with a door half as fallback -- BLOCK_PALETTE entry 0: fallback type 69
+[eden-emod] PASS putRecord refuses a palette with paint 55 -- BLOCK_PALETTE entry 0: fallback paint 55
+[eden-emod] PASS putRecord refuses a palette with a repeated name -- BLOCK_PALETTE entry 1: name 'a:b' repeated
+[eden-emod] PASS putRecord refuses a palette with count 129 -- BLOCK_PALETTE count 129 > 128
+[eden-emod] PASS a superset commits; the newest version wins
+[eden-emod] PASS reopens flagged with the newest palette
+[eden-emod] PASS compact(true, palette) on a flagged file is refused -- a palette is only given to the flag compaction of an unflagged file
+[eden-emod] PASS compact(true) on a flagged file is a plain compaction
+[eden-emod] PASS plain compaction keeps the flag and the record
+[eden-emod] PASS and is idempotent, byte for byte
+[eden-emod] PASS verify clean after compaction
+[eden-emod] PASS acceptPaletteFlag off: refused (writable, read-only, header-only) as 'written by a newer build'; file byte-identical -- non-zero flags/reserved in the file header (written by a newer build)
+[eden-emod] PASS any other flag bit is still refused -- non-zero flags/reserved in the file header (written by a newer build)
+[eden-emod] PASS unflagged bytes >= 128: a verify warning, not an error
+[eden-emod] PASS a supplied id that is a latent byte is refused (D13) -- palette id 131 is a latent type byte in this world (D13); nothing was replaced
+[eden-emod] PASS ... and nothing was replaced
+[eden-emod] PASS the flag compaction finds 131, 250
+[eden-emod] PASS they are reserved as emod:unknown_<id> beside the supplied entry
+[eden-emod] PASS verify clean
+[eden-emod] PASS a flagged byte with no entry: a warning
+[eden-emod] PASS flag compaction killed at 9240 points of its 9240 B file: the world is the old one byte for byte every time (9240)
+[eden-emod] PASS ... and the next try writes exactly the uncrashed file over the stale .compact (9240/9240)
+[eden-emod] PASS first palette batch commits
+[eden-emod] PASS first palette batch killed at 2400 points (1200 B, prefix + zero-filled): 2394 old, 6 new, 0 wrong; always flagged with a record
+[eden-emod] == interchange (K.1-4)
+[eden-emod] PASS interchange: the palette fixture opens flagged
+[eden-emod] PASS interchange: the fixture's mod-block column is there
+[eden-emod] PASS Legacy64z: the report counts each mod block by name (4: 3 named, 1 unassigned) -- ; {"target":"Legacy64z","bandsIn":16,"bandsOut":4,"versionIn":5,"versionOut":4,"bytes":274464,"columns":8,"creatureSlotsIn":400,"creatureSlotsOut":200,"scanned":true,"blocksAbove63":6653,"columnsAffected":4,"doorsOrphaned":0,"newBlocksReplaced":0,"newBlockColumns":0,"trailerBytesIn":352,"trailerBytesOut":0,"trailerParsed":false,"signsIn":0,"signsOut":0,"cmdsIn":0,"cmdsOut":0,"otherIn":0,"otherOut":0,"creaturesDropped":0,"creaturesRelocated":0,"creaturesOverflow":0,"posClamped":false,"homeClamped":false,"lossy":true,"paletteEntries":3,"paletteWritten":false,"paletteReplaced":4,"paletteUnassigned":1,"paletteColumns":1,"paletteBlocks":{"emod:test_glow":1,"stairs:oak":1,"stairs:oak/r":1,"#200":1}}; 6653 blocks above height 63 removed, 4 mod blocks become their stock fallback (emod:test_glow 1, stairs:oak 1, stairs:oak/r 1, ...), signs dropped.
+[eden-emod] PASS Legacy64z: no byte >= 128, no BPL1, converts back unflagged
+[eden-emod] PASS Legacy64z: fallback type + its paint (paint 0 keeps the voxel's; unassigned -> stone)
+[eden-emod] PASS NewDawn256z: the report counts each mod block by name (4: 3 named, 1 unassigned) -- ; {"target":"NewDawn256z","bandsIn":16,"bandsOut":16,"versionIn":5,"versionOut":5,"bytes":1072896,"columns":8,"creatureSlotsIn":400,"creatureSlotsOut":400,"scanned":true,"blocksAbove63":0,"columnsAffected":0,"doorsOrphaned":0,"newBlocksReplaced":0,"newBlockColumns":0,"trailerBytesIn":352,"trailerBytesOut":0,"trailerParsed":false,"signsIn":0,"signsOut":0,"cmdsIn":0,"cmdsOut":0,"otherIn":0,"otherOut":0,"creaturesDropped":0,"creaturesRelocated":0,"creaturesOverflow":0,"posClamped":false,"homeClamped":false,"lossy":true,"paletteEntries":3,"paletteWritten":false,"paletteReplaced":4,"paletteUnassigned":1,"paletteColumns":1,"paletteBlocks":{"emod:test_glow":1,"stairs:oak":1,"stairs:oak/r":1,"#200":1}}; 4 mod blocks become their stock fallback (emod:test_glow 1, stairs:oak 1, stairs:oak/r 1, ...), signs dropped.
+[eden-emod] PASS NewDawn256z: no byte >= 128, no BPL1, converts back unflagged
+[eden-emod] PASS NewDawn256z: fallback type + its paint (paint 0 keeps the voxel's; unassigned -> stone)
+[eden-emod] PASS NewFormat256z: the report counts each mod block by name (4: 3 named, 1 unassigned) -- ; {"target":"NewFormat256z","bandsIn":16,"bandsOut":16,"versionIn":5,"versionOut":5,"bytes":1073248,"columns":8,"creatureSlotsIn":400,"creatureSlotsOut":400,"scanned":true,"blocksAbove63":0,"columnsAffected":0,"doorsOrphaned":0,"newBlocksReplaced":0,"newBlockColumns":0,"trailerBytesIn":352,"trailerBytesOut":352,"trailerParsed":false,"signsIn":0,"signsOut":0,"cmdsIn":0,"cmdsOut":0,"otherIn":0,"otherOut":0,"creaturesDropped":0,"creaturesRelocated":0,"creaturesOverflow":0,"posClamped":false,"homeClamped":false,"lossy":true,"paletteEntries":3,"paletteWritten":false,"paletteReplaced":4,"paletteUnassigned":1,"paletteColumns":1,"paletteBlocks":{"emod:test_glow":1,"stairs:oak":1,"stairs:oak/r":1,"#200":1}}; 4 mod blocks become their stock fallback (emod:test_glow 1, stairs:oak 1, stairs:oak/r 1, ...).
+[eden-emod] PASS NewFormat256z: no byte >= 128, no BPL1, converts back unflagged
+[eden-emod] PASS NewFormat256z: fallback type + its paint (paint 0 keeps the voxel's; unassigned -> stone)
+[eden-emod] PASS own + paletteFallbacks: the report counts each mod block by name (4: 3 named, 1 unassigned) -- ; {"target":"own","bandsIn":16,"bandsOut":16,"versionIn":5,"versionOut":5,"bytes":1073248,"columns":8,"creatureSlotsIn":400,"creatureSlotsOut":400,"scanned":true,"blocksAbove63":0,"columnsAffected":0,"doorsOrphaned":0,"newBlocksReplaced":0,"newBlockColumns":0,"trailerBytesIn":352,"trailerBytesOut":352,"trailerParsed":false,"signsIn":0,"signsOut":0,"cmdsIn":0,"cmdsOut":0,"otherIn":0,"otherOut":0,"creaturesDropped":0,"creaturesRelocated":0,"creaturesOverflow":0,"posClamped":false,"homeClamped":false,"lossy":true,"paletteEntries":3,"paletteWritten":false,"paletteReplaced":4,"paletteUnassigned":1,"paletteColumns":1,"paletteBlocks":{"emod:test_glow":1,"stairs:oak":1,"stairs:oak/r":1,"#200":1}}; 4 mod blocks become their stock fallback (emod:test_glow 1, stairs:oak 1, stairs:oak/r 1, ...).
+[eden-emod] PASS own + paletteFallbacks: no byte >= 128, no BPL1, converts back unflagged
+[eden-emod] PASS own + paletteFallbacks: fallback type + its paint (paint 0 keeps the voxel's; unassigned -> stone)
+[eden-emod] PASS own: BPL1 written, nothing replaced, no scan --  {"target":"own","bandsIn":16,"bandsOut":16,"versionIn":5,"versionOut":5,"bytes":1073552,"columns":8,"creatureSlotsIn":400,"creatureSlotsOut":400,"scanned":false,"blocksAbove63":0,"columnsAffected":0,"doorsOrphaned":0,"newBlocksReplaced":0,"newBlockColumns":0,"trailerBytesIn":352,"trailerBytesOut":656,"trailerParsed":false,"signsIn":0,"signsOut":0,"cmdsIn":0,"cmdsOut":0,"otherIn":0,"otherOut":0,"creaturesDropped":0,"creaturesRelocated":0,"creaturesOverflow":0,"posClamped":false,"homeClamped":false,"lossy":false,"paletteEntries":3,"paletteWritten":true,"paletteReplaced":0,"paletteUnassigned":0,"paletteColumns":0,"paletteBlocks":{}}
+[eden-emod] PASS own: the export's BPL1 is the record, byte for byte
+[eden-emod] PASS own -> convert: flagged, the palette + emod:unknown_200 (D13), the column's bytes kept -- 4 entries
+[eden-emod] PASS keepPalette Legacy64z: raw bytes, a BPL1-only trailer, converts back flagged at 64z --  {"target":"Legacy64z","bandsIn":16,"bandsOut":4,"versionIn":5,"versionOut":4,"bytes":274768,"columns":8,"creatureSlotsIn":400,"creatureSlotsOut":200,"scanned":true,"blocksAbove63":6653,"columnsAffected":4,"doorsOrphaned":0,"newBlocksReplaced":0,"newBlockColumns":0,"trailerBytesIn":352,"trailerBytesOut":304,"trailerParsed":false,"signsIn":0,"signsOut":0,"cmdsIn":0,"cmdsOut":0,"otherIn":0,"otherOut":0,"creaturesDropped":0,"creaturesRelocated":0,"creaturesOverflow":0,"posClamped":false,"homeClamped":false,"lossy":true,"paletteEntries":3,"paletteWritten":true,"paletteReplaced":0,"paletteUnassigned":0,"paletteColumns":0,"paletteBlocks":{}}
+[eden-emod] PASS paletteFallbacks wins over keepPalette
+[eden-emod] PASS upload (Current, own format): the body's world has no byte >= 128 and no palette --  {"target":"own","bandsIn":16,"bandsOut":16,"versionIn":5,"versionOut":5,"bytes":1073248,"columns":8,"creatureSlotsIn":400,"creatureSlotsOut":400,"scanned":true,"blocksAbove63":0,"columnsAffected":0,"doorsOrphaned":0,"newBlocksReplaced":0,"newBlockColumns":0,"trailerBytesIn":352,"trailerBytesOut":352,"trailerParsed":false,"signsIn":0,"signsOut":0,"cmdsIn":0,"cmdsOut":0,"otherIn":0,"otherOut":0,"creaturesDropped":0,"creaturesRelocated":0,"creaturesOverflow":0,"posClamped":false,"homeClamped":false,"lossy":true,"paletteEntries":3,"paletteWritten":false,"paletteReplaced":4,"paletteUnassigned":1,"paletteColumns":1,"paletteBlocks":{"emod:test_glow":1,"stairs:oak":1,"stairs:oak/r":1,"#200":1}}
+[eden-emod] PASS unflagged world, NewDawn256z: its 3 stray bytes >= 128 become stone (counted: this target always scans) -- ok 1 err '' entries 0 replaced 3 view ok 1 high 0
+[eden-emod] == crash: kill commitBatch() after every byte of a batch (K4)
+[eden-emod] PASS crash base converted
+[eden-emod] PASS reference batch commits
+[eden-emod] PASS the batch changes the state
+[eden-emod] PASS 8096 kill points (4048 B batch, prefix + zero-filled): 8090 old commit, 6 new (file already complete), 0 wrong/mixed, 0 refused
+[eden-emod] PASS a torn tail is never reported as damage (0 were)
+[eden-emod] PASS the next save after every crash writes exactly the uncrashed file (0 differ)
+[eden-emod] PASS a lost record under a surviving COMMIT rolls back to the old commit (7/7)
+[eden-emod] PASS a save after a long torn tail truncates it first: the file equals a clean save byte for byte (2/2)
+[eden-emod] PASS a kill point at the batch's last byte is the new commit
+[eden-emod] == corrupt gate (emod.py's cases, on this reader)
+[eden-emod] PASS CRC on: 34 cases, 0 not detected, 0 mixed
+[eden-emod]    flip first type-2 header byte                NOT DETECTED
+[eden-emod]    flip first type-2 payload byte               NOT DETECTED
+[eden-emod]    flip last type-2 header byte                 NOT DETECTED
+[eden-emod]    flip last type-2 payload byte                NOT DETECTED + MIXED STATE
+[eden-emod]    flip first type-3 header byte                NOT DETECTED
+[eden-emod]    flip first type-3 payload byte               NOT DETECTED
+[eden-emod]    flip last type-3 header byte                 reported
+[eden-emod]    flip last type-3 payload byte                reported
+[eden-emod]    flip first type-4 header byte                reported
+[eden-emod]    flip first type-4 payload byte               reported
+[eden-emod]    flip first type-5 header byte                reported
+[eden-emod]    flip first type-5 payload byte               reported
+[eden-emod]    flip first type-1 header byte                reported
+[eden-emod]    flip first type-1 payload byte               NOT DETECTED
+[eden-emod]    flip last type-1 header byte                 reported
+[eden-emod]    flip last type-1 payload byte                reported
+[eden-emod]    flip first type-10 header byte               NOT DETECTED
+[eden-emod]    flip first type-10 payload byte              NOT DETECTED
+[eden-emod]    flip last type-10 header byte                reported
+[eden-emod]    flip last type-10 payload byte               reported
+[eden-emod]    flip first type-6 header byte                NOT DETECTED
+[eden-emod]    flip first type-6 payload byte               NOT DETECTED
+[eden-emod]    flip last type-6 header byte                 reported
+[eden-emod]    flip last type-6 payload byte                reported
+[eden-emod]    flip first type-7 header byte                reported
+[eden-emod]    flip first type-7 payload byte               reported
+[eden-emod]    flip last type-7 header byte                 reported
+[eden-emod]    flip last type-7 payload byte                reported
+[eden-emod]    flip file header byte (bands)                reported
+[eden-emod]    flip file header byte (created_unix)         NOT DETECTED
+[eden-emod]    flip file header byte (flags)                reported
+[eden-emod]    truncate mid-COLUMN in the last batch        reported
+[eden-emod]    truncate mid-COMMIT of the last batch        reported
+[eden-emod]    truncate mid-record in the first batch       reported
+[eden-emod] PASS control: CRC check DISABLED, the gate must fail -- 12 not detected, 1 mixed
+[eden-emod] == open time on a 30,000-column log (decides INDEX)
+[eden-emod] PASS 30000-column 64z world streamed (1743 ms, 938.0 MB in -> 20.53 MB)
+[eden-emod] PASS open(): 30000 columns, 22.51 MB, 21 batches: median 12.2 ms (min 12.0, max 12.7) over 5 opens; x3 (A8X proxy) = 37 ms vs the 100 ms INDEX threshold -> no INDEX
+[eden-emod] PASS converter RAM: 597152 B held at 3000 columns, 1201184 B at 30000 -- 22.4 B per extra column (directory row + slot index), nothing per byte of world
+[eden-emod] 325 checks, 0 failed (38.1 s) -- ALL PASS

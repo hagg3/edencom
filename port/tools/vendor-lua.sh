@@ -7,6 +7,8 @@
 # open them by accident (WORKING/mod-scripting-plan-2026-11-03.md S1). lua_onefile.cpp (Emod's, not
 # upstream's) compiles them all as ONE C++ translation unit: Lua errors become C++ exceptions, so a C
 # function in Classes/ModScript.cpp that raises one still runs its destructors.
+# QA.3: then applies vendor-lua-emod.patch (Emod's caps on the C loops a mod script sizes: pattern steps,
+# string.rep, table.move/insert/remove; docs/scripting.md) and stops if it doesn't apply cleanly.
 set -e
 SRC="$1"
 [ -f "$SRC/src/lua.h" ] || { echo "usage: $0 <lua-5.4.x tree>"; exit 1; }
@@ -21,4 +23,7 @@ for h in "$SRC"/src/*.h; do cp "$h" "$OUT/"; done
 # The licence is the MIT notice at the end of lua.h; ship it beside the sources (NOTICE names it too).
 sed -n '/^\/\*\*\*\*\*\*\*\*\*\*/,$p' "$SRC/src/lua.h" | sed -e '1d' -e '/^\*\*\*\*/,$d' | sed 's/^\* \{0,1\}//' > "$OUT/LICENSE"
 rm -f "$OUT/lualib.h.orig" "$OUT/linit.c"
+PATCH="$(cd "$(dirname "$0")" && pwd)/vendor-lua-emod.patch"
+(cd "$OUT" && patch -p1 --forward --no-backup-if-mismatch < "$PATCH") || { echo "vendor-lua-emod.patch did not apply: port Emod's caps by hand (QA.3)"; exit 1; }
+rm -f "$OUT"/*.orig "$OUT"/*.rej
 echo "wrote $OUT ($(ls "$OUT" | wc -l | tr -d ' ') files)"

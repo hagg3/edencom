@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unordered_set>
 
 namespace Json {
 
@@ -170,6 +171,7 @@ struct Reader {
             v->type = isObj ? Object : Array;
             if (!skip()) return false;
             if (i < n && p[i] == close) { ++i; return true; }
+            std::unordered_set<std::string> seen;   // QA.10: built once an object passes 16 members
             for (;;) {
                 if (isObj) {
                     if (!skip()) return false;
@@ -177,8 +179,13 @@ struct Reader {
                     const size_t keyAt = i;
                     std::string key;
                     if (!string(&key)) return false;
-                    for (const auto& m : v->obj)
-                        if (m.first == key) return failAt(keyAt, "duplicate key");
+                    if (seen.empty() && v->obj.size() < 16) {
+                        for (const auto& m : v->obj)
+                            if (m.first == key) return failAt(keyAt, "duplicate key");
+                    } else {
+                        if (seen.empty()) for (const auto& m : v->obj) seen.insert(m.first);
+                        if (!seen.insert(key).second) return failAt(keyAt, "duplicate key");
+                    }
                     if (!skip()) return false;
                     if (i >= n || p[i] != ':') return fail("':' expected");
                     ++i;

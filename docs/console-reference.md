@@ -184,6 +184,7 @@ A variable is `group.name`. **`NAME`** prints it, **`NAME VALUE`** sets it. Name
 | `gameplay.health` | on / off | on | at once | Falls, fire and creatures hurt. |
 | `gameplay.autojump` | on / off | on | at once | Auto-jump |
 | `gameplay.creatures` | on / off | on | at once | Creatures |
+| `gameplay.hotbar` | on / off | on | at once | Nine quick slots for blocks and colours. |
 | `gameplay.fly` | on / off | off | at once | Allow fly |
 | `gameplay.fly_accel` | 0.05 to 1 | 1 | at once | Lower is gentler and easier to hold still. |
 | `gameplay.fly_max_speed` | 0 to 100 | 0 | at once | Blocks per second. 0 is unlimited. |
@@ -260,15 +261,15 @@ A variable is `group.name`. **`NAME`** prints it, **`NAME VALUE`** sets it. Name
 | `video.render_radius` | 4, 5, 6, 7, 8, 9, 10, 12, 16 | 9 | when a world opens | Applies when a world opens. |
 | `video.render_scale` | 50%, 75%, 100%, 125% | 100% | at once | Below 100% is softer but cooler and faster. |
 | `video.shadows` | Off, Classic, Smooth | Classic | at once | Soft shading under overhangs. Smooth costs a little more meshing. |
+| `video.shadow_lamp_tint` | on / off | off | at once | Lamp light colours shadows, even by day. |
 | `video.atmosphere` | Off, Low, High, Custom | High | at once | Clouds, precipitation and ambient particles. |
 | `video.fps_cap` | Uncapped, 30, 45, 60 | Uncapped | at once | 30 or 60 saves battery and heat. |
 | `video.original_lighting` | on / off | on | at once | Shading on debris and fireworks, as in Eden 2.1. |
 | `video.fov` | 60 to 110 | 80 | at once | 80 is the original. |
 | `video.ui_scale` | Auto, 100%, 125%, 150%, 200% | Auto | at once | Size of menus and HUD. Auto picks for this device. |
 | `video.reduce_flashing` | on / off | off | at once | Lightning dims the sky gently instead of flashing. |
-| `video.display_mode` | Fixed, Fit window, Fullscreen | Fixed | at once | Display (diagnostics builds) |
+| `video.fullscreen` | on / off | off | at once | Fill the screen. F11 toggles it. |
 | `video.display_layout` | Auto, Classic 16:9, Adaptive | Auto | at once | Layout aspect (diagnostics builds) |
-| `video.dpr_cap` | 1x, 1.5x, 2x | 2x | at once | Max pixel ratio (diagnostics builds) |
 | `video.camera_view` | First person, Third person, Third person (front) | First person | at once | Third person shows your body. F5 cycles. |
 
 #### `interface.`
@@ -277,7 +278,6 @@ A variable is `group.name`. **`NAME`** prints it, **`NAME VALUE`** sets it. Name
 |---|---|---|---|---|
 | `interface.crosshair` | on / off | on | at once | Crosshair |
 | `interface.block_preview` | on / off | off | at once | Shows where the next block goes. |
-| `interface.legacy_menu` | on / off | off | at once | The original 2010 menus. (diagnostics builds) |
 
 #### `atmo.`
 
@@ -339,6 +339,7 @@ A variable is `group.name`. **`NAME`** prints it, **`NAME VALUE`** sets it. Name
 | `keys.hideHud` | a key name, or none | - | at once | Hide HUD |
 | `keys.screenshot` | a key name, or none | - | at once | Screenshot |
 | `keys.cameraView` | a key name, or none | - | at once | Camera view |
+| `keys.fullscreen` | a key name, or none | - | at once | Fullscreen |
 | `keys.hotbar1` | a key name, or none | - | at once | Hotbar 1 |
 | `keys.hotbar2` | a key name, or none | - | at once | Hotbar 2 |
 | `keys.hotbar3` | a key name, or none | - | at once | Hotbar 3 |

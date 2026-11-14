@@ -73,7 +73,7 @@ struct MenuKit {
     GLW::Button     back, myWorlds, multiplayer;
     // About screen: placeholder licence/credits text, one Label per paragraph
     static const int ABOUT_PARAS=6;
-    GLW::Button     about, aboutBack, modsBtn;   // modsBtn: K.3-5, beside About
+    GLW::Button     about, aboutBack, modsBtn, quitBtn;   // quitBtn: UX.5, desktop only   // modsBtn: K.3-5, beside About
     GLW::Label      aboutTitle, aboutPara[ABOUT_PARAS];
     CGRect          aboutPanel, aboutContent;
     GLW::IconRail   aboutRail;   // one tile for now: Info
@@ -93,7 +93,7 @@ struct MenuKit {
     std::string     shownStatus;
     WorldNode*      lastSelected;
     int             listTouch, barTouch, downRow;
-    MenuKit() : pitch(30), btnH(30), titleY(0), homeTopY(0), homeSubY(0), homeTileW(0), aboutPt(0), aboutW(0), aboutH(0), built(false), lastSelected(NULL),
+    MenuKit() : aboutPt(0), aboutW(0), aboutH(0), homeTopY(0), homeSubY(0), homeTileW(0), pitch(30), btnH(30), titleY(0), built(false), lastSelected(NULL),
                 listTouch(-1), barTouch(-1), downRow(-1) {
         panel=list=homePanel=CGRectMake(0,0,0,0);
         for(int k=0;k<MK_MAX_ROWS;k++) rowBuilt[k]=false;
@@ -129,6 +129,7 @@ void Menu::layoutKit(){
         k->settings.setLabel("Settings",du(22));
         k->about.setLabel("About",du(22));
         k->modsBtn.setLabel("Mods",du(22));
+        k->quitBtn.setLabel("Quit",du(22));
         k->aboutBack.setLabel("Back",du(20));
         k->aboutBack.sizeToFit();
         k->aboutTitle.set("About Emod",du(32),UITextAlignmentCenter);
@@ -149,6 +150,7 @@ void Menu::layoutKit(){
         k->play.setLabel("Play",du(22));
         k->play.setTone(GLW::Button::TONE_POSITIVE);
         k->del.setLabel("Delete",du(22));
+        k->del.setTone(GLW::Button::TONE_DANGER);   // UX.4 (P2)
         rect_rename.setLabel("Properties",du(22));   // H.15: was "Rename" (N.4.5); the name is on the screen now
         kit_share.setLabel("Share",du(22));
         k->empty.set("No worlds yet",du(24),UITextAlignmentCenter);
@@ -257,6 +259,10 @@ void Menu::tapRow(int index){
     }
 }
 
+extern "C" int eden_home_quit_offered(void);   // port/src/seam/WindowState_native.cpp (UX.5)
+extern "C" void eden_host_quit(void);
+static bool homeQuitOffered(){ return eden_home_quit_offered()!=0; }
+
 CGRect Menu::controlRect(const char* which){
     layoutKit();
     if(!strcmp(which,"new"))      return kit->create.rect();
@@ -275,6 +281,7 @@ CGRect Menu::controlRect(const char* which){
     if(!strcmp(which,"home.myworlds"))    return kit->myWorlds.rect();
     if(!strcmp(which,"home.multiplayer")) return kit->multiplayer.rect();
     if(!strcmp(which,"home.mods"))        return kit->modsBtn.rect();   // K.3-5
+    if(!strcmp(which,"home.quit"))        return homeQuitOffered()?kit->quitBtn.rect():CGRectMake(0,0,0,0);   // UX.5
     return CGRectMake(0,0,0,0);
 }
 
@@ -315,9 +322,10 @@ void Menu::layoutHome(){
     const float avail=k->homeTopY-bottom;
     const float bh=btnH, bg=du(10), sh=k->subtitle.height();
     float pad=du(12), gap=du(10), gh=bh*1.6f;
-    if(pad*2.0f+sh+gap+gh+bg*2.0f+bh*2.0f>avail) gh=bh;
-    if(pad*2.0f+sh+gap+gh+bg*2.0f+bh*2.0f>avail){ pad=du(8); gap=du(5); }
-    const float groupH=gh+bg*2.0f+bh*2.0f;
+    const float qh=homeQuitOffered()?bh+bg:0.0f;   // UX.5: a full-width Quit row under the grid, desktop only
+    if(pad*2.0f+sh+gap+gh+bg*2.0f+bh*2.0f+qh>avail) gh=bh;
+    if(pad*2.0f+sh+gap+gh+bg*2.0f+bh*2.0f+qh>avail){ pad=du(8); gap=du(5); }
+    const float groupH=gh+bg*2.0f+bh*2.0f+qh;
     const float ph=pad*2.0f+sh+gap+groupH;
     const float gw=std::min((float)du(360),(float)(safe.size.width-margin*2.0f-pad*2.0f));
     const float cw=(gw-bg)*0.5f;
@@ -326,11 +334,13 @@ void Menu::layoutHome(){
     k->homePanel=CGRectMake(safe.origin.x+(safe.size.width-pw)*0.5f,py,pw,ph);
     k->homeSubY=py+ph-pad;
     const float x0=k->homePanel.origin.x+pad;
-    float y=py+pad+bh*2.0f+bg;
-    k->about.setRect(CGRectMake(x0,py+pad,cw,bh));
-    k->modsBtn.setRect(CGRectMake(x0+cw+bg,py+pad,cw,bh));
-    k->multiplayer.setRect(CGRectMake(x0,py+pad+bh+bg,cw,bh));
-    k->settings.setRect(CGRectMake(x0+cw+bg,py+pad+bh+bg,cw,bh));
+    const float gy=py+pad+qh;   // the grid sits above the Quit row
+    float y=gy+bh*2.0f+bg;
+    if(qh>0.0f) k->quitBtn.setRect(CGRectMake(x0,py+pad,gw,bh));
+    k->about.setRect(CGRectMake(x0,gy,cw,bh));
+    k->modsBtn.setRect(CGRectMake(x0+cw+bg,gy,cw,bh));
+    k->multiplayer.setRect(CGRectMake(x0,gy+bh+bg,cw,bh));
+    k->settings.setRect(CGRectMake(x0+cw+bg,gy+bh+bg,cw,bh));
     y+=bg;
     k->myWorlds.setRect(CGRectMake(x0,y,cw,gh));
     k->getWorlds.setRect(CGRectMake(x0+cw+bg,y,cw,gh));
@@ -365,6 +375,7 @@ void Menu::layoutHome(){
     k->settings.setEnabled(idle);
     k->about.setEnabled(idle);
     k->modsBtn.setEnabled(idle);
+    k->quitBtn.setEnabled(idle);
 }
 
 // A tile's art and caption, inside the button it sits on (drawn first).
@@ -398,6 +409,7 @@ void Menu::renderHome(){
     Pen::blendFunc(R::B_ALPHA);
 
     // The window, its heading on the gray surface in the kit's text colour, then the tiles.
+    Focus::screen(&k->homePanel,&k->myWorlds);   // UX.7: Return = My Worlds
     bevel(k->homePanel,BEVEL_WINDOW);
     k->subtitle.drawCentered(k->homePanel.origin.x+k->homePanel.size.width*0.5f,k->homeSubY,kText);
     k->myWorlds.render();
@@ -415,7 +427,46 @@ void Menu::renderHome(){
     k->settings.render();
     k->about.render();
     k->modsBtn.render();
+    if(homeQuitOffered()) k->quitBtn.render();
     Pen::color(1.0f,1.0f,1.0f,1.0f);
+}
+
+// QA.22: the back-routing table. Priority order = who gets Escape first when two flags overlap;
+// `shown` is the screen's flag, `close` runs its Back (returns false when it did not consume the key).
+// The home fallback below reads the same table, so a screen cannot be forgotten in two places.
+extern "C" int eden_settings_menu_back(void);   // port/src/seam/Settings.cpp (its Back also unwinds a Keys capture / sub-page)
+struct BackScreen { const char* name; bool Menu::*shown; bool (*close)(Menu*); };
+static const BackScreen kBackScreens[] = {
+    {"console",  &Menu::showconsole, [](Menu* m){ if(!m->console||!m->console->isOpen()) return false; m->console->back(); return true; }},
+    {"settings", &Menu::showsettings, [](Menu*){ return eden_settings_menu_back()!=0; }},
+    {"newworld", &Menu::shownewworld, [](Menu* m){ if(!m->newworld) return false; m->newworld->back(); m->shownewworld=false; return true; }},
+    {"props",    &Menu::showprops,    [](Menu* m){ if(!m->props) return false; m->props->back(); if(!m->props->isOpen()) m->showprops=false; return true; }},   // UX.9: a dirty form asks first and stays
+    {"servers",  &Menu::showservers,  [](Menu* m){
+        if(!m->servers||m->loading||GLDialog::active()) return false;
+        const bool r=m->servers->back(); if(!m->servers->isOpen()) m->showservers=false; return r; }},
+    {"mods",     &Menu::showmods,     [](Menu* m){ if(!m->mods||GLDialog::active()) return false; m->mods->back(); m->showmods=false; return true; }},
+};
+
+int Menu::testBackSkip = -1;
+
+bool Menu::back(){
+    World* w=World::getWorld;
+    const int n=(int)(sizeof(kBackScreens)/sizeof(kBackScreens[0]));
+    for(int i=0;i<n;i++){
+        if(i==testBackSkip) continue;
+        const BackScreen& s=kBackScreens[i];
+        if(!(this->*s.shown)) continue;
+        // The console runs over a world; every other screen is a menu-mode screen.
+        if(s.shown!=&Menu::showconsole && s.shown!=&Menu::showsettings && (!w||w->game_mode!=GAME_MODE_MENU)) continue;
+        if(s.close(this)) return true;
+    }
+    // Fallback (I.7): the world list goes back to home. Not over any open screen, the home screen,
+    // mid-load, under a dialog or in play.
+    if(!w||w->game_mode!=GAME_MODE_MENU) return false;
+    if(showhome||loading||GLDialog::active()||is_sharing||showlistscreen) return false;
+    for(int i=0;i<n;i++) if(this->*kBackScreens[i].shown) return false;
+    showHome(true);
+    return true;
 }
 
 void Menu::showHome(bool home){
@@ -655,7 +706,7 @@ void Menu::activate(){
     // MP.6 (UI plan §1): leaving a session lands on the server list, so Rejoin is one tap. exitToMenu
     // activates the menu before MpWorld::endSession, so the session still reads as active here.
     if(MpWorld::active()){ showservers=false; openServers(); }   // a fresh open re-probes the list
-	sbar->setStatus("Choose world to load" ,99999);
+	sbar->clear();   // UX.4 (P3): "Choose world to load" repeated what the selected row already says
 	if(selected_world!=NULL)
 	fnbar->setStatus(selected_world->display_name ,9999);
 	share_menu->activate();
@@ -832,11 +883,12 @@ void Menu::updateHome(float etime){
     MenuKit* k=kit;
     sbar->update(etime);
     itouch* touches=Input::getInput()->getTouches();
-    GLW::Button* const tiles[]={&k->myWorlds,&k->multiplayer,&k->getWorlds,&k->settings,&k->about,&k->modsBtn};
+    GLW::Button* const tiles[]={&k->myWorlds,&k->multiplayer,&k->getWorlds,&k->settings,&k->about,&k->modsBtn,&k->quitBtn};
+    const bool quitOn=homeQuitOffered();
     for(int i=0;i<MAX_TOUCHES;i++){
         if(touches[i].inuse==0&&touches[i].down==M_DOWN){
             touches[i].inuse=usage_id;
-            for(GLW::Button* b:tiles) b->setPressed(b->enabled()&&b->hit(touches[i].mx,touches[i].my));
+            for(GLW::Button* b:tiles) b->setPressed(b->enabled()&&(b!=&k->quitBtn||quitOn)&&b->hit(touches[i].mx,touches[i].my));
         }
         if(touches[i].inuse==usage_id&&touches[i].down==M_RELEASE){
             const float mx=touches[i].mx, my=touches[i].my;
@@ -866,6 +918,10 @@ void Menu::updateHome(float etime){
             }
             if(chosen==&k->modsBtn){
                 openMods();
+                return;
+            }
+            if(chosen==&k->quitBtn){
+                eden_host_quit();   // UX.5: nothing is unsaved at the menu
                 return;
             }
             if(chosen==&k->settings){
@@ -927,6 +983,7 @@ void Menu::renderAbout(){
     const RailFrame f=railFrame();
     const CGRect p=k->aboutPanel;
     const float pad=du(12), gap=du(8);
+    Focus::screen(&k->aboutPanel,&k->aboutBack);   // UX.7
     bevel(p,BEVEL_WINDOW);
     k->aboutBack.render();
     k->aboutTitle.drawCentered(p.origin.x+p.size.width*0.5f,f.titleY(k->aboutTitle),kText);
@@ -1197,6 +1254,7 @@ void Menu::renderKit(){
     Pen::blend(true);
     Pen::blendFunc(R::B_ALPHA);
 
+    Focus::screen(k,&k->play);   // UX.7: Return = Play
     bevel(k->panel,BEVEL_WINDOW);
     k->back.render();
     k->create.render();
@@ -1319,7 +1377,7 @@ void Menu::render(){
 	// (sbar's text is drawn by the kit as the status line; fnbar's job, naming the selection, is
 	// the selected row's).
 	renderKit();
-    GLW::drawVersionTag();
+    if(!showservers) GLW::drawVersionTag();   // UX.3 (B3): home and the world list only; the server screens have a Back there
     if(AUTO_LOAD&&loading==0){
        
         

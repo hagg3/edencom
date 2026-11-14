@@ -69,6 +69,7 @@ struct MpConfig {
     bool joinBurst = true;      // send SIGNQ + REGION right behind JOIN, as retail does
     int regionX = 65536, regionZ = 65536;
     size_t worldQueueCapBytes = size_t(256) << 20;   // Q.6: this queue + setHeldBytes, across drains
+    size_t sideQueueCapBytes = size_t(4) << 20;      // QA.8 (A3-08): chat/peer/pong not yet drained
 };
 
 // Q.6 (F20): a session owned by a std::shared_ptr can be detach()ed: its thread keeps it alive and
@@ -105,6 +106,7 @@ public:
     void sendAction(int x, int y, int z, int mode, int extra = -1);
 
     static size_t eventBytes(const MpWorldEvent& w);   // Q.6: what one event counts against the cap
+    static size_t eventBytes(const MpSideEvent& e);    // QA.8: the side queue's cap
     size_t bytesReceived() const { return rxBytes_.load(); }
     size_t snapzRecords() const { return snapzRecs_.load(); }
     int connectMs() const { return connectMs_.load(); }
@@ -128,6 +130,7 @@ private:
 
     std::mutex mu_;                          // guards sideQ_, worldQ_, outQ_
     std::deque<MpSideEvent> sideQ_;
+    size_t sideBytes_ = 0;                   // QA.8: what sideQ_ holds, against sideQueueCapBytes
     std::deque<MpWorldEvent> worldQ_;
     std::string outQ_;
 

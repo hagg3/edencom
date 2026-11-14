@@ -30,7 +30,7 @@ statements like any other: `if 0 0 0 grass; video.fov 100`.
 `CmdScript::verbs()` / `findVerb()` hold one row per built-in verb in reference order: name, usage
 (`"X Y Z TYPE [COLOR]"`), the wording of its "needs" error when it isn't the usage (`spawn` → *a
 creature*, `time` → *T from 0 to 1*, `hurt/gold/sound/wait` → *a number*), a one-line help, and the
-argument kinds (`ARG_COORD/BLOCK/COLOR/CREATURE/NUMBER/TEXT`). The parser builds every *X needs …*
+argument kinds (`ARG_COORD/BLOCK/COLOR/CREATURE/NUMBER/TEXT`). Each row also names its `op` and its multiplayer `flags` (QA.20: `V_SAFE` runs in a session, `V_TIME` only with the Day/night cycle on, `V_EDITS_WORLD` never; `runLine` reads them via `CmdScript::stmtFlags`, and an op with no row is refused): a new verb must state its flags or `--console-selftest` fails. The parser builds every *X needs …*
 message from the row, so help, errors and (C.2) completion can't drift; `--console-selftest` checks
 that every row parses and that each bare verb's error is its row's. The messages are byte-identical to
 D.4c's (saved worlds' bad statements toast them).

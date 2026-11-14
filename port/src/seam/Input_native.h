@@ -20,5 +20,7 @@ int eden_native_input_debug_hold_active(void);
 // C.4: --ui-selftest / --shot pretend an on-screen keyboard (eden_text_input_keyboard_top()'s answer;
 // -2 = the platform's own again).
 void eden_native_debug_set_keyboard_top(float top);
+// UX.7: --ui-selftest's hover pointer (eden_ui_pointer()'s answer): valid 0/1 forces it, -1 = the real mouse.
+void eden_native_debug_set_pointer(float x, float yUp, int valid);
 
 #endif

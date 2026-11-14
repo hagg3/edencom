@@ -37,7 +37,8 @@ public:
     void close(Outcome o);
     bool isOpen() const      { return m_open; }
     Mode mode() const        { return m_mode; }
-    bool back();             // Escape: 1 = consumed (closes, discarding)
+    bool back();             // Escape / Back: 1 = consumed (closes; asks "Discard changes?" first when dirty(), UX.9)
+    bool dirty() const;      // any field differs from what the form opened with
     void update(float etime);
     void render();
 
@@ -61,6 +62,7 @@ private:
     ServerFormMenu& operator=(const ServerFormMenu&);
 
     void open(Mode m);
+    std::string snapshot() const;
     void layout();
     void validate();
     void save();
@@ -75,6 +77,7 @@ private:
     int   m_character;           // MODE_PROFILE: 0..6
     float m_builtU;
     Mode  m_builtMode;
+    std::string m_snap;          // snapshot() at open: dirty() compares against it
 
     GLW::Label      m_title;
     GLW::Button     m_back, m_save, m_del, m_up, m_down, m_join;

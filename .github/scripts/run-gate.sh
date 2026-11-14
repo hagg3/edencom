@@ -49,3 +49,35 @@ run_gate() {
   fi
   return "$rc"
 }
+
+# run_mutant <label> <fail-regex> <command> [args...]   (QA.11, audit A5-02)
+#
+# A mutation leg puts one fixed bug back and must see the gate go red FOR THAT BUG. "Exit non-zero"
+# alone is not that: a renamed hook, an unknown --*-mutate= name (exit 2), a missing fixture
+# (cwd not native/), a crash and a selftest broken for another reason all exit non-zero too, and
+# each used to read as "mutation caught". So all three must hold, else the leg is red:
+#   1. exit status exactly 1 (a selftest that ran and found failures; not 2 = unknown name or
+#      usage, not 127, not a signal death);
+#   2. the log has the `mutation: <name>` banner (the mode accepted the name: mutation_known());
+#   3. the log has a FAIL line matching <fail-regex> (the check the mutation is meant to trip).
+# <label> is `<mode>-<name>`; the banner is searched for as `mutation: <name>`. The log is
+# gate-mutant-<label>.log, tailed on a red leg.
+run_mutant() {
+  local label="$1" regex="$2"; shift 2
+  local name="${label##*-}"
+  local log="gate-mutant-$(printf '%s' "$label" | tr -c 'A-Za-z0-9' '-').log"
+  local rc=0 why=""
+  "$@" > "$log" 2>&1 || rc=$?
+  if   [ "$rc" -eq 0 ]; then why="PASSED: the gate cannot see that mutation"
+  elif [ "$rc" -ne 1 ]; then why="exited $rc, not 1 (2 = unknown mutation name, >128 = crash): not a caught mutation"
+  elif ! grep -Eq "mutation: $name\$" "$log"; then why="no 'mutation: $name' banner: the mode did not run the mutation"
+  elif ! grep -E ' FAIL' "$log" | grep -Eq "$regex"; then why="failed, but no FAIL line matches /$regex/: caught by the wrong check"
+  fi
+  if [ -z "$why" ]; then
+    echo "mutant $label — caught ($(grep -E ' FAIL' "$log" | grep -Ec "$regex") matching FAIL line(s))"
+    return 0
+  fi
+  echo "::error::mutant $label — $why"
+  echo "::group::mutant $label — log"; grep -v "^Texture2D" "$log" | tail -n 60; echo "::endgroup::"
+  return 1
+}

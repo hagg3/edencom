@@ -7,6 +7,7 @@
 //
 
 #include "World.h"
+#include "Hotbar.h"
 #include "OpenGL_Internal.h"
 #include "Model.h"
 #include "Globals.h"
@@ -23,6 +24,8 @@
 #include "MpWorld.h"       // MP.3a: the session world
 #include <iostream>
 #include <pthread.h>
+#include <thread>
+#include <chrono>
 #include "port/src/shim/foundation/platform_shims.h"   // eden_platform_now_ms, eden_platform_bundle_root
 
 #include "VKeyboard.h"
@@ -39,6 +42,8 @@
 // below for why the engine's own state machine now consults it. Only linked when the web seam
 // sources are built; a from-scratch iOS build would need its own stub.
 extern "C" int eden_load_failed(void);
+extern "C" void eden_load_failed_clear(void);
+extern "C" const char* eden_load_failed_reason(void);
 // Web port hook (port/src/seam/DisplayProfile.cpp) — ROADMAP Phase M / M5.3. Non-zero when the
 // page has flagged this device as too RAM-poor for the port's 256z ("New Dawn") worlds. loadWorld
 // below refuses such a world through the same eden_report_load_failure() channel a corrupt save
@@ -337,9 +342,11 @@ World::World(){
    
 }*/
 //extern "C" loadWorldThread(void* ptr);
+int g_load_thread_delay_ms=0;   // QA.7 test hook (--mods-selftest leg 9): hold the load thread so a read on the load's first frame is caught
 void* loadWorldThread(void* ptr){
+    if(g_load_thread_delay_ms>0) std::this_thread::sleep_for(std::chrono::milliseconds(g_load_thread_delay_ms));
     World::getWorld->terrain->loadTerrain(*(const std::string*)ptr,true);   // G.2b-2: World::loadWorld's static copy
-    World::getWorld->doneLoading=2;
+    World::getWorld->doneLoading.store(2,std::memory_order_release);   // QA.7: publishes everything the load wrote
     
     return NULL;
 }
@@ -394,6 +401,7 @@ void World::loadWorld(const std::string& nameIn){
             }
         }
         doneLoading=1;
+        eden_load_failed_clear();   // QA.6: a failed load no longer blocks every later one (the flag was sticky)
         // K.2-4 (data-driven-content plan D6): mod packs load at world entry, here on the main thread before
         // the load pthread starts (FileManager::loadWorld resolves the palette against their definitions; the
         // atlas re-upload is GL). Adding or removing a pack takes effect at the next world load. A
@@ -443,9 +451,20 @@ void World::loadWorld(const std::string& nameIn){
             // G.2b-2: one load at a time, so one static copy outlives the thread (was the NSString*).
             static std::string threadName;
             threadName=name;
-            pthread_create(&foo,NULL,loadWorldThread, &threadName);
-           // std::thread first (loadWorldThread,name);
-            //[NSThread detachNewThreadSelector:@selector(loadWorldThread:) toTarget:self withObject:name];
+            // QA.7 (A2-03): the handle is kept and joined in the doneLoading==2 branch below (and at
+            // quit: QA.14 kept the join rather than detach, a joined thread cannot outlive main()). If no thread
+            // can be made, load inline as LOW_MEM_DEVICE does, rather than wait for a 2 that never comes.
+            // QA.14: a threaded load leaves the main thread's part to fm->finishLoadOnMain() (below).
+            fm->loadOnThread=true;
+            int err=pthread_create(&foo,NULL,loadWorldThread, &threadName);
+            if(err==0){
+                loadThread=foo;
+                loadThreadLive=true;
+            }else{
+                fprintf(stderr,"emod: could not start the world-load thread (error %d), loading inline\n",err);
+                fm->loadOnThread=false;
+                loadWorldThread(&threadName);
+            }
         }
         
         
@@ -468,6 +487,9 @@ void World::loadWorld(const std::string& nameIn){
         
         if(doneLoading==2){
          //   printg("done loading !\n");
+            joinLoadThread();   // QA.7: it has stored 2 and is returning; reap it (was never joined: 16 KB a load)
+            bool threaded=fm->loadOnThread;
+            fm->loadOnThread=false;
 
             // FileManager::loadWorld() (called on the loadWorldThread pthread this doneLoading==2
             // is waiting on) bails out early -- terrain cleared, nothing read -- when the save's
@@ -482,9 +504,14 @@ void World::loadWorld(const std::string& nameIn){
             // again next frame and retries the same doomed load forever.
             if(eden_load_failed()){
                 doneLoading=0;
+                modsNoticePending=false;
                 menu->loading=0;
+                menu->sbar->setStatus(strf("Could not load this world: %s",eden_load_failed_reason()),300);   // QA.6
                 return;
             }
+            // QA.14 (A2-03): what the load thread no longer does: a new world's first save and the
+            // input/effects/HUD resets (the player's reset is below, where it always was).
+            if(threaded)fm->finishLoadOnMain();
 
             if(!LOW_MEM_DEVICE){
             menu->deactivate();
@@ -493,6 +520,10 @@ void World::loadWorld(const std::string& nameIn){
             }
             
             Resources::getResources->loadGameAssets();
+            if(modsNoticePending){   // QA.7 (A2-04): the palette is this world's now (was read on the load's first frame)
+                modsNoticePending=false;
+                showModsNotice();
+            }
             
             // Stage S / S.5: this world was just converted from a `.eden` -- ask what to do with it.
             // Skipped (original kept, hidden as paired) by EDEN_CONVERT_PROMPT=0, which headless
@@ -525,10 +556,20 @@ void World::loadWorld(const std::string& nameIn){
     }
 	
 }
+// QA.14: the load thread is joined, never detached: here at the end of a load, and from the port's
+// quit path (eden_world_load_join), where it waits out a load in flight so main() does not return
+// (static destructors, SDL_Quit) under a thread still filling the window.
+void World::joinLoadThread(){
+    if(loadThreadLive){
+        pthread_join(loadThread,NULL);
+        loadThreadLive=false;
+    }
+}
 void World::exitToMenu(){
     exit_to_menu=false;
    // printg("hihihi\n");
 	terrain->unloadTerrain(true);
+    Hotbar::get().saveIfDirty();   // UX.8-3: a bar changed since the last save
     fm->closeWorld();   // Stage S: release the `.emod` store (after unloadTerrain saved into it)
     if(CREATURES_ON||MpWorld::active()){
         UnloadModels();
@@ -656,6 +697,20 @@ static void f3_drive(World* w){
 static inline void f3_drive(World*){}
 #endif
 
+// K.3-6: the world is in; its palette names the mods it uses. QA.7 (A2-04): called from loadWorld's
+// doneLoading==2 success branch, after the load thread has been joined (it ran on the load's first
+// frame, racing the thread's BlockRegistry::resetWorld and reporting the previous world's mods).
+void World::showModsNotice(){
+    std::string off;
+    int n=0;
+    for(const ContentPack::WorldMod& wm:ContentPack::worldMods(fm->documents)){
+        if(wm.state==ContentPack::WMOD_LOADED) continue;
+        if(n++) off+=", ";
+        off+=wm.id;
+    }
+    if(n) hud->sb->setStatus("This world uses mods that are off or missing: "+off,6);
+}
+
 bool World::update(float etime){
     f3_frame_begin();
     f3_drive(this);
@@ -671,17 +726,6 @@ bool World::update(float etime){
         return false;
     }
     realtime=etime;
-    if(modsNoticePending){   // K.3-6: the world is in; its palette names the mods it uses
-        modsNoticePending=false;
-        std::string off;
-        int n=0;
-        for(const ContentPack::WorldMod& wm:ContentPack::worldMods(fm->documents)){
-            if(wm.state==ContentPack::WMOD_LOADED) continue;
-            if(n++) off+=", ";
-            off+=wm.id;
-        }
-        if(n) hud->sb->setStatus("This world uses mods that are off or missing: "+off,6);
-    }
    // NSLog(@"Hi");
 	if(menu->is_sharing!=1){
 	/*if([UIDevice currentDevice].orientation==UIDeviceOrientationLandscapeRight){

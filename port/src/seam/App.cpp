@@ -18,7 +18,8 @@
 #include "AppLifecycle.h"
 
 extern "C" void eden_native_gl_present(void);
-extern "C" void eden_native_apply_display_mode(void);   // src/seam/DisplayMode_native.cpp
+extern "C" void eden_native_apply_display_mode(void);
+extern "C" void eden_window_apply_pending(void);   // WindowState_native.cpp (UX.5)   // src/seam/DisplayMode_native.cpp
 // The C pool seam (AutoreleasePool_native.cpp): on Apple the frame still reaches seam ObjC (AppleNet,
 // AppleAudio, IOSKeyboard) that may autorelease; elsewhere it is a no-op (G.3).
 extern "C" void* eden_autoreleasepool_push(void);
@@ -46,6 +47,7 @@ void App::boot() {
     // DERIVED (window aspect x ui_scale) by DisplayProfile.cpp; this asks DisplayMode_native.cpp to
     // hand it the shape of the real window and fit the drawable to the aspect it chose.
     eden_native_apply_display_mode();
+    eden_window_apply_pending();   // UX.5: the saved Fullscreen setting, now there is a window
     // 2. The world. LOW_GRAPHICS/LOW_MEM_DEVICE stay at their zero-initialised "best graphics" default.
     g_app = new App();
     g_app->world = new World();

@@ -47,7 +47,6 @@ extern "C" void eden_render_pass_mark(int pass, int begin) {
 
 extern "C" int eden_render_pass_depth(void) { return g_depth; }
 extern "C" int eden_render_pass_innermost(void) { return g_depth > 0 ? g_open[g_depth - 1] : -1; }
-extern "C" int eden_render_pass_is_open(int pass) { return open(pass) ? 1 : 0; }
 extern "C" int eden_render_pass_unbalanced(void) { return g_unbalanced; }
 extern "C" void eden_render_pass_reset(void) { g_depth = 0; g_overflow = 0; g_unbalanced = 0; }
 
@@ -86,7 +85,6 @@ extern "C" const char* eden_render_category_name(int bit) {
 }
 
 extern "C" void eden_render_set_draw_mask(unsigned mask) { g_mask = mask; }
-extern "C" unsigned eden_render_draw_mask(void) { return g_mask; }
 extern "C" int eden_render_mask_active(void) { return g_mask != EDEN_RC_ALL ? 1 : 0; }
 
 extern "C" int eden_render_draw_allowed(void) {

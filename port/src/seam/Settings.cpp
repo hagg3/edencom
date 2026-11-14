@@ -6,30 +6,28 @@
 // button. It is not extensible — every row is a hand-placed texture and a hard-coded `if` in both
 // update() and render() — and there is nowhere to put a slider at all.
 //
-// So the DATA half of that class is kept and the UI half is replaced:
-//   * KEPT, untouched: `SettingsMenu::{load,save,getNewWorldName}` and its `properties[]` array.
-//     Those own the engine-visible meaning of every toggle (Resources::playmusic, Player::
-//     autojump_option/health_option, CREATURES_ON, ...) and the prefs round-trip (eden_prefs). This
-//     file WRITES `properties[i].value` and then calls the engine's own `save()`, so the engine
-//     applies its own settings exactly as it always did.
-//   * REPLACED: the GL panel is the engine's own SettingsMenu screen over this table; the retired web
-//     build --wrap'd `update`/`render` to no-ops under a DOM panel (docs/web-port-archive.md).
+// Every setting, the stock five (Health, Auto-jump, Creatures, Sound effects, Music) included, is one
+// row of kSettings[] (what it looks like) plus one entry of kBindings[] (what its value does: a float
+// it is copied to, an apply hook, or both). QA.19 replaced the 80-branch strcmp chain and the stock
+// rows' second store (SettingsMenu::properties[]/save(), whose load() stomped port rows) with that
+// table; a value row without a binding fails eden_settings_check_bindings (--console-selftest).
 //
-// The port's OWN preferences (sensitivity, FOV, volumes, block preview, ...) live here too, in one
-// table with the engine ones, because a settings screen split across two models would drift. The
-// JS side (public/eden-settings.js) renders whatever `eden_settings_schema()` describes and knows
-// nothing about which half a row belongs to.
-//
-// PERSISTENCE is eden_prefs for everything (G.2b-1; NSUserDefaults before) — the engine rows through
-// `SettingsMenu::save()`, the port rows written here directly. One flat file on every target, so both
-// halves survive a relaunch with one mechanism (see src/shim/foundation/eden_prefs.h).
+// PERSISTENCE is eden_prefs for everything (G.2b-1; NSUserDefaults before): a row's value in
+// thousandths under its key, except the stock five, which keep stock 2.1's names and 0/1 ints
+// ("Health", "Autojump", "Creatures", "Sound effects", "Music": SettingBinding::stock) so existing
+// prefs files read back. SettingsMenu::load() still reads those five once at construction, through
+// eden_settings_boot_stock(), so the title tune obeys Music before this model loads.
 #include "../shim/foundation/eden_base.h"
 #include "../shim/foundation/eden_image.h"
 #include "../shim/foundation/eden_prefs.h"
+#include "eden_settings.h"   // QA.19: the accessors below, declared once
 #include "../../../Classes/World.h"
 #include "../../../Classes/Menu.h"
 #include "../../../Classes/SettingsMenu.h"
 #include "../../../Classes/Resources.h"
+#include "../../../Classes/Player.h"        // QA.19: health/autojump/invert_look targets
+#include "../../../Classes/MpWorld.h"       // QA.19: creatures (MpWorld::gateCreatures)
+#include "../../../Classes/Globals.h"       // CREATURES_ON
 #include "../../../Classes/Input.h"
 #include "../../../Classes/SimpleAudioEngine.h"
 #include "../../../Classes/Shadow.h"          // H.2: the shadows row
@@ -46,23 +44,10 @@
 #include "../../../Classes/Weather.h"     // SX.6: snowline / mistheight
 #include "../../../Classes/TouchLook.h"   // Stage L: TOUCH_LOOK_* globals the touch_look_* rows write
 
-// Mirrors the anonymous enum at the top of Classes/SettingsMenu.mm. Those constants are file-local
-// there, so the indexes are duplicated — same situation as Player's `usage_id` in Input.cpp. If
-// they ever change, the engine toggles silently address the wrong row; the labels below are the
-// canary (they are the engine's own `pnames[]` strings).
-enum {
-    ENG_CREATURES = 0,
-    ENG_AUTOJUMP  = 1,
-    ENG_HEALTH    = 2,
-    ENG_SOUND     = 3,
-    ENG_MUSIC     = 4,
-};
-
 // ---------------------------------------------------------------------------------------------
 // The schema. Order here IS the display order; `group` drives the section headings in the panel.
 // `kind`: 0 = toggle (0/1), 1 = range, 2 = enum (a small label list, value is the 0-based index
-// into `options`). `engine` >= 0 means the value lives in SettingsMenu::properties[engine]; -1
-// means this file owns it.
+// into `options`). What a row's value does is its kBindings[] entry (QA.19), further down.
 // ---------------------------------------------------------------------------------------------
 // KIND_KEY (3) is NOT used by any kSettings[] row — it is the row-kind constant the GL keybinds
 // screen dispatches on, and it lives here so the kind space stays one enumeration. See the
@@ -87,7 +72,6 @@ struct Setting {
     const char* label;
     const char* group;
     int   kind;
-    int   engine;         // index into SettingsMenu::properties[], or -1
     float min, max, step;
     float def;
     const char* hint;     // one line of explanation, shown under the control
@@ -103,86 +87,87 @@ struct Setting {
 };
 
 static const Setting kSettings[] = {
-  // key                 label                group        kind         engine        min  max  step  def   hint                                                                options
-  { "health",            "Health",            "Gameplay",  KIND_TOGGLE, ENG_HEALTH,     0,   1,   1,   1,  "Falls, fire and creatures hurt.",                     NULL },
-  { "autojump",          "Auto-jump",         "Gameplay",  KIND_TOGGLE, ENG_AUTOJUMP,   0,   1,   1,   1,  NULL,                            NULL },
-  { "creatures",         "Creatures",         "Gameplay",  KIND_TOGGLE, ENG_CREATURES,  0,   1,   1,   1,  NULL,                       NULL },
-  { "crouch",            "Crouch mode",       "Experiments", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Adds a crouch key for 1-block gaps.", NULL, NULL, "Gameplay" },
+  // key                 label                group        kind         min  max  step  def   hint                                                                options
+  { "health",            "Health",            "Gameplay",  KIND_TOGGLE, 0,   1,   1,   1,  "Falls, fire and creatures hurt.",                     NULL },
+  { "autojump",          "Auto-jump",         "Gameplay",  KIND_TOGGLE, 0,   1,   1,   1,  NULL,                            NULL },
+  { "creatures",         "Creatures",         "Gameplay",  KIND_TOGGLE, 0,   1,   1,   1,  NULL,                       NULL },
+  { "crouch",            "Crouch mode",       "Experiments", KIND_TOGGLE, 0,   1,   1,   0,  "Adds a crouch key for 1-block gaps.", NULL, NULL, "Gameplay" },
+  { "hotbar",            "Hotbar",            "Gameplay",  KIND_TOGGLE, 0,   1,   1,   1,  "Nine quick slots for blocks and colours.", NULL },
   // Fly mode lives in Gameplay (was Experiments). The four sliders default to the original feel
   // (accel 10x walk, drag .995/frame, rise/fall JUMP_SPEED*3, no speed cap); see FLY_* in Classes/Player.mm.
-  { "fly",               "Allow fly",         "Gameplay",  KIND_TOGGLE, -1,             0,   1,   1,   0,  NULL,                   NULL },
-  { "fly_accel",         "Fly acceleration",  "Gameplay",  KIND_RANGE,  -1,          .05f,   1, .05f,   1,  "Lower is gentler and easier to hold still.", NULL, "fly" },
-  { "fly_max_speed",     "Fly top speed",     "Gameplay",  KIND_RANGE,  -1,             0, 100,   1,   0,  "Blocks per second. 0 is unlimited.", NULL, "fly" },
-  { "fly_braking",       "Fly braking",       "Gameplay",  KIND_RANGE,  -1,             0,   1, .05f,   0,  "Higher stops sooner when you let go.", NULL, "fly" },
-  { "fly_vertical",      "Fly rise/fall speed", "Gameplay", KIND_RANGE, -1,          .05f,   1, .05f,   1,  NULL, NULL, "fly" },
-  { "noclip_speed",      "Noclip speed",      "Gameplay",  KIND_RANGE,  -1,            10, 100,   5,  60,  "Blocks per second while noclipping.", NULL, "fly" },
-  { "heading_world_all", "All worlds", "World", KIND_HEADING, -1, 0, 0, 0, 0, NULL, NULL },
-  { "day_night_cycle",   "Day/night cycle",   "Gameplay", KIND_TOGGLE, -1,           0,   1,   1,   0,  "The sky and light follow a clock. Overrides sky painting.", NULL, NULL, "World" },
-  { "day_length",        "Day length",        "Gameplay", KIND_ENUM,   -1,           0,   3,   1,   1,  "Real minutes per full day.", "10 min,20 min,40 min,60 min", "day_night_cycle", "World" },
+  { "fly",               "Allow fly",         "Gameplay",  KIND_TOGGLE, 0,   1,   1,   0,  NULL,                   NULL },
+  { "fly_accel",         "Fly acceleration",  "Gameplay",  KIND_RANGE,  .05f,   1, .05f,   1,  "Lower is gentler and easier to hold still.", NULL, "fly" },
+  { "fly_max_speed",     "Fly top speed",     "Gameplay",  KIND_RANGE,  0, 100,   1,   0,  "Blocks per second. 0 is unlimited.", NULL, "fly" },
+  { "fly_braking",       "Fly braking",       "Gameplay",  KIND_RANGE,  0,   1, .05f,   0,  "Higher stops sooner when you let go.", NULL, "fly" },
+  { "fly_vertical",      "Fly rise/fall speed", "Gameplay", KIND_RANGE, .05f,   1, .05f,   1,  NULL, NULL, "fly" },
+  { "noclip_speed",      "Noclip speed",      "Gameplay",  KIND_RANGE,  10, 100,   5,  60,  "Blocks per second while noclipping.", NULL, "fly" },
+  { "heading_world_all", "All worlds", "World", KIND_HEADING, 0, 0, 0, 0, NULL, NULL },
+  { "day_night_cycle",   "Day/night cycle",   "Gameplay", KIND_TOGGLE, 0,   1,   1,   0,  "The sky and light follow a clock. Overrides sky painting.", NULL, NULL, "World" },
+  { "day_length",        "Day length",        "Gameplay", KIND_ENUM,   0,   3,   1,   1,  "Real minutes per full day.", "10 min,20 min,40 min,60 min", "day_night_cycle", "World" },
   // AT.1a (WORKING/atmosphere-plan-2026-11-05.md A6): random rain/snow/storms/mist. Works with the cycle off.
   // Classes/Weather (AT.1b) reads eden_weather_enabled(); off = nothing runs, nothing is saved.
-  { "weather",           "Weather",           "Gameplay", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Rain, snow, storms and mist come and go.", NULL, NULL, "World" },
+  { "weather",           "Weather",           "Gameplay", KIND_TOGGLE, 0,   1,   1,   0,  "Rain, snow, storms and mist come and go.", NULL, NULL, "World" },
   // SX.9: how often (clear spells' length) and how often storms follow rain; Normal = the plan's shares.
-  { "frequency",         "Weather frequency", "Weather", KIND_ENUM, -1,              0,   2,   1,   1,  "How often it rains or snows. Normal is about 4 days in 10 overcast or wet.", "Rare,Normal,Often", "weather", "World" },
-  { "storms",            "Storms",            "Weather", KIND_ENUM, -1,              0,   3,   1,   2,  "How often rain turns into a thunderstorm.", "Off,Rare,Normal,Often", "weather", "World" },
-  { "weather_tuning_open", "Weather tuning",  "World", KIND_PAGE, -1,                0,   0,   0,   0,  "Snowline and mist height.", "weathertune", "weather" },
+  { "frequency",         "Weather frequency", "Weather", KIND_ENUM, 0,   2,   1,   1,  "How often it rains or snows. Normal is about 4 days in 10 overcast or wet.", "Rare,Normal,Often", "weather", "World" },
+  { "storms",            "Storms",            "Weather", KIND_ENUM, 0,   3,   1,   2,  "How often rain turns into a thunderstorm.", "Off,Rare,Normal,Often", "weather", "World" },
+  { "weather_tuning_open", "Weather tuning",  "World", KIND_PAGE, 0,   0,   0,   0,  "Snowline and mist height.", "weathertune", "weather" },
   // SX.6: the open world's own clock and weather (audit §4.3), through their cvars. Saved with the world at its
   // next save (records SKY_CLOCK, WEATHER); in a multiplayer session they only change this device's view (U3).
-  { "heading_world_this", "This world", "World", KIND_HEADING, -1, 0, 0, 0, 0, "Saved with this world.", NULL, NULL, NULL, SCOPE_WORLD },
-  { "heading_world_none", "This world", "World", KIND_HEADING, -1, 0, 0, 0, 0, "Open a world to change its time and weather.", NULL, NULL, NULL, SCOPE_NO_WORLD },
-  { "world_time",        "Time of day",       "World", KIND_CVAR, -1,                0,   0,   0,   0,  "Sets this world's clock. Noon is 12:00.", "world.time", NULL, NULL, SCOPE_WORLD },
-  { "world_locktime",    "Lock time of day",  "World", KIND_CVAR, -1,                0,   0,   0,   0,  "Keeps this world's clock still.", "world.locktime", "day_night_cycle", NULL, SCOPE_WORLD },
-  { "weather_now",       "Weather now",       "World", KIND_CVAR, -1,                0,   0,   0,   0,  "Starts that weather here now.", "weather.now", "weather", NULL, SCOPE_WORLD },
-  { "weather_lock",      "Lock weather",      "World", KIND_CVAR, -1,                0,   0,   0,   0,  "The current weather never ends.", "weather.lock", "weather", NULL, SCOPE_WORLD },
+  { "heading_world_this", "This world", "World", KIND_HEADING, 0, 0, 0, 0, "Saved with this world.", NULL, NULL, NULL, SCOPE_WORLD },
+  { "heading_world_none", "This world", "World", KIND_HEADING, 0, 0, 0, 0, "Open a world to change its time and weather.", NULL, NULL, NULL, SCOPE_NO_WORLD },
+  { "world_time",        "Time of day",       "World", KIND_CVAR, 0,   0,   0,   0,  "Sets this world's clock. Noon is 12:00.", "world.time", NULL, NULL, SCOPE_WORLD },
+  { "world_locktime",    "Lock time of day",  "World", KIND_CVAR, 0,   0,   0,   0,  "Keeps this world's clock still.", "world.locktime", "day_night_cycle", NULL, SCOPE_WORLD },
+  { "weather_now",       "Weather now",       "World", KIND_CVAR, 0,   0,   0,   0,  "Starts that weather here now.", "weather.now", "weather", NULL, SCOPE_WORLD },
+  { "weather_lock",      "Lock weather",      "World", KIND_CVAR, 0,   0,   0,   0,  "The current weather never ends.", "weather.lock", "weather", NULL, SCOPE_WORLD },
   // SX.6: World > Weather tuning. Group "Weather" makes them the weather.snowline / weather.mistheight cvars
   // (they were hand-made cvars holding session values; now persisted like any setting, for all worlds).
-  { "snowline",          "Snowline",          "Weather", KIND_RANGE, -1,             0,   1, .05f, .75f, "Snow falls at and above this share of the world height. The default map's snow mountain always snows.", NULL, NULL, "weathertune" },
-  { "mistheight",        "Mist height",       "Weather", KIND_RANGE, -1,             0,   1, .05f, .40f, "Top of the valley mist at dawn and in rain, as a share of the world height. Atmosphere High only.", NULL, NULL, "weathertune" },
+  { "snowline",          "Snowline",          "Weather", KIND_RANGE, 0,   1, .05f, .75f, "Snow falls at and above this share of the world height. The default map's snow mountain always snows.", NULL, NULL, "weathertune" },
+  { "mistheight",        "Mist height",       "Weather", KIND_RANGE, 0,   1, .05f, .40f, "Top of the valley mist at dawn and in rain, as a share of the world height. Atmosphere High only.", NULL, NULL, "weathertune" },
 
   // SX.3: two clean trees. Ambience beds follow the Music toggle (Resources::soundEventBed), so they are Music children (U7).
-  { "master_volume",     "Master volume",     "Audio",     KIND_RANGE,  -1,             0,   1, .05f,  1,  "Overall loudness, on top of the sliders below.",                  NULL },
-  { "mute_in_background", "Mute in background", "Audio",   KIND_TOGGLE, -1,             0,   1,   1,   0,  "Silence the game while its window is not in focus.",            NULL },
-  { "music",             "Music",             "Audio",     KIND_TOGGLE, ENG_MUSIC,      0,   1,   1,   1,  NULL,                                                               NULL },
-  { "music_volume",      "Music volume",      "Audio",     KIND_RANGE,  -1,             0,   1, .05f,  1,  NULL,                                                               NULL, "music" },
-  { "ambience_volume",   "Ambience volume",   "Audio",     KIND_RANGE,  -1,             0,   1, .05f,  1,  NULL,                                                               NULL, "music" },
-  { "night_ambience", "Night ambience", "Audio", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Night sounds; needs the day/night cycle.", NULL, "music" },
-  { "sound",             "Sound effects",     "Audio",     KIND_TOGGLE, ENG_SOUND,      0,   1,   1,   1,  NULL,                                                               NULL },
-  { "effects_volume",    "Effects volume",    "Audio",     KIND_RANGE,  -1,             0,   1, .05f,  1,  NULL,                                                               NULL, "sound" },
-  { "creature_walk_voices", "Creature walking sounds", "Audio", KIND_TOGGLE, -1,  0,   1,   1,   0,  "Creatures call out as they start walking.", NULL, "sound" },
-  { "touch_controls_sound", "Touch controls sound", "Audio", KIND_TOGGLE, -1,           0,   1,   1,   0,  NULL, NULL },
+  { "master_volume",     "Master volume",     "Audio",     KIND_RANGE,  0,   1, .05f,  1,  "Overall loudness, on top of the sliders below.",                  NULL },
+  { "mute_in_background", "Mute in background", "Audio",   KIND_TOGGLE, 0,   1,   1,   0,  "Silence the game while its window is not in focus.",            NULL },
+  { "music",             "Music",             "Audio",     KIND_TOGGLE, 0,   1,   1,   1,  NULL,                                                               NULL },
+  { "music_volume",      "Music volume",      "Audio",     KIND_RANGE,  0,   1, .05f,  1,  NULL,                                                               NULL, "music" },
+  { "ambience_volume",   "Ambience volume",   "Audio",     KIND_RANGE,  0,   1, .05f,  1,  NULL,                                                               NULL, "music" },
+  { "night_ambience", "Night ambience", "Audio", KIND_TOGGLE, 0,   1,   1,   0,  "Night sounds; needs the day/night cycle.", NULL, "music" },
+  { "sound",             "Sound effects",     "Audio",     KIND_TOGGLE, 0,   1,   1,   1,  NULL,                                                               NULL },
+  { "effects_volume",    "Effects volume",    "Audio",     KIND_RANGE,  0,   1, .05f,  1,  NULL,                                                               NULL, "sound" },
+  { "creature_walk_voices", "Creature walking sounds", "Audio", KIND_TOGGLE, 0,   1,   1,   0,  "Creatures call out as they start walking.", NULL, "sound" },
+  { "touch_controls_sound", "Touch controls sound", "Audio", KIND_TOGGLE, 0,   1,   1,   0,  NULL, NULL },
 
   // input_mode: 0=Auto (matchMedia + first-input detection, see eden-st.html), 1=Touch,
   // 2=Keyboard+Mouse. Auto is the default so nothing changes for players who never open Settings.
-  { "input_mode",        "Input mode",        "Controls",  KIND_ENUM,   -1,             0,   2,   1,   0,  "Force one if Auto guesses wrong. Menus work in every mode.", "Auto,Touch,Keyboard+Mouse" },
-  { "hold_to_act",       "Hold to mine/build", "Controls",  KIND_TOGGLE, -1,            0,   1,   1,   1,  "Repeat while the button is held.", NULL },
-  { "mouse_sensitivity", "Mouse sensitivity", "Controls",  KIND_RANGE,  -1,          .25f,  3, .05f,  1,  NULL,                         NULL },
-  { "mouse_sensitivity_y", "Mouse sensitivity (Y)", "Controls", KIND_RANGE, -1,      .25f,  3, .05f,  1,  "Vertical, separate from horizontal.",  NULL },
-  { "invert_look",       "Invert look",       "Controls",  KIND_TOGGLE, -1,             0,   1,   1,   0,  NULL,                                                               NULL },
+  { "input_mode",        "Input mode",        "Controls",  KIND_ENUM,   0,   2,   1,   0,  "Force one if Auto guesses wrong. Menus work in every mode.", "Auto,Touch,Keyboard+Mouse" },
+  { "hold_to_act",       "Hold to mine/build", "Controls",  KIND_TOGGLE, 0,   1,   1,   1,  "Repeat while the button is held.", NULL },
+  { "mouse_sensitivity", "Mouse sensitivity", "Controls",  KIND_RANGE,  .25f,  3, .05f,  1,  NULL,                         NULL },
+  { "mouse_sensitivity_y", "Mouse sensitivity (Y)", "Controls", KIND_RANGE, .25f,  3, .05f,  1,  "Vertical, separate from horizontal.",  NULL },
+  { "invert_look",       "Invert look",       "Controls",  KIND_TOGGLE, 0,   1,   1,   0,  NULL,                                                               NULL },
   // Stage L: touch drag-camera rows (Classes/TouchLook.h). Shown only with touch input; the mouse rows are
   // hidden then (eden_settings_native_hidden). Smoothing 0 = raw exactly. Glide is a half-life in seconds, 0 = off (default).
-  { "touch_look_speed",  "Touch look speed",  "Controls",  KIND_RANGE,  -1,          .25f,  3, .05f,  1,  "Drag camera, left-right.", NULL },
-  { "touch_look_speed_y", "Touch look speed (Y)", "Controls", KIND_RANGE, -1,        .25f,  3, .05f,  1,  "Drag camera, up-down.", NULL },
-  { "touch_look_smoothing", "Touch look smoothing", "Controls", KIND_RANGE, -1,       0,   1, .05f, .2f, "0 follows your finger exactly.", NULL },
-  { "touch_look_glide", "Touch look glide", "Controls", KIND_RANGE, -1,               0, .6f, .05f,  0,  "Camera keeps turning after you lift your finger. 0 stops at once.", NULL },
+  { "touch_look_speed",  "Touch look speed",  "Controls",  KIND_RANGE,  .25f,  3, .05f,  1,  "Drag camera, left-right.", NULL },
+  { "touch_look_speed_y", "Touch look speed (Y)", "Controls", KIND_RANGE, .25f,  3, .05f,  1,  "Drag camera, up-down.", NULL },
+  { "touch_look_smoothing", "Touch look smoothing", "Controls", KIND_RANGE, 0,   1, .05f, .2f, "0 follows your finger exactly.", NULL },
+  { "touch_look_glide", "Touch look glide", "Controls", KIND_RANGE, 0, .6f, .05f,  0,  "Camera keeps turning after you lift your finger. 0 stops at once.", NULL },
   // Row #24 (gamepad). Two translators read these now — public/eden-gamepad.js on web and
   // port/src/seam/Input_native.cpp (Phase N Stage 2) on native — both of them pure translators
   // over the existing input entry points. The rows deliberately do
   // not touch the engine (engine >= 0). ON by default because the module is inert until a pad is
   // actually connected AND has been interacted with, so it costs a disconnected player nothing.
-  { "gamepad",           "Gamepad",           "Controls",  KIND_TOGGLE, -1,             0,   1,   1,   1,  "Use a connected controller.", NULL },
-  { "gamepad_look_sensitivity", "Gamepad look speed", "Controls", KIND_RANGE, -1,     .25f,  3, .05f,  1,  NULL,        NULL, "gamepad" },
-  { "gamepad_deadzone",  "Gamepad deadzone",  "Controls",  KIND_RANGE,  -1,          .05f, .5f, .05f, .15f, "Raise it if the camera drifts.", NULL, "gamepad" },
+  { "gamepad",           "Gamepad",           "Controls",  KIND_TOGGLE, 0,   1,   1,   1,  "Use a connected controller.", NULL },
+  { "gamepad_look_sensitivity", "Gamepad look speed", "Controls", KIND_RANGE, .25f,  3, .05f,  1,  NULL,        NULL, "gamepad" },
+  { "gamepad_deadzone",  "Gamepad deadzone",  "Controls",  KIND_RANGE,  .05f, .5f, .05f, .15f, "Raise it if the camera drifts.", NULL, "gamepad" },
 
-  { "heading_video_quality", "Quality", "Video", KIND_HEADING, -1, 0, 0, 0, 0, NULL, NULL },
+  { "heading_video_quality", "Quality", "Video", KIND_HEADING, 0, 0, 0, 0, NULL, NULL },
   // B.8: a shortcut over view_distance + render_scale (see kPresets[]). Stored like any row, but
   // moving either knob by hand drops it to Custom. Default reproduces the pre-B.8 look exactly.
 #if defined(EDEN_PLATFORM_IOS)
-  { "graphics_preset",   "Graphics preset",   "Video",     KIND_ENUM,   -1,             0,   3,   1,   2,  "Sets view distance, render scale and atmosphere.", "Custom,Low,Default,High" },
+  { "graphics_preset",   "Graphics preset",   "Video",     KIND_ENUM,   0,   3,   1,   2,  "Sets view distance, render scale and atmosphere.", "Custom,Low,Default,High" },
 #else
-  { "graphics_preset",   "Graphics preset",   "Video",     KIND_ENUM,   -1,             0,   3,   1,   2,  "Sets view distance, render scale and atmosphere.", "Custom,Low,Default,High" },
+  { "graphics_preset",   "Graphics preset",   "Video",     KIND_ENUM,   0,   3,   1,   2,  "Sets view distance, render scale and atmosphere.", "Custom,Low,Default,High" },
 #endif
   // B.5a: draw-culling only (Graphics::setZFAR); a "less" knob for weak CPUs/GPUs. Auto = the per-device value.
-  { "view_distance",     "View distance",     "Video",     KIND_ENUM,   -1,             0,   6,   1,   0,  "How far terrain is drawn. Lower is faster.", "Auto,4,5,6,7,8,9" },
+  { "view_distance",     "View distance",     "Video",     KIND_ENUM,   0,   6,   1,   0,  "How far terrain is drawn. Lower is faster.", "Auto,4,5,6,7,8,9" },
   // B.5b-2: the resident window's radius in chunks (kRenderRadius[] below), read once per world
   // entry by eden_window_radius_for_world() -- the arrays are sized from it, so it cannot change
   // under an open world. 9 is stock. iOS offers 12 at most, opt-in (P.4 decision 5): T.B16 measured
@@ -191,9 +176,9 @@ static const Setting kSettings[] = {
   // INDEX, so prepending options needed a new key: "render_radius" replaced "render_distance" (9,10,12,16 = old
   // indexes 0-3 = new 5-8), migrated once in eden_settings_init.
 #if defined(EDEN_PLATFORM_IOS)
-  { "render_radius",     "Render distance",   "Video",     KIND_ENUM,   -1,             0,   7,   1,   5,  "Applies when a world opens.", "4,5,6,7,8,9,10,12" },
+  { "render_radius",     "Render distance",   "Video",     KIND_ENUM,   0,   7,   1,   5,  "Applies when a world opens.", "4,5,6,7,8,9,10,12" },
 #else
-  { "render_radius",     "Render distance",   "Video",     KIND_ENUM,   -1,             0,   8,   1,   5,  "Applies when a world opens.", "4,5,6,7,8,9,10,12,16" },
+  { "render_radius",     "Render distance",   "Video",     KIND_ENUM,   0,   8,   1,   5,  "Applies when a world opens.", "4,5,6,7,8,9,10,12,16" },
 #endif
   // Audit item #6 (§4a/§4c.1-2): the drawable used to be pinned to 1136x640 with devicePixelRatio
   // never read at all, so on any modern display the game was a small buffer upscaled — permanently
@@ -207,17 +192,19 @@ static const Setting kSettings[] = {
   // eden_settings_set() clamp to 100%; eden_get_render_scale_pct() reads a stored 3 as 100%.
   // Hidden and read as 100% from N.4.12 until FT.16 (2026-10-28) replaced the blit with a quad.
   // The default is per device: 75% on Air 2-class hardware (eden_ios_air2_class), 100% elsewhere.
-  { "render_scale",      "Render scale",      "Video",     KIND_ENUM,   -1,             0,   2,   1,   2,  "Below 100% is softer but cooler and faster.", "50%,75%,100%" },
+  { "render_scale",      "Render scale",      "Video",     KIND_ENUM,   0,   2,   1,   2,  "Below 100% is softer but cooler and faster.", "50%,75%,100%" },
 #else
-  { "render_scale",      "Render scale",      "Video",     KIND_ENUM,   -1,             0,   3,   1,   2,  "Below 100% is softer but cooler and faster.", "50%,75%,100%,125%" },
+  { "render_scale",      "Render scale",      "Video",     KIND_ENUM,   0,   3,   1,   2,  "Below 100% is softer but cooler and faster.", "50%,75%,100%,125%" },
 #endif
   // H.2: baked top-face shadows (Classes/Shadow.h). CPU meshing only (< 1 % computed), so not in the
   // presets. Default Off until the user's T look picks the shipped one (ROADMAP Stage H).
-  { "shadows",           "Shadows",           "Video",     KIND_ENUM,   -1,             0,   2,   1,   1,  "Soft shading under overhangs. Smooth costs a little more meshing.", "Off,Classic,Smooth" },
+  { "shadows",           "Shadows",           "Video",     KIND_ENUM,   0,   2,   1,   1,  "Soft shading under overhangs. Smooth costs a little more meshing.", "Off,Classic,Smooth" },
+  // Lamp light in shadows: off = a shaded top face by day ignores coloured lamp light (shadows are plain grey).
+  { "shadow_lamp_tint",   "Tinted lamp shadows", "Video",    KIND_TOGGLE, 0,   1,   1,   0,  "Lamp light colours shadows, even by day.", NULL },
   // AT.1a: the Atmosphere tier (A7). Default High; eden_apply_profile_defaults seeds Off on Air 2-class iOS.
   // A tier change writes the Atmo-group element rows below (P10); a preset knob (kPresets[].atmosphere).
-  { "atmosphere",        "Atmosphere",        "Video",     KIND_ENUM,   -1,             0,   3,   1,   2,  "Clouds, precipitation and ambient particles.", "Off,Low,High,Custom" },
-  { "atmosphere_details_open", "Atmosphere details", "Video", KIND_PAGE, -1,         0,   0,   0,   0,  "Switch each element on or off. Edits show as Custom.", "atmosphere" },
+  { "atmosphere",        "Atmosphere",        "Video",     KIND_ENUM,   0,   3,   1,   2,  "Clouds, precipitation and ambient particles.", "Off,Low,High,Custom" },
+  { "atmosphere_details_open", "Atmosphere details", "Video", KIND_PAGE, 0,   0,   0,   0,  "Switch each element on or off. Edits show as Custom.", "atmosphere" },
   // Row #14: an opt-in frame-rate ceiling, mainly for thermal/battery on touch devices (a voxel
   // game at an uncapped rAF is a thermal-throttle machine there — perf-audit §4b). Uncapped is the
   // default for everyone; eden_apply_input_profile() below sets it to 60 the first time a touch
@@ -226,97 +213,96 @@ static const Setting kSettings[] = {
   // P.14 (decision P.4-4): no 45 on iOS -- at vsync 1 on a 60 Hz panel it alternates 16.7 / 33.3 ms
   // frames. The list is 3 long here, so the stored index differs from the 4-entry list below:
   // eden_get_fps_cap() maps it, the profile seeder remaps, and eden_settings_init migrates once.
-  { "fps_cap",           "Frame rate cap",    "Video",     KIND_ENUM,   -1,             0,   2,   1,   0,  "30 or 60 saves battery and heat.", "Uncapped,30,60" },
+  { "fps_cap",           "Frame rate cap",    "Video",     KIND_ENUM,   0,   2,   1,   0,  "30 or 60 saves battery and heat.", "Uncapped,30,60" },
 #else
-  { "fps_cap",           "Frame rate cap",    "Video",     KIND_ENUM,   -1,             0,   3,   1,   0,  "30 or 60 saves battery and heat.", "Uncapped,30,45,60" },
+  { "fps_cap",           "Frame rate cap",    "Video",     KIND_ENUM,   0,   3,   1,   0,  "30 or 60 saves battery and heat.", "Uncapped,30,45,60" },
 #endif
   // G.5b-4 (renderer plan §7): ES 1.1 per-vertex lighting as 2.1 drew it. Off = the port's unlit look
   // before G.5b-4. Read by the GL backend's drawLit (R8); creatures are lit either way. Not in the presets.
-  { "original_lighting", "Original lighting", "Video",     KIND_TOGGLE, -1,             0,   1,   1,   1,  "Shading on debris and fireworks, as in Eden 2.1.", NULL },
-  { "heading_video_view", "View", "Video", KIND_HEADING, -1, 0, 0, 0, 0, NULL, NULL },
-  { "fov",               "Field of view",     "Video",     KIND_RANGE,  -1,            60, 110,   1,  80,  "80 is the original.",                    NULL },
-  { "crosshair",         "Crosshair",         "Interface", KIND_TOGGLE, -1,             0,   1,   1,   1,  NULL,             NULL },
-  { "block_preview",     "Block preview",     "Interface", KIND_TOGGLE, -1,             0,   1,   1,   0,  "Shows where the next block goes.",      NULL },
-  { "ui_scale",          "UI scale",          "Video",     KIND_ENUM,   -1,             0,   4,   1,   0,  "Size of menus and HUD. Auto picks for this device.", "Auto,100%,125%,150%,200%" },
-  { "heading_video_comfort", "Comfort", "Video", KIND_HEADING, -1, 0, 0, 0, 0, NULL, NULL },
-  { "reduce_flashing",   "Reduce flashing",   "Video",     KIND_TOGGLE, -1,             0,   1,   1,   0,  "Lightning dims the sky gently instead of flashing.", NULL },
+  { "original_lighting", "Original lighting", "Video",     KIND_TOGGLE, 0,   1,   1,   1,  "Shading on debris and fireworks, as in Eden 2.1.", NULL },
+  { "heading_video_view", "View", "Video", KIND_HEADING, 0, 0, 0, 0, NULL, NULL },
+  { "fov",               "Field of view",     "Video",     KIND_RANGE,  60, 110,   1,  80,  "80 is the original.",                    NULL },
+  { "crosshair",         "Crosshair",         "Interface", KIND_TOGGLE, 0,   1,   1,   1,  NULL,             NULL },
+  { "block_preview",     "Block preview",     "Interface", KIND_TOGGLE, 0,   1,   1,   0,  "Shows where the next block goes.",      NULL },
+  { "ui_scale",          "UI scale",          "Video",     KIND_ENUM,   0,   4,   1,   0,  "Size of menus and HUD. Auto picks for this device.", "Auto,100%,125%,150%,200%" },
+  { "heading_video_comfort", "Comfort", "Video", KIND_HEADING, 0, 0, 0, 0, NULL, NULL },
+  { "reduce_flashing",   "Reduce flashing",   "Video",     KIND_TOGGLE, 0,   1,   1,   0,  "Lightning dims the sky gently instead of flashing.", NULL },
 
   // AT.1a P10: one switch per element, set by the tier above (kAtmoTier[]). Group Atmo = the atmo.* cvars; hidden from the panel.
-  { "precip",            "Rain and snow",       "Atmo",       KIND_TOGGLE, -1,             0,   1,   1,   1,  NULL, NULL, NULL, "atmosphere" },
-  { "splash",            "Rain splashes",       "Atmo",       KIND_TOGGLE, -1,             0,   1,   1,   1,  NULL, NULL, NULL, "atmosphere" },
-  { "clouds",            "Clouds",              "Atmo",       KIND_TOGGLE, -1,             0,   1,   1,   1,  NULL, NULL, NULL, "atmosphere" },
-  { "cloud_shadows",     "Cloud shadows",       "Atmo",       KIND_TOGGLE, -1,             0,   1,   1,   0,  NULL, NULL, NULL, "atmosphere" },
-  { "height_fog",        "Height fog",          "Atmo",       KIND_TOGGLE, -1,             0,   1,   1,   1,  NULL, NULL, NULL, "atmosphere" },
-  { "ambient",           "Ambient particles",   "Atmo",       KIND_TOGGLE, -1,             0,   1,   1,   1,  NULL, NULL, NULL, "atmosphere" },
-  { "water_tint",        "Water tint",          "Atmo",       KIND_TOGGLE, -1,             0,   1,   1,   1,  NULL, NULL, NULL, "atmosphere" },
-  { "glint",             "Water glint",         "Atmo",       KIND_TOGGLE, -1,             0,   1,   1,   1,  NULL, NULL, NULL, "atmosphere" },
-  { "halos",             "Lamp halos",          "Atmo",       KIND_TOGGLE, -1,             0,   1,   1,   1,  NULL, NULL, NULL, "atmosphere" },
-  { "display_mode",      "Display",           "Video",     KIND_ENUM,   -1,             0,   2,   1,   0,  NULL,             "Fixed,Fit window,Fullscreen" },
+  { "precip",            "Rain and snow",       "Atmo",       KIND_TOGGLE, 0,   1,   1,   1,  NULL, NULL, NULL, "atmosphere" },
+  { "splash",            "Rain splashes",       "Atmo",       KIND_TOGGLE, 0,   1,   1,   1,  NULL, NULL, NULL, "atmosphere" },
+  { "clouds",            "Clouds",              "Atmo",       KIND_TOGGLE, 0,   1,   1,   1,  NULL, NULL, NULL, "atmosphere" },
+  { "cloud_shadows",     "Cloud shadows",       "Atmo",       KIND_TOGGLE, 0,   1,   1,   0,  NULL, NULL, NULL, "atmosphere" },
+  { "height_fog",        "Height fog",          "Atmo",       KIND_TOGGLE, 0,   1,   1,   1,  NULL, NULL, NULL, "atmosphere" },
+  { "ambient",           "Ambient particles",   "Atmo",       KIND_TOGGLE, 0,   1,   1,   1,  NULL, NULL, NULL, "atmosphere" },
+  { "water_tint",        "Water tint",          "Atmo",       KIND_TOGGLE, 0,   1,   1,   1,  NULL, NULL, NULL, "atmosphere" },
+  { "glint",             "Water glint",         "Atmo",       KIND_TOGGLE, 0,   1,   1,   1,  NULL, NULL, NULL, "atmosphere" },
+  { "halos",             "Lamp halos",          "Atmo",       KIND_TOGGLE, 0,   1,   1,   1,  NULL, NULL, NULL, "atmosphere" },
   // Audit rows D1 + D4 — the two knobs on the (now derived) engine POINT space. Both default to
   // Auto, which defers to the active device profile (src/seam/DisplayProfile.cpp's kProfiles[]):
   // desktop gets 125% + Adaptive, touch gets 200% + Classic, i.e. exactly the 568x320 layout this
   // port shipped with. Leaving them on Auto is not the same as picking the profile's value by hand
   // — Auto re-resolves if the input mode changes, an explicit choice does not.
-  { "display_layout",    "Layout aspect",     "Video",     KIND_ENUM,   -1,             0,   2,   1,   0,  NULL, "Auto,Classic 16:9,Adaptive" },
-  { "dpr_cap",           "Max pixel ratio",   "Video",     KIND_ENUM,   -1,             0,   2,   1,   2,  NULL, "1x,1.5x,2x" },
-  // The escape hatch for the rebuilt DOM UI (public/eden-menu.js + public/eden-pausemenu.js). ON =
-  // the original 2010 GL menus, which are still compiled and still running underneath — for the
-  // MAIN menu "legacy" is literally "stop drawing the overlay" and there is no second code path to
-  // keep alive. The IN-GAME menu needs one extra step in the other direction: its GL panel is
-  // suppressed by default (eden_hud_draw_menu_screen_hook, installed in Menu.cpp) because the
-  // DOM panel no longer covers the whole canvas, so this flag both re-enables that panel and keeps
-  // the DOM one closed. Read by eden_menu_active()/eden_legacy_ui_active() (Menu.cpp), by
-  // public/eden-menu.js's own poll, and by public/eden-pausemenu.js's tick().
-  { "legacy_menu",       "Legacy UI",         "Interface", KIND_TOGGLE, -1,             0,   1,   1,   0,  "The original 2010 menus.", NULL },
+  // UX.5 (I8): desktop only (hidden on iOS, eden_settings_native_hidden). F11 is the keybind.
+  { "fullscreen",        "Fullscreen",        "Video",     KIND_TOGGLE, 0,   1,   1,   0,  "Fill the screen. F11 toggles it.", NULL },
+  { "display_layout",    "Layout aspect",     "Video",     KIND_ENUM,   0,   2,   1,   0,  NULL, "Auto,Classic 16:9,Adaptive" },
 
   // Experiments: opt-in, off by default (except fps_normalize, which keeps its pre-existing
   // default now that it has moved tabs — only its group changed, not its behavior).
-  { "srclike_movement",   "Srclike movement",   "Experiments", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Strafing, bunnyhopping and surfing. Keyboard and mouse.", NULL },
-  { "srclike_settings_open", "Srclike settings", "Experiments", KIND_PAGE, -1,      0,   0,   0,   0,  "Auto-bhop, sensitivity and the movement sliders.", "srclike", "srclike_movement" },
-  { "camera_view",       "Camera view",       "Video", KIND_ENUM,   -1,           0,   2,   1,   0,  "Third person shows your body. F5 cycles.", "First person,Third person,Third person (front)", NULL, "Experiments" },
-  { "fps_normalize",     "Frame-rate normalize", "Experiments", KIND_TOGGLE, -1,        0,   1,   1,   1,  "Same walk speed at any refresh rate.",     NULL },
-  { "srclike_autobhop",   "Auto-bhop (hold jump)", "Experiments", KIND_TOGGLE, -1,       0,   1,   1,   0,  "Holding jump hops again on landing. Off: time each hop.", NULL, NULL, "srclike" },
-  { "srclike_sens",       "Srclike sensitivity", "Experiments", KIND_RANGE, -1,         0,  10, .05f,   0,  "Counter-Strike value (degrees per count = value x 0.022). 0 = use Mouse sensitivity.", NULL, NULL, "srclike" },
+  { "srclike_movement",   "Srclike movement",   "Experiments", KIND_TOGGLE, 0,   1,   1,   0,  "Strafing, bunnyhopping and surfing. Keyboard and mouse.", NULL },
+  { "srclike_settings_open", "Srclike settings", "Experiments", KIND_PAGE, 0,   0,   0,   0,  "Auto-bhop, sensitivity and the movement sliders.", "srclike", "srclike_movement" },
+  { "camera_view",       "Camera view",       "Video", KIND_ENUM,   0,   2,   1,   0,  "Third person shows your body. F5 cycles.", "First person,Third person,Third person (front)", NULL, "Experiments" },
+  { "fps_normalize",     "Frame-rate normalize", "Experiments", KIND_TOGGLE, 0,   1,   1,   1,  "Same walk speed at any refresh rate.",     NULL },
+  { "srclike_autobhop",   "Auto-bhop (hold jump)", "Experiments", KIND_TOGGLE, 0,   1,   1,   0,  "Holding jump hops again on landing. Off: time each hop.", NULL, NULL, "srclike" },
+  { "srclike_sens",       "Srclike sensitivity", "Experiments", KIND_RANGE, 0,  10, .05f,   0,  "Counter-Strike value (degrees per count = value x 0.022). 0 = use Mouse sensitivity.", NULL, NULL, "srclike" },
   // SRC.8b: "Movement tuning" opens the Settings sub-page "movetune" (SX.1: a KIND_PAGE row; it was a hidden tab).
-  { "fire_melts_ice",    "Fire melts ice",    "Experiments", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Burning ice turns to water.", NULL },
-  { "fire_chars_vines",  "Fire chars vines",  "Experiments", KIND_TOGGLE, -1,           0,   1,   1,   0,  "Burning vines turn to dark stone.", NULL },
-  { "dev_console",       "Allow developer console", "Experiments", KIND_TOGGLE, -1,       0,   1,   1,   0,  "Adds a console button next to the settings icon in singleplayer.", NULL },
-  { "double_brush",      "Double-size build brush", "Experiments", KIND_TOGGLE, -1,      0,   1,   1,   0,  "A key builds 2x2x2 blocks at a time.", NULL },
+  { "fire_melts_ice",    "Fire melts ice",    "Experiments", KIND_TOGGLE, 0,   1,   1,   0,  "Burning ice turns to water.", NULL },
+  { "fire_chars_vines",  "Fire chars vines",  "Experiments", KIND_TOGGLE, 0,   1,   1,   0,  "Burning vines turn to dark stone.", NULL },
+  { "dev_console",       "Allow developer console", "Experiments", KIND_TOGGLE, 0,   1,   1,   0,  "Adds a console button next to the settings icon in singleplayer.", NULL },
+  { "double_brush",      "Double-size build brush", "Experiments", KIND_TOGGLE, 0,   1,   1,   0,  "A key builds 2x2x2 blocks at a time.", NULL },
   // DN.2 (WORKING/day-night-cycle-plan-2026-10-31.md U1): the clock runs and is saved per world, but
     // MP.8: comma-separated matchmaker addresses (host[:port], default 27020); empty = no Matchmakers tab.
-  { "online_sources_open", "Online sources", "Experiments", KIND_PAGE, -1,         0,   0,   0,   0,  "Matchmakers and the mod catalogue.", "online" },
-  { "mp_matchmakers",    "Matchmakers",       "Experiments", KIND_TEXT,   -1,           0,   0,   0,   0,  "Lists other servers. Off when empty.", NULL, NULL, "online" },
+  { "online_sources_open", "Online sources", "Experiments", KIND_PAGE, 0,   0,   0,   0,  "Matchmakers and the mod catalogue.", "online" },
+  { "mp_matchmakers",    "Matchmakers",       "Experiments", KIND_TEXT,   0,   0,   0,   0,  "Lists other servers. Off when empty.", NULL, NULL, "online" },
   // K.3-5/6 (WORKING/mod-manager-plan-2026-11-01.md): "Mods" opens the manager (main menu only; the row's
   // text is unused). The catalogue URL is the Get Mods tab's source (M7); empty = the tab is hidden.
-  { "mods_catalogue_url","Get Mods catalogue", "Experiments", KIND_TEXT,  -1,           0,   0,   0,   0,  "Address of a mod catalogue (http or https). Empty hides Get Mods.", NULL, NULL, "online" },
+  { "mods_catalogue_url","Get Mods catalogue", "Experiments", KIND_TEXT,  0,   0,   0,   0,  "Address of a mod catalogue (http or https). Empty hides Get Mods.", NULL, NULL, "online" },
 
   // SRC.8b: the move.* tunables as sliders. The values apply into SrclikeMove::tunables(). SX.6: these rows ARE
   // the move.* cvars' one range table: group "Movement tuning" maps to the console name move.<key less "move_">
   // (eden_settings_cvar), so Console.cpp bridges them like any row (its bridgeMove copy is gone). SX.1 places
   // them on the "srclike" page by `page`; Back and Reset are the page's titlebar. Defaults = SrclikeMove::kDefaults.
-  { "move_accelerate",   "Ground acceleration", "Movement tuning", KIND_RANGE, -1,       1,  20, .5f,   5,  "How fast you reach walking speed (sv_accelerate).", NULL, NULL, "srclike" },
-  { "move_airaccelerate","Air acceleration",   "Movement tuning", KIND_RANGE, -1,        1, 1000,  1, 100,  "Air steering. 100 is the surf/bhop value.", NULL, NULL, "srclike" },
-  { "move_friction",     "Friction",           "Movement tuning", KIND_RANGE, -1,        0,  20, .5f,   4,  "How fast you slow on the ground.", NULL, NULL, "srclike" },
-  { "move_stopspeed",    "Stop speed",         "Movement tuning", KIND_RANGE, -1,        0, 300,   5,  75,  "Below this speed, friction stops you at a fixed rate.", NULL, NULL, "srclike" },
-  { "move_gravity",      "Gravity",            "Movement tuning", KIND_RANGE, -1,      100, 2000, 10, 800,  "Units/s^2. 800 is stock.", NULL, NULL, "srclike" },
-  { "move_maxvelocity",  "Max velocity",       "Movement tuning", KIND_RANGE, -1,      500, 10000, 100, 3500, "Speed cap per axis.", NULL, NULL, "srclike" },
-  { "move_tickrate",     "Tick rate",          "Movement tuning", KIND_RANGE, -1,       30, 128,   1, 66.67f, "Movement ticks per second. 66.67 is CS:S.", NULL, NULL, "srclike" },
+  { "move_accelerate",   "Ground acceleration", "Movement tuning", KIND_RANGE, 1,  20, .5f,   5,  "How fast you reach walking speed (sv_accelerate).", NULL, NULL, "srclike" },
+  { "move_airaccelerate","Air acceleration",   "Movement tuning", KIND_RANGE, 1, 1000,  1, 100,  "Air steering. 100 is the surf/bhop value.", NULL, NULL, "srclike" },
+  { "move_friction",     "Friction",           "Movement tuning", KIND_RANGE, 0,  20, .5f,   4,  "How fast you slow on the ground.", NULL, NULL, "srclike" },
+  { "move_stopspeed",    "Stop speed",         "Movement tuning", KIND_RANGE, 0, 300,   5,  75,  "Below this speed, friction stops you at a fixed rate.", NULL, NULL, "srclike" },
+  { "move_gravity",      "Gravity",            "Movement tuning", KIND_RANGE, 100, 2000, 10, 800,  "Units/s^2. 800 is stock.", NULL, NULL, "srclike" },
+  { "move_maxvelocity",  "Max velocity",       "Movement tuning", KIND_RANGE, 500, 10000, 100, 3500, "Speed cap per axis.", NULL, NULL, "srclike" },
+  { "move_tickrate",     "Tick rate",          "Movement tuning", KIND_RANGE, 30, 128,   1, 66.67f, "Movement ticks per second. 66.67 is CS:S.", NULL, NULL, "srclike" },
 
   // B.5b-1b (2026-10-12): the periodic save that replaced the walk reload's. Off leaves saving to
   // the ring's evict-saves (a modified column leaving the window -- never optional, or the edit is
   // lost), warp, exit, the Save button and app background. Read as g_autosave_seconds (FileManager.h).
-  { "heading_world_saves", "Saves", "World", KIND_HEADING, -1, 0, 0, 0, 0, NULL, NULL },
-  { "autosave",          "Autosave",          "Saves",       KIND_ENUM,   -1,           0,   3,   1,   3,  "Off still saves on exit and warp.", "Off,1 min,2 min,5 min", NULL, "World" },
-  { "save_backup",       "Keep a save backup", "Saves",      KIND_TOGGLE, -1,           0,   1,   1,   0,  "Keep the previous save as a .bak.", NULL, NULL, "World" },
+  { "heading_world_saves", "Saves", "World", KIND_HEADING, 0, 0, 0, 0, NULL, NULL },
+  { "autosave",          "Autosave",          "Saves",       KIND_ENUM,   0,   3,   1,   3,  "Off still saves on exit and warp.", "Off,1 min,2 min,5 min", NULL, "World" },
+  { "save_backup",       "Keep a save backup", "Saves",      KIND_TOGGLE, 0,   1,   1,   0,  "Keep the previous save as a .bak.", NULL, NULL, "World" },
   // Stage S / S.5e (the user, 2026-10-10): every `.emod` is 256z by default. Read through
   // eden_get_upgrade_256z() by FileManager's convert-on-play, native Get Worlds and the web Storage
   // tab's import; the convert prompt's "Keep 64z" overrides it for one world.
-  { "upgrade_256z",      "Convert to 256 high", "Saves", KIND_TOGGLE, -1, 0, 1, 1, 1, "Upgrade 64z worlds to 256z when converting: room to build up to y 255. Uses more memory.", NULL, NULL, "World" },
+  { "upgrade_256z",      "Convert to 256 high", "Saves", KIND_TOGGLE, 0, 1, 1, 1, "Upgrade 64z worlds to 256z when converting: room to build up to y 255. Uses more memory.", NULL, NULL, "World" },
 };
 static const int kSettingCount = (int)(sizeof(kSettings) / sizeof(kSettings[0]));
 
 static float g_value[kSettingCount];
 static std::string g_text[kSettingCount];   // KIND_TEXT rows only
+
+// K.3-8: the shipped values of two KIND_TEXT rows (everything else starts empty). A player who clears one
+// stores "" and keeps it off; Reset puts the default back.
+static const char* textDefault(const char* key) {
+    if (!std::strcmp(key, "mods_catalogue_url")) return "https://hagg3.github.io/emod-packs/index.json";
+    if (!std::strcmp(key, "mp_matchmakers")) return "45.79.193.87";
+    return "";
+}
 static bool  g_loaded = false;
 // Row #14: did eden_prefs actually have a value for this (port-owned) row at load time? Used
 // by eden_apply_input_profile() to tell "the player explicitly chose this" apart from "still
@@ -329,6 +315,8 @@ static int eden_setting_index(const char* key) {
         if (std::strcmp(kSettings[i].key, key) == 0) return i;
     return -1;
 }
+
+extern "C" int eden_settings_index_of(const char* key) { return eden_setting_index(key); }   // UX.5: WindowState_native.cpp
 
 // Port-owned values the rest of the port reads. Declared in Input.cpp / consumed by the
 // gluPerspective wrap below.
@@ -344,21 +332,20 @@ float eden_fps_normalize    = 1.0f;
 // Input.cpp/eden-st.html.
 float eden_mouse_sensitivity_y = 1.0f;   // read by eden_apply_look_delta (Y axis)
 float eden_hold_to_act      = 1.0f;      // read by eden-st.html's hold-to-act state machine
+float eden_hotbar_shown     = 1.0f;      // UX.8-4: Settings > Gameplay > Hotbar (the strip; the keys work either way)
 float eden_crosshair        = 1.0f;      // read by eden-st.html's crosshair overlay
-float eden_display_mode     = 0.0f;      // 0=Fixed/1=Fit/2=Fullscreen-on-demand, read by eden-st.html
 // Audit item #6. Stored as the ENUM INDEX (same as every other KIND_ENUM row); the getters below
 // translate to the numbers the page actually wants, so the index<->value table lives in exactly
 // one place instead of being duplicated in JS.
 float eden_render_scale     = 2.0f;      // index into {50%,75%,100%,125%}
-float eden_dpr_cap          = 2.0f;      // index into {1x,1.5x,2x}
 float eden_fps_cap          = 0.0f;      // index into {Uncapped,30,45,60} ({Uncapped,30,60} on iOS, P.14); row #14
 // Audit D1/D4. Both are enum indexes whose 0 is "Auto"; read (not written) by
 // src/seam/DisplayProfile.cpp, which resolves Auto against the active profile every time it
 // recomputes the point space. Never seeded by eden_apply_profile_defaults — see that function.
 float eden_ui_scale         = 0.0f;      // index into {Auto,100%,125%,150%,200%}
+extern "C" void eden_window_set_fullscreen(int on);   // port/src/seam/WindowState_native.cpp (UX.5)
+extern "C" int  eden_host_can_quit(void);
 float eden_display_layout   = 0.0f;      // index into {Auto,Classic 16:9,Adaptive}
-// Read by eden_menu_active() (Menu.cpp) and public/eden-menu.js. 0 = the rebuilt DOM menu.
-float eden_legacy_menu      = 0.0f;
 // Row #24's three gamepad rows, mirrored into C for the same reason every other row above is:
 // there is now a SECOND consumer. On web the translator is public/eden-gamepad.js and reads them
 // through the settings bridge; on native it is port/src/seam/Input_native.cpp, which has no JS
@@ -367,9 +354,7 @@ float eden_legacy_menu      = 0.0f;
 float eden_gamepad_enabled  = 1.0f;
 float eden_gamepad_look_sensitivity = 1.0f;
 float eden_gamepad_deadzone = 0.15f;
-// Read (via eden_get_save_backup() below, not directly -- see there) by the portable
-// save_backup.cpp, shared with native. Default OFF since FT.13 (the user's decision); ON is what
-// keeps a corrupted/truncated save recoverable through eden_load_restore_backup().
+// Inert since S.8 (nothing writes a .bak any more); the row and its pref stay so a stored value reads back.
 float eden_save_backup      = 0.0f;
 // S.5e: read once per conversion through eden_get_upgrade_256z(). Default ON (the user's decision).
 float eden_upgrade_256z     = 1.0f;
@@ -415,27 +400,7 @@ void eden_set_detected_touch(int isTouch) {
     eden_apply_input_profile();
 }
 
-// Lets the DOM UI panels (eden-pausemenu.js, eden-settings.js — plain HTML buttons, no touch
-// path through Hud::update) play the same click sounds the engine's own HUD menu icons got wired
-// up to in Classes/Hud.mm (pass 39, S_MENU_BUTTON_PRESS/RELEASE). `pressed` nonzero = press,
-// zero = release. Resources::getResources is a singleton set up once in World's constructor
-// (Classes/World.mm) and outlives every menu/game-mode transition, so this is safe to call from
-// either the main menu or in-game.
-void eden_play_menu_button_sound(int pressed) {
-    if (!Resources::getResources) return;
-    Resources::getResources->playSound(pressed ? S_MENU_BUTTON_PRESS : S_MENU_BUTTON_RELEASE);
-}
 
-// Settings panel's boolean on/off switches ONLY (eden-settings.js's kind===0 rows) — deliberately
-// separate from eden_play_menu_button_sound above. menu_button_press/release_01.mp3 (variation 01
-// of that sound) is audibly different from variations 02-05 and was pulled out of that sound's
-// random-variation pool (Classes/Resources.mm) specifically so it would stop turning up on
-// ordinary button clicks; it now lives only here, as its own single-variation sound ID, for the
-// one control it was asked to keep: switch toggles.
-void eden_play_switch_toggle_sound(int on) {
-    if (!Resources::getResources) return;
-    Resources::getResources->playSound(on ? S_SWITCH_TOGGLE_ON : S_SWITCH_TOGGLE_OFF);
-}
 } // extern "C"
 
 // Row #14 (perf-audit §4c.3), generalised into audit row D4's first-class PROFILE concept: "one
@@ -494,7 +459,7 @@ static bool g_presetApplying = false;
 // kAtmoTier[] (Low: precip, clouds, ambient, water tint; High: all); an element row changed by hand stays
 // until the next tier change. --atmo= overrides the tier for one run (not stored), and the pinned harness
 // modes force Off unless it is given.
-enum { AT_PRECIP, AT_SPLASH, AT_CLOUDS, AT_CLOUD_SHADOWS, AT_HEIGHT_FOG, AT_AMBIENT, AT_WATER_TINT, AT_GLINT, AT_HALOS, AT_COUNT };
+// (the AT_* enum is in Classes/Weather.h: the engine reads elements by name)
 static const char* const kAtmoKey[AT_COUNT] = { "precip", "splash", "clouds", "cloud_shadows", "height_fog",
                                                 "ambient", "water_tint", "glint", "halos" };
 static const unsigned char kAtmoTier[3][AT_COUNT] = {
@@ -520,18 +485,16 @@ static void eden_apply_profile_defaults(void) {
     if (g_profileDefaultsApplied || !g_loaded) return;
     g_profileDefaultsApplied = true;
     const EdenProfile* p = eden_profile_active();
-    int dpr = p->dpr_cap, fps = p->fps_cap, rs = p->render_scale;
+    int fps = p->fps_cap, rs = p->render_scale;
     // ROADMAP Phase M / M5.2: the low-memory overlay replaces the video-preset defaults with the
     // leaner kProfiles[EDEN_PROFILE_LOWMEM] row (1x pixel ratio, 75% render scale, 45 fps). It is
     // set by the page before this runs; still only a DEFAULT, so g_hadStored[] (a row the player
     // touched) wins exactly as with the input profile.
     if (eden_low_memory()) {
         const EdenProfile* lm = eden_profile_get(EDEN_PROFILE_LOWMEM);
-        dpr = lm->dpr_cap;
         rs  = lm->render_scale;
         if (lm->fps_cap) fps = lm->fps_cap;
     }
-    eden_seed_profile_default("dpr_cap",      dpr);
 #if defined(EDEN_PLATFORM_IOS)
     if (fps >= 2) fps -= 1;   // profile indices are into {Uncapped,30,45,60}; iOS dropped 45 (P.14): 45 -> 30, 60 -> 60
     if (eden_ios_air2_class()) fps = 1;   // FT.15d: Air 2-class seeds 30 fps (-0.9 W, FT.15c); index 1 in {Uncapped,30,60}
@@ -545,6 +508,8 @@ static void eden_apply_profile_defaults(void) {
     }
     // FT.13: crosshair ON with keyboard+mouse, OFF on touch; seeded once from the profile resolved at first run.
     eden_seed_profile_default("crosshair", eden_profile_touch_chrome() ? 0 : 1);
+    // UX.8-4 (H4): the hotbar strip is on with keyboard + mouse, off on touch.
+    eden_seed_profile_default("hotbar", eden_profile_touch_chrome() ? 0 : 1);
 }
 
 static void eden_apply_input_profile(void) {
@@ -576,17 +541,6 @@ static SettingsMenu* eden_engine_settings(void) {
     return World::getWorld->menu->settings;
 }
 
-// ---------------------------------------------------------------------------------------------
-// Applying one row. Engine rows are written into `properties[]` and committed with the engine's
-// own save() (which re-runs load(), i.e. the engine's own apply step). Port rows act directly.
-//
-// The re-apply at the bottom is NOT belt-and-braces: `SettingsMenu::load()` unconditionally sets
-// `player->invertcam = FALSE` and `hud->use_joystick = TRUE` every time it runs (Classes/
-// SettingsMenu.mm:188-189 — hard-coded, not saved preferences). So committing ANY engine toggle
-// silently reverts two of the port's own control settings unless they are re-applied afterwards.
-// This is the same class of trap pass 23 hit with use_joystick and Joystick::update.
-// ---------------------------------------------------------------------------------------------
-static void eden_apply_port_settings(void);
 
 // B.8 presets: enum indexes of view_distance (0 = Auto, 1 = 4 chunks) and render_scale (0 = 50%,
 // 1 = 75%, 2 = 100%). Index 0 (Custom) has no row. On iOS (FT.16) Low is 50% and Default is the
@@ -610,113 +564,126 @@ static void eden_preset_sync(int changedKnob);
 static void eden_persist_setting(int i);
 extern "C" void eden_settings_set(int i, float v);
 
-static void eden_apply_setting(int i, bool commitEngine) {
-    if (i < 0 || i >= kSettingCount) return;
-    const Setting& s = kSettings[i];
-    const float v = g_value[i];
+// ---------------------------------------------------------------------------------------------
+// QA.19: what each row's value does, as data. One entry per value row (toggle, range, enum), keyed by
+// the row's key and resolved to an index once (eden_settings_resolve_bindings); a row with no entry,
+// an entry naming no row, or an entry with neither `bind` nor `apply` fails the check that
+// --console-selftest runs (eden_settings_check_bindings). `bind` receives the value first, then
+// `apply(i, v, commit)` runs: commit = a deliberate change (eden_settings_set), false = the load-time
+// pass (init), which must not re-run one-shot actions (a preset writing its knobs). `stock` = the
+// stock 2.1 prefs name a row persists under (a 0/1 int), so old prefs read back.
+// ---------------------------------------------------------------------------------------------
+typedef void (*SettingApply)(int i, float v, bool commit);
+struct SettingBinding {
+    const char*  key;
+    float*       bind;
+    SettingApply apply;
+    const char*  stock;
+};
+static bool on(float v) { return v != 0.0f; }
+static void apply_none(int, float, bool) {}   // read where used (eden_weather_enabled, eden_reduce_flashing, ...)
+static void apply_preset_knob(int i, float, bool) { eden_preset_sync(i); }
+static void apply_atmo_element(int, float, bool commit) { if (commit) eden_atmo_sync(); }
+static void apply_move_tunable(int i, float v, bool) {   // SRC.8b
+    SrclikeMove::Tunables& t = SrclikeMove::tunables();
+    float* f[] = {&t.accelerate, &t.airaccelerate, &t.friction, &t.stopspeed, &t.gravity, &t.maxvelocity, &t.tickrate};
+    static const char* const k[] = {"move_accelerate", "move_airaccelerate", "move_friction", "move_stopspeed",
+                                    "move_gravity", "move_maxvelocity", "move_tickrate"};
+    for (int j = 0; j < 7; ++j) if (std::strcmp(kSettings[i].key, k[j]) == 0) *f[j] = v;
+}
+static Player* settings_player(void) { return World::getWorld ? World::getWorld->player : nullptr; }
+extern bool DEV_CONSOLE_ALLOWED;
+extern bool touchControlsSoundEnabled;
+extern bool nightAmbienceEnabled;
+static const SettingBinding kBindings[] = {
+  // The stock five (2.1's SettingsMenu rows), under their stock prefs names.
+  { "health",    nullptr, [](int, float v, bool) { if (Player* p = settings_player()) p->health_option = on(v); }, "Health" },
+  { "autojump",  nullptr, [](int, float v, bool) { if (Player* p = settings_player()) p->autojump_option = on(v); }, "Autojump" },
+  { "creatures", nullptr, [](int, float v, bool) { CREATURES_ON = MpWorld::gateCreatures(on(v)); }, "Creatures" },   // MP.3a: never in a session
+  { "sound",     nullptr, [](int, float v, bool) { if (Resources::getResources) Resources::getResources->playsound = on(v); }, "Sound effects" },
+  // Music also has to start or stop now (stock did it inline in its touch handler); musicToggled() picks the
+  // title tune or an in-game song by mode.
+  { "music",     nullptr, [](int, float v, bool commit) {
+        if (!Resources::getResources) return;
+        Resources::getResources->playmusic = on(v);
+        if (commit) Resources::getResources->musicToggled(on(v));
+    }, "Music" },
 
-    if (s.engine >= 0) {
-        SettingsMenu* sm = eden_engine_settings();
-        if (!sm) return;
-        sm->properties[s.engine].value = (v != 0.0f) ? 1 : 0;
-        if (!commitEngine) return;
-        sm->save();                       // engine: writes eden_prefs, then load() applies
-        // Music has one side effect save()/load() does not do: music has to start or stop right
-        // now. Classes/SettingsMenu.mm:150-158 did this inline in its touch handler, which is
-        // exactly the piece a wrapped-out update() would otherwise lose. musicToggled() picks the
-        // title tune or an in-game song by mode — this called playMenuTune() unconditionally until
-        // 2026-10-05, which is how a title track came to play over gameplay.
-        if (s.engine == ENG_MUSIC && Resources::getResources)
-            Resources::getResources->musicToggled(v != 0.0f ? true : false);
-        eden_apply_port_settings();       // undo load()'s invertcam/use_joystick stomp
-        return;
-    }
-
-    if (std::strcmp(s.key, "block_preview") == 0) {
-        eden_set_block_preview(v != 0.0f ? 1 : 0);
-    } else if (std::strcmp(s.key, "fly") == 0) {
-        eden_set_fly_allowed(v != 0.0f ? 1 : 0);
-    } else if (std::strcmp(s.key, "dev_console") == 0) {
-        extern bool DEV_CONSOLE_ALLOWED;
-        DEV_CONSOLE_ALLOWED = v != 0.0f;
-    } else if (std::strcmp(s.key, "fly_accel") == 0) {
-        FLY_ACCEL_MULT = v;
-    } else if (std::strcmp(s.key, "fly_max_speed") == 0) {
-        FLY_MAX_SPEED = v;
-    } else if (std::strcmp(s.key, "fly_braking") == 0) {
-        FLY_BRAKING = v;
-    } else if (std::strcmp(s.key, "fly_vertical") == 0) {
-        FLY_VERTICAL_MULT = v;
-    } else if (std::strcmp(s.key, "noclip_speed") == 0) {   // SX.4
-        NOCLIP_SPEED = v;
-    } else if (std::strcmp(s.key, "crouch") == 0) {
-        eden_set_crouch_enabled(v != 0.0f ? 1 : 0);
-    } else if (std::strcmp(s.key, "srclike_movement") == 0) {
-        SrclikeMove::setEnabled(v != 0.0f);
-    } else if (std::strcmp(s.key, "srclike_sens") == 0) {
-        eden_srclike_sens = v;
-    } else if (std::strncmp(s.key, "move_", 5) == 0 && s.kind == KIND_RANGE) {   // SRC.8b
-        SrclikeMove::Tunables& t = SrclikeMove::tunables();
-        float* f[] = {&t.accelerate, &t.airaccelerate, &t.friction, &t.stopspeed, &t.gravity, &t.maxvelocity, &t.tickrate};
-        static const char* const k[] = {"move_accelerate", "move_airaccelerate", "move_friction", "move_stopspeed",
-                                        "move_gravity", "move_maxvelocity", "move_tickrate"};
-        for (int j = 0; j < 7; ++j) if (std::strcmp(s.key, k[j]) == 0) *f[j] = v;
-    } else if (std::strcmp(s.key, "srclike_autobhop") == 0) {
-        SrclikeMove::setAutoBhop(v != 0.0f);
-    } else if (std::strcmp(s.key, "fire_melts_ice") == 0) {
-        eden_set_fire_melts_ice(v != 0.0f ? 1 : 0);
-    } else if (std::strcmp(s.key, "fire_chars_vines") == 0) {
-        eden_set_fire_chars_vines(v != 0.0f ? 1 : 0);
-    } else if (std::strcmp(s.key, "creature_walk_voices") == 0) {
-        CREATURE_WALK_VOICES = v != 0.0f;
-    } else if (std::strcmp(s.key, "day_night_cycle") == 0) {
-        SkyCycle::setEnabled(v != 0.0f);
-    } else if (std::strcmp(s.key, "snowline") == 0) {     // SX.6 (was the session-only weather.snowline)
-        Weather::setSnowline(v);
-    } else if (std::strcmp(s.key, "mistheight") == 0) {   // SX.6
-        Weather::setMistHeight(v);
-    } else if (std::strcmp(s.key, "frequency") == 0) {    // SX.9
-        Weather::setFrequency((int)lroundf(v));
-    } else if (std::strcmp(s.key, "storms") == 0) {
-        Weather::setStorms((int)lroundf(v));
-    } else if (std::strcmp(s.key, "day_length") == 0) {
+  { "crouch",          nullptr, [](int, float v, bool) { eden_set_crouch_enabled(on(v)); } },
+  { "hotbar",          &eden_hotbar_shown },
+  { "fly",             nullptr, [](int, float v, bool) { eden_set_fly_allowed(on(v)); } },
+  { "fly_accel",       &FLY_ACCEL_MULT },
+  { "fly_max_speed",   &FLY_MAX_SPEED },
+  { "fly_braking",     &FLY_BRAKING },
+  { "fly_vertical",    &FLY_VERTICAL_MULT },
+  { "noclip_speed",    &NOCLIP_SPEED },   // SX.4
+  { "day_night_cycle", nullptr, [](int, float v, bool) { SkyCycle::setEnabled(on(v)); } },
+  { "day_length",      nullptr, [](int, float v, bool) {
         static const int kMinutes[] = {10, 20, 40, 60};
         const int d = (int)lroundf(v);
         SkyCycle::setDayLengthMinutes(d >= 0 && d < 4 ? kMinutes[d] : 20);
-    } else if (std::strcmp(s.key, "camera_view") == 0) {
-        eden_set_camera_view((int)lroundf(v));
-    } else if (std::strcmp(s.key, "double_brush") == 0) {
-        DOUBLE_BRUSH = v != 0.0f;
-        if (!DOUBLE_BRUSH) eden_set_build_size(1);
-    } else if (std::strcmp(s.key, "mouse_sensitivity") == 0) {
-        eden_look_sensitivity = v;
-    } else if (std::strcmp(s.key, "fov") == 0) {
-        eden_fov_degrees = v;
-    } else if (std::strcmp(s.key, "view_distance") == 0) {
-        eden_view_distance = v;
+    } },
+  { "weather",         nullptr, apply_none },   // eden_weather_enabled()
+  { "frequency",       nullptr, [](int, float v, bool) { Weather::setFrequency((int)lroundf(v)); } },   // SX.9
+  { "storms",          nullptr, [](int, float v, bool) { Weather::setStorms((int)lroundf(v)); } },
+  { "snowline",        nullptr, [](int, float v, bool) { Weather::setSnowline(v); } },     // SX.6 (was session-only)
+  { "mistheight",      nullptr, [](int, float v, bool) { Weather::setMistHeight(v); } },
+
+  { "master_volume",   nullptr, [](int, float v, bool) { eden_audio_set_master(v); } },
+  { "mute_in_background", nullptr, [](int, float v, bool) {
+        g_muteInBackground = on(v);
+        if (!g_muteInBackground) eden_audio_set_bg_muted(0);
+    } },
+  { "music_volume",    nullptr, [](int, float v, bool) {
+        if (CocosDenshion::SimpleAudioEngine::sharedEngine()) CocosDenshion::SimpleAudioEngine::sharedEngine()->setBackgroundMusicVolume(v);
+    } },
+  { "ambience_volume", nullptr, [](int, float v, bool) {
+        if (CocosDenshion::SimpleAudioEngine::sharedEngine()) CocosDenshion::SimpleAudioEngine::sharedEngine()->setAmbienceVolume(v);
+    } },
+  { "night_ambience",  nullptr, [](int, float v, bool) { nightAmbienceEnabled = on(v); } },
+  { "effects_volume",  nullptr, [](int, float v, bool) {
+        if (CocosDenshion::SimpleAudioEngine::sharedEngine()) CocosDenshion::SimpleAudioEngine::sharedEngine()->setEffectsVolume(v);
+    } },
+  { "creature_walk_voices", nullptr, [](int, float v, bool) { CREATURE_WALK_VOICES = on(v); } },
+  { "touch_controls_sound", nullptr, [](int, float v, bool) { touchControlsSoundEnabled = on(v); } },
+
+  { "input_mode",      nullptr, [](int, float v, bool) { g_inputMode = (int)lroundf(v); eden_apply_input_profile(); } },
+  { "hold_to_act",     &eden_hold_to_act },
+  { "mouse_sensitivity", &eden_look_sensitivity },
+  { "mouse_sensitivity_y", &eden_mouse_sensitivity_y },
+  { "invert_look",     nullptr, [](int, float v, bool) { if (Player* p = settings_player()) p->invertcam = on(v); } },
+  { "touch_look_speed",     &TOUCH_LOOK_SENS_X },
+  { "touch_look_speed_y",   &TOUCH_LOOK_SENS_Y },
+  { "touch_look_smoothing", &TOUCH_LOOK_SMOOTH },
+  { "touch_look_glide", nullptr, [](int, float v, bool) { TOUCH_LOOK_GLIDE = v > 0.0f ? v : 0.0f; } },
+  { "gamepad",         &eden_gamepad_enabled },
+  { "gamepad_look_sensitivity", &eden_gamepad_look_sensitivity },
+  { "gamepad_deadzone", &eden_gamepad_deadzone },
+
+  { "graphics_preset", nullptr, [](int, float v, bool commit) {
+        // Only a deliberate change applies the knobs; the load-time pass must not overwrite stored knobs
+        // (or the low-memory seeds) with the preset's.
+        const int p = (int)lroundf(v);
+        if (!commit || p < 1 || p >= (int)(sizeof(kPresets) / sizeof(kPresets[0]))) return;
+        g_presetApplying = true;
+        eden_settings_set(eden_setting_index("view_distance"), (float)kPresets[p].view_distance);
+        eden_settings_set(eden_setting_index("render_radius"), (float)kPresets[p].render_distance);
+        eden_settings_set(eden_setting_index("render_scale"), (float)eden_preset_render_scale(p));
+        eden_settings_set(eden_setting_index("atmosphere"), (float)eden_preset_atmosphere(p));
+        g_presetApplying = false;
+    } },
+  { "view_distance",   &eden_view_distance, [](int i, float, bool) {
         if (World::getWorld) Graphics::setZFAR(0);   // re-derive ZFAR now (it is otherwise only set on world load)
         eden_preset_sync(i);
-    } else if (std::strcmp(s.key, "render_radius") == 0) {
-        eden_render_distance = v;   // read at the next world entry, never applied to an open one
-        eden_preset_sync(i);
-    } else if (std::strcmp(s.key, "graphics_preset") == 0) {
-        // Only a deliberate change applies the knobs; the init/re-apply pass must not overwrite
-        // stored knobs (or the low-memory seeds) with the preset's.
-        int p = (int)lroundf(v);
-        if (commitEngine && p >= 1 && p < (int)(sizeof(kPresets) / sizeof(kPresets[0]))) {
-            g_presetApplying = true;
-            eden_settings_set(eden_setting_index("view_distance"), (float)kPresets[p].view_distance);
-            eden_settings_set(eden_setting_index("render_radius"), (float)kPresets[p].render_distance);
-            eden_settings_set(eden_setting_index("render_scale"), (float)eden_preset_render_scale(p));
-            eden_settings_set(eden_setting_index("atmosphere"), (float)eden_preset_atmosphere(p));
-            g_presetApplying = false;
-        }
-    } else if (std::strcmp(s.key, "original_lighting") == 0) {
-        R::setOriginalLighting(v != 0.0f);
-    } else if (std::strcmp(s.key, "atmosphere") == 0) {
-        // A deliberate change writes the element rows (the init/re-apply pass must not overwrite hand-set ones).
+    } },
+  { "render_radius",   &eden_render_distance, apply_preset_knob },   // read at the next world entry, never applied to an open one
+  { "render_scale",    &eden_render_scale, apply_preset_knob },
+  { "shadows",         nullptr, [](int, float v, bool) { shadow_setSetting((int)lroundf(v)); } },   // re-meshes if the mode changed
+  { "shadow_lamp_tint", nullptr, [](int, float v, bool) { shadow_setLampTint(v >= 0.5f); } },     // re-meshes if it changed
+  { "atmosphere",      nullptr, [](int i, float v, bool commit) {
+        // A deliberate change writes the element rows (the load-time pass must not overwrite hand-set ones).
         const int t = (int)lroundf(v);
-        if (commitEngine && t >= 0 && t <= 2) {
+        if (commit && t >= 0 && t <= 2) {
             for (int e = 0; e < AT_COUNT; ++e) {
                 const int ei = eden_setting_index(kAtmoKey[e]);
                 if (ei < 0) continue;
@@ -726,97 +693,106 @@ static void eden_apply_setting(int i, bool commitEngine) {
             }
         }
         eden_preset_sync(i);
-    } else if (std::strcmp(s.group, "Atmo") == 0) {
-        if (commitEngine) eden_atmo_sync();
-    } else if (std::strcmp(s.key, "shadows") == 0) {
-        shadow_setSetting((int)lroundf(v));   // re-meshes the window if the mode changed
-    } else if (std::strcmp(s.key, "autosave") == 0) {
+    } },
+  { "fps_cap",         &eden_fps_cap },
+  { "original_lighting", nullptr, [](int, float v, bool) { R::setOriginalLighting(on(v)); } },
+  { "fov",             &eden_fov_degrees },
+  { "crosshair",       &eden_crosshair },
+  { "block_preview",   nullptr, [](int, float v, bool) { eden_set_block_preview(on(v)); } },
+  { "ui_scale",        &eden_ui_scale, [](int, float, bool) { eden_display_refresh(); } },   // re-derives the point space, re-lays-out
+  { "reduce_flashing", nullptr, apply_none },   // eden_reduce_flashing()
+  { "precip",          nullptr, apply_atmo_element },
+  { "splash",          nullptr, apply_atmo_element },
+  { "clouds",          nullptr, apply_atmo_element },
+  { "cloud_shadows",   nullptr, apply_atmo_element },
+  { "height_fog",      nullptr, apply_atmo_element },
+  { "ambient",         nullptr, apply_atmo_element },
+  { "water_tint",      nullptr, apply_atmo_element },
+  { "glint",           nullptr, apply_atmo_element },
+  { "halos",           nullptr, apply_atmo_element },
+  { "fullscreen",      nullptr, [](int, float v, bool) { eden_window_set_fullscreen(on(v)); } },   // UX.5: held until the window exists
+  { "display_layout",  &eden_display_layout, [](int, float, bool) { eden_display_refresh(); } },
+
+  { "srclike_movement", nullptr, [](int, float v, bool) { SrclikeMove::setEnabled(on(v)); } },
+  { "camera_view",     nullptr, [](int, float v, bool) { eden_set_camera_view((int)lroundf(v)); } },
+  { "fps_normalize",   &eden_fps_normalize },
+  { "srclike_autobhop", nullptr, [](int, float v, bool) { SrclikeMove::setAutoBhop(on(v)); } },
+  { "srclike_sens",    &eden_srclike_sens },
+  { "fire_melts_ice",  nullptr, [](int, float v, bool) { eden_set_fire_melts_ice(on(v)); } },
+  { "fire_chars_vines", nullptr, [](int, float v, bool) { eden_set_fire_chars_vines(on(v)); } },
+  { "dev_console",     nullptr, [](int, float v, bool) { DEV_CONSOLE_ALLOWED = on(v); } },
+  { "double_brush",    nullptr, [](int, float v, bool) { DOUBLE_BRUSH = on(v); if (!DOUBLE_BRUSH) eden_set_build_size(1); } },
+  { "move_accelerate",    nullptr, apply_move_tunable },
+  { "move_airaccelerate", nullptr, apply_move_tunable },
+  { "move_friction",      nullptr, apply_move_tunable },
+  { "move_stopspeed",     nullptr, apply_move_tunable },
+  { "move_gravity",       nullptr, apply_move_tunable },
+  { "move_maxvelocity",   nullptr, apply_move_tunable },
+  { "move_tickrate",      nullptr, apply_move_tunable },
+
+  { "autosave",        nullptr, [](int, float v, bool) {
         static const float kPeriod[] = {0, 60, 120, 300};
-        int a = (int)lroundf(v);
+        const int a = (int)lroundf(v);
         g_autosave_seconds = (a >= 0 && a < 4) ? kPeriod[a] : 60;
-    } else if (std::strcmp(s.key, "fps_normalize") == 0) {
-        eden_fps_normalize = v;
-    } else if (std::strcmp(s.key, "hold_to_act") == 0) {
-        eden_hold_to_act = v;
-    } else if (std::strcmp(s.key, "mouse_sensitivity_y") == 0) {
-        eden_mouse_sensitivity_y = v;
-    } else if (std::strcmp(s.key, "touch_look_speed") == 0) {
-        TOUCH_LOOK_SENS_X = v;
-    } else if (std::strcmp(s.key, "touch_look_speed_y") == 0) {
-        TOUCH_LOOK_SENS_Y = v;
-    } else if (std::strcmp(s.key, "touch_look_smoothing") == 0) {
-        TOUCH_LOOK_SMOOTH = v;
-    } else if (std::strcmp(s.key, "touch_look_glide") == 0) {
-        TOUCH_LOOK_GLIDE = v > 0.0f ? v : 0.0f;
-    } else if (std::strcmp(s.key, "crosshair") == 0) {
-        eden_crosshair = v;
-    } else if (std::strcmp(s.key, "display_mode") == 0) {
-        eden_display_mode = v;
-    } else if (std::strcmp(s.key, "render_scale") == 0) {
-        eden_render_scale = v;
-        eden_preset_sync(i);
-    } else if (std::strcmp(s.key, "dpr_cap") == 0) {
-        eden_dpr_cap = v;
-    } else if (std::strcmp(s.key, "fps_cap") == 0) {
-        eden_fps_cap = v;
-    } else if (std::strcmp(s.key, "ui_scale") == 0) {
-        eden_ui_scale = v;
-        eden_display_refresh();     // re-derives the point space and re-lays-out the HUD/menu
-    } else if (std::strcmp(s.key, "display_layout") == 0) {
-        eden_display_layout = v;
-        eden_display_refresh();
-    } else if (std::strcmp(s.key, "legacy_menu") == 0) {
-        eden_legacy_menu = v;
-    } else if (std::strcmp(s.key, "gamepad") == 0) {
-        eden_gamepad_enabled = v;
-    } else if (std::strcmp(s.key, "gamepad_look_sensitivity") == 0) {
-        eden_gamepad_look_sensitivity = v;
-    } else if (std::strcmp(s.key, "gamepad_deadzone") == 0) {
-        eden_gamepad_deadzone = v;
-    } else if (std::strcmp(s.key, "save_backup") == 0) {
-        eden_save_backup = v;
-    } else if (std::strcmp(s.key, "upgrade_256z") == 0) {
-        eden_upgrade_256z = v;
-    } else if (std::strcmp(s.key, "input_mode") == 0) {
-        g_inputMode = (int)lroundf(v);
-        eden_apply_input_profile();
-    } else if (std::strcmp(s.key, "invert_look") == 0) {
-        if (World::getWorld && World::getWorld->player)
-            World::getWorld->player->invertcam = (v != 0.0f) ? true : false;
-    } else if (std::strcmp(s.key, "master_volume") == 0) {
-        eden_audio_set_master(v);
-    } else if (std::strcmp(s.key, "mute_in_background") == 0) {
-        g_muteInBackground = (v != 0.0f);
-        if (!g_muteInBackground) eden_audio_set_bg_muted(0);
-    } else if (std::strcmp(s.key, "music_volume") == 0) {
-        if (CocosDenshion::SimpleAudioEngine::sharedEngine())
-            CocosDenshion::SimpleAudioEngine::sharedEngine()->setBackgroundMusicVolume(v);
-    } else if (std::strcmp(s.key, "ambience_volume") == 0) {
-        if (CocosDenshion::SimpleAudioEngine::sharedEngine())
-            CocosDenshion::SimpleAudioEngine::sharedEngine()->setAmbienceVolume(v);
-    } else if (std::strcmp(s.key, "effects_volume") == 0) {
-        if (CocosDenshion::SimpleAudioEngine::sharedEngine())
-            CocosDenshion::SimpleAudioEngine::sharedEngine()->setEffectsVolume(v);
-    } else if (std::strcmp(s.key, "touch_controls_sound") == 0) {
-        extern bool touchControlsSoundEnabled;
-        touchControlsSoundEnabled = (v != 0.0f);
-    } else if (std::strcmp(s.key, "night_ambience") == 0) {
-        extern bool nightAmbienceEnabled;
-        nightAmbienceEnabled = (v != 0.0f);
+    } },
+  { "save_backup",     &eden_save_backup },
+  { "upgrade_256z",    &eden_upgrade_256z },
+};
+static const int kBindingCount = (int)(sizeof(kBindings) / sizeof(kBindings[0]));
+static const SettingBinding* g_binding[kSettingCount];   // by row; filled by eden_settings_resolve_bindings
+static bool g_bindingsResolved = false;
+static bool settings_row_has_value(int i) { return kSettings[i].kind <= KIND_ENUM; }   // toggle, range, enum
+
+// Fills g_binding[] and reports every mismatch into `why` (may be null). Returns the number of problems.
+// `skip` (tests only: --console-mutate=unbound) leaves that key's entry out, as if it had none.
+static int eden_settings_resolve_bindings(std::string* why, const char* skip = nullptr) {
+    int bad = 0;
+    for (int i = 0; i < kSettingCount; ++i) g_binding[i] = nullptr;
+    for (int b = 0; b < kBindingCount; ++b) {
+        const SettingBinding& e = kBindings[b];
+        if (skip && !std::strcmp(e.key, skip)) continue;
+        const int i = eden_setting_index(e.key);
+        const char* fault = i < 0 ? "names no row" : !settings_row_has_value(i) ? "is on a row without a value"
+                          : g_binding[i] ? "is bound twice" : (!e.bind && !e.apply) ? "has neither bind nor apply" : nullptr;
+        if (fault) { ++bad; if (why) *why += std::string(e.key) + " " + fault + "; "; continue; }
+        g_binding[i] = &e;
     }
-}
-
-static void eden_apply_port_settings(void) {
     for (int i = 0; i < kSettingCount; ++i)
-        if (kSettings[i].engine < 0) eden_apply_setting(i, false);
+        if (settings_row_has_value(i) && !g_binding[i]) { ++bad; if (why) *why += std::string(kSettings[i].key) + " has no binding; "; }
+    g_bindingsResolved = true;
+    return bad;
 }
 
-// Port rows persist here; engine rows persist through SettingsMenu::save(). Both end up in
-// eden_prefs — one store, one lifetime.
+static void eden_apply_setting(int i, bool commit) {
+    if (i < 0 || i >= kSettingCount) return;
+    if (!g_bindingsResolved) eden_settings_resolve_bindings(nullptr);
+    const SettingBinding* b = g_binding[i];
+    if (!b) return;
+    const float v = g_value[i];
+    if (b->bind) *b->bind = v;
+    if (b->apply) b->apply(i, v, commit);
+}
+
+// The load-time pass: every row, no one-shot actions.
+static void eden_apply_all_settings(void) {
+    for (int i = 0; i < kSettingCount; ++i) eden_apply_setting(i, false);
+}
+
+// The stock prefs name a row persists under, or null (QA.19).
+static const char* settings_stock_name(int i) {
+    if (!g_bindingsResolved) eden_settings_resolve_bindings(nullptr);
+    return g_binding[i] ? g_binding[i]->stock : nullptr;
+}
+
+// Every row persists here, in eden_prefs.
 static void eden_persist_setting(int i) {
-    if (kSettings[i].engine >= 0) return;   // owned by SettingsMenu::save()
     if (kSettings[i].kind >= KIND_PAGE) return;   // SX.1: pages and headings hold no value
     const char* key = kSettings[i].key;
+    if (const char* stock = settings_stock_name(i)) {   // a stock 2.1 row: its own name, a 0/1 int
+        eden_prefs_set_int(stock, g_value[i] != 0.0f ? 1 : 0);
+        eden_prefs_sync();
+        return;
+    }
     if (kSettings[i].kind == KIND_TEXT) {
         eden_prefs_set_str(key, g_text[i].c_str());
         eden_prefs_sync();
@@ -871,26 +847,42 @@ static void eden_preset_sync(int changedKnob) {
 
 extern "C" {
 
-// Called once the world exists. Seeds every row: engine rows FROM the engine (SettingsMenu's ctor
-// has already run its own load()), port rows from eden_prefs, then applies the port half.
+// The stock five's values, straight from eden_prefs, applied without the rest of the model: called by
+// SettingsMenu::load() at construction, before the title tune starts and frames before eden_settings_init
+// can run (it needs World::getWorld->menu->settings). Stock 2.1 read and applied them there too.
+void eden_settings_boot_stock(void) {
+    for (int i = 0; i < kSettingCount; ++i) {
+        const char* stock = settings_stock_name(i);
+        if (!stock) continue;
+        g_value[i] = (float)(eden_prefs_get_int(stock, kSettings[i].def != 0.0f ? 1 : 0) != 0);
+        eden_apply_setting(i, false);
+    }
+}
+
+// Called once the world exists. Seeds every row from eden_prefs, then applies them all.
 void eden_settings_init(void) {
     if (g_loaded) return;
-    SettingsMenu* sm = eden_engine_settings();
-    if (!sm) return;                        // too early; caller retries next frame
+    if (!eden_engine_settings()) return;   // too early; caller retries next frame
     g_loaded = true;
+    {   // QA.19: a row without a binding does nothing; say so (--console-selftest fails on it)
+        std::string why;
+        if (eden_settings_resolve_bindings(&why))
+            std::fprintf(stderr, "[eden-settings] BINDINGS: %s\n", why.c_str());
+    }
 
     for (int i = 0; i < kSettingCount; ++i) {
-        if (kSettings[i].engine >= 0) {
-            g_value[i] = (float)sm->properties[kSettings[i].engine].value;
-            continue;
-        }
         g_value[i] = kSettings[i].def;
         const char* key = kSettings[i].key;
         if (kSettings[i].kind >= KIND_PAGE) continue;   // SX.1: no value
+        if (const char* stock = settings_stock_name(i)) {   // stock 2.1 name and 0/1 int
+            g_hadStored[i] = (eden_prefs_type(stock) == 1);
+            if (g_hadStored[i]) g_value[i] = (float)(eden_prefs_get_int(stock, 0) != 0);
+            continue;
+        }
         if (kSettings[i].kind == KIND_TEXT) {
             const char* t = eden_prefs_get_str(key);
             g_hadStored[i] = (t != nullptr);
-            if (t) g_text[i] = t;
+            g_text[i] = t ? t : textDefault(key);
             continue;
         }
         g_hadStored[i] = (eden_prefs_type(key) == 1);
@@ -942,7 +934,7 @@ void eden_settings_init(void) {
             g_value[pi] = isDefault ? 2.0f : 0.0f;
         }
     }
-    eden_apply_port_settings();
+    eden_apply_all_settings();
 }
 
 // Has eden_settings_init() actually run yet? It needs the World to exist, so it happens some
@@ -950,6 +942,26 @@ void eden_settings_init(void) {
 // this as a one-shot edge to re-derive the drawable from the RESTORED render_scale/dpr_cap
 // (item #6); without it a persisted non-default value only took effect on the first resize.
 int eden_settings_loaded(void) { return g_loaded ? 1 : 0; }
+
+// QA.19 (--console-selftest): every value row has a binding and every binding names one. Returns the number of
+// problems and lists them in `why`. `skip` drops one key's entry first (the mutation leg); the table is
+// resolved again without it afterwards, so a running model is unchanged.
+int eden_settings_check_bindings(const char* skip, char* why, int whyLen) {
+    std::string w;
+    const int bad = eden_settings_resolve_bindings(&w, skip && *skip ? skip : nullptr);
+    eden_settings_resolve_bindings(nullptr);
+    if (why && whyLen > 0) std::snprintf(why, (size_t)whyLen, "%s", w.c_str());
+    return bad;
+}
+
+// QA.19 (--settings-selftest): load the model again from whatever eden_prefs now holds (the test points it at
+// a fixture file first with eden_prefs_reset_for_test), profile defaults included, as a fresh boot would.
+void eden_settings_test_reinit(void) {
+    g_loaded = false;
+    g_profileDefaultsApplied = false;
+    for (int i = 0; i < kSettingCount; ++i) g_hadStored[i] = false;
+    eden_settings_init();
+}
 
 // The panel's whole data model, as JSON. One string rather than an accessor per field so the C
 // table above stays the single source of truth and the JS never hard-codes a row.
@@ -1085,7 +1097,7 @@ void eden_settings_set_text(int i, const char* text) {
 // window.EdenKeybinds.resetDefaults() together, then re-renders once.
 void eden_settings_reset_all(void) {
     for (int i = 0; i < kSettingCount; ++i) {
-        if (kSettings[i].kind == KIND_TEXT) { g_text[i].clear(); eden_persist_setting(i); continue; }
+        if (kSettings[i].kind == KIND_TEXT) { g_text[i] = textDefault(kSettings[i].key); eden_persist_setting(i); continue; }
         if (kSettings[i].kind >= KIND_PAGE) continue;
         eden_settings_set(i, kSettings[i].def);
     }
@@ -1121,8 +1133,6 @@ int eden_settings_menu_open(void) {
 void eden_settings_menu_close(void) {
     if (!World::getWorld || !World::getWorld->menu) return;
     World::getWorld->menu->showsettings = false;
-    SettingsMenu* sm = eden_engine_settings();
-    if (sm) { sm->save(); eden_apply_port_settings(); }
     // Menu::update returned early for every frame the panel was up, so any touch that was live
     // when it opened is still sitting in the slot table with a stale `inuse`. Clear the lot rather
     // than let the main menu act on a press that belonged to the panel.
@@ -1154,10 +1164,7 @@ void eden_settings_menu_open_now(void) {
 // that path is for the settings PANEL, which only needs it once per open.
 int eden_get_hold_to_act(void) { return eden_hold_to_act != 0.0f; }
 int eden_get_crosshair(void) { return eden_crosshair != 0.0f; }
-int eden_get_display_mode(void) { return (int)lroundf(eden_display_mode); }
-// Not polled -- read once per save by save_backup.cpp (portable C++, no Settings.cpp include),
-// which is the actual reason this is a function and not a direct extern of the float above.
-int eden_get_save_backup(void) { return eden_save_backup != 0.0f; }
+int eden_get_hotbar_shown(void) { return eden_hotbar_shown != 0.0f; }
 // S.5e: "Convert to 256 high". EDEN_UPGRADE_256Z=0|1 wins over the setting:
 // a harness pins the height so a gate does not depend on whatever the save directory's settings say
 // (port/src/harness/ sets it to 0 for every scripted mode unless --upgrade-256z is given).
@@ -1198,13 +1205,6 @@ int eden_get_render_scale_pct(void) {
     if (i < 0 || i >= (int)(sizeof(kPct) / sizeof(kPct[0]))) return 100;
     return kPct[i];
 }
-int eden_get_dpr_cap_x100(void) {
-    static const int kCap[] = {100, 150, 200};
-    int i = (int)lroundf(eden_dpr_cap);
-    if (i < 0 || i >= (int)(sizeof(kCap) / sizeof(kCap[0]))) return 200;
-    return kCap[i];
-}
-
 // Row #14. Read every rAF tick by eden_main.cpp's frame gate — plain int, not a bool getter, since
 // 0 means "uncapped" and any other value IS the target fps, no separate on/off flag needed.
 int eden_get_fps_cap(void) {
@@ -1323,20 +1323,17 @@ int eden_settings_apply(int i) {
 }
 
 // Rows whose effect is not wired on native yet — the GL screen skips these rather than show a
-// control that does nothing (DPR / UI scale / layout are the web drawable and point-space knobs;
-// input_mode is DOM detection; legacy_menu is the DOM-vs-GL switch that is forced on here anyway).
+// control that does nothing (layout is a point-space knob; input_mode is DOM detection).
 // render_scale is shown since N.4.11: native renders the 3D pass at it (gl_context_native.cpp's
-// eden_scene_pass_begin). dpr_cap stays hidden on purpose: it would be a second knob for the same
-// thing, and the touch profile seeds it at 1.5x, which would silently drop a 2x iPad to 75%
-// before anyone has measured what that buys (N.4.11 asks for the device fps number first).
+// eden_scene_pass_begin).
 int eden_settings_native_hidden(int i) {
     const Setting* s = eden_row(i);
     if (!s) return 1;
     static const char* const kHidden[] = {
-        "dpr_cap", "display_mode",
-        "display_layout", "legacy_menu",
+        "display_layout",
     };
     for (const char* h : kHidden) if (std::strcmp(s->key, h) == 0) return 1;
+    if (std::strcmp(s->key, "fullscreen") == 0) return eden_host_can_quit() ? 0 : 1;   // UX.5: no window manager on iOS
     // Stage L: look rows follow the effective input device.
     const bool touch = eden_effective_input_is_touch() != 0;
     if (std::strcmp(s->key, "touch_controls_sound") == 0) return touch ? 0 : 1;   // SX.3
@@ -1441,7 +1438,7 @@ enum {
     KC_S = 22, KC_T = 23, KC_V = 25, KC_W = 26, KC_X = 27, KC_B = 5,
     KC_1 = 30, KC_2 = 31, KC_3 = 32, KC_4 = 33, KC_5 = 34,
     KC_6 = 35, KC_7 = 36, KC_8 = 37, KC_9 = 38,
-    KC_ESCAPE = 41, KC_SPACE = 44, KC_GRAVE = 53, KC_SLASH = 56, KC_F1 = 58, KC_F2 = 59, KC_F5 = 62,
+    KC_ESCAPE = 41, KC_SPACE = 44, KC_GRAVE = 53, KC_SLASH = 56, KC_F1 = 58, KC_F2 = 59, KC_F5 = 62, KC_F11 = 68,
     KC_RIGHT = 79, KC_LEFT = 80, KC_DOWN = 81, KC_UP = 82,
     KC_LCTRL = 224, KC_LSHIFT = 225, KC_LALT = 226,
     KC_RCTRL = 228, KC_RSHIFT = 229, KC_RALT = 230,
@@ -1502,7 +1499,7 @@ static const Keybind kKeybinds[] = {
   { "hideHud",     "Hide HUD",              "Interface", KC_F1,      0,         KB_MOMENTARY,  KB_NATIVE },
   { "screenshot",  "Screenshot",            "Interface", KC_F2,      0,         KB_MOMENTARY,  KB_NATIVE },
   { "cameraView",  "Camera view",           "Interface", KC_F5,      0,         KB_MOMENTARY,  KB_NATIVE },
-  { "fullscreen",  "Fullscreen",            "Interface", KC_L,       0,         KB_MOMENTARY,  KB_WEB  },
+  { "fullscreen",  "Fullscreen",            "Interface", KC_F11,     0,         KB_MOMENTARY,  KB_NATIVE },   // UX.5
 
   { "hotbar1", "Hotbar 1", "Hotbar", KC_1, 0, KB_MOMENTARY, KB_BOTH },
   { "hotbar2", "Hotbar 2", "Hotbar", KC_2, 0, KB_MOMENTARY, KB_BOTH },
@@ -1559,8 +1556,6 @@ const char* eden_keybind_label(int i)  { const Keybind* k = eden_keybind_row(i);
 const char* eden_keybind_group(int i)  { const Keybind* k = eden_keybind_row(i); return k ? k->group  : ""; }
 int eden_keybind_default(int i)   { const Keybind* k = eden_keybind_row(i); return k ? k->def : 0; }
 int eden_keybind_secondary(int i) { const Keybind* k = eden_keybind_row(i); return k ? k->sec : 0; }
-int eden_keybind_is_continuous(int i) { const Keybind* k = eden_keybind_row(i); return k && (k->dispatch & KB_CONTINUOUS) ? 1 : 0; }
-int eden_keybind_is_momentary(int i)  { const Keybind* k = eden_keybind_row(i); return k && (k->dispatch & KB_MOMENTARY)  ? 1 : 0; }
 // Mirrors eden_settings_native_hidden(): 1 = the GL screen must not offer this row.
 int eden_keybind_native_hidden(int i) {
     const Keybind* k = eden_keybind_row(i);
@@ -1599,12 +1594,6 @@ void eden_keybind_reset_all(void) {
 
 int eden_keybind_action_after(int prev, int code);
 
-// The translators' hot path (once per key event, not per frame). Returns the FIRST action bound
-// to `code`, or -1. Callers that must honour a deliberate double-binding — Ctrl is flyDown AND
-// crouch out of the box — iterate with eden_keybind_action_after() instead of stopping here.
-int eden_keybind_action_for_code(int code) {
-    return eden_keybind_action_after(-1, code);
-}
 
 // Iterator form: pass the previous result (or -1 to start), get the next action bound to `code`,
 // or -1 when there are no more. Exists because "one key, two actions" is shipped configuration

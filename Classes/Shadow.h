@@ -65,6 +65,9 @@ void shadow_onSetLand(int x,int z,int y,int oldtype,int type);   // Terrain::set
 // mode re-meshes the window; shadowTop is already current.
 void shadow_setSetting(int mode);
 void shadow_setOverride(int mode);
+// Settings > Tinted lamp shadows (default off): when off, a shaded top face by day (skylight 1) gets no
+// brick-store (lamp) light, so shadows are not tinted by lamp colour. Re-meshes the window on change.
+void shadow_setLampTint(bool on);
 // Main thread: for the chunk whose min corner is block (x0,y0,z0), the gap table (above) of the 18x18
 // block columns from (x0-1,z0-1), i.e. its own columns and the ring, read from blockarray.
 void shadow_gather(int x0,int z0,int y0,unsigned char* out);

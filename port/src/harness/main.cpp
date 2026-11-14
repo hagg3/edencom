@@ -68,9 +68,6 @@
 //                        and loaded. Not a gate (it depends on three hosts being up).
 //   --net-fixtures=DIR   answer every eden_net_fetch from DIR/<host>/<path>@<query> instead of the
 //                        network (also the EDEN_NET_FIXTURES environment variable).
-//   --objc-selftest      Stage 3: this port's own ObjC runtime (Linux/Windows only; macOS uses
-//                        Apple's). Dispatch, ivar layout, super, categories, the empty-base ivar
-//                        bias and the @"literal" layout.
 //   --audio-selftest     Stage 2: decodes one real file of each shipped format and asserts a
 //                        played effect reaches the mixer, drains, and that a music channel
 //                        streams. Headless (no window needed) but it DOES open the audio device
@@ -94,6 +91,14 @@
 //   --gamepad-selftest   Stage 2: attaches an SDL VIRTUAL gamepad, drives its sticks/buttons, and
 //                        asserts the engine moved — so it needs no physical controller and runs
 //                        headless. Native counterpart of web-port-final:web/tools/headless-gamepad-test.js.
+//   --load-fail-selftest QA.6: a world whose file-header CRC is flipped is refused (status bar says why), and
+//                        the next, good world in the same process reaches PLAY.
+//   --save-fail-selftest QA.5: a save that fails (RLIMIT_FSIZE at the file's size, SIGXFSZ ignored: EFBIG,
+//                        what a full disk looks like) is reported (stderr `emod: save failed:`, status line),
+//                        Save & Quit stays in the world behind a dialog, warp and the bulk reload don't go ahead,
+//                        and with the limit lifted "Try again" saves and the edit reloads. POSIX only (Windows: SKIP).
+//                        --save-fail-mutate=exit (Save & Quit/warp) and =stream (walk/jump) go ahead regardless
+//                        and must FAIL it. Headless.
 //   --background-selftest Stage 4.2: pushes SDL_EVENT_WILL_ENTER_BACKGROUND and asserts the event
 //                        WATCH (not the poll loop -- see eden_lifecycle_event_watch) reaches
 //                        eden_app_will_background() and a real world file lands on disk.
@@ -153,6 +158,9 @@
 //   --mods-selftest      K.3: the mod manager's model in --docs/Packs: the enable list (mods.json) and its order,
 //                        requires/conflicts, the mod-list hash, worldMods, zip install/update and every refusal,
 //                        the Get Mods catalogue parser. Headless, no world.
+//   --hotbar-selftest    UX.8-3: the hotbar's model and sidecar (Classes/Hotbar): the hotbar.json reader's refusals,
+//                        select/scroll, smart replace, picker target swap, the Hud's pick sites, save + re-enter,
+//                        hostile files, a mod slot with its pack on and off. Headless; plays worlds in --docs.
 //   --lua-selftest       K.4: sandboxed Lua mod scripts (docs/scripting.md): four test packs in --docs/Packs; load
 //                        order, the sandbox, the API vs the block verbs, player-edit events, eden.wait, the shared
 //                        work budget, CPU preemption + stops, the memory cap, maxErrors, the pack hash, session/close.
@@ -184,6 +192,10 @@
 //                        one; mining and TNT taking the anchor's signs; a command block's steel mined
 //                        taking only its CMB1 record (+ its signs); save + reload. Either container
 //                        (--world-format=emod). --signs-mutate=bottom|nohook are the mutation legs.
+//   --settings-selftest  QA.19: every settings row set, then its value and the targets it writes dumped and
+//                        compared with port/tools/fixtures/settings/dump.txt; and a pre-QA.19 prefs file
+//                        (fixtures/settings/prefs) reads back to the same dump. --settings-capture=<dir>
+//                        writes a new pair (only for a deliberate change of what a row writes).
 //   --camera-selftest    H.12: the third-person camera. Picking at screen centre hits the same block
 //                        in all three views (13 ahead: inside reach only if the third-person ray starts
 //                        at the player), a block behind the player neither picks nor blocks, pull-in in
@@ -200,7 +212,8 @@
 //                        --console-corpus=PATH, parsed with block and console options), kVerbs vs the
 //                        parser's errors; then a fresh world in --docs: gate 2 (a typed line == the
 //                        script pressed on a block the player stands on), jobs/stop/`=`/sink/OP_EXT/
-//                        timeHook. --console-mutate=anchor must FAIL it.
+//                        timeHook. --console-mutate=anchor must FAIL it (and =flipburst, QA.9: the
+//                        day/night flip meshing the whole window in one frame; --sky-shot takes it too, as the reference).
 //   --sign-shot[=PREFIX] a REAL WINDOW: --world, --at, --look=YAW,PITCH, then PREFIX-signs.bmp and
 //                        the sign pass's probe line.
 //   --scene-shot[=PREFIX] G.5b-0, a REAL WINDOW: a scratch world (--world, default "scene-shot",
@@ -363,6 +376,7 @@
 // its own harness::g_<group> namespace) and harness.h (the includes, externs and the declarations they share).
 
 #include "harness.h"
+#include "../seam/AppLifecycle.h"   // QA.14: eden_world_load_join
 
 // <SDL3/SDL_main.h> defines `main` to `SDL_main` and supplies a real main() that calls
 // SDL_RunApp -> UIApplicationMain, so the process gets a UIApplication, an app delegate and a
@@ -504,9 +518,80 @@ static int parse_arg_string(const char* text) {
 
 // The body of the loop above, verbatim from when it was one. Split out only so argv and EDEN_ARGS
 // cannot drift into two parsers.
+
+// QA.26: `--help`. One line per test mode, printed and exit 0; the full option notes are the header
+// comment above. Keep this list in step with parse_one_arg when a mode is added.
+static const char* const kModeHelp[][2] = {
+    {"--stage1", "boot a world, walk it, print the frame checksums (the CI boot gate)"},
+    {"--smoke", "open a window, render a few frames, quit"},
+    {"--shot", "capture a UI page or scene to a PNG (see the header for the options)"},
+    {"--scene-shot", "capture a world scene to a PNG"},
+    {"--audio-selftest", "decode each shipped sound format; mixer and music streaming (opens the audio device)"},
+    {"--background-selftest", "app-lifecycle events: backgrounding saves and pauses"},
+    {"--base-selftest", "string and path helpers"},
+    {"--bundled-map-selftest", "every column of the bundled default map decodes and meshes"},
+    {"--browser-selftest", "Get Worlds, offline against fixtures: lists, downloads, refusals"},
+    {"--camera-selftest", "third-person camera and picking"},
+    {"--classic-selftest", "the seeded Classic world generator"},
+    {"--cmds-selftest", "command blocks against a world with a built circuit"},
+    {"--console-selftest", "the command-block language as a console line"},
+    {"--convert-prompt-selftest", "the prompt for converting a 64-high .eden world"},
+    {"--convert64-selftest", "the 64-high to 128-high world converter"},
+    {"--creature-selftest", "creature models load, pose and skin"},
+    {"--display-selftest", "display profiles, UI scale and letterboxing"},
+    {"--emod-selftest", "the .emod container and the streaming converter"},
+    {"--empty-bit-selftest", "edits inside an all-air chunk"},
+    {"--evict-selftest", "ring streaming: evict-save, node dropping, autosave"},
+    {"--fit-selftest", "every menu fits its screen at every device profile"},
+    {"--fly-selftest", "fly and noclip movement"},
+    {"--folders-selftest", "world folders: adoption and layout"},
+    {"--gamepad-selftest", "a virtual gamepad drives the sticks and buttons"},
+    {"--gl-selftest", "the renderer's GL backend"},
+    {"--hotbar-selftest", "the hotbar model and its sidecar file"},
+    {"--input-selftest", "synthetic key and mouse events through the real input path"},
+    {"--json-selftest", "the JSON reader and writer, and every refusal"},
+    {"--keybind-selftest", "the keybind model and the rebind path"},
+    {"--light-selftest", "light boxes: place, repaint, break"},
+    {"--load-fail-selftest", "a corrupt world is refused with a reason"},
+    {"--look-selftest", "mouse and touch look: no loss, no staircase"},
+    {"--lua-selftest", "sandboxed Lua mod scripts"},
+    {"--mods-selftest", "the mod manager's enable list and order"},
+    {"--mp-selftest", "the multiplayer protocol session"},
+    {"--net-selftest", "the multiplayer TCP seam"},
+    {"--net-live-selftest", "Get Worlds against the real servers (not a gate)"},
+    {"--newblocks-selftest", "the 2026 block ids build and draw"},
+    {"--packs-selftest", "mod packs at run time"},
+    {"--pack-selftest=DIR", "the stock pack equals a fresh compile; bad packs in DIR are refused"},
+    {"--photo-selftest", "the in-game photo PNG encoder"},
+    {"--props-selftest", "World Properties"},
+    {"--recolor-selftest", "block recolouring"},
+    {"--registry-selftest", "the block registry and per-world palette"},
+    {"--render-selftest", "the renderer core's invariants (headless)"},
+    {"--ring-light-selftest", "per-column light under ring streaming"},
+    {"--save-fail-selftest", "a save that fails leaves the world intact"},
+    {"--settings-selftest", "every settings row and what it writes"},
+    {"--shadow-selftest", "baked top-face shadows"},
+    {"--signs-selftest", "signs: model, rendering, tool"},
+    {"--srclike-selftest[=leg]", "Srclike movement"},
+    {"--touch-selftest", "touch events reach the HUD"},
+    {"--trailer-selftest", "the sign and command-block trailer model"},
+    {"--ui-selftest", "the GL widgets and menus: taps, drags, dialogs"},
+    {"--weather-selftest[=leg]", "weather, atmosphere and the sky cycle"},
+};
+
+static void print_help() {
+    std::printf("eden_native [--headless] [--docs=DIR] [--world=NAME] [MODE] [options]\n\n"
+                "With no MODE the game starts normally. Test modes (each prints PASS/FAIL, exit 0 on pass):\n\n");
+    for (const auto& m : kModeHelp) std::printf("  %-26s %s\n", m[0], m[1]);
+    std::printf("\nOptions and per-mode notes: the header comment of port/src/harness/main.cpp.\n"
+                "The full CI gate list: .github/scripts/run-gate.sh and .github/workflows/native.yml.\n"
+                "Fixture paths default to this source tree, so any working directory works.\n");
+}
+
 static int parse_one_arg(const char* a) {
     {
-        if (!std::strcmp(a, "--headless"))            g_opt.headless = true;
+        if (!std::strcmp(a, "--help") || !std::strcmp(a, "-h")) { print_help(); std::fflush(stdout); std::exit(0); }
+        else if (!std::strcmp(a, "--headless"))       g_opt.headless = true;
         else if (!std::strcmp(a, "--p1-gate"))        { g_opt.mode = "p1-gate";  g_opt.headless = true; }
         else if (!std::strcmp(a, "--stage1"))         g_opt.mode = "stage1";
         else if (starts_with(a, "--mesh-bench="))     g_meshBenchPasses = atoi(a + 13);
@@ -536,6 +621,10 @@ static int parse_one_arg(const char* a) {
         else if (!std::strcmp(a, "--trailer-keep"))  g_opt.trailerKeep = true;
         else if (!std::strcmp(a, "--signs-selftest")) { g_opt.mode = "signs-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--camera-selftest")) { g_opt.mode = "camera-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--settings-selftest")) { g_opt.mode = "settings-selftest"; g_opt.headless = true; }
+        else if (starts_with(a, "--settings-capture=")) g_opt.settingsCapture = a + 19;
+        else if (starts_with(a, "--settings-fixtures=")) g_opt.settingsFixtures = a + 20;
+        else if (!std::strcmp(a, "--settings-dump")) g_opt.settingsDump = true;
         else if (starts_with(a, "--signs-mutate="))  g_opt.signsMutate = a + 15;
         else if (!std::strcmp(a, "--cmds-selftest"))  { g_opt.mode = "cmds-selftest"; g_opt.headless = true; }
         else if (starts_with(a, "--cmds-mutate="))   g_opt.cmdsMutate = a + 14;
@@ -549,6 +638,7 @@ static int parse_one_arg(const char* a) {
         else if (!std::strcmp(a, "--json-selftest")) { g_opt.mode = "json-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--packs-selftest")) { g_opt.mode = "packs-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--mods-selftest")) { g_opt.mode = "mods-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--hotbar-selftest")) { g_opt.mode = "hotbar-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--lua-selftest")) { g_opt.mode = "lua-selftest"; g_opt.headless = true; }
         else if (starts_with(a, "--packs="))         g_opt.packs.push_back(a + 8);
         else if (starts_with(a, "--pack-selftest=")) { g_opt.mode = "pack-selftest"; g_opt.headless = true; g_opt.packFixtures = a + 16; }
@@ -608,6 +698,7 @@ static int parse_one_arg(const char* a) {
         else if (starts_with(a, "--mp-type="))       g_opt.mpType = atoi(a + 10);
         else if (!std::strcmp(a, "--mp-edits"))      g_opt.mpEdits = true;
         else if (starts_with(a, "--mp-hold="))       g_opt.mpHold = a + 10;
+        else if (starts_with(a, "--mp-unfocus="))    g_opt.mpUnfocusSecs = atoi(a + 13);
         else if (!std::strcmp(a, "--mp-mock"))       eden_mp_servers_mock(1);   // MP.6: the canned server list
         else if (starts_with(a, "--mp-reconcile="))  MpWorld::reconcileOn = atoi(a + 15) != 0;
         else if (!std::strcmp(a, "--base-selftest")) { g_opt.mode = "base-selftest"; g_opt.headless = true; }
@@ -621,6 +712,7 @@ static int parse_one_arg(const char* a) {
         else if (!std::strcmp(a, "--light-selftest")) { g_opt.mode = "light-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--evict-selftest")) { g_opt.mode = "evict-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--ring-light-selftest")) { g_opt.mode = "ring-light-selftest"; g_opt.headless = true; }
+        else if (starts_with(a, "--weather-mutate=")) g_opt.weatherMutate = a + 17;
         else if (starts_with(a, "--evict-mutate="))  g_opt.evictMutate = a + 15;
         else if (starts_with(a, "--light-lattice=")) g_opt.lightLattice = atoi(a + 16);
         else if (!std::strcmp(a, "--shadow-selftest")) { g_opt.mode = "shadow-selftest"; g_opt.headless = true; }
@@ -628,6 +720,7 @@ static int parse_one_arg(const char* a) {
         else if (starts_with(a, "--classic-fixture=")) g_opt.classicFixture = a + 18;
         else if (starts_with(a, "--classic-mutate=")) g_opt.classicMutate = a + 17;
         else if (!std::strcmp(a, "--props-selftest")) { g_opt.mode = "props-selftest"; g_opt.headless = true; }
+        else if (starts_with(a, "--ui-mutate=")) g_opt.uiMutate = a + 12;
         else if (starts_with(a, "--props-mutate=")) g_opt.propsMutate = a + 15;
         else if (starts_with(a, "--lua-mutate=")) g_opt.luaMutate = a + 13;
         else if (starts_with(a, "--props-world=")) g_opt.propsWorld = a + 14;
@@ -665,6 +758,9 @@ static int parse_one_arg(const char* a) {
         else if (!std::strcmp(a, "--save-roundtrip")) g_opt.mode = "save-roundtrip";
         else if (!std::strcmp(a, "--save-inplace")) { /* S.8: ignored -- there is no in-place .eden save any more */ }
         else if (!std::strcmp(a, "--background-selftest")) { g_opt.mode = "background-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--save-fail-selftest")) { g_opt.mode = "save-fail-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--load-fail-selftest")) { g_opt.mode = "load-fail-selftest"; g_opt.headless = true; }
+        else if (starts_with(a, "--save-fail-mutate=")) g_opt.saveFailMutate = a + 19;
         else if (!std::strcmp(a, "--pass-probe"))     g_opt.mode = "pass-probe";
         else if (starts_with(a, "--pass-probe="))     { g_opt.mode = "pass-probe"; g_opt.passFrames = std::max(10, atoi(a + 13)); }
         else if (!std::strcmp(a, "--pass-timers"))    g_opt.passTimers = true;
@@ -763,7 +859,7 @@ static int parse_one_arg(const char* a) {
             if (sscanf(a + 5, "%f,%f,%f", &g_opt.at[0], &g_opt.at[1], &g_opt.at[2]) == 3)
                 g_opt.haveAt = true;
         } else {
-            std::fprintf(stderr, "eden: unknown option '%s' (see port/src/harness/main.cpp's header)\n", a);
+            std::fprintf(stderr, "eden: unknown option '%s' (try --help)\n", a);
             return 2;
         }
     }
@@ -883,29 +979,8 @@ static int eden_main_after_args(int argc, char** argv) {
     if (!g_opt.mode && g_opt.liveCmds.empty()) {
         const int r = eden_player_readme_write(docs.c_str());
         if (r < 0) std::fprintf(stderr, "[eden] README.txt not written in %s\n", docs.c_str());
-        // WB: the bundled example pack(s) into Packs/, once per Documents folder (ContentPack.h).
-        std::vector<std::string> seeded;
-        ContentPack::seedBundledPacks(docs, eden_platform_bundle_root(), &seeded);
-        for (const std::string& l : seeded) std::fprintf(stderr, "[pack] bundled: %s\n", l.c_str());
     }
 
-    // The previous-save slot. Stage 1 left native WITHOUT one, and that was a real regression
-    // against web rather than a missing nicety: web gets it from the Foundation shim's
-    // NSFileHandle, and this target links Apple's real Foundation, whose NSFileHandle is a class
-    // cluster with `-writeData:` on a private subclass — so there is no honest place to swizzle
-    // it. The engine grew a hook at the top of FileManager::saveWorld instead, and both targets
-    // run the identical rules (port/src/shim/foundation/save_backup.cpp). Installed here rather
-    // than inside the seam file so the file that OWNS the decision is the one that shows it.
-    //
-    // Narrower than web's, and knowingly so: the shim guards every file open, including the C3
-    // rollback journal's, while this covers the world file at save time. That is the case the
-    // slot exists for; the journal has its own recovery.
-    eden_save_backup_hook = eden_save_backup_before_overwrite;
-    // ...and the save DIRECTORY. Without this, Classes/FileManager.mm asked real Foundation and
-    // got ~/Documents; the seam's value (and therefore --docs=) would be set and ignored, which
-    // is the state Stage 1 shipped in (G.2b-4: FileManager.cpp's fallback is now the seam itself). eden_platform_documents_root() outlives the process, which
-    // is what the hook's contract requires.
-    eden_documents_root_hook = eden_platform_documents_root;
     // The seam value IS what the engine uses now — Classes/FileManager.cpp asks
     // eden_platform_documents_root() rather than NSSearchPathForDirectoriesInDomains (Phase N
     // Stage 2). Through Stage 1 those were different things on this target and printing the seam
@@ -944,7 +1019,16 @@ static int eden_main_after_args(int argc, char** argv) {
     eden_mem_trace_install();
     eden_mem_trace("boot");
     eden_gl_context_set_drawable_1x(g_opt.drawable1x);
+    // UX.5 (I8): an interactive desktop session reopens at the size and place it closed at.
+    int restoredPos = 0;
+    {
+        int sx, sy, sw, sh;
+        if (!g_opt.mode && !g_opt.headless && g_opt.winW <= 0 && eden_window_prefs_load(&sx, &sy, &sw, &sh)) {
+            g_opt.winW = sw; g_opt.winH = sh; restoredPos = 1;
+        }
+    }
     eden_gl_context_create(g_opt.winW, g_opt.winH);
+    eden_window_boot(restoredPos);   // UX.5: min size, saved position
 
     // N.4.10 (2026-10-04): native never calls eden_set_low_memory(), on purpose — the decision,
     // not an omission. On web it refuses 256z worlds and seeds 1x DPR / 75% render scale / 45 fps.
@@ -999,10 +1083,8 @@ static int eden_main_after_args(int argc, char** argv) {
     // asserts on the wiring rather than on a default. GENERALISES: when enabling a subsystem
     // "breaks" a test, check whether the test was depending on that subsystem being absent.
     //
-    // Two host facts have to be stated before the model loads, because both are properties of
-    // this build rather than preferences:
-    eden_ui_force_legacy(1);        // there is no DOM UI here; the GL menus are the only menus
-    // ...and iOS is the one target where the second fact inverts. Phase N Stage 4.1: this read
+    // A host fact has to be stated before the model loads, because it is a property of this build
+    // rather than a preference. iOS is the one target where it inverts. Phase N Stage 4.1: this read
     // `eden_set_detected_touch(0)` unconditionally, which was true of the three desktop legs and
     // is a lie on a phone — the profile it selects lays the HUD out for a pointer on a device that
     // has none. Stage 2 paid for this class of mistake once already (the ESC menu drew nothing
@@ -1061,6 +1143,7 @@ static int eden_main_after_args(int argc, char** argv) {
         else if (!std::strcmp(g_opt.mode, "registry-selftest")) rc = run_registry_selftest();
         else if (!std::strcmp(g_opt.mode, "packs-selftest")) rc = run_packs_selftest();
         else if (!std::strcmp(g_opt.mode, "mods-selftest")) rc = run_mods_selftest();
+        else if (!std::strcmp(g_opt.mode, "hotbar-selftest")) rc = g_hotbar::run_hotbar_selftest();
         else if (!std::strcmp(g_opt.mode, "lua-selftest")) rc = run_lua_selftest();
         else if (!std::strcmp(g_opt.mode, "base-selftest")) rc = eden_base_selftest_run(g_opt.docs.c_str());
         else if (!std::strcmp(g_opt.mode, "net-selftest"))  rc = eden_net_selftest_run(g_opt.netServer.c_str());
@@ -1072,6 +1155,7 @@ static int eden_main_after_args(int argc, char** argv) {
         else if (!std::strcmp(g_opt.mode, "folders-selftest")) rc = run_folders_selftest();
         else if (!std::strcmp(g_opt.mode, "signs-selftest")) rc = run_signs_selftest();
         else if (!std::strcmp(g_opt.mode, "camera-selftest")) rc = run_camera_selftest();
+        else if (!std::strcmp(g_opt.mode, "settings-selftest")) rc = run_settings_selftest();
         else if (!std::strcmp(g_opt.mode, "sign-shot"))     rc = run_sign_shot();
         else if (!std::strcmp(g_opt.mode, "scene-shot"))    rc = run_scene_shot();
         else if (!std::strcmp(g_opt.mode, "sky-shot"))      rc = run_sky_shot();
@@ -1097,6 +1181,8 @@ static int eden_main_after_args(int argc, char** argv) {
         else if (!std::strcmp(g_opt.mode, "convert64-selftest")) rc = run_convert64_selftest();
         else if (!std::strcmp(g_opt.mode, "save-roundtrip")) rc = run_save_roundtrip();
         else if (!std::strcmp(g_opt.mode, "background-selftest")) rc = run_background_selftest();
+        else if (!std::strcmp(g_opt.mode, "save-fail-selftest")) rc = run_save_fail_selftest();
+        else if (!std::strcmp(g_opt.mode, "load-fail-selftest")) rc = run_load_fail_selftest();
         else if (!std::strcmp(g_opt.mode, "shot"))          rc = run_shot();
         else if (!std::strcmp(g_opt.mode, "fit-selftest"))  rc = run_fit_selftest();
         else if (!std::strcmp(g_opt.mode, "scale-probe"))   rc = run_scale_probe();
@@ -1123,58 +1209,16 @@ static int eden_main_after_args(int argc, char** argv) {
         // "interval since the last frame", so the average rate is the cap exactly; the slack lets a
         // frame start a little early (the vsync-blocking swap absorbs it) so that a cap equal to the
         // display rate never sleeps past a vsync and halves the frame rate.
-        constexpr double kPaceSlackMs = 2.0;
+        // The loop body is interactive_iteration() (core.cpp, QA.8), so --background-selftest's
+        // focus leg drives the real one.
         double nextFrameMs = 0.0;
         if (!g_opt.liveCmds.empty()) eden_live_commands_init(g_opt.liveCmds.c_str());
         if (!g_opt.mpJoin.empty()) mp_join_from_args();   // MP.3b: straight from the main menu to a server
-        // FT.15a --power-exp lever (off by default): menu30.
-        while (g_running) {
-            power_frame();
-            int capFps = eden_get_fps_cap();
-            if (eden_power_exp(EDEN_PEXP_MENU30) && power_game_mode() != GAME_MODE_PLAY && (capFps == 0 || capFps > 30))
-                capFps = 30;
-            if (capFps > 0) {
-                const double interval = 1000.0 / (double)capFps;
-                const double now = eden_platform_now_ms();
-                // First frame, a cap change, or a stall (a slow load, a backgrounded app): restart
-                // the schedule rather than rushing frames out to catch up. The early side allows the
-                // slack: a frame that wakes kPaceSlackMs early and finishes in under that (a cheap menu
-                // frame) is on schedule, and restarting there skipped every other sleep (FT.15c:
-                // menu30 ran ~58 fps on the Air 2).
-                if (nextFrameMs == 0.0 || now - nextFrameMs > interval ||
-                    nextFrameMs - now > interval + kPaceSlackMs)
-                    nextFrameMs = now;
-                const double wait = nextFrameMs - now - kPaceSlackMs;
-                if (wait > 0.0) {
-                    const double p0 = eden_platform_now_ms();
-                    // PW.5 (G5): a true sleep to the slack, no busy tail. SDL_DelayPrecise spun the last
-                    // stretch (~7 CPU points, 0 W measured). `spin` restores it for A/B.
-                    if (eden_power_exp(EDEN_PEXP_SPIN)) SDL_DelayPrecise((Uint64)(wait * 1e6));
-                    else SDL_Delay((Uint32)wait);
-                    power_note_pace(eden_platform_now_ms() - p0);
-                }
-                nextFrameMs += interval;
-            } else {
-                nextFrameMs = 0.0;
-            }
-            pump_events();
-            if (!g_app) break;
-            settings_pump();
-            // BEFORE drawFrame: World::update() is what consumes the queued touches, so input
-            // pushed after it would land a frame late — the same ordering public/eden-input.js
-            // gets by running inside the rAF callback ahead of the engine tick.
-            eden_native_input_tick();
-            eden_live_commands_tick();
-            eden_look_trace_frame();   // L.0: after the pump, before World::update reads the touches
-            if (g_app->isAnimating()) g_app->drawFrame(true);
-            power_frame_end();
-            // AFTER the tick that queued this frame's sounds, so a sound fired now is bound to
-            // the device in the same frame rather than the next one.
-            eden_native_audio_tick();
-            eden_heap_pressure_tick();
-        }
+        while (g_running && interactive_iteration(nextFrameMs)) {}
     }
 
+    eden_world_load_join();   // QA.14: quit during "Loading World...": let the load thread finish first
+    if (!g_opt.mode) eden_window_remember();   // UX.5: size/position for next launch (before the window goes)
     eden_native_audio_shutdown();
     eden_gl_context_destroy();
     SDL_Quit();

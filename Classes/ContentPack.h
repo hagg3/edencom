@@ -137,14 +137,6 @@ bool setPackEnabled(const std::string& documents, const std::string& id, bool en
 bool movePack(const std::string& documents, const std::string& id, int delta);   // -1 earlier, +1 later
 // Removes `<documents>/Packs/<folder>` (the folder, not the list entry). False: not a pack folder there.
 bool removePackFolder(const std::string& documents, const std::string& folder);
-// WB (2026-11-07): the packs Emod puts in every player's Packs folder (`kBundledPacks`: the Wonder Blocks
-// example). For each id not yet recorded in `<documents>/Packs/.bundled`, copies `<bundle>/packs/<id>` (else
-// `<bundle>/media/packs/<id>`) to `Packs/<id>` through `Packs/.seed.partial` and one no-replace rename, then
-// records the id, so it happens once per Documents folder and a player who removes the pack keeps it removed.
-// An id some Packs folder already holds is recorded without copying. New ids added to the list in a later
-// release reach existing players once too. Only interactive runs call it (main.cpp): harness runs leave their
-// --docs folders as they found them. Returns the number of packs copied; `lines` gets one line per action.
-int seedBundledPacks(const std::string& documents, const std::string& bundleRoot, std::vector<std::string>* lines);
 // Version order: dotted numbers, each the leading digits of its part (none = 0), missing parts 0.
 int compareVersions(const std::string& a, const std::string& b);
 

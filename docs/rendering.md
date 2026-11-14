@@ -107,6 +107,9 @@ load time and are not switchable mid-session.
 
 ## Chunk meshing — `TerrainChunk::rebuild2()` ("here be dragons")
 
+> QA.24: the world-ceiling top faces (a block at y = H-1, no neighbour above) come from the `pbounds[1]+CHUNK_SIZE==T_HEIGHT` branch after the visibility scan; `--evict-selftest`'s ceiling leg checks `num_vertices[5]` and `--evict-mutate=noceiling` (`TerrainChunk::testNoCeilingTop`) must fail it.
+
+
 CPU-side, runs on the main thread inside `prepareAndLoadGeometry`. Stages:
 
 0. **Empty shortcut (modified from stock, Stage R / R.2, 2026-10-03).** If the chunk's
@@ -393,7 +396,9 @@ geometry) is a separate future item (row 24/C2, ES3 instancing) — not done.
 ## Performance characteristics & knobs
 - Meshing a chunk is O(4096·faces); a full window re-mesh (1296 chunks at the default radius and
   64z, 5184 at 256z) happens on
-  load and on lighting changes — this is the main hitch source.
+  load and on lighting changes — this is the main hitch source. Since QA.9 the day/night flip and the
+  painted-sky re-meshes are spread at `BULK_RELOAD_CHUNK_BUDGET` chunks a frame (`window_remesh_owed`,
+  `docs/lighting-liquids-effects.md`); a load and a Shadows-setting change are still one frame.
 - `INDICES_MAX = 32768` (`Geometry.h`) caps vertices per chunk stream; faces beyond it
   are silently dropped (`render` guards with `continue`).
 - `max_render_objects = 300` caps doors/cubes/portals per frame; `MAX_FLOWERS 10000`.
@@ -452,7 +457,7 @@ time becomes an upper bound that includes its own GPU work.
 - **Safe:** colors/shade tables, fog parameters, adding a new object batch modeled on
   the flower/portal loops, atlas layout changes (update `getBlockTexShort` +
   `blockTypeFaces`; growing the strip past `ATLAS_TILES` means changing that one constant and
-  regenerating both PNGs with `port/tools/atlas-d2t.py`'s pattern).
+  regenerating both PNGs with `archive/tools/atlas-d2t.py`'s pattern).
 - **Caution:** `rebuild2` (counting and fill passes must stay exactly consistent or
   you'll write past `verticesbg`), bucket/`face_idx` bookkeeping, `prepareVBO`
   swap ordering, anything shared with the old threading design.

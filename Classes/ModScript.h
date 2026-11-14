@@ -8,8 +8,9 @@
 //  no packs, so no scripts (M8).
 //
 //  The sandbox (S4): base (no dofile/loadfile; load = text chunks only; collectgarbage count/collect/step;
-//  print -> the console), coroutine, string (no dump; the pattern functions refuse a subject over 64 KiB, since
-//  C code can't be preempted), table, math, utf8. io, os, package and debug are not compiled at all
+//  setmetatable refuses __gc; print -> the console), coroutine, string (no dump; the pattern functions refuse a
+//  subject over 64 KiB), table, math, utf8. C code can't be preempted, so the vendored Lua bounds its loops a script
+//  sizes (QA.3: pattern steps, string.rep, table.move/insert/remove). io, os, package and debug are not compiled at all
 //  (port/src/shim/vendor/lua). A script never opens a file: its sources were read at world entry.
 //
 //  The API is the command-block language (S8): every world edit (`eden.set`, `eden.fill`, `eden.cmd(line)`,
@@ -20,7 +21,7 @@
 //  Budgets (S5, S6): an allocator cap per state; a count hook every HOOK_EVERY instructions. Every handler
 //  runs as a coroutine: past the per-pack or all-packs instruction budget of a frame it is PAUSED to the next
 //  frame (preempted); preempted `maxPreempts` frames in a row without an eden.wait it is stopped with an
-//  error. Code that can't yield (a table.sort comparator, a __gc, a coroutine the script made) gets an error
+//  error. Code that can't yield (a table.sort comparator, a coroutine the script made) gets an error
 //  past `hardPerResume` instructions instead. An error is reported (console, stderr, a rate-limited toast);
 //  `maxErrors` stops the pack.
 //

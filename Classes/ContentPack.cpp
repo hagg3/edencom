@@ -1056,12 +1056,7 @@ bool writeModList(const std::string& documents, const std::vector<ModListEntry>&
     for (size_t i = 0; i < list.size(); ++i)
         t += std::string(i ? ",\n  " : "\n  ") + "{\"id\": \"" + list[i].id + "\", \"enabled\": " + (list[i].enabled ? "true" : "false") + "}";
     t += "\n]}\n";
-    const std::string path = modListPath(documents), tmp = path + ".tmp";
-    FILE* f = fopen(tmp.c_str(), "wb");
-    if (!f) return false;
-    const bool ok = fwrite(t.data(), 1, t.size(), f) == t.size();
-    if (fclose(f) != 0 || !ok) { eden_fs_remove(tmp); return false; }
-    return eden_fs_move(tmp, path);
+    return eden_fs_write_atomic(modListPath(documents), t.data(), t.size());   // QA.17: + fsync, no copy fallback
 }
 
 std::vector<ModPack> scanPacks(const std::string& documents, std::vector<std::string>* lines) {
@@ -1175,78 +1170,6 @@ bool removePackFolder(const std::string& documents, const std::string& folder) {
     const std::string d = documents + "/Packs/" + folder;
     if (!eden_fs_is_dir(d) || !eden_fs_exists(d + "/pack.json")) return false;
     return eden_fs_remove_tree(d);
-}
-
-namespace {
-const char* const kBundledPacks[] = {"wonders"};
-
-bool copyTree(const std::string& from, const std::string& to) {
-    if (!eden_fs_make_dirs(to)) return false;
-    for (const std::string& n : eden_fs_list(from)) {
-        if (n.empty() || n[0] == '.') continue;
-        const std::string a = from + "/" + n, b = to + "/" + n;
-        if (eden_fs_is_dir(a) ? !copyTree(a, b) : !eden_fs_copy(a, b)) return false;
-    }
-    return true;
-}
-
-// The "id" of the pack in `dir`, or "" (no pack.json, unreadable, no id).
-std::string packIdIn(const std::string& dir) {
-    std::string text;
-    Json::Value root;
-    Json::Error je;
-    if (!readPackFile(dir + "/pack.json", &text) || !Json::parse(text.data(), text.size(), &root, &je) || !root.isObject()) return "";
-    const Json::Value* id = root.get("id");
-    return id && id->isString() ? id->str : "";
-}
-}  // namespace
-
-int seedBundledPacks(const std::string& documents, const std::string& bundleRoot, std::vector<std::string>* lines) {
-    if (documents.empty() || bundleRoot.empty()) return 0;
-    const std::string packs = documents + "/Packs", marker = packs + "/.bundled";
-    std::set<std::string> done;
-    std::string text;
-    if (readPackFile(marker, &text)) {
-        size_t at = 0;
-        while (at < text.size()) {
-            size_t e = text.find('\n', at);
-            if (e == std::string::npos) e = text.size();
-            if (e > at) done.insert(text.substr(at, e - at));
-            at = e + 1;
-        }
-    }
-    int copied = 0;
-    bool changed = false;
-    for (const char* id : kBundledPacks) {
-        if (done.count(id)) continue;
-        std::string src = bundleRoot + "/packs/" + id;
-        if (!eden_fs_exists(src + "/pack.json")) src = bundleRoot + "/media/packs/" + id;
-        if (!eden_fs_exists(src + "/pack.json")) { if (lines) lines->push_back(std::string(id) + ": not in the bundle"); continue; }
-        if (!eden_fs_make_dirs(packs)) return copied;
-        bool have = false;
-        for (const std::string& n : eden_fs_list(packs))
-            if (!n.empty() && n[0] != '.' && eden_fs_is_dir(packs + "/" + n) && packIdIn(packs + "/" + n) == id) have = true;
-        if (!have) {
-            const std::string stage = packs + "/.seed.partial";
-            eden_fs_remove_tree(stage);
-            if (eden_fs_exists(packs + "/" + id) || !copyTree(src, stage) || !eden_fs_move_new(stage, packs + "/" + id)) {
-                eden_fs_remove_tree(stage);
-                if (lines) lines->push_back(std::string(id) + ": could not copy it into Packs (try again next start)");
-                continue;   // not recorded: the next start tries again
-            }
-            ++copied;
-        }
-        if (lines) lines->push_back(std::string(id) + (have ? ": already in Packs" : ": copied into Packs"));
-        done.insert(id);
-        changed = true;
-    }
-    if (changed) {
-        std::string out;
-        for (const std::string& d : done) out += d + "\n";
-        FILE* f = fopen(marker.c_str(), "wb");
-        if (f) { fwrite(out.data(), 1, out.size(), f); fclose(f); }
-    }
-    return copied;
 }
 
 void setExtraPackDirs(const std::vector<std::string>& dirs) { g_extraDirs = dirs; }

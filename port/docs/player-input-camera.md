@@ -21,9 +21,15 @@ pages, Escape menu/back. A held click repeats the edit every 200 ms (the hold-to
 `SDL_EVENT_FINGER_*` become touches directly; the touch profile shows the on-screen joystick and
 buttons.
 
-**Hotbar without a strip.** The 9 slots (`kHotbarBlocks[]` in `Input.cpp`, fed by the real picker)
-select `hud->blocktype` and `MODE_BUILD`, but nothing draws them on native — the strip and the
-crosshair were DOM overlays. The Settings › Interface "Crosshair" row is likewise inert on native.
+**Hotbar (strip: UX.8-4, `../../docs/ui.md` "Hotbar strip"; taps UX.8-5).** The 9 slots are the engine's since UX.8-3 (`Classes/Hotbar`,
+`../../docs/ui.md` "Hotbar model": block / painted block / colour, per world in `Worlds/<id>/hotbar.json`); the
+seam keeps only the wrappers `eden_select_hotbar_slot`, `eden_hotbar_scroll`, `eden_get_hotbar_index`,
+`eden_get_hotbar_slot_type` (`eden_set_hotbar_slot_type`, `kHotbarBlocks[]` and `eden_ui_tick`'s picker edge
+detector are gone). `Hud::renderHotbar` draws the strip (Settings › Gameplay › Hotbar; `eden_get_hotbar_shown`).
+UX.8-5: the number keys call `eden_hotbar_key(n)` (Input.cpp: with a picker open and the pointer over a cell it assigns that
+cell to slot n, else `Hud::hotbarActivate`: select, or re-select/empty opens the targeted picker); a right-click on the
+strip with the cursor free is `eden_hotbar_right_click` (Input_native.cpp, before the pointer event). Taps and drags are
+`Hud::update`'s own (touch claim `usage_hb`); `hudTapButtonRect` ids 11-19 are the cells, 20/21 the chevrons.
 
 ## The Y-axis coordinate gotcha
 `eden_input_pointer_event(phase, id, x, y)` takes **top-left-origin, Y-down**
@@ -138,7 +144,7 @@ Crouch is **off by default** (`CROUCH_ENABLED=false`, top of `Classes/Player.cpp
 settings toggle (as fly mode now is too): the "Crouch mode" row in the
 "Experiments" settings tab (see [ui.md](ui.md)) calls `eden_set_crouch_enabled()`
 (`src/seam/Input.cpp`, mirroring `eden_set_fly_mode`/`eden_get_fly_mode`), which is wired through
-`eden_apply_setting()` in `src/seam/Settings.cpp`. When it's off, `Hud.cpp` also hides the crouch
+its `kBindings[]` entry in `src/seam/Settings.cpp`. When it's off, `Hud.cpp` also hides the crouch
 button entirely — its hit-test loop and its render/draw call are both wrapped in
 `if (CROUCH_ENABLED)` (`extern bool CROUCH_ENABLED`) — so there's no dead button sitting on screen,
 matching how `FLY_MODE` hides its own up/down affordances when off.
@@ -148,7 +154,7 @@ Fly state seam (FM.1, `Input.cpp`): `eden_cycle_fly_mode` (V / gamepad Y), `eden
 keep their programmatic contract (on = Fly, ignores *Allow fly*).
 
 ## Camera view (H.12)
-Experiments › *Camera view* (`camera_view`, `KIND_ENUM` 0–2) applies through `eden_apply_setting()` →
+Experiments › *Camera view* (`camera_view`, `KIND_ENUM` 0–2) applies through its `kBindings[]` entry →
 `eden_set_camera_view()` (`src/seam/Input.cpp`, beside `eden_set_fly_mode`), which writes the engine's
 `CAMERA_VIEW`. The **F5** `cameraView` keybind (`KB_NATIVE`, resolved as `g_miCameraView` in
 `port/src/seam/Input_native.cpp`'s one-shot chain) calls `eden_cycle_camera_view()` (`Settings.cpp`),
@@ -161,8 +167,9 @@ the same way. Gate: `--camera-selftest`.
   stock feel bit-for-bit; braking >0 blends the per-frame drag from .995 toward .80 (made frame-rate independent only then).
 
 ## Middle-click eyedropper (`eden_pick_block_at_crosshair`, `src/seam/Input.cpp`)
-Middle-click raycasts the crosshair block and copies its type into the current hotbar
-slot (`Terrain::getLand`). **Fixed 2026-07-31:** it read type only and dropped the
+Middle-click raycasts the crosshair block and puts its type and paint colour in the hand
+(`Terrain::getLand`), then `Hud::noteHand()` smart-replaces it into the hotbar (UX.8-3: the slot that
+already holds it, else the first empty one, else the selected one; mod blocks by name). **Fixed 2026-07-31:** it read type only and dropped the
 block's paint color, unlike the real 35-cell picker (`Hud.cpp`) which always sets
 `hud->block_paintcolor` alongside `blocktype`. Now also reads `Terrain::getColor(x,z,y)`
 and assigns it to `hud->block_paintcolor`, so eyedropping a painted block carries the

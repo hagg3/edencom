@@ -1,5 +1,6 @@
 // G.4: split out of the old eden_main_native.cpp (see harness.h). Mode group "browser".
 #include "harness.h"
+#include "../../../Classes/Texture2D.h"   // QA.4: the STBI_MAX_DIMENSIONS leg
 
 using namespace harness;
 
@@ -52,6 +53,47 @@ std::vector<unsigned char> deflate_bytes(const std::vector<unsigned char>& in, i
     return out;
 }
 std::vector<unsigned char> gzip_bytes(const std::vector<unsigned char>& in) { return deflate_bytes(in, 15 + 16); }
+
+// QA.4: a valid w x h 8-bit RGB PNG of zeros, deflated one row at a time (a decompression bomb when large:
+// 8192 x 8192 is ~200 KB on the wire and 268 MB once stb decodes it to RGBA).
+std::vector<unsigned char> zero_png(unsigned w, unsigned h) {
+    std::vector<unsigned char> png = { 0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n' };
+    auto chunk = [&png](const char* type, const std::vector<unsigned char>& d) {
+        const unsigned n = (unsigned)d.size();
+        const unsigned char len[4] = { (unsigned char)(n >> 24), (unsigned char)(n >> 16), (unsigned char)(n >> 8), (unsigned char)n };
+        png.insert(png.end(), len, len + 4);
+        const size_t at = png.size();
+        png.insert(png.end(), type, type + 4);
+        png.insert(png.end(), d.begin(), d.end());
+        const unsigned c = (unsigned)crc32(0, png.data() + at, (uInt)(4 + n));
+        const unsigned char cb[4] = { (unsigned char)(c >> 24), (unsigned char)(c >> 16), (unsigned char)(c >> 8), (unsigned char)c };
+        png.insert(png.end(), cb, cb + 4);
+    };
+    std::vector<unsigned char> ihdr = { (unsigned char)(w >> 24), (unsigned char)(w >> 16), (unsigned char)(w >> 8), (unsigned char)w,
+                                        (unsigned char)(h >> 24), (unsigned char)(h >> 16), (unsigned char)(h >> 8), (unsigned char)h,
+                                        8, 2, 0, 0, 0 };
+    chunk("IHDR", ihdr);
+    z_stream z;
+    std::memset(&z, 0, sizeof(z));
+    deflateInit(&z, 9);
+    const std::vector<unsigned char> row(1 + (size_t)w * 3, 0);   // filter byte 0, then RGB zeros
+    std::vector<unsigned char> idat, buf(1 << 16);
+    for (unsigned y = 0; y <= h; ++y) {
+        z.next_in = (Bytef*)row.data();
+        z.avail_in = y < h ? (uInt)row.size() : 0;
+        const int flush = y < h ? Z_NO_FLUSH : Z_FINISH;
+        do {
+            z.next_out = buf.data();
+            z.avail_out = (uInt)buf.size();
+            deflate(&z, flush);
+            idat.insert(idat.end(), buf.data(), buf.data() + (buf.size() - z.avail_out));
+        } while (z.avail_out == 0);
+    }
+    deflateEnd(&z);
+    chunk("IDAT", idat);
+    chunk("IEND", std::vector<unsigned char>());
+    return png;
+}
 
 // A single-entry PK zip, the shape the archive serves: local header, data, central directory, EOCD.
 // `streamed` sets general-purpose bit 3 and ZEROES the local header's sizes, as a streaming
@@ -265,6 +307,8 @@ int run_browser_selftest_body(bool live) {
     std::snprintf(exe, sizeof(exe), "%sreport_flag.png", base ? base : "");
     const bool havePng = read_file(exe, &png);
     if (havePng) write_bytes(arch + "/worldfiles/1600000001/1600000001.eden.png", png);
+    // QA.4 (A3-04): Beta's preview is a decompression bomb, within stb's backstop but over the preview cap.
+    write_bytes(arch + "/worldfiles/1600000002/1600000002.eden.png", zero_png(8192, 8192));
 
     const std::string app2 = fx + "/app2.edengame.net", files2 = fx + "/files2.edengame.net";
     write_bytes(files2 + "/popularlist.txt", bytes_of("1600000101.eden\nServer Alpha.name\n"));
@@ -322,6 +366,29 @@ int run_browser_selftest_body(bool live) {
     if (b->rowRect(0, &r)) ui_tap_rect(r);
     tick_until([b] { return b->previewShown(); }, 1500, "the preview");
     check(!havePng || b->previewShown(), "selecting a world shows its preview", havePng ? "" : "(no PNG to serve)");
+    check(!b->previewRefused(), "...and a normal preview is not refused", "");
+    // QA.4 (A3-04): the cap, each side on its own (a bomb over both could not catch a broken one)...
+    check(WorldBrowser::previewTooBig(2049, 1) && WorldBrowser::previewTooBig(1, 2049) && !WorldBrowser::previewTooBig(2048, 2048),
+          "the preview cap refuses a side over 2048 px, width or height alone, and takes 2048x2048", "");
+    // ...and an 8192x8192 preview is refused from its IHDR, before it is written or decoded.
+    if (b->rowRect(1, &r)) ui_tap_rect(r);
+    tick_until([b] { return b->previewRefused(); }, 1500, "the oversized preview's refusal");
+    check(b->previewRefused() && !b->previewShown(), "an 8192x8192 preview PNG is refused undecoded (\"preview missing\")", "");
+    // ...and stb's own ceiling (STBI_MAX_DIMENSIONS 8192, Texture2D.cpp) refuses any image past 8192 a side.
+    {
+        const std::string big = docs + "/.qa4-8193.png", ok = docs + "/.qa4-8192.png";
+        write_bytes(big, zero_png(8193, 1));
+        write_bytes(ok, zero_png(8192, 1));
+        Texture2D* tb = new Texture2D(big, false);
+        Texture2D* to = new Texture2D(ok, false);
+        char nd[64];
+        std::snprintf(nd, sizeof nd, "names %u / %u", (unsigned)tb->name, (unsigned)to->name);
+        check(!tb->name && to->name, "Texture2D refuses an 8193 px wide PNG and loads an 8192 px one", nd);
+        delete tb;
+        delete to;
+    }
+    if (b->rowRect(0, &r)) ui_tap_rect(r);
+    tick_until([b] { return b->previewShown(); }, 1500, "the preview again");
 
     // --- downloads: deflate zip, nested zip, no overwrite --------------------------------------
     struct Want { const char* id; const char* file; const char* what; int source; };

@@ -103,266 +103,50 @@ jobs:
           cmake --build /tmp/SDL/build --parallel
           cmake --install /tmp/SDL/build
 
+      # QA.16 (A5-10): a compiler cache; the build is ~3 min of the job, and a sanitizer build is
+      # a different set of objects, so each job has its own key.
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ github.job }}
+
       - name: Configure
         working-directory: native
         env:
           CC: clang
           CXX: clang++
-        run: cmake -B build -G Ninja $EDEN_CMAKE_FLAGS -DCMAKE_PREFIX_PATH="$HOME/sdl3-prefix"
+        run: cmake -B build -G Ninja $EDEN_CMAKE_FLAGS -DEDEN_WERROR_INIT=ON -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_PREFIX_PATH="$HOME/sdl3-prefix"
 
       - name: Build
         working-directory: native
         run: cmake --build build --parallel
 
-      - name: Gates — boot, geometry, selftests, save round-trip
+      - name: Gates — the table (.github/scripts/gates.sh) — boot, geometry, selftests, save round-trip
         working-directory: native
-        # One step, one helper, a backtrace on any crash. See .github/scripts/run-gate.sh for why
-        # the obvious `binary | tee log` shape cannot report a segfault.
+        env:
+          GATE_JOBS: 3
+        # ONE list for every job: .github/scripts/gates.sh (QA.16). It runs each gate through
+        # .github/scripts/run-gate.sh (no `| tee`, a backtrace on a crash) and lists what failed at the end.
         run: |
           set -e
           . ../.github/scripts/run-gate.sh
           export LD_LIBRARY_PATH=$HOME/sdl3-prefix/lib
           B=./build/eden_native
-
-          # G.2b-0 (plan D14): the ObjC surface may only shrink; a converted file may not regain any.
-          python3 -I ../port/tools/objc-surface.py --check
-          # LG.7: the shipped .edm creature models are exactly pod2edm.py's conversion of the .pod art.
-          python3 -I ../port/tools/pod2edm.py --check
-          # SRC.4: the Srclike movement reference model still prints its golden vectors (--srclike-selftest=move reads them).
-          python3 -I ../port/tools/srclike-pm-ref.py --check
-          # G.5b-7: no live GL call outside the renderer (port/src/render/); the engine and host draw through R::.
-          python3 -I ../port/tools/gl-call-gate.py
-          # FT.4: no non-ASCII bytes in UI string literals (the fonts have no glyph for them).
-          python3 -I ../port/tools/ui-string-gate.py
-
-          run_gate "boot (--p1-gate)" $B --p1-gate
-
-          # A FRESH --docs PER RUN, and this is not hygiene. --stage1 creates-or-LOADS a world by
-          # name, so a 64z save left by the previous command is silently reused by the 256z one and
-          # reported under the phase name "world256" with 64z geometry. Reproduced on the dev Mac
-          # while writing this workflow; check-stage1.py names it as the first thing to rule out.
-          # H.2: --shadows=off pins the pair to Off whatever the setting's default becomes; the
-          # shadows leg asserts geom is unchanged (shadows only move colours) and a pinned `full`.
-          rm -rf docs64 docs256 docs64s && mkdir -p docs64 docs256 docs64s
-          run_gate "geometry 64z"  $B --headless --stage1 --shadows=off --docs="$PWD/docs64"
-          run_gate "geometry 256z" $B --headless --stage1 --shadows=off --height=256 --docs="$PWD/docs256"
-          python3 ../.github/scripts/check-stage1.py \
-            gate-geometry-64z.log gate-geometry-256z.log
-          run_gate "geometry 64z shadows" $B --headless --stage1 --shadows=classic --docs="$PWD/docs64s"
-          python3 ../.github/scripts/check-stage1.py --shadows gate-geometry-64z-shadows.log
-
-          run_gate "input selftest"   $B --input-selftest
-          run_gate "gamepad selftest" $B --gamepad-selftest
-          # Stage 4.3: SDL finger events at the engine's own reported HUD rect. Not iOS-only —
-          # the translator is shared, so every platform gets to prove it still routes.
-          run_gate "touch selftest"   $B --touch-selftest
-          # Stage L: the touch drag camera, steps 0-9 (WORKING/touch-camera-plan-2026-10-17.md).
-          # Each --look-mutate puts one fixed bug back and must FAIL it.
-          rm -rf look-docs && mkdir -p look-docs
-          run_gate "look selftest"    $B --look-selftest --docs="$PWD/look-docs"
-          for m in lastonly int enginepts noflush noslop noclear nodecay unlatched multi clearlatch; do
-            rm -rf look-docs-$m && mkdir -p look-docs-$m
-            if $B --look-selftest --look-mutate=$m --docs="$PWD/look-docs-$m" > gate-look-mutate-$m.log 2>&1; then
-              echo "::error::--look-selftest --look-mutate=$m PASSED: the gate cannot see that mutation"; exit 1
-            fi
-          done
-          # Stage FM: noclip, the V cycle + toast, the touch fly slots. --fly-mutate=move calls
-          # move() in noclip again and must FAIL it.
-          rm -rf fly-docs && mkdir -p fly-docs
-          run_gate "fly selftest"     $B --fly-selftest --docs="$PWD/fly-docs"
-          rm -rf source-docs && mkdir -p source-docs
-          run_gate "srclike selftest"  $B --srclike-selftest --docs="$PWD/source-docs"   # Stage SRC (SRC.2 input, SRC.3 trace, SRC.4 move legs; move reads ../port/tools/fixtures/srclike-pm/vectors.txt)
-          rm -rf fly-docs-m && mkdir -p fly-docs-m
-          if $B --fly-selftest --fly-mutate=move --docs="$PWD/fly-docs-m" > gate-fly-mutate-move.log 2>&1; then
-            echo "::error::--fly-selftest --fly-mutate=move PASSED: the gate cannot see noclip calling move()"; exit 1
-          fi
-          run_gate "audio selftest"   $B --audio-selftest
-          # W.2: the retired web checks' native gates (docs/web-port-archive.md) -- the paint/door/skin recolour, the stock 568x320 HUD rects and the
-          # derived point space, and FileManager::convertWorldTo64 against eden-convert.js --to-64.
-          # Plus --ui-selftest (GL settings widgets, New World), Mac-only until W.2.
-          rm -rf w2-docs && mkdir -p w2-docs/recolor w2-docs/display w2-docs/ui
-          run_gate "recolor selftest" $B --recolor-selftest --docs="$PWD/w2-docs/recolor"
-          run_gate "display selftest" $B --display-selftest --docs="$PWD/w2-docs/display"
-          run_gate "ui selftest"      $B --ui-selftest --docs="$PWD/w2-docs/ui"
-          node ../port/tools/convert64-crosscheck.js $B "$PWD/w2-docs/convert64"
-          run_gate "background selftest" $B --background-selftest --world=bg --docs="$PWD/bg-docs"
-          # ROADMAP 5.9: Get Worlds end to end over OFFLINE fixtures it writes itself (a runner must
-          # not depend on edengame.net being up) — tabs, both list parsers, gzip / zip / zip-in-zip
-          # unpacking, the import, and loading a downloaded world.
-          run_gate "browser selftest" $B --browser-selftest --docs="$PWD/browser-docs"
-          # Stage S / S.3: the .emod store + streaming converter. --emod-fixtures is the checked-in
-          # pack emod.py wrote; every target must reproduce its SHA-256s byte for byte, which is
-          # the cross-target .emod gate (macOS, Linux, Windows here).
-          # G.2b-0: the de-ObjC replacement layer (strf/eden_cstr_copy/EdenFile/eden_fs/prefs) vs the Apple vectors.
-          run_gate "base selftest" $B --base-selftest --docs="$PWD/base-docs"
-          # K.0w-2: world-folder adoption (loose .emod -> Worlds/<id>/), then the crash-injection loop (a kill
-          # after every mutating step, then recovery: each world once, bytes unchanged, no sidecar lost).
-          rm -rf folders-docs folders-crash && mkdir -p folders-docs
-          run_gate "folders selftest" $B --headless --folders-selftest --docs="$PWD/folders-docs"
-          # K.1-3: the block registry (names, palette, placeholders, flag compaction, refusals).
-          run_gate "registry selftest" $B --registry-selftest --docs="$PWD/registry-docs"
-          # K.2-1: the content pin (every per-type table + the BlockTraits oracle; check-content-dump.py)
-          # and the pack JSON reader.
-          run_gate "content dump" $B --content-dump
-          python3 ../.github/scripts/check-content-dump.py gate-content-dump.log
-          run_gate "json selftest" $B --json-selftest
-          # K.2-3: the stock pack. The boot loaded packs/eden/pack.json (the dump above is what it compiles
-          # to); --pack-selftest re-compiles it against the live tables and refuses every corrupt fixture
-          # with exactly its expect.txt; pack.py (the independent reference) gives the same dump and the
-          # same refusals; and a broken or missing stock pack is fatal (exit 1), never a half-filled table.
-          run_gate "pack selftest" $B --pack-selftest=../port/tools/fixtures/content/packs
-          python3 ../port/tools/pack.py compile ../media/packs/eden --check gate-content-dump.log
-          python3 ../port/tools/pack.py fixtures ../port/tools/fixtures/content/packs
-          # K.2-4: mod packs. The example pack compiles to the same `## mods` section in both validators,
-          # and --packs-selftest drives it through a world (load, place, save, remove, restore, tile budget).
-          run_gate "content dump mods" $B --content-dump --packs=../media/packs/emod_example
-          python3 ../port/tools/pack.py compile ../media/packs/emod_example --check gate-content-dump-mods.log
-          # The Wonder Blocks example pack (23 blocks, 26 tiles, 13 Lua scripts): same parity.
-          run_gate "content dump wonders" $B --content-dump --packs=../media/packs/wonders
-          python3 ../port/tools/pack.py compile ../media/packs/wonders --check gate-content-dump-wonders.log
-          # K.3: requires/conflicts resolution, same skips and lines in both (fixture README.txt).
-          run_gate "content dump resolve" $B --content-dump --packs=../port/tools/fixtures/content/mods-resolve
-          python3 ../port/tools/pack.py compile ../port/tools/fixtures/content/mods-resolve --check gate-content-dump-resolve.log
-          rm -rf mods-docs && mkdir -p mods-docs
-          run_gate "mods selftest" $B --mods-selftest --docs="$PWD/mods-docs"
-          rm -rf lua-docs && mkdir -p lua-docs
-          run_gate "lua selftest" $B --lua-selftest --docs="$PWD/lua-docs"   # K.4: sandboxed Lua mod scripts
-          # K.4: each mutation must FAIL the selftest (count hook off; sandbox escapes left in)
-          for m in hook sandbox; do rm -rf lua-mut && mkdir -p lua-mut
-            if $B --lua-selftest --lua-mutate=$m --docs="$PWD/lua-mut" > lua-mut-$m.log 2>&1; then echo "::error::--lua-selftest --lua-mutate=$m passed"; exit 1; fi
-          done
-          rm -rf packs-docs && mkdir -p packs-docs
-          run_gate "packs selftest" $B --packs-selftest --docs="$PWD/packs-docs"
-          rm -rf broken-bundle && mkdir -p broken-bundle/packs/eden
-          cp ../port/tools/fixtures/content/packs/blocks/pack.json broken-bundle/packs/eden/
-          if $B --content-dump --bundle="$PWD/broken-bundle" > broken-pack.log 2>&1; then
-            echo "::error::a broken stock pack did not stop the boot"; cat broken-pack.log; exit 1; fi
-          grep -q 'FATAL: the stock content pack did not load' broken-pack.log || { cat broken-pack.log; exit 1; }
-          # K.1-4: a 256-high run adds Convert to 64z (the palette and flag survive the cut); linux leg only
-          run_gate "registry selftest 256" $B --registry-selftest --height=256 --docs="$PWD/registry-docs-256"
-          run_gate "folders crash loop" bash ../port/tools/folders-crash-gate.sh $B "$PWD/folders-crash"
-          run_gate "emod selftest" $B --emod-selftest --emod-fixtures=../port/tools/fixtures/emod --emod-work="$PWD/emod-work"
-          # MP.1/MP.2: the multiplayer TCP seam + protocol session against an in-process mock server on
-          # loopback (Winsock on Windows). The live leg against ewb-server is port/tools/mp-live-gate.sh.
-          run_gate "net selftest" $B --net-selftest
-          run_gate "mp selftest" $B --mp-selftest
-          # MP.3a: the session world offline -- a recorded edenserver stream (port/tools/fixtures/mp) into
-          # the overlay, landed, walked out and back, teleported (engine plan §15 legs 1, 2, 5); MP.3b adds
-          # step 5c, reconcile and the REGION pacer (leg 3) and a 600k-record join + relay storm (leg 4); each
-          # mutation must FAIL it. The .expect is mp-replay.py's own decode of the same lines (checked here once).
-          python3 ../port/tools/mp-replay.py expect ../port/tools/fixtures/mp/replay-1.lines --check
-          rm -rf mp-replay-docs && mkdir -p mp-replay-docs
-          run_gate "mp replay" $B --mp-replay=../port/tools/fixtures/mp/replay-1.lines --docs="$PWD/mp-replay-docs"
-          for m in noevictcommit nolandhook noreconcile echo; do
-            rm -rf mp-replay-docs-$m && mkdir -p mp-replay-docs-$m
-            if $B --mp-replay=../port/tools/fixtures/mp/replay-1.lines --mp-mutate=$m --docs="$PWD/mp-replay-docs-$m" > gate-mp-replay-mutate-$m.log 2>&1; then
-              echo "::error::--mp-replay --mp-mutate=$m PASSED: the gate cannot see that mutation"; exit 1
-            fi
-          done
-          # Stage S / S.6: the bundled map. Every column of Eden.emod through the engine's own read +
-          # decode, against the RLE Eden.eden it was baked from (0 may differ).
-          run_gate "bundled map" $B --bundled-map-selftest --bundled-eden=../Eden.eden --bundled-emod=../Eden.emod
-          # The offline .eden 64z <-> 256z converter (port/tools/eden-convert.js, pure byte surgery,
-          # no engine). Ran in the `web` job until the web build was retired (2026-10-13).
-          node ../port/tools/eden-convert-test.js
-
-          # The stage's leak obligation. The shim Foundation runs outside Emscripten on this leg
-          # for the first time and this runtime's object_dispose() has no .cxx_destruct, so a shim
-          # class holding a C++ ivar leaks silently unless it wrote a -dealloc. --leak-probe is the
-          # native form of the retired web build's headless-alloc-leak-probe / --torture=same64.
-          rm -rf leak-docs && mkdir -p leak-docs
-          run_gate "leak probe (torture, same 64z)" $B --leak-probe --docs="$PWD/leak-docs"
-
-          rm -rf ci-docs && mkdir -p ci-docs
-          run_gate "save round-trip" $B --headless --save-roundtrip --world=ci --docs="$PWD/ci-docs"
-          # B.5b-1b: ring streaming's evict-save, node dropping and autosave (plan §3.4 gates 2, 3).
-          rm -rf evict-docs && mkdir -p evict-docs
-          run_gate "evict selftest" $B --evict-selftest --docs="$PWD/evict-docs"
-          # B.5b-1c: light per landed column (walked light + meshes = a full re-sweep + re-mesh, at
-          # night), and the light store's edit paths incl. a lightbox at the window edge (no wrap).
-          rm -rf ringlight-docs light-docs && mkdir -p ringlight-docs light-docs
-          run_gate "ring light selftest" $B --ring-light-selftest --docs="$PWD/ringlight-docs"
-          run_gate "light selftest" $B --light-selftest --light-selfcheck --docs="$PWD/light-docs"
-          # B.5b-2: the same two ring gates at the largest window (radius 16 = 512 blocks, 1024 columns).
-          rm -rf evict16-docs ringlight16-docs && mkdir -p evict16-docs ringlight16-docs
-          run_gate "evict selftest r16" $B --evict-selftest --radius=16 --docs="$PWD/evict16-docs"
-          run_gate "ring light selftest r16" $B --ring-light-selftest --radius=16 --docs="$PWD/ringlight16-docs"
-          # H.2: baked shadows -- tops after every landing and edit, the edit hook's re-shading, a
-          # walk vs a re-scan + re-mesh, Off unchanged; and at the largest window (T_SIZE-sized table).
-          rm -rf shadow-docs shadow16-docs && mkdir -p shadow-docs shadow16-docs
-          run_gate "shadow selftest" $B --shadow-selftest --docs="$PWD/shadow-docs"
-          run_gate "shadow selftest r16" $B --shadow-selftest --radius=16 --docs="$PWD/shadow16-docs"
-          # G.5b-0: the engine-owned renderer's invariants over the null backend (menu, a world, its
-          # menus; negative self-checks; the signs pass contract). The GL leg (--render-selftest-gl) needs
-          # a window and runs on the Mac.
-          run_gate "render selftest" $B --render-selftest --docs="$PWD/render-docs"
-          # H.4: the seeded Classic generator. 1.x columns byte-equal to the checked-in fixture, and
-          # four pinned per-profile hashes -- THE CROSS-TARGET PIN: the hashes in the binary are the
-          # macOS arm64 ones, so this leg failing on one target alone is float drift (fp contraction
-          # first: TerrainGenerator.cpp is built -ffp-contract=off). Each mutation must FAIL it.
-          rm -rf classic-docs && mkdir -p classic-docs
-          run_gate "classic selftest" $B --classic-selftest --docs="$PWD/classic-docs"
-          for m in tables trunc noborder; do
-            rm -rf classic-docs-$m && mkdir -p classic-docs-$m
-            if $B --classic-selftest --classic-mutate=$m --docs="$PWD/classic-docs-$m" > gate-classic-mutate-$m.log 2>&1; then
-              echo "::error::--classic-selftest --classic-mutate=$m PASSED: the gate cannot see that mutation"; exit 1
-            fi
-          done
-          # C.1: the command-block language as a console line (dev-console-plan.md §8 gates 1-2):
-          # the parser on the checked-in corpus with block and console options (the first time the
-          # parser runs off the Mac: --cmds-selftest needs the gitignored adder), then a typed line vs
-          # the same script pressed on a block. The anchor mutation must FAIL it.
-          rm -rf console-docs console-docs-anchor console-docs-noreg && mkdir -p console-docs console-docs-anchor console-docs-noreg
-          run_gate "console selftest" $B --console-selftest --docs="$PWD/console-docs"
-          run_gate "weather selftest" $B --weather-selftest --docs="$PWD/weather-docs"   # Stage AT (AT.1a settings; AT.1b schedule, region, record, save; AT.1c verbs; AT.2b precip)
-          if $B --console-selftest --console-mutate=anchor --docs="$PWD/console-docs-anchor" > gate-console-mutate-anchor.log 2>&1; then
-            echo "::error::--console-selftest --console-mutate=anchor PASSED: the gate cannot see that mutation"; exit 1
-          fi
-          # C.2: the Settings/keybind bridge off (gate 3) must FAIL it too.
-          if $B --console-selftest --console-mutate=noreg --docs="$PWD/console-docs-noreg" > gate-console-mutate-noreg.log 2>&1; then
-            echo "::error::--console-selftest --console-mutate=noreg PASSED: the gate cannot see that mutation"; exit 1
-          fi
-          # C.5 gate 6: --live-cmds drives legacy verbs and `/` console lines; output pinned.
-          run_gate "live-cmds gate" ../port/tools/live-cmds-gate.sh $B "$PWD/live-gate"
-          # H.15: World Properties (world-properties-plan.md §6): the screen's save path on worlds in
-          # --docs -- a terrain change regenerates untouched land and keeps edits, Cancel writes
-          # nothing, a 1.x world's record, the lifted home. The mutation (no GENERATOR) must FAIL it.
-          rm -rf props-docs props-docs-nogen && mkdir -p props-docs props-docs-nogen
-          run_gate "props selftest" $B --props-selftest --docs="$PWD/props-docs"
-          if $B --props-selftest --props-mutate=nogen --docs="$PWD/props-docs-nogen" > gate-props-mutate-nogen.log 2>&1; then
-            echo "::error::--props-selftest --props-mutate=nogen PASSED: the gate cannot see that mutation"; exit 1
-          fi
-          # H.12: the third-person camera (centre pick + reach in all views, pull-in, the frustum,
-          # F5 through the camera_view setting, the body slot never picked or counted).
-          rm -rf camera-docs && mkdir -p camera-docs
-          run_gate "camera selftest" $B --camera-selftest --docs="$PWD/camera-docs"
-
-          # LG.7: the seven .edm creature models load, pose and skin for every quarter frame. The
-          # hashes are pinned for macOS arm64 only (libm + FMA move the last bit); here structural.
-          rm -rf creature-docs && mkdir -p creature-docs
-          run_gate "creature selftest" $B --creature-selftest --docs="$PWD/creature-docs"
+          bash ../.github/scripts/gates.sh linux
 
           # THE WORLD FILE IS NOT NAMED AFTER THE WORLD. This engine gives every world a random
-          # 40-character filename and keeps the display name inside the header — so the artifact
-          # has to be found, not assumed. (Assuming `ci.emod` is how the first version of this
-          # workflow uploaded a path that does not exist.)
+          # 40-character filename and keeps the display name inside the header: find it, don't assume.
+          # (The "save round-trip" gate's --docs is gate-docs/save-round-trip.)
           mkdir -p publish
-          cp "$(ls -S ci-docs/Worlds/*/*.emod | head -1)" publish/world-linux.emod
-          # S.8: the byte comparison below runs on the `.eden` EXPORT of each platform's world -- the
-          # logical, deterministic form (an `.emod` carries record headers/CRCs that are not comparable).
+          cp "$(ls -S gate-docs/save-round-trip/Worlds/*/*.emod | head -1)" publish/world-linux.emod
+          # S.8: the byte comparison runs on the `.eden` EXPORT of each platform's world -- the logical,
+          # deterministic form (an `.emod` carries record headers/CRCs that are not comparable).
           ./build/eden_native --export=publish/world-linux.emod --export-out=publish/world-linux.eden
 
-          # ...and PUBLISH THE CHECKSUM OF LOADING IT, which is what turns the other platforms'
-          # "read the world Linux wrote" gates into assertions instead of gestures. Loading a fixed
-          # file is reproducible (verified: the same file loaded twice gives the same geom), unlike
-          # CREATING one, so this number is a legitimate cross-platform constant.
-          #
-          # `--world=ci` is load-bearing: --stage1 creates-or-loads BY DISPLAY NAME, and the world
-          # in ci-docs is called "ci". Without it the run creates a brand-new "stage1" world beside
-          # the imported one and checksums that instead — which is what the windows and macos
-          # crossload gates were doing, undetected, because they only grepped for the WORD
-          # "checksum".
-          run_gate "crossload self" $B --headless --stage1 --world=ci --docs="$PWD/ci-docs"
+          # ...and PUBLISH THE CHECKSUM OF LOADING IT, which turns the other platforms' "read the world
+          # Linux wrote" gates into assertions. `--world=ci` is load-bearing: --stage1 creates-or-loads BY
+          # DISPLAY NAME, and the world in that docs dir is called "ci"; without it the run creates a new
+          # "stage1" world beside it and checksums that instead.
+          run_gate "crossload self" $B --headless --stage1 --world=ci --docs="$PWD/gate-docs/save-round-trip"
           sed -n 's/.*"geom":"\([0-9a-f]*\)".*/\1/p' gate-crossload-self.log | head -1 \
             > publish/world-linux.geom
           test -s publish/world-linux.geom
@@ -411,8 +195,9 @@ jobs:
           test -f dist/Emod/Eden.emod || { echo "::error::Eden.emod is not in the package"; exit 1; }
           n=$(find dist/Emod -type f | wc -l)
           [ "$n" -gt 800 ] || { echo "::error::only $n files in the package"; exit 1; }
-          cp ../LICENSE ../NOTICE dist/Emod/   # zstd (BSD-3) requires its notice in binary distributions
+          cp ../LICENSE ../COPYING ../NOTICE dist/Emod/   # zstd (BSD-3) requires its notice in binary distributions
           tar -C dist -czf Emod-linux-x64.tar.gz Emod
+          for f in COPYING LICENSE NOTICE; do tar -tzf Emod-linux-x64.tar.gz | grep -qx "Emod/$f" || { echo "::error::$f is not inside Emod-linux-x64.tar.gz"; exit 1; }; done
           ls -l Emod-linux-x64.tar.gz
 
       - name: Smoke-test the package from another directory
@@ -468,56 +253,102 @@ jobs:
           cmake --build /tmp/SDL/build --parallel
           cmake --install /tmp/SDL/build
 
+      # QA.16 (A5-10): a compiler cache; the build is ~3 min of the job, and a sanitizer build is
+      # a different set of objects, so each job has its own key.
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ github.job }}
+
       - name: Configure and build (ASan + UBSan)
         working-directory: native
         env:
           CC: clang
           CXX: clang++
         run: |
-          cmake -B build -G Ninja $EDEN_CMAKE_FLAGS -DEDEN_SANITIZE=ON -DCMAKE_PREFIX_PATH="$HOME/sdl3-prefix"
+          cmake -B build -G Ninja $EDEN_CMAKE_FLAGS -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DEDEN_SANITIZE=ON -DCMAKE_PREFIX_PATH="$HOME/sdl3-prefix"
           cmake --build build --parallel
 
-      - name: Gates under ASan + UBSan — geometry, save/format, console, base
+      - name: Python venv for the hostile-world gate (emod.py needs zstandard)
+        working-directory: native
+        run: python3 -m venv hostile-venv && hostile-venv/bin/pip install -q zstandard==0.25.0
+
+      - name: Gates under ASan + UBSan (the table, gates.sh)
         working-directory: native
         env:
           ASAN_OPTIONS: detect_leaks=0
           UBSAN_OPTIONS: print_stacktrace=1
         run: |
           set -e
-          . ../.github/scripts/run-gate.sh
           export LD_LIBRARY_PATH=$HOME/sdl3-prefix/lib
-          B=./build/eden_native
-          # A fresh --docs per run, as in the linux job (--stage1 creates-or-LOADS by name).
-          rm -rf docs64 docs256 && mkdir -p docs64 docs256
-          run_gate "geometry 64z"  $B --headless --stage1 --shadows=off --docs="$PWD/docs64"
-          run_gate "geometry 256z" $B --headless --stage1 --shadows=off --height=256 --docs="$PWD/docs256"
-          python3 ../.github/scripts/check-stage1.py gate-geometry-64z.log gate-geometry-256z.log
-          run_gate "base selftest" $B --base-selftest --docs="$PWD/base-docs"
-          # K.0w-2: world-folder adoption (the crash loop runs on the plain legs).
-          rm -rf folders-docs && mkdir -p folders-docs
-          run_gate "folders selftest" $B --headless --folders-selftest --docs="$PWD/folders-docs"
-          # K.1-3: the block registry (names, palette, placeholders, flag compaction, refusals).
-          run_gate "registry selftest" $B --registry-selftest --docs="$PWD/registry-docs"
-          # K.2-1: the content pin (every per-type table + the BlockTraits oracle; check-content-dump.py)
-          # and the pack JSON reader.
-          run_gate "content dump" $B --content-dump
-          python3 ../.github/scripts/check-content-dump.py gate-content-dump.log
-          run_gate "json selftest" $B --json-selftest
-          run_gate "pack selftest" $B --pack-selftest=../port/tools/fixtures/content/packs   # K.2-3
-          rm -rf packs-docs && mkdir -p packs-docs
-          run_gate "packs selftest" $B --packs-selftest --docs="$PWD/packs-docs"   # K.2-4
-          rm -rf mods-docs && mkdir -p mods-docs
-          run_gate "mods selftest" $B --mods-selftest --docs="$PWD/mods-docs"   # K.3
-          rm -rf lua-docs && mkdir -p lua-docs
-          run_gate "lua selftest" $B --lua-selftest --docs="$PWD/lua-docs"   # K.4: sandboxed Lua mod scripts
-          run_gate "emod selftest" $B --emod-selftest --emod-fixtures=../port/tools/fixtures/emod --emod-work="$PWD/emod-work"
-          run_gate "bundled map" $B --bundled-map-selftest --bundled-eden=../Eden.eden --bundled-emod=../Eden.emod
-          rm -rf ci-docs evict-docs console-docs && mkdir -p ci-docs evict-docs console-docs
-          run_gate "save round-trip" $B --headless --save-roundtrip --world=ci --docs="$PWD/ci-docs"
-          run_gate "evict selftest" $B --evict-selftest --docs="$PWD/evict-docs"
-          run_gate "console selftest" $B --console-selftest --docs="$PWD/console-docs"
-          run_gate "weather selftest" $B --weather-selftest --docs="$PWD/weather-docs"   # Stage AT (AT.1a settings; AT.1b schedule, region, record, save; AT.1c verbs; AT.2b precip)
-          run_gate "render selftest" $B --render-selftest --docs="$PWD/render-docs"   # G.5b-0
+          bash ../.github/scripts/gates.sh sanitize
+
+  # =============================================================================================
+  # TSan (QA.7, A2-07) — the Linux build with -fsanitize=thread (EDEN_SANITIZE=thread; ASan and TSan
+  # can't share a binary). Rule 8 (one load pthread, the MP network thread, probe and fetch workers) was
+  # enforced only by prose. halt_on_error=1: the first unsuppressed race fails the gate.
+  # port/tools/tsan-suppressions.txt holds only the mp mock: QA.14 (2026-11-12) moved the load thread's
+  # Input/Player resets and a new world's first save to the main thread and emptied its engine lines.
+  # Mac-measured 2026-11-12: these legs report the World::doneLoading race with a plain int, 0 with QA.7.
+  # =============================================================================================
+  tsan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang lld ninja-build cmake gdb zlib1g-dev libcurl4-openssl-dev libgl1-mesa-dev \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
+            libxfixes-dev libxss-dev libxtst-dev libwayland-dev libxkbcommon-dev \
+            libasound2-dev libpulse-dev libudev-dev
+
+      # Ubuntu 24.04's 32 bits of mmap ASLR give older TSan runtimes "unexpected memory mapping".
+      - name: Lower mmap ASLR for TSan
+        run: sudo sysctl vm.mmap_rnd_bits=28
+
+      - name: Cache SDL3
+        id: sdl-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/sdl3-prefix
+          key: sdl3-${{ env.SDL_VERSION }}-ubuntu-latest
+
+      - name: Build SDL3 from source
+        if: steps.sdl-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "release-${SDL_VERSION}" https://github.com/libsdl-org/SDL.git /tmp/SDL
+          cmake -S /tmp/SDL -B /tmp/SDL/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/sdl3-prefix" \
+            -DSDL_STATIC=OFF -DSDL_TEST_LIBRARY=OFF
+          cmake --build /tmp/SDL/build --parallel
+          cmake --install /tmp/SDL/build
+
+      # QA.16 (A5-10): a compiler cache; the build is ~3 min of the job, and a sanitizer build is
+      # a different set of objects, so each job has its own key.
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ github.job }}
+
+      - name: Configure and build (TSan)
+        working-directory: native
+        env:
+          CC: clang
+          CXX: clang++
+        run: |
+          cmake -B build -G Ninja $EDEN_CMAKE_FLAGS -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DEDEN_SANITIZE=thread -DCMAKE_PREFIX_PATH="$HOME/sdl3-prefix"
+          cmake --build build --parallel
+
+      - name: Gates under TSan — load thread, streaming, browser, mods notice, network (the table, gates.sh)
+        working-directory: native
+        env:
+          SDL_AUDIO_DRIVER: dummy
+        run: |
+          set -e
+          export LD_LIBRARY_PATH=$HOME/sdl3-prefix/lib
+          export TSAN_OPTIONS="halt_on_error=1 second_deadlock_stack=1 suppressions=$PWD/../port/tools/tsan-suppressions.txt"
+          bash ../.github/scripts/gates.sh tsan
 
   # =============================================================================================
   # Windows — the point of the stage. MSYS2's CLANG64 environment IS an LLVM-mingw toolchain
@@ -583,182 +414,14 @@ jobs:
         # ninja's status.
         run: cmake --build build --parallel -- -k 0
 
-      - name: Gates — boot, geometry, selftests, leak probe
+      - name: Gates — the table (.github/scripts/gates.sh) — boot, geometry, selftests, leak probe
         working-directory: native
-        # THE SAME HELPER THE LINUX JOB USES, and for a stronger reason than symmetry: this runner
-        # is the only place Windows ever runs, so a crash has to be diagnosable from the log alone.
-        # `./eden.exe … | tee log` reports TEE's exit status, so the first version of these steps
-        # turned a segfault into "check-stage1.py found no checksum line"; run-gate.sh captures the
-        # binary's own status and re-runs a signal death under gdb for a backtrace in the same job.
-        # (That is what mingw-w64-clang-x86_64-gdb is in the package list for.)
+        env:
+          GATE_JOBS: 3
         run: |
           set -e
-          . ../.github/scripts/run-gate.sh
           export PATH="/c/sdl3-prefix/bin:$PATH"
-          B=./build/eden_native.exe
-
-          run_gate "boot (--p1-gate)" $B --p1-gate
-
-          # H.2: --shadows=off pins the pair to Off whatever the setting's default becomes; the
-          # shadows leg asserts geom is unchanged (shadows only move colours) and a pinned `full`.
-          rm -rf docs64 docs256 docs64s && mkdir -p docs64 docs256 docs64s
-          run_gate "geometry 64z"  $B --headless --stage1 --shadows=off --docs="$PWD/docs64"
-          run_gate "geometry 256z" $B --headless --stage1 --shadows=off --height=256 --docs="$PWD/docs256"
-          python ../.github/scripts/check-stage1.py \
-            gate-geometry-64z.log gate-geometry-256z.log
-          run_gate "geometry 64z shadows" $B --headless --stage1 --shadows=classic --docs="$PWD/docs64s"
-          python ../.github/scripts/check-stage1.py --shadows gate-geometry-64z-shadows.log
-
-          run_gate "input selftest"   $B --input-selftest
-          run_gate "gamepad selftest" $B --gamepad-selftest
-          # Stage 4.3: SDL finger events at the engine's own reported HUD rect. Not iOS-only —
-          # the translator is shared, so every platform gets to prove it still routes.
-          run_gate "touch selftest"   $B --touch-selftest
-          # Stage L: the touch drag camera, steps 0-9 (WORKING/touch-camera-plan-2026-10-17.md).
-          # Each --look-mutate puts one fixed bug back and must FAIL it.
-          rm -rf look-docs && mkdir -p look-docs
-          run_gate "look selftest"    $B --look-selftest --docs="$PWD/look-docs"
-          for m in lastonly int enginepts noflush noslop noclear nodecay unlatched multi clearlatch; do
-            rm -rf look-docs-$m && mkdir -p look-docs-$m
-            if $B --look-selftest --look-mutate=$m --docs="$PWD/look-docs-$m" > gate-look-mutate-$m.log 2>&1; then
-              echo "::error::--look-selftest --look-mutate=$m PASSED: the gate cannot see that mutation"; exit 1
-            fi
-          done
-          # Stage FM: noclip, the V cycle + toast, the touch fly slots. --fly-mutate=move calls
-          # move() in noclip again and must FAIL it.
-          rm -rf fly-docs && mkdir -p fly-docs
-          run_gate "fly selftest"     $B --fly-selftest --docs="$PWD/fly-docs"
-          rm -rf source-docs && mkdir -p source-docs
-          run_gate "srclike selftest"  $B --srclike-selftest --docs="$PWD/source-docs"   # Stage SRC (SRC.2 input, SRC.3 trace, SRC.4 move legs; move reads ../port/tools/fixtures/srclike-pm/vectors.txt)
-          rm -rf fly-docs-m && mkdir -p fly-docs-m
-          if $B --fly-selftest --fly-mutate=move --docs="$PWD/fly-docs-m" > gate-fly-mutate-move.log 2>&1; then
-            echo "::error::--fly-selftest --fly-mutate=move PASSED: the gate cannot see noclip calling move()"; exit 1
-          fi
-          run_gate "audio selftest"   $B --audio-selftest
-          # W.2: the retired web checks' native gates (docs/web-port-archive.md) -- the paint/door/skin recolour, the stock 568x320 HUD rects and the
-          # derived point space, and FileManager::convertWorldTo64 against eden-convert.js --to-64.
-          # Plus --ui-selftest (GL settings widgets, New World), Mac-only until W.2.
-          rm -rf w2-docs && mkdir -p w2-docs/recolor w2-docs/display w2-docs/ui
-          run_gate "recolor selftest" $B --recolor-selftest --docs="$PWD/w2-docs/recolor"
-          run_gate "display selftest" $B --display-selftest --docs="$PWD/w2-docs/display"
-          run_gate "ui selftest"      $B --ui-selftest --docs="$PWD/w2-docs/ui"
-          mkdir -p w2-docs/convert64
-          run_gate "convert64 selftest" $B --convert64-selftest --docs="$PWD/w2-docs/convert64"
-          run_gate "background selftest" $B --background-selftest --world=bg --docs="$PWD/bg-docs"
-          # ROADMAP 5.9: Get Worlds end to end over OFFLINE fixtures it writes itself (a runner must
-          # not depend on edengame.net being up) — tabs, both list parsers, gzip / zip / zip-in-zip
-          # unpacking, the import, and loading a downloaded world.
-          run_gate "browser selftest" $B --browser-selftest --docs="$PWD/browser-docs"
-          # Stage S / S.3: the .emod store + streaming converter. --emod-fixtures is the checked-in
-          # pack emod.py wrote; every target must reproduce its SHA-256s byte for byte, which is
-          # the cross-target .emod gate (macOS, Linux, Windows here).
-          # G.2b-0: the de-ObjC replacement layer (strf/eden_cstr_copy/EdenFile/eden_fs/prefs) vs the Apple vectors.
-          run_gate "base selftest" $B --base-selftest --docs="$PWD/base-docs"
-          # K.0w-2: world-folder adoption (loose .emod -> Worlds/<id>/), then the crash-injection loop (a kill
-          # after every mutating step, then recovery: each world once, bytes unchanged, no sidecar lost).
-          rm -rf folders-docs folders-crash && mkdir -p folders-docs
-          run_gate "folders selftest" $B --headless --folders-selftest --docs="$PWD/folders-docs"
-          # K.1-3: the block registry (names, palette, placeholders, flag compaction, refusals).
-          run_gate "registry selftest" $B --registry-selftest --docs="$PWD/registry-docs"
-          # K.2-1: the content pin (every per-type table + the BlockTraits oracle; check-content-dump.py)
-          # and the pack JSON reader.
-          run_gate "content dump" $B --content-dump
-          python ../.github/scripts/check-content-dump.py gate-content-dump.log
-          run_gate "json selftest" $B --json-selftest
-          run_gate "pack selftest" $B --pack-selftest=../port/tools/fixtures/content/packs   # K.2-3
-          rm -rf packs-docs && mkdir -p packs-docs
-          run_gate "packs selftest" $B --packs-selftest --docs="$PWD/packs-docs"   # K.2-4
-          rm -rf mods-docs && mkdir -p mods-docs
-          run_gate "mods selftest" $B --mods-selftest --docs="$PWD/mods-docs"   # K.3
-          rm -rf lua-docs && mkdir -p lua-docs
-          run_gate "lua selftest" $B --lua-selftest --docs="$PWD/lua-docs"   # K.4: sandboxed Lua mod scripts
-          run_gate "folders crash loop" bash ../port/tools/folders-crash-gate.sh $B "$PWD/folders-crash"
-          run_gate "emod selftest" $B --emod-selftest --emod-fixtures=../port/tools/fixtures/emod --emod-work="$PWD/emod-work"
-          # MP.1/MP.2: the multiplayer TCP seam + protocol session against an in-process mock server on
-          # loopback (Winsock on Windows). The live leg against ewb-server is port/tools/mp-live-gate.sh.
-          run_gate "net selftest" $B --net-selftest
-          run_gate "mp selftest" $B --mp-selftest
-          # MP.3a (see the linux job).
-          rm -rf mp-replay-docs && mkdir -p mp-replay-docs
-          run_gate "mp replay" $B --mp-replay=../port/tools/fixtures/mp/replay-1.lines --docs="$PWD/mp-replay-docs"
-          for m in noevictcommit nolandhook noreconcile echo; do
-            rm -rf mp-replay-docs-$m && mkdir -p mp-replay-docs-$m
-            if $B --mp-replay=../port/tools/fixtures/mp/replay-1.lines --mp-mutate=$m --docs="$PWD/mp-replay-docs-$m" > gate-mp-replay-mutate-$m.log 2>&1; then
-              echo "::error::--mp-replay --mp-mutate=$m PASSED: the gate cannot see that mutation"; exit 1
-            fi
-          done
-          rm -rf evict-docs && mkdir -p evict-docs
-          run_gate "evict selftest" $B --evict-selftest --docs="$PWD/evict-docs"
-          # B.5b-1c: light per landed column (walked light + meshes = a full re-sweep + re-mesh, at
-          # night), and the light store's edit paths incl. a lightbox at the window edge (no wrap).
-          rm -rf ringlight-docs light-docs && mkdir -p ringlight-docs light-docs
-          run_gate "ring light selftest" $B --ring-light-selftest --docs="$PWD/ringlight-docs"
-          run_gate "light selftest" $B --light-selftest --light-selfcheck --docs="$PWD/light-docs"
-          # B.5b-2: the same two ring gates at the largest window (radius 16 = 512 blocks, 1024 columns).
-          rm -rf evict16-docs ringlight16-docs && mkdir -p evict16-docs ringlight16-docs
-          run_gate "evict selftest r16" $B --evict-selftest --radius=16 --docs="$PWD/evict16-docs"
-          run_gate "ring light selftest r16" $B --ring-light-selftest --radius=16 --docs="$PWD/ringlight16-docs"
-          # H.2: baked shadows -- tops after every landing and edit, the edit hook's re-shading, a
-          # walk vs a re-scan + re-mesh, Off unchanged; and at the largest window (T_SIZE-sized table).
-          rm -rf shadow-docs shadow16-docs && mkdir -p shadow-docs shadow16-docs
-          run_gate "shadow selftest" $B --shadow-selftest --docs="$PWD/shadow-docs"
-          run_gate "shadow selftest r16" $B --shadow-selftest --radius=16 --docs="$PWD/shadow16-docs"
-          # G.5b-0: the engine-owned renderer's invariants over the null backend (menu, a world, its
-          # menus; negative self-checks; the signs pass contract). The GL leg (--render-selftest-gl) needs
-          # a window and runs on the Mac.
-          run_gate "render selftest" $B --render-selftest --docs="$PWD/render-docs"
-          # H.4: the seeded Classic generator. 1.x columns byte-equal to the checked-in fixture, and
-          # four pinned per-profile hashes -- THE CROSS-TARGET PIN: the hashes in the binary are the
-          # macOS arm64 ones, so this leg failing on one target alone is float drift (fp contraction
-          # first: TerrainGenerator.cpp is built -ffp-contract=off). Each mutation must FAIL it.
-          rm -rf classic-docs && mkdir -p classic-docs
-          run_gate "classic selftest" $B --classic-selftest --docs="$PWD/classic-docs"
-          for m in tables trunc noborder; do
-            rm -rf classic-docs-$m && mkdir -p classic-docs-$m
-            if $B --classic-selftest --classic-mutate=$m --docs="$PWD/classic-docs-$m" > gate-classic-mutate-$m.log 2>&1; then
-              echo "::error::--classic-selftest --classic-mutate=$m PASSED: the gate cannot see that mutation"; exit 1
-            fi
-          done
-          # C.1: the command-block language as a console line (dev-console-plan.md §8 gates 1-2):
-          # the parser on the checked-in corpus with block and console options (the first time the
-          # parser runs off the Mac: --cmds-selftest needs the gitignored adder), then a typed line vs
-          # the same script pressed on a block. The anchor mutation must FAIL it.
-          rm -rf console-docs console-docs-anchor console-docs-noreg && mkdir -p console-docs console-docs-anchor console-docs-noreg
-          run_gate "console selftest" $B --console-selftest --docs="$PWD/console-docs"
-          run_gate "weather selftest" $B --weather-selftest --docs="$PWD/weather-docs"   # Stage AT (AT.1a settings; AT.1b schedule, region, record, save; AT.1c verbs; AT.2b precip)
-          if $B --console-selftest --console-mutate=anchor --docs="$PWD/console-docs-anchor" > gate-console-mutate-anchor.log 2>&1; then
-            echo "::error::--console-selftest --console-mutate=anchor PASSED: the gate cannot see that mutation"; exit 1
-          fi
-          # C.2: the Settings/keybind bridge off (gate 3) must FAIL it too.
-          if $B --console-selftest --console-mutate=noreg --docs="$PWD/console-docs-noreg" > gate-console-mutate-noreg.log 2>&1; then
-            echo "::error::--console-selftest --console-mutate=noreg PASSED: the gate cannot see that mutation"; exit 1
-          fi
-          # C.5 gate 6: --live-cmds drives legacy verbs and `/` console lines; output pinned.
-          run_gate "live-cmds gate" ../port/tools/live-cmds-gate.sh $B "$PWD/live-gate"
-          # H.15: World Properties (world-properties-plan.md §6): the screen's save path on worlds in
-          # --docs -- a terrain change regenerates untouched land and keeps edits, Cancel writes
-          # nothing, a 1.x world's record, the lifted home. The mutation (no GENERATOR) must FAIL it.
-          rm -rf props-docs props-docs-nogen && mkdir -p props-docs props-docs-nogen
-          run_gate "props selftest" $B --props-selftest --docs="$PWD/props-docs"
-          if $B --props-selftest --props-mutate=nogen --docs="$PWD/props-docs-nogen" > gate-props-mutate-nogen.log 2>&1; then
-            echo "::error::--props-selftest --props-mutate=nogen PASSED: the gate cannot see that mutation"; exit 1
-          fi
-          # H.12: the third-person camera (centre pick + reach in all views, pull-in, the frustum,
-          # F5 through the camera_view setting, the body slot never picked or counted).
-          rm -rf camera-docs && mkdir -p camera-docs
-          run_gate "camera selftest" $B --camera-selftest --docs="$PWD/camera-docs"
-
-          # LG.7: the seven .edm creature models load, pose and skin for every quarter frame. The
-          # hashes are pinned for macOS arm64 only (libm + FMA move the last bit); here structural.
-          rm -rf creature-docs && mkdir -p creature-docs
-          run_gate "creature selftest" $B --creature-selftest --docs="$PWD/creature-docs"
-
-          # See the Linux job for why the leak probe is a stage obligation. Windows has the one
-          # honest gap in the statistic — the mingw CRT publishes no live-bytes figure, so
-          # HeapProbe_native.cpp reports process commit charge in that slot. It answers "is this
-          # flat" at least as well; read the absolute number as a trend, not as bytes.
-          rm -rf leak-docs && mkdir -p leak-docs
-          run_gate "leak probe (torture, same 64z)" $B --leak-probe --docs="$PWD/leak-docs"
+          bash ../.github/scripts/gates.sh windows
 
       # ROADMAP 5.9: the world browser's REAL HTTP backend (NSURLSession / libcurl / WinHTTP —
       # --browser-selftest above uses offline fixtures and never touches it). Lists from the archive
@@ -862,8 +525,9 @@ jobs:
           # ...and ASSERT the two things a silent miss above would leave behind. Both of these
           # failures shipped a zip that looked fine in the log and could not start.
           test -f dist/SDL3.dll || { echo "::error::SDL3.dll is not in the package"; exit 1; }
-          cp ../LICENSE ../NOTICE dist/   # zstd (BSD-3) requires its notice in binary distributions
+          cp ../LICENSE ../COPYING ../NOTICE dist/   # zstd (BSD-3) requires its notice in binary distributions
           test -f dist/NOTICE || { echo "::error::NOTICE is not in the package"; exit 1; }
+          test -f dist/COPYING || { echo "::error::COPYING is not in the package"; exit 1; }
           test -f dist/Eden.emod || { echo "::error::Eden.emod is not in the package"; exit 1; }
           n=$(find dist -type f | wc -l)
           [ "$n" -gt 800 ] || { echo "::error::only $n files in the package; expected ~880"; exit 1; }
@@ -950,47 +614,15 @@ jobs:
             -DVCPKG_TARGET_TRIPLET=x64-windows-static -DCMAKE_PREFIX_PATH='C:\sdl3-msvc'
           cmake --build build --parallel -- -k 0
 
-      - name: Gates and the adoption numbers
+      - name: Gates (the table, .github/scripts/gates.sh)
         working-directory: native
         run: |
           set -e
-          . ../.github/scripts/run-gate.sh
           export PATH="/c/sdl3-msvc/bin:$PATH"
           B=./build/eden_native.exe
           echo "binary size: $(stat -c %s $B) bytes (compare with the windows job's eden_native.exe)"
           echo "imports:"; dumpbin //dependents $B | grep -i '\.dll' || true
-          run_gate "boot (--p1-gate)" $B --p1-gate
-          rm -rf docs64 docs256 && mkdir -p docs64 docs256
-          run_gate "geometry 64z"  $B --headless --stage1 --shadows=off --docs="$PWD/docs64"
-          run_gate "geometry 256z" $B --headless --stage1 --shadows=off --height=256 --docs="$PWD/docs256"
-          python ../.github/scripts/check-stage1.py gate-geometry-64z.log gate-geometry-256z.log
-          run_gate "base selftest" $B --base-selftest --docs="$PWD/base-docs"
-          # K.0w-2: world-folder adoption (loose .emod -> Worlds/<id>/), then the crash-injection loop (a kill
-          # after every mutating step, then recovery: each world once, bytes unchanged, no sidecar lost).
-          rm -rf folders-docs folders-crash && mkdir -p folders-docs
-          run_gate "folders selftest" $B --headless --folders-selftest --docs="$PWD/folders-docs"
-          # K.1-3: the block registry (names, palette, placeholders, flag compaction, refusals).
-          run_gate "registry selftest" $B --registry-selftest --docs="$PWD/registry-docs"
-          # K.2-1: the content pin (every per-type table + the BlockTraits oracle; check-content-dump.py)
-          # and the pack JSON reader.
-          run_gate "content dump" $B --content-dump
-          python ../.github/scripts/check-content-dump.py gate-content-dump.log
-          run_gate "json selftest" $B --json-selftest
-          run_gate "pack selftest" $B --pack-selftest=../port/tools/fixtures/content/packs   # K.2-3
-          rm -rf packs-docs && mkdir -p packs-docs
-          run_gate "packs selftest" $B --packs-selftest --docs="$PWD/packs-docs"   # K.2-4
-          rm -rf mods-docs && mkdir -p mods-docs
-          run_gate "mods selftest" $B --mods-selftest --docs="$PWD/mods-docs"   # K.3
-          rm -rf lua-docs && mkdir -p lua-docs
-          run_gate "lua selftest" $B --lua-selftest --docs="$PWD/lua-docs"   # K.4: sandboxed Lua mod scripts
-          run_gate "folders crash loop" bash ../port/tools/folders-crash-gate.sh $B "$PWD/folders-crash"
-          run_gate "emod selftest" $B --emod-selftest --emod-fixtures=../port/tools/fixtures/emod --emod-work="$PWD/emod-work"
-          run_gate "classic selftest" $B --classic-selftest --docs="$PWD/classic-docs"
-          rm -rf ci-docs && mkdir -p ci-docs
-          run_gate "save round-trip" $B --headless --save-roundtrip --world=ci --docs="$PWD/ci-docs"
-          run_gate "console selftest" $B --console-selftest --docs="$PWD/console-docs"
-          run_gate "weather selftest" $B --weather-selftest --docs="$PWD/weather-docs"   # Stage AT (AT.1a settings; AT.1b schedule, region, record, save; AT.1c verbs; AT.2b precip)
-          run_gate "ui selftest" $B --ui-selftest --docs="$PWD/ui-docs"
+          bash ../.github/scripts/gates.sh msvc
 
   # =============================================================================================
   # macOS — NOT a new platform, and that is the job's purpose. It reproduces the checksums this
@@ -1013,99 +645,11 @@ jobs:
           cmake -B build $EDEN_CMAKE_FLAGS
           cmake --build build --parallel
 
-      - name: Gate — boot, checksums, selftests
+      - name: Gate — boot, checksums, selftests (the table, .github/scripts/gates.sh)
         working-directory: native
-        run: |
-          ./build/eden_native --p1-gate
-          rm -rf docs64 docs256 docs64s && mkdir -p docs64 docs256 docs64s
-          ./build/eden_native --headless --stage1 --shadows=off --docs="$PWD/docs64"                2>&1 | tee stage1-64.log
-          ./build/eden_native --headless --stage1 --shadows=off --height=256 --docs="$PWD/docs256"  2>&1 | tee stage1-256.log
-          python3 ../.github/scripts/check-stage1.py stage1-64.log stage1-256.log
-          ./build/eden_native --headless --stage1 --shadows=classic --docs="$PWD/docs64s"           2>&1 | tee stage1-64s.log
-          python3 ../.github/scripts/check-stage1.py --shadows stage1-64s.log
-          rm -rf base-docs && mkdir -p base-docs
-          ./build/eden_native --base-selftest --docs="$PWD/base-docs"   # G.2b-0
-          ./build/eden_native --content-dump > content-dump.log   # K.2-1: the content pin
-          python3 ../.github/scripts/check-content-dump.py content-dump.log
-          ./build/eden_native --json-selftest
-          ./build/eden_native --pack-selftest=../port/tools/fixtures/content/packs   # K.2-3: the stock pack + corrupt fixtures
-          rm -rf packs-docs && mkdir -p packs-docs
-          ./build/eden_native --packs-selftest --docs="$PWD/packs-docs"   # K.2-4: mod packs (ASan/UBSan over the loader)
-          rm -rf mods-docs && mkdir -p mods-docs
-          ./build/eden_native --mods-selftest --docs="$PWD/mods-docs"   # K.3: enable list, deps, zip install (ASan/UBSan over the zip reader)
-          rm -rf lua-docs && mkdir -p lua-docs
-          ./build/eden_native --lua-selftest --docs="$PWD/lua-docs"   # K.4: Lua mod scripts (ASan/UBSan over the VM and the sandbox)
-          rm -rf folders-docs folders-crash && mkdir -p folders-docs   # K.0w-2: world-folder adoption + its crash loop
-          ./build/eden_native --headless --folders-selftest --docs="$PWD/folders-docs"
-          bash ../port/tools/folders-crash-gate.sh ./build/eden_native "$PWD/folders-crash"
-          ./build/eden_native --input-selftest
-          ./build/eden_native --gamepad-selftest
-          ./build/eden_native --touch-selftest
-          rm -rf look-docs && mkdir -p look-docs
-          ./build/eden_native --look-selftest --docs="$PWD/look-docs"   # Stage L; the mutation legs run on linux/windows
-          rm -rf fly-docs && mkdir -p fly-docs
-          ./build/eden_native --fly-selftest --docs="$PWD/fly-docs"   # Stage FM; the mutation leg runs on linux/windows
-          ./build/eden_native --audio-selftest
-          # W.2 (see the linux job). The convert64 cross-check matters most here: Apple's Foundation is
-          # where convertWorldTo64's `.eden` leg failed (fileHandleForWritingAtPath: on a missing file).
-          rm -rf w2-docs && mkdir -p w2-docs/recolor w2-docs/display w2-docs/ui
-          ./build/eden_native --render-selftest --docs="$PWD/render-docs"   # G.5b-7: absorbed --gl-selftest
-          ./build/eden_native --recolor-selftest --docs="$PWD/w2-docs/recolor"
-          ./build/eden_native --display-selftest --docs="$PWD/w2-docs/display"
-          ./build/eden_native --ui-selftest --docs="$PWD/w2-docs/ui"
-          node ../port/tools/convert64-crosscheck.js ./build/eden_native "$PWD/w2-docs/convert64"
-          ./build/eden_native --background-selftest --world=bg --docs="$PWD/bg-docs"
-          ./build/eden_native --browser-selftest --docs="$PWD/browser-docs"
-          ./build/eden_native --emod-selftest --emod-fixtures=../port/tools/fixtures/emod --emod-work="$PWD/emod-work"
-          ./build/eden_native --net-selftest
-          ./build/eden_native --mp-selftest
-          rm -rf mp-replay-docs && mkdir -p mp-replay-docs
-          ./build/eden_native --mp-replay=../port/tools/fixtures/mp/replay-1.lines --docs="$PWD/mp-replay-docs"
-          for m in noevictcommit nolandhook noreconcile echo; do
-            rm -rf mp-replay-docs-$m && mkdir -p mp-replay-docs-$m
-            if ./build/eden_native --mp-replay=../port/tools/fixtures/mp/replay-1.lines --mp-mutate=$m --docs="$PWD/mp-replay-docs-$m" > mp-replay-mutate-$m.log 2>&1; then
-              echo "::error::--mp-replay --mp-mutate=$m PASSED"; exit 1
-            fi
-          done
-          rm -rf evict-docs && mkdir -p evict-docs
-          ./build/eden_native --evict-selftest --docs="$PWD/evict-docs"
-          rm -rf ringlight-docs light-docs && mkdir -p ringlight-docs light-docs
-          ./build/eden_native --ring-light-selftest --docs="$PWD/ringlight-docs"
-          ./build/eden_native --light-selftest --light-selfcheck --docs="$PWD/light-docs"
-          rm -rf evict16-docs ringlight16-docs && mkdir -p evict16-docs ringlight16-docs
-          ./build/eden_native --evict-selftest --radius=16 --docs="$PWD/evict16-docs"
-          ./build/eden_native --ring-light-selftest --radius=16 --docs="$PWD/ringlight16-docs"
-          rm -rf shadow-docs shadow16-docs && mkdir -p shadow-docs shadow16-docs
-          ./build/eden_native --shadow-selftest --docs="$PWD/shadow-docs"
-          ./build/eden_native --shadow-selftest --radius=16 --docs="$PWD/shadow16-docs"
-          # H.4 (see the linux job): the macOS leg is where the pinned hashes came from.
-          rm -rf classic-docs && mkdir -p classic-docs
-          ./build/eden_native --classic-selftest --docs="$PWD/classic-docs"
-          for m in tables trunc noborder; do
-            rm -rf classic-docs-$m && mkdir -p classic-docs-$m
-            if ./build/eden_native --classic-selftest --classic-mutate=$m --docs="$PWD/classic-docs-$m" > classic-mutate-$m.log 2>&1; then
-              echo "::error::--classic-selftest --classic-mutate=$m PASSED"; exit 1
-            fi
-          done
-          # C.1 (see the linux job).
-          rm -rf console-docs console-docs-anchor console-docs-noreg && mkdir -p console-docs console-docs-anchor console-docs-noreg
-          ./build/eden_native --console-selftest --docs="$PWD/console-docs"
-          if ./build/eden_native --console-selftest --console-mutate=anchor --docs="$PWD/console-docs-anchor" > console-mutate-anchor.log 2>&1; then
-            echo "::error::--console-selftest --console-mutate=anchor PASSED"; exit 1
-          fi
-          if ./build/eden_native --console-selftest --console-mutate=noreg --docs="$PWD/console-docs-noreg" > console-mutate-noreg.log 2>&1; then
-            echo "::error::--console-selftest --console-mutate=noreg PASSED"; exit 1
-          fi
-          # C.5 gate 6 (see the linux job).
-          ../port/tools/live-cmds-gate.sh ./build/eden_native "$PWD/live-gate"
-          # H.15 (see the linux job).
-          rm -rf props-docs props-docs-nogen && mkdir -p props-docs props-docs-nogen
-          ./build/eden_native --props-selftest --docs="$PWD/props-docs"
-          if ./build/eden_native --props-selftest --props-mutate=nogen --docs="$PWD/props-docs-nogen" > props-mutate-nogen.log 2>&1; then
-            echo "::error::--props-selftest --props-mutate=nogen PASSED"; exit 1
-          fi
-          rm -rf leak-docs && mkdir -p leak-docs
-          ./build/eden_native --leak-probe --docs="$PWD/leak-docs"
+        env:
+          GATE_JOBS: 3
+        run: bash ../.github/scripts/gates.sh macos
 
       # ROADMAP 5.9: the world browser's REAL HTTP backend (NSURLSession / libcurl / WinHTTP —
       # --browser-selftest above uses offline fixtures and never touches it). Lists from the archive
@@ -1139,15 +683,6 @@ jobs:
           [ -n "$got" ] && [ "$want" = "$got" ] || {
             echo "::error::macos read Linux's world as '$got', linux reads it as '$want'"; exit 1; }
 
-      - name: Gate — creature models, pinned to the PowerVR SDK's output (LG.7)
-        working-directory: native
-        # macos-latest is arm64, the target the hashes were measured on (the SDK's own skinned
-        # vertices, byte-identical to CreatureModel's before Classes/PVRT* was deleted).
-        run: |
-          set -e
-          . ../.github/scripts/run-gate.sh
-          rm -rf creature-docs && mkdir -p creature-docs
-          run_gate "creature selftest" ./build/eden_native --creature-selftest --docs="$PWD/creature-docs"
 
       - name: Gate — save round-trip, and publish this platform's world
         working-directory: native
@@ -1193,8 +728,9 @@ jobs:
           test -f dist/Emod/Eden.emod || { echo "::error::Eden.emod is not in the package"; exit 1; }
           n=$(find dist/Emod -type f | wc -l)
           [ "$n" -gt 800 ] || { echo "::error::only $n files in the package"; exit 1; }
-          cp ../LICENSE ../NOTICE dist/Emod/   # zstd (BSD-3) requires its notice in binary distributions
+          cp ../LICENSE ../COPYING ../NOTICE dist/Emod/   # zstd (BSD-3) requires its notice in binary distributions
           tar -C dist -czf Emod-macos-arm64.tar.gz Emod
+          for f in COPYING LICENSE NOTICE; do tar -tzf Emod-macos-arm64.tar.gz | grep -qx "Emod/$f" || { echo "::error::$f is not inside Emod-macos-arm64.tar.gz"; exit 1; }; done
           ls -l Emod-macos-arm64.tar.gz
 
       - name: Smoke-test the package from another directory
@@ -1314,7 +850,7 @@ jobs:
           test -f "$APP/Info.plist"      || { echo "::error::no Info.plist"; exit 1; }
           test -f "$APP/Eden.emod"       || { echo "::error::Eden.emod is not inside the .app"; exit 1; }
           test -f "$APP/packs/eden/pack.json" || { echo "::error::the stock pack (packs/eden/pack.json) is not inside the .app"; exit 1; }
-          test -f "$APP/packs/emod_example/textures/oak.png" || { echo "::error::the example pack's PNGs are not inside the .app"; exit 1; }
+          ! test -d "$APP/packs/emod_example" || { echo "::error::the example pack is bundled again (K.3-8: it is a catalogue download)"; exit 1; }
           ! test -f "$APP/Eden.eden"     || { echo "::error::raw Eden.eden shipped in the .app -- S.6 bundles only Eden.emod"; exit 1; }
           ! test -f "$APP/Eden.eden.gz"  || { echo "::error::Eden.eden.gz shipped in the .app -- S.6 retired it"; exit 1; }
           n=$(find "$APP" -type f | wc -l | tr -d ' ')
@@ -1355,13 +891,15 @@ jobs:
           set -e
           rm -rf ipa && mkdir -p ipa/Payload
           cp -R build-ios-device/Emod.app ipa/Payload/
-          cp ../LICENSE ../NOTICE ipa/Payload/Emod.app/   # zstd (BSD-3) requires its notice in binary distributions
+          cp ../LICENSE ../COPYING ../NOTICE ipa/Payload/Emod.app/   # zstd (BSD-3) requires its notice in binary distributions
           (cd ipa && zip -qry ../Emod-unsigned.ipa Payload)
           # Assert the shape rather than trust the copy: a Payload/ with the executable in it, and
           # a plausible size. An .ipa that unzips to nothing is indistinguishable from a good one
           # until someone tries to install it.
           unzip -l Emod-unsigned.ipa | grep -q 'Payload/Emod.app/Emod' || {
             echo "::error::the .ipa has no Payload/Emod.app/Emod"; exit 1; }
+          for f in COPYING LICENSE NOTICE; do unzip -l Emod-unsigned.ipa | grep -q "Payload/Emod.app/$f\$" || {
+            echo "::error::$f is not inside the .ipa"; exit 1; }; done
           n=$(unzip -l Emod-unsigned.ipa | tail -1 | awk '{print $2}')
           [ "$n" -gt 800 ] || { echo "::error::only $n entries in the .ipa"; exit 1; }
           echo "Emod-unsigned.ipa: $n entries, $(du -h Emod-unsigned.ipa | cut -f1)"
@@ -1460,6 +998,7 @@ jobs:
           grep -q 'pack. .* ALL PASS' pack.log || {
             echo "::error::--pack-selftest did not pass in the simulator"; cat pack.log; exit 1; }
           # K.2-4: mod packs, the example pack copied from Emod.app/packs/ into the app's Documents/Packs.
+          rm -rf "$DATA/Documents/pack-fixtures" && mkdir -p "$DATA/Documents/pack-fixtures" && cp -R port/tools/fixtures/packs/emod_example "$DATA/Documents/pack-fixtures/"
           launch packs.log --packs-selftest
           grep -q 'eden-packs. ALL PASS' packs.log || {
             echo "::error::--packs-selftest did not pass in the simulator"; cat packs.log; exit 1; }
@@ -1658,7 +1197,7 @@ jobs:
   # =============================================================================================
   release:
     if: github.event_name == 'workflow_dispatch' && inputs.release
-    needs: [linux, sanitize, windows, macos, ios, interchange]
+    needs: [linux, sanitize, tsan, windows, macos, ios, interchange]
     runs-on: ubuntu-latest
     permissions:
       contents: write

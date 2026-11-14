@@ -56,6 +56,7 @@ int   eden_settings_enum_count(int i);
 void  eden_input_pointer_event(int phase, int identity, float x, float y);
 }
 extern "C" void eden_settings_set_text(int i, const char* text);   // K.3-6
+extern "C" const char* eden_settings_text(int i);   // K.3-8
 extern "C" int eden_settings_scope(int i);   // SX.6
 int settings_index(const char* key) {
     for (int i = 0; i < eden_settings_count(); ++i)
@@ -109,6 +110,12 @@ void ui_menu_to(bool home) {
     tick(3);
 }
 
+// UX.1: a pointer build focuses the first field on open; touch deliberately does not (the keyboard would
+// cover the screen unasked), so on touch the test makes the tap a player would make.
+void ui_focus_field(CGRect r) {
+    if (GLW::touchFloor() > 0.0f) { ui_tap_rect(r); tick(2); }
+}
+
 void push_wheel(float y) {
     SDL_Event e;
     SDL_zero(e);
@@ -116,6 +123,233 @@ void push_wheel(float y) {
     e.wheel.y = y;
     e.wheel.direction = SDL_MOUSEWHEEL_NORMAL;
     SDL_PushEvent(&e);
+}
+
+// ---------------------------------------------------------------------------------------------
+// UX.7: the kit's focus model and hover (GLW::Focus), by the keys a player presses.
+// ---------------------------------------------------------------------------------------------
+extern "C" int eden_ui_focus_key(int key);
+bool same_rect(CGRect a, CGRect b) {
+    return std::fabs(a.origin.x - b.origin.x) < 0.5f && std::fabs(a.origin.y - b.origin.y) < 0.5f &&
+           std::fabs(a.size.width - b.size.width) < 0.5f && std::fabs(a.size.height - b.size.height) < 0.5f;
+}
+bool focus_at(CGRect want) { CGRect r; return GLW::Focus::focusedRect(&r) && same_rect(r, want); }
+// A key and the frames its effect needs: the key, the synthetic tap's two edges, a scroll's frame.
+void focus_key(SDL_Scancode sc, bool shift = false) {
+    for (int down = 1; down >= 0; --down) {
+        SDL_Event e;
+        SDL_zero(e);
+        e.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+        e.key.scancode = sc;
+        e.key.mod = shift ? SDL_KMOD_LSHIFT : SDL_KMOD_NONE;
+        SDL_PushEvent(&e);
+    }
+    tick(7);
+}
+void focus_pointer_clear() { eden_ui_focus_key(GLW::Focus::K_POINTER); tick(2); }
+// Tab once per stop: every stop is visited once and the next Tab is back on the first.
+bool focus_cycle(char* detail, size_t cap) {
+    focus_pointer_clear();
+    const int n = GLW::Focus::stops();
+    std::vector<CGRect> seen;
+    int distinct = 0;
+    for (int i = 0; i < n; ++i) {
+        focus_key(SDL_SCANCODE_TAB);
+        CGRect r;
+        if (!GLW::Focus::focusedRect(&r)) break;
+        bool dup = false;
+        for (size_t j = 0; j < seen.size(); ++j) dup |= same_rect(seen[j], r);
+        if (!dup) distinct++;
+        seen.push_back(r);
+    }
+    focus_key(SDL_SCANCODE_TAB);
+    const bool wrapped = !seen.empty() && focus_at(seen[0]);
+    std::snprintf(detail, cap, "%d stops, %d distinct, wrapped %d, ring %d", n, distinct, wrapped ? 1 : 0,
+                  GLW::Focus::ringShown() ? 1 : 0);
+    return n > 0 && distinct == n && wrapped && GLW::Focus::ringShown();
+}
+
+// On the world list, with more worlds than fit. Leaves the menu on the list, nothing loading.
+int focus_ui_checks(Menu* m) {
+    char detail[240];
+    const bool touch = GLW::touchFloor() > 0.0f;
+    int rings = 0, hovers = 0;
+    eden_menu_select(m->firstVisibleRow() + 1);
+    tick(3);
+    const int sel0 = eden_menu_selected_index();
+    const CGRect play = m->controlRect("play");
+    eden_native_debug_set_pointer(play.origin.x + play.size.width * 0.5f, play.origin.y + play.size.height * 0.5f, 1);
+    tick(3);
+    GLW::Focus::debugCounts(NULL, NULL, true);
+    tick(3);
+    GLW::Focus::debugCounts(&rings, &hovers, true);
+
+    if (touch) {
+        // Touch never shows either, and the keys stay the game's: nothing is consumed or drawn.
+        focus_key(SDL_SCANCODE_TAB);
+        focus_key(SDL_SCANCODE_DOWN);
+        focus_key(SDL_SCANCODE_RETURN);
+        int r2 = 0, h2 = 0;
+        GLW::Focus::debugCounts(&r2, &h2, true);
+        std::snprintf(detail, sizeof(detail), "live %d ring %d rings %d hovers %d selected %d (was %d) loading %d",
+                      GLW::Focus::live() ? 1 : 0, GLW::Focus::ringShown() ? 1 : 0, rings + r2, hovers + h2,
+                      eden_menu_selected_index(), sel0, m->loading);
+        check(!GLW::Focus::live() && !GLW::Focus::ringShown() && rings + r2 == 0 && hovers + h2 == 0 &&
+              eden_menu_selected_index() == sel0 && m->loading == 0,
+              "touch: no focus ring, no hover tint, keys not taken", detail);
+        eden_native_debug_set_pointer(0, 0, -1);
+        return 0;
+    }
+
+    std::snprintf(detail, sizeof(detail), "hovers %d rings %d", hovers, rings);
+    check(hovers > 0 && rings == 0, "the pointer over Play tints it; no ring before a key", detail);
+    eden_native_debug_set_pointer(0, 0, 0);
+    tick(3);
+    GLW::Focus::debugCounts(NULL, NULL, true);
+    tick(3);
+    GLW::Focus::debugCounts(&rings, &hovers, true);
+    std::snprintf(detail, sizeof(detail), "hovers %d", hovers);
+    check(hovers == 0, "no pointer, no tint", detail);
+
+    // Tab order on My Worlds: Back, New, the list (one stop, at the selected row), the action bar, Play.
+    {
+        const int n = GLW::Focus::stops();
+        std::vector<CGRect> seq;
+        for (int i = 0; i < n; ++i) {
+            focus_key(SDL_SCANCODE_TAB);
+            CGRect r = CGRectMake(0, 0, 0, 0);
+            GLW::Focus::focusedRect(&r);
+            seq.push_back(r);
+        }
+        CGRect row;
+        const bool haveRow = m->rowRect(sel0, &row);
+        GLW::Focus::debugCounts(&rings, NULL, true);
+        const bool order = n >= 5 && same_rect(seq[0], m->controlRect("back")) && same_rect(seq[1], m->controlRect("new")) &&
+                           haveRow && same_rect(seq[2], row) && same_rect(seq[3], m->controlRect("delete")) &&
+                           same_rect(seq[n - 1], play);
+        std::snprintf(detail, sizeof(detail), "%d stops, rings drawn %d, selected %d (was %d)", n, rings,
+                      eden_menu_selected_index(), sel0);
+        check(order && rings > 0 && GLW::Focus::ringShown() && eden_menu_selected_index() == sel0 && m->loading == 0,
+              "Tab order: Back, New, the selected row, Delete ... Play (Tab selects nothing)", detail);
+        focus_key(SDL_SCANCODE_TAB);
+        const bool wrap = focus_at(m->controlRect("back"));
+        focus_key(SDL_SCANCODE_TAB, true);
+        check(wrap && focus_at(play), "Tab wraps to Back; Shift-Tab steps back to Play", "");
+    }
+
+    // Arrows move selected_world: from nothing focused they start at the selected row.
+    {
+        focus_pointer_clear();
+        const bool cleared = !GLW::Focus::ringShown();
+        focus_key(SDL_SCANCODE_DOWN);
+        const int s1 = eden_menu_selected_index();
+        CGRect row;
+        const bool on1 = m->rowRect(s1, &row) && focus_at(row);
+        focus_key(SDL_SCANCODE_UP);
+        const int s2 = eden_menu_selected_index();
+        std::snprintf(detail, sizeof(detail), "cleared %d; Down %d -> %d (focused %d), Up -> %d, loading %d", cleared ? 1 : 0,
+                      sel0, s1, on1 ? 1 : 0, s2, m->loading);
+        check(cleared && s1 == sel0 + 1 && on1 && s2 == sel0 && m->loading == 0,
+              "a click hides the ring; Down / Up move the selected world", detail);
+        // From the top of the list, so the last world is a scroll away.
+        const int total = eden_menu_world_count();
+        push_wheel((float)total);
+        tick(3);
+        const int f0 = m->firstVisibleRow();
+        if (m->rowRect(f0, &row)) ui_tap_rect(row);
+        tick(2);
+        focus_pointer_clear();
+        for (int i = 0; i < total + 2 && eden_menu_selected_index() < total - 1; ++i) focus_key(SDL_SCANCODE_DOWN);
+        const int s3 = eden_menu_selected_index();
+        const bool on3 = m->rowRect(s3, &row) && focus_at(row);
+        std::snprintf(detail, sizeof(detail), "selected %d of %d, first %d -> %d, focused %d, loading %d", s3, total, f0,
+                      m->firstVisibleRow(), on3 ? 1 : 0, m->loading);
+        check(s3 == total - 1 && m->firstVisibleRow() > f0 && on3 && m->loading == 0,
+              "Down at the list's edge scrolls it, to the last world", detail);
+        focus_key(SDL_SCANCODE_DOWN);   // nothing more to show: focus leaves the list for the action bar
+        check(eden_menu_selected_index() == total - 1 && GLW::Focus::focusedRect(&row) &&
+              row.origin.y < m->controlRect("list").origin.y, "Down past the last world moves to the action bar", "");
+    }
+
+    // A two-button confirm has no Return default: Return alone must not delete.
+    {
+        const int total = eden_menu_world_count();
+        ui_tap_rect(m->controlRect("delete"));
+        tick(4);
+        const bool up = GLDialog::active();
+        focus_key(SDL_SCANCODE_RETURN);
+        const bool still = GLDialog::active() && eden_menu_world_count() == total;
+        CGRect b0, b1;
+        GLDialog::buttonRect(0, &b0);
+        GLDialog::buttonRect(1, &b1);
+        focus_key(SDL_SCANCODE_TAB);
+        const bool onDelete = focus_at(b0);
+        focus_key(SDL_SCANCODE_TAB);
+        const bool onCancel = focus_at(b1);
+        focus_key(SDL_SCANCODE_RETURN);
+        std::snprintf(detail, sizeof(detail), "up %d, after Return %d, Tab on Delete %d, Tab on Cancel %d, closed %d, count %d (was %d)",
+                      up ? 1 : 0, still ? 1 : 0, onDelete ? 1 : 0, onCancel ? 1 : 0, GLDialog::active() ? 0 : 1,
+                      eden_menu_world_count(), total);
+        check(up && still && onDelete && onCancel && !GLDialog::active() && eden_menu_world_count() == total,
+              "a dialog takes the focus; Return needs a focused button (Cancel keeps the world)", detail);
+        if (GLDialog::active()) { GLDialog::dismiss(); tick(2); }
+    }
+
+    // Every stop is reachable by Tab on the screens with no scrolling page of controls.
+    check(focus_cycle(detail, sizeof(detail)), "Tab cycle: My Worlds", detail);
+    ui_menu_to(true);
+    check(focus_cycle(detail, sizeof(detail)), "Tab cycle: home", detail);
+    focus_pointer_clear();
+    focus_key(SDL_SCANCODE_RETURN);
+    check(!m->showhome, "Return on home opens My Worlds (its default)", "");
+    ui_menu_to(false);
+
+    // New World: Tab leaves the name field (the key reaches Focus through the text seam) and comes back.
+    {
+        NewWorldMenu* nw = m->newworld;
+        ui_tap_rect(m->controlRect("new"));
+        tick(4);
+        const bool inField = nw->focused("name");
+        focus_key(SDL_SCANCODE_TAB);
+        const bool left = !nw->focused("name") && GLW::Focus::ringShown() && eden_text_input_active() == 0;
+        focus_key(SDL_SCANCODE_TAB, true);
+        const bool back = nw->focused("name") && eden_text_input_active() == 1;
+        std::snprintf(detail, sizeof(detail), "in field %d, Tab left it %d, Shift-Tab back in %d", inField ? 1 : 0,
+                      left ? 1 : 0, back ? 1 : 0);
+        check(inField && left && back, "New World: Tab leaves the name field, Shift-Tab returns to it", detail);
+        const int n0 = eden_menu_world_count();
+        ui_tap_rect(nw->controlRect("back"));
+        tick(4);
+        check(!m->shownewworld && eden_menu_world_count() == n0, "New World closes with nothing created", "");
+    }
+
+    // Settings: Space (a toggle) or Right (a slider, a stepper) changes the focused row's value.
+    {
+        ui_menu_to(true);
+        ui_tap_rect(m->controlRect("home.settings"));
+        tick(4);
+        const int ns = eden_settings_count();
+        std::vector<float> v0(ns);
+        for (int i = 0; i < ns; ++i) v0[i] = eden_settings_get(i);
+        int changed = -1, presses = 0;
+        focus_key(SDL_SCANCODE_TAB);                       // Back
+        focus_key(SDL_SCANCODE_TAB);                       // the rail (one stop)
+        for (; presses < 6 && changed < 0; ++presses) {
+            focus_key(SDL_SCANCODE_TAB);                   // a row's control
+            focus_key(SDL_SCANCODE_SPACE);
+            focus_key(SDL_SCANCODE_RIGHT);
+            for (int i = 0; i < ns && changed < 0; ++i) if (eden_settings_get(i) != v0[i]) changed = i;
+        }
+        std::snprintf(detail, sizeof(detail), "changed %s after %d control(s)", changed >= 0 ? eden_settings_key(changed) : "nothing", presses);
+        check(m->showsettings && changed >= 0, "Settings: Space / Right change the focused control", detail);
+        for (int i = 0; i < ns; ++i) if (eden_settings_get(i) != v0[i]) eden_settings_set(i, v0[i]);
+        eden_settings_menu_close();
+        tick(3);
+        ui_menu_to(false);
+    }
+    focus_pointer_clear();
+    eden_native_debug_set_pointer(0, 0, -1);
+    return 0;
 }
 
 // MP.6: the Multiplayer screens (UI plan §9's tap paths), from the home screen and back to it.
@@ -148,7 +382,13 @@ int mp_ui_checks(Menu* m) {
     ui_tap_rect(sl->controlRect("add"));
     tick(3);
     check(fm->isOpen() && fm->mode() == ServerFormMenu::MODE_ADD, "Add opens the server form", "");
-    check(fm->field("address")->focused(), "Add focuses the Address field under a pointer", "");
+    if (GLW::touchFloor() > 0.0f) {
+        check(!fm->field("address")->focused(), "Add leaves the Address field unfocused on touch", "");
+        ui_focus_field(fm->controlRect("address"));
+    } else {
+        check(fm->field("address")->focused(), "Add focuses the Address field under a pointer", "");
+    }
+    check(fm->field("address")->focused(), "the Address field has focus before typing", "");
     push_text("bad host");
     tick(3);
     std::snprintf(detail, sizeof detail, "hint '%s' save %d", fm->hint("address"), fm->saveEnabled());
@@ -176,6 +416,7 @@ int mp_ui_checks(Menu* m) {
     ui_tap_rect(rr);   // the selected row: a tap joins
     tick(3);
     check(fm->isOpen() && fm->mode() == ServerFormMenu::MODE_PROFILE, "the first Join with no name opens Profile", "");
+    ui_focus_field(fm->controlRect("name"));
     fm->field("name")->setText("");
     push_text("a:b");
     tick(3);
@@ -315,6 +556,35 @@ int mp_ui_checks(Menu* m) {
           "a keyboard over the form: the focused field and Save stay above it", detail);
     eden_native_debug_set_keyboard_top(-2.0f);
     fm->blurFields();
+    {   // UX.9: the form is untouched since it opened (Add), so Back is instant; with an edit it asks.
+        const bool clean = !fm->dirty();
+        ui_tap_rect(fm->controlRect("back"));
+        tick(3);
+        check(clean && !fm->isOpen() && !GLDialog::active(), "UX.9: Back on a clean server form closes at once", "");
+        ui_tap_rect(sl->controlRect("add"));
+        tick(3);
+        fm->field("address")->setText("example.org");
+        tick(2);
+        CGRect b;
+        const int nBefore = eden_mp_servers_count();
+        ui_tap_rect(fm->controlRect("back"));
+        tick(3);
+        check(fm->dirty() && fm->isOpen() && GLDialog::active(), "UX.9: Back on an edited server form asks 'Discard changes?'", "");
+        push_tap_key(SDL_SCANCODE_ESCAPE);   // Escape in the dialog = Keep editing
+        tick(3);
+        check(fm->isOpen() && !GLDialog::active() && !std::strcmp(fm->field("address")->text().c_str(), "example.org"),
+              "UX.9: Escape in the dialog keeps the form and its text", "");
+        fm->blurFields();
+        push_tap_key(SDL_SCANCODE_ESCAPE);   // the form's own Escape asks again
+        tick(3);
+        const bool ask = GLDialog::active() && GLDialog::buttonRect(0, &b);
+        if (ask) ui_tap_rect(b);
+        tick(3);
+        std::snprintf(detail, sizeof detail, "ask %d open %d servers %d", ask, fm->isOpen(), eden_mp_servers_count());
+        check(ask && !fm->isOpen() && eden_mp_servers_count() == nBefore, "UX.9: Discard closes the form and adds nothing", detail);
+        ui_tap_rect(sl->controlRect("add"));
+        tick(3);
+    }
     ui_tap_rect(fm->controlRect("back"));
     tick(3);
     push_tap_key(SDL_SCANCODE_ESCAPE);
@@ -426,7 +696,11 @@ int mods_ui_checks(Menu* m) {
 
     // Get Mods: hidden without the catalogue setting, the tab appears when it is set.
     const int si = settings_index("mods_catalogue_url");
-    check(si >= 0 && !mm->tabsShown(), "no Get Mods tab while mods_catalogue_url is empty", "");
+    check(si >= 0 && !std::strcmp(eden_settings_text(si), "https://hagg3.github.io/emod-packs/index.json") && mm->tabsShown(),
+          "the Get Mods catalogue defaults to the emod-packs site (K.3-8)", "");
+    eden_settings_set_text(si, "");
+    tick(3);
+    check(!mm->tabsShown(), "no Get Mods tab while mods_catalogue_url is empty", "");
     eden_settings_set_text(si, "http://127.0.0.1:1/catalogue.json");
     tick(3);
     check(mm->tabsShown(), "the Get Mods tab appears when it is set", "");
@@ -531,6 +805,43 @@ int run_menu_selftest() {
         check(!m->showhome, "back on the list for the checks below", "");
     }
 
+    // QA.22: Escape per screen. Each screen is opened the way its button does and Menu::back() must
+    // close exactly it (no other flag changes, the list stays the list), then return 0 with none open.
+    {
+        eden_menu_select(0);
+        tick(2);
+        // World Properties needs a readable world: its own leg below (props Escape) covers it.
+        struct Row { const char* name; bool Menu::*flag; void (Menu::*open)(); bool toHome; };
+        const Row rows[] = {
+            {"New World", &Menu::shownewworld, &Menu::openNewWorld, false},
+            {"Multiplayer", &Menu::showservers, &Menu::openServers, true},   // its list's Back is "home"
+            {"Mods", &Menu::showmods, &Menu::openMods, false},
+        };
+        for (const Row& r : rows) {
+            (m->*r.open)();
+            tick(3);
+            const bool opened = m->*r.flag;
+            const bool others = (m->shownewworld + m->showprops + m->showservers + m->showmods + m->showsettings) == 1;
+            const bool home0 = m->showhome;
+            const int took = eden_menu_back();
+            tick(2);
+            const bool left = (m->shownewworld + m->showprops + m->showservers + m->showmods + m->showsettings) == 0;
+            std::snprintf(detail, sizeof(detail), "%s: opened %d only-one %d consumed %d closed %d home %d->%d", r.name,
+                          opened, others, took, left, home0, m->showhome);
+            check(opened && others && took == 1 && left && !(m->*r.flag) && m->showhome == (r.toHome ? true : home0),
+                  "QA.22: Escape closes exactly the open screen", detail);
+            // A screen may have closed to home (servers) and the rest need the list: put it back.
+            if (m->showhome) ui_menu_to(false);
+        }
+        m->showsettings = true;
+        const int took = eden_menu_back();
+        tick(2);
+        check(took == 1 && !m->showsettings && !m->showhome, "QA.22: Escape closes Settings and stays on the list", "");
+        check(eden_menu_back() == 1 && m->showhome, "QA.22: Escape on the list returns home", "");
+        check(eden_menu_back() == 0 && m->showhome, "QA.22: Escape on home is not consumed", "");
+        ui_menu_to(false);
+    }
+
     // U.5: New opens the New World screen and adds nothing; Back closes it, still nothing.
     ui_tap_rect(m->controlRect("new"));
     tick(3);
@@ -538,7 +849,13 @@ int run_menu_selftest() {
     std::snprintf(detail, sizeof(detail), "shown %d open %d count %d -> %d", m->shownewworld ? 1 : 0,
                   nw->isOpen() ? 1 : 0, n0, eden_menu_world_count());
     check(m->shownewworld && nw->isOpen() && eden_menu_world_count() == n0, "New opens the New World screen", detail);
-    check(nw->focused("name") && eden_text_input_active() == 1, "the name field has focus on a desktop", "");
+    if (GLW::touchFloor() > 0.0f) {
+        check(!nw->focused("name") && eden_text_input_active() == 0, "the name field is not focused on touch", "");
+        ui_focus_field(nw->controlRect("name"));
+    } else {
+        check(nw->focused("name") && eden_text_input_active() == 1, "the name field has focus on a desktop", "");
+    }
+    check(nw->focused("name") && eden_text_input_active() == 1, "the name field has focus before typing", "");
     ui_tap_rect(nw->controlRect("back"));
     tick(3);
     std::snprintf(detail, sizeof(detail), "shown %d count %d (was %d) text input %d", m->shownewworld ? 1 : 0,
@@ -635,6 +952,8 @@ int run_menu_selftest() {
         check(eden_menu_world_count() == total - 1 && !listed, "Delete -> Delete removes the world", detail);
     }
 
+    if (focus_ui_checks(m) != 0) return 1;   // UX.7
+
     // Play: the button, then the stock world-type + height dialogs (Flat, then the height's first
     // button -- New Dawn 256, the default since S.5e), to a world.
     {
@@ -642,7 +961,9 @@ int run_menu_selftest() {
         eden_menu_select(idx);
         tick(2);
         const std::string name = eden_menu_world_name(idx);
-        ui_tap_rect(m->controlRect("play"));
+        // UX.7: under a pointer the keyboard plays it (Return = the screen's default action, nothing focused).
+        if (GLW::touchFloor() > 0.0f) ui_tap_rect(m->controlRect("play"));
+        else { push_tap_key(SDL_SCANCODE_RETURN); tick(4); check(m->loading != 0, "Return plays the selected world", ""); }
         CGRect b;
         const bool asked = tick_until([] { return GLDialog::active(); }, 600, "world-type dialog");
         if (asked && GLDialog::buttonRect(0, &b)) ui_tap_rect(b);            // Flat
@@ -687,6 +1008,7 @@ int run_menu_selftest() {
         // FT.3: world names keep only A-Z, a-z, 0-9, space and '; the typed "í" must be dropped.
         const char* typed = "Selftest V\xC3\xADlag";   // "Selftest Vílag"
         const char* kept = "Selftest Vlag";
+        ui_focus_field(nw->controlRect("name"));
         push_text(typed);
         tick(2);
         int flatTile = -1;
@@ -728,6 +1050,8 @@ int run_menu_selftest() {
         const int count = eden_menu_world_count();
         ui_tap_rect(m->controlRect("new"));
         tick(3);
+        const bool touchUi = GLW::touchFloor() > 0.0f;   // no field focus on open: one Escape closes
+        if (touchUi) ui_focus_field(nw->controlRect("name"));
         push_tap_key(SDL_SCANCODE_ESCAPE);
         tick(3);
         const bool fieldLeft = !nw->focused("name") && m->shownewworld;
@@ -756,6 +1080,7 @@ int run_menu_selftest() {
         NewWorldMenu* nw = m->newworld;
         ui_tap_rect(m->controlRect("new"));
         tick(3);
+        ui_focus_field(nw->controlRect("name"));
         push_text("Selftest Classic");
         tick(2);
         int classicTile = -1;
@@ -1140,6 +1465,8 @@ int run_ui_selftest() {
     g_selftestTag = "eden-ui";
     g_tickInput = true;            // headless pump_events() only drains SDL's queue with this set
     char detail[240];
+    if (!mutation_known("eden-ui", "--ui-mutate", g_opt.uiMutate, {"menuback"})) return 2;
+    Menu::testBackSkip = g_opt.uiMutate == "menuback" ? 2 : -1;   // 2 = New World's row in kBackScreens
     tick(120);
     check(eden_settings_loaded() != 0, "the settings model loaded", "");
 
@@ -1584,6 +1911,45 @@ int run_ui_selftest() {
         std::snprintf(detail, sizeof(detail), "opened %d showprops %d bytes %zu -> %zu", opened ? 1 : 0,
                       menu->showprops ? 1 : 0, after.size(), again.size());
         check(opened && !menu->showprops && again.size() == after.size(), "Escape closes Properties and writes nothing", detail);
+    }
+    {
+        // UX.9: Back on a dirty form asks; a clean one does not.
+        ui_tap_rect(menu->controlRect("properties"));
+        tick(3);
+        WorldPropertiesMenu* w = menu->props;
+        ui_tap_rect(w->controlRect("back"));
+        tick(3);
+        check(!w->isOpen() && !GLDialog::active(), "UX.9: Back on a clean Properties closes at once", "");
+
+        ui_tap_rect(menu->controlRect("properties"));
+        tick(3);
+        ui_tap_rect(w->controlRect("name"));
+        tick(2);
+        push_text("x");
+        tick(2);
+        CGRect b;
+        const bool dirty = w->saveEnabled();
+        ui_tap_rect(w->controlRect("back"));
+        tick(3);
+        check(dirty && w->isOpen() && GLDialog::active(), "UX.9: Back on a dirty Properties asks 'Discard changes?'", "");
+        push_tap_key(SDL_SCANCODE_ESCAPE);   // Escape in the dialog = Keep editing
+        tick(3);
+        check(w->isOpen() && !GLDialog::active() && w->saveEnabled(), "UX.9: Escape in the dialog keeps editing (edits kept)", "");
+        ui_tap_rect(w->controlRect("back"));
+        tick(3);
+        const bool askAgain = GLDialog::active() && GLDialog::buttonRect(1, &b);
+        if (askAgain) ui_tap_rect(b);
+        tick(3);
+        check(askAgain && w->isOpen() && w->saveEnabled(), "UX.9: Keep editing stays on the form", "");
+        ui_tap_rect(w->controlRect("back"));
+        tick(3);
+        const bool askThird = GLDialog::active() && GLDialog::buttonRect(0, &b);
+        if (askThird) ui_tap_rect(b);
+        tick(3);
+        std::vector<unsigned char> fin;
+        read_file(file, &fin);
+        check(askThird && !w->isOpen() && !menu->showprops && fin.size() == after.size(),
+              "UX.9: Discard closes Properties and writes nothing", "");
     }
 
     const bool reopened = open_world(want, g_opt.height);

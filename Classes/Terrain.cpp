@@ -12,9 +12,7 @@
 #include "Model.h"
 #include "VectorUtil.h"
 
-// The repo-root Lighting.h -- the one Eden.xcodeproj lists. A bare "Lighting.h" resolves to
-// Classes/Lighting.h first, an empty stock stub with the SAME include guard (Stage R / R.3 needs
-// the real one: the light store's accessors live there).
+// The repo-root Lighting.h: the light store's accessors live there.
 #include "../Lighting.h"
 #include "SignTool.h"
 #include "CmdScript.h"
@@ -26,8 +24,7 @@
 #include "Clouds.h"              // AT.6 cloud layer + shadows
 #include "MpWorld.h"             // MP.3a: the session world (no file behind the window)
 
-// Repo-root Lighting.h is the built one (Eden.xcodeproj / web CMake); the Classes/ copy next to
-// this file is a stale snapshot with no prototypes, hence these explicit decls.
+// Repo-root Lighting.h is the built one; these explicit decls predate it.
 void calculateLighting();
 #include "F3Timing.h"
 #include "SkyCycle.h"
@@ -428,6 +425,22 @@ static bool bulk_reload_active=false;
 // Set by the meshing pass when the per-frame budget stopped it short, i.e. that reload still owes
 // the window geometry even if every column has been read.
 static bool bulk_reload_meshing=false;
+// QA.9: a whole-window re-mesh was requested outside a bulk reload (terrain_requestWindowRemesh: the
+// day/night flip, paintSky, the region walk). While it is owed the mesh pass keeps the bulk reload's
+// per-frame budget, so the window streams in over a few frames instead of meshing and uploading in one
+// (42-50 ms on an M2, 330 ms on an Air 2). Cleared by the first mesh pass that defers nothing, and
+// on load. It is not bulk_reload_active: it stages no reads, holds no autosave and no lighting sweep.
+static bool window_remesh_owed=false;
+bool Terrain::testUnbudgetedRemesh=false;
+// Diagnostics (--console-selftest's QA.9 leg): the most budget-counted chunks one mesh pass took
+// since the harness last zeroed it, and the budget itself.
+int Terrain::meshPassWorst=0;
+void terrain_requestWindowRemesh(){
+    if(!chunksToUpdate||!columnsToUpdate)return;   // DN.5: the watcher can run before allocateMemory
+    memset(chunksToUpdate,true,sizeof(bool)*CHUNKS_PER_SIDE*CHUNKS_PER_SIDE*CHUNKS_PER_COLUMN);
+    memset(columnsToUpdate,true,sizeof(bool)*CHUNKS_PER_SIDE*CHUNKS_PER_SIDE);
+    window_remesh_owed=!Terrain::testUnbudgetedRemesh;
+}
 // B.5b-1a ring streaming (prepareAndLoadGeometry), its two follow-ups.
 // A window shift has happened and its creature top-up is owed once the ring has caught up (stale
 // count back to 0): the top-up's randomised ground search would otherwise put creatures on columns
@@ -440,6 +453,7 @@ int g_bulk_reloads=0;
 // B.5b-1b diagnostics (--evict-selftest): evict-saves the ring ran, dynamics nodes it dropped,
 // autosaves the timer ran.
 int g_ring_evict_saves=0;
+int g_ring_evict_held=0;   // QA.5: columns that waited because their occupant's save failed
 int g_ring_dynamics_dropped=0;
 int g_autosaves=0;
 bool Terrain::testNoEvictSave=false;
@@ -509,6 +523,7 @@ void Terrain::loadTerrain(const std::string& name,bool fromArchive){
     // TRUE from the previous world would run a slice against a window this world never staged.
     bulk_reload_active=false;
     bulk_reload_meshing=false;
+    window_remesh_owed=false;
     // Likewise the ring's follow-up (B.5b-1a): a load places creatures itself.
     ring_creatures_owed=false;
     World::getWorld->hud->justLoaded=1;
@@ -523,35 +538,45 @@ void Terrain::loadTerrain(const std::string& name,bool fromArchive){
 	
 	
 }
-void Terrain::warpToPoint(float x,float z,float y){
+// QA.5: a warp reloads the whole window from the file, so it goes ahead only on a committed save: on
+// a failed one the player stays put with every edit still resident (and the status line saying why).
+bool Terrain::warpToPoint(float x,float z,float y){
     Vector pp;
 	pp.x=(x+.5f);
 	pp.z=(z+.5f);
 	pp.y=(y+1);
 	//World::getWorld->player.pos=pp;
     f3_begin("E1");
-    World::getWorld->fm->saveWorld(pp);
+    if(!World::getWorld->fm->saveWorld(pp)&&!(g_save_test_ignore&SAVE_TEST_IGNORE_EXIT))return false;
 	unloadTerrain(false);
     
 	loadTerrain(world_name,false);
     //[World::getWorld->player reset];
     
     World::getWorld->player->groundPlayer();
+    return true;
 }
-void Terrain::warpToHome(){
+// QA.5: does the window hold an edit no commit has? (The autosave's question, and the bulk reload's.)
+bool Terrain::anyChunkModified(){
+    for(int i=0;i<CHUNKS_PER_SIDE*CHUNKS_PER_SIDE*CHUNKS_PER_COLUMN;i++)
+        if(chunkTable[i]&&chunkTable[i]->modified)return true;
+    return false;
+}
+bool Terrain::warpToHome(){
 	Vector pp;
 	pp.x=(home.x+.5f);
 	pp.z=(home.z+.5f);
 	pp.y=(home.y+1);
 	//World::getWorld->player.pos=pp;
     f3_begin("E1");
-	World::getWorld->fm->saveWorld(pp);
+	if(!World::getWorld->fm->saveWorld(pp)&&!(g_save_test_ignore&SAVE_TEST_IGNORE_EXIT))return false;   // QA.5, as warpToPoint
 	unloadTerrain(false);
     
 	loadTerrain(world_name,false);
     //[World::getWorld->player reset];
 
     World::getWorld->player->groundPlayer();
+    return true;
 }
 void Terrain::addToUpdateList(int cx,int cy,int cz){
     if(cy<0||cy>=CHUNKS_PER_COLUMN)return;   // Q.1 F16: threeToOne doesn't wrap cy
@@ -2271,10 +2296,7 @@ bool Terrain::update(float etime){
     g_seconds_since_save+=etime;
     if(g_autosave_seconds>0&&g_seconds_since_save>=g_autosave_seconds&&loaded&&!bulk_reload_active&&do_reload==0){
         g_seconds_since_save=0;
-        bool dirty=false;
-        for(int i=0;i<CHUNKS_PER_SIDE*CHUNKS_PER_SIDE*CHUNKS_PER_COLUMN&&!dirty;i++)
-            if(chunkTable[i]&&chunkTable[i]->modified)dirty=true;
-        if(dirty){
+        if(anyChunkModified()){
             World::getWorld->fm->saveWorldKeepDynamics();
             g_autosaves++;
         }
@@ -2401,6 +2423,7 @@ static int hit_load_counter=0;
 // read (32 KB at 64z, 131 KB at 256z) and the mesh work, so a column budget would cost 4x as
 // much per frame in a tall world. 96 chunks = 24 columns at 64z, 6 at 256z.
 #define BULK_RELOAD_CHUNK_BUDGET 96
+const int Terrain::meshChunkBudget=BULK_RELOAD_CHUNK_BUDGET;
 // H.4: the bulk reload's per-frame time for Classic-generated columns (generator-plan.md §2.1).
 // 4 ms is ~11 legacy columns a frame on the iPad Air 2 (0.36 ms each); tune on the device.
 #define GEN_FRAME_BUDGET_MS 4.0
@@ -2596,11 +2619,24 @@ void Terrain::prepareAndLoadGeometry(){
                     }
 
                 }
+                // QA.5: the reload overwrites every stale slot, so with edits resident it starts only on a
+                // committed save. A failed one leaves the window as it is and retries after the hold
+                // (hit_load_counter stays 1); with nothing modified a failed save loses nothing here.
+                bool startBulk=false;
                 if(hit_load_counter>=2){
+                    const bool dirty=anyChunkModified();
+                    if(dirty&&World::getWorld->fm->saveHeld()){
+                        hit_load_counter=1;
+                    }else{
+                        World::getWorld->hud->sb->clear();
+                        f3_begin("E2");
+                        const bool saved=World::getWorld->fm->saveWorld();
+                        if(!saved&&dirty&&!(g_save_test_ignore&SAVE_TEST_IGNORE_STREAM))hit_load_counter=1;
+                        else startBulk=true;
+                    }
+                }
+                if(startBulk){
                     hit_load_counter=0;
-                    World::getWorld->hud->sb->clear();
-                    f3_begin("E2");
-                    World::getWorld->fm->saveWorld();
 
                     World::getWorld->fm->chunkOffsetX=m_chunkOffsetX;
                     World::getWorld->fm->chunkOffsetZ=m_chunkOffsetZ;
@@ -2750,6 +2786,7 @@ void Terrain::prepareAndLoadGeometry(){
             std::string file_name=world->fm->documents+"/"+world_name;
             // Reopened per frame, for the reason the bulk slice gives. None in a session (MP.3a).
             EdenFile* saveFile=world->fm->sessionWorld?NULL:EdenFile::openRead(file_name);   // G.2b-2: was NSFileHandle
+            bool evictSaveFailed=false;   // QA.5: one failed evict-save a frame, then dirty occupants wait
             for(int i=0,taken=0;i<nring&&taken<RING_COLUMN_BUDGET;i++){
                 const int cx=ring[i].cx,cz=ring[i].cz;
                 // B.5b-1b, per column, in this order (plan §3.3 step 2):
@@ -2765,14 +2802,21 @@ void Terrain::prepareAndLoadGeometry(){
                 TerrainChunk* occ=chunkTable[threeToOne(cx,0,cz)];
                 if(occ&&!testNoDropDynamics)
                     g_ring_dynamics_dropped+=dropDynamicsInColumn(occ->pbounds[0]/CHUNK_SIZE,occ->pbounds[2]/CHUNK_SIZE);
+                //    QA.5: if that save fails (or is held after a failure), the occupant keeps its slot and
+                //    the column waits: a full disk stalls streaming over an edit rather than drop it.
+                bool occupantKept=false;
                 for(int cy=0;cy<CHUNKS_PER_COLUMN&&!testNoEvictSave;cy++){
                     TerrainChunk* c=chunkTable[threeToOne(cx,cy,cz)];
                     if(c&&c->modified){
-                        world->fm->saveWorldKeepDynamics();
-                        g_ring_evict_saves++;
+                        if(!evictSaveFailed){
+                            g_ring_evict_saves++;
+                            evictSaveFailed=!world->fm->saveWorldKeepDynamics();
+                        }
+                        occupantKept=evictSaveFailed&&!(g_save_test_ignore&SAVE_TEST_IGNORE_STREAM);
                         break;
                     }
                 }
+                if(occupantKept){ g_ring_evict_held++; continue; }
                 world->fm->readColumn(cx,cz,saveFile);
                 isloaded[cx-m_chunkOffsetX][cz-m_chunkOffsetZ]=true;
                 g_ring_columns_landed++;
@@ -2871,8 +2915,9 @@ void Terrain::prepareAndLoadGeometry(){
         // While a bulk reload is in flight the same per-frame budget that limits its column reads
         // limits its meshing, using the deferral list_max already had. Outside a reload this is
         // list_max, i.e. the pass drains everything exactly as it always did -- an edit, an
-        // explosion and the initial world load are all unbudgeted.
-        const int frame_max=bulk_reload_active&&BULK_RELOAD_CHUNK_BUDGET<list_max
+        // explosion and the initial world load are all unbudgeted. QA.9: a requested whole-window
+        // re-mesh (window_remesh_owed) is budgeted the same way until a pass defers nothing.
+        const int frame_max=(bulk_reload_active||window_remesh_owed)&&BULK_RELOAD_CHUNK_BUDGET<list_max
                             ?BULK_RELOAD_CHUNK_BUDGET:list_max;
         // Stage R / R.2: what frame_max counts. An all-air chunk (typesEmpty) costs rebuild2() a
         // few instructions now, not a scan, so it no longer spends the budget: at 256z ~80% of a
@@ -2942,6 +2987,10 @@ void Terrain::prepareAndLoadGeometry(){
                 }
             }
             list_full:
+            // QA.9: the requested re-mesh is done once a pass left nothing behind for the budget (a
+            // full list[] is a deferral too). Only the budget is released: dirty bits are untouched.
+            if(window_remesh_owed&&!bulk_reload_meshing&&num<list_max)window_remesh_owed=false;
+            if(budgeted>meshPassWorst)meshPassWorst=budgeted;
 
 
 

@@ -139,6 +139,7 @@ void cmds_parser_cases() {
 int run_cmds_selftest() {
     using namespace cmds_test;
     g_selftestTag = "eden-cmds";
+    if (!mutation_known("eden-cmds", "--cmds-mutate", g_opt.cmdsMutate, {"nodepth"})) return 2;
     CmdScript::testNoDepthCap = g_opt.cmdsMutate == "nodepth";
     CmdScript::trace = g_opt.cmdsTrace;
     char d[1024];
@@ -731,8 +732,11 @@ int run_console_selftest() {
     using namespace console_test;
     using CS = CmdScript;
     g_selftestTag = "eden-console";
+    if (!mutation_known("eden-console", "--console-mutate", g_opt.consoleMutate, {"anchor", "noreg", "flipburst", "unbound", "noflag"})) return 2;
     CS::testAnchorFeet = g_opt.consoleMutate == "anchor";
+    CS::testFlagMutant = g_opt.consoleMutate == "noflag";
     Console::testNoBridge = g_opt.consoleMutate == "noreg";
+    Terrain::testUnbudgetedRemesh = g_opt.consoleMutate == "flipburst";   // QA.9: the flip meshes in one frame again
     CS::trace = g_opt.cmdsTrace;
     char d[1024];
 
@@ -798,6 +802,14 @@ int run_console_selftest() {
         check(n == 23 && why.empty(), "kVerbs: every verb parses; its errors are its usage", d);
         check(CS::findVerb("FILL") && CS::findVerb("Unless") && !CS::findVerb("video.fov") && !CS::findVerb("echo"),
               "findVerb: case-insensitive, built-ins only", "");
+    }
+
+    // ---- QA.19: every Settings value row has a kBindings[] entry (bind or apply), and every entry names a row.
+    // --console-mutate=unbound drops the fov row's entry, which this must catch.
+    {
+        char why[1024];
+        const int bad = eden_settings_check_bindings(g_opt.consoleMutate == "unbound" ? "fov" : nullptr, why, sizeof(why));
+        check(bad == 0, "QA.19 every settings value row is bound", why);
     }
 
     // ---- C.9 / C.10: the player's README and the commands reference name nothing that is gone
@@ -1059,6 +1071,36 @@ int run_console_selftest() {
         check(r == CS::RUN_BAD && land(PX + 1, PY + 1, PZ + 1) == 0 && sk.has("2: Unknown block: glas") && sk.has("line not run"),
               "in play: a bad line changes nothing", d);
 
+        // QA.20: with a multiplayer session open, every verb row states its MP safety: each edit verb is
+        // refused (RUN_BAD, nothing placed), time verbs follow the cycle, the rest run. --console-mutate=noflag
+        // mislabels fill, which this must catch.
+        {
+            size_t nv = 0;
+            const CS::Verb* vs = CS::verbs(&nv);
+            std::string why;
+            CS::testForceMp = true;
+            for (size_t i = 0; i < nv; ++i) {
+                const CS::Verb& v = vs[i];
+                const unsigned f = v.flags;
+                if (f != CS::V_SAFE && f != CS::V_EDITS_WORLD && f != CS::V_TIME) { why += std::string(v.name) + " has no single flag; "; continue; }
+                if (f != CS::V_EDITS_WORLD) continue;
+                std::string ln = v.name;
+                for (int k = 0; v.kinds[k]; ++k) {
+                    if (v.kinds[k] == CS::ARG_COORD) ln += " 1";
+                    else if (v.kinds[k] == CS::ARG_BLOCK) ln += " glass";
+                    else if (v.kinds[k] == CS::ARG_CREATURE) ln += " moof";
+                    else if (v.kinds[k] == CS::ARG_NUMBER) ln += " 5";
+                    else if (v.kinds[k] == CS::ARG_COLOR) break;
+                }
+                if (ln == "if 1 1 1 glass" || ln == "unless 1 1 1 glass") ln += "; say hi";
+                TestSink sk2;
+                const int r2 = CS::runLine(ln.c_str(), PX, PY, PZ, CS::SRC_CONSOLE, &sk2, NULL);
+                if (r2 != CS::RUN_BAD) why += ln + " -> " + std::to_string(r2) + "; ";
+            }
+            CS::testForceMp = false;
+            check(why.empty() && land(PX + 1, PY + 1, PZ + 1) == 0, "QA.20 every edit verb is refused in a multiplayer session", why.c_str());
+        }
+
         // `=` absolute, mixed with relative, from an anchor far away
         sk.lines.clear();
         char line[160];
@@ -1290,8 +1332,8 @@ int run_console_selftest() {
             std::string got;
             for (const std::string& m : f.matches) got += (got.empty() ? "" : " ") + m;
             check(got == "fill find fire", "completion: `fi` lists fill find fire", got.c_str());
-            Completion v = complete("video.sha");
-            check(v.line == "video.shadows ", "completion: `video.sha` -> video.shadows", v.line.c_str());
+            Completion v = complete("video.fps");
+            check(v.line == "video.fps_cap ", "completion: `video.fps` -> video.fps_cap", v.line.c_str());
             Completion b = complete("set 0 0 0 gla");
             check(b.line == "set 0 0 0 glass ", "completion: block names by argument kind", b.line.c_str());
             Completion e = complete("gold 1; video.shadows sm");
@@ -1563,6 +1605,28 @@ int run_console_selftest() {
         check(dDay > 0 && dNight == 0 && nDay == 0 && nNight > 0 && bDay > 0 && bNight == 0 && fB - fA == 1 &&
                   SkyCycle::nightFlips() - fB == 1,
               "DN.5 a flip re-meshes the whole window with the new night bit (one request per flip)", d);
+
+        // QA.9: the flip streams in -- no mesh pass takes more than the bulk reload's chunk budget, and the
+        // window is still whole within a bounded number of frames. (Counts, not milliseconds: CI timing flakes.)
+        {
+            Terrain::meshPassWorst = 0;
+            SkyCycle::setTime(0.0);
+            int frames = 0, sDay = 0, sNight = 0;
+            do {
+                tick(1);
+                frames++;
+                eden_debug_baked_night(&sDay, &sNight);
+            } while ((sDay > 0 || sNight == 0) && frames < 600);
+            const int total = bDay;
+            const int want = (total + Terrain::meshChunkBudget - 1) / Terrain::meshChunkBudget;
+            std::snprintf(d, sizeof(d), "%d chunks re-baked in %d frames (%d at the budget), worst pass %d chunks, budget %d; left %d day/%d night",
+                          total, frames, want, Terrain::meshPassWorst, Terrain::meshChunkBudget, sDay, sNight);
+            check(total > Terrain::meshChunkBudget && sDay == 0 && sNight > 0 && Terrain::meshPassWorst > 0 &&
+                      Terrain::meshPassWorst <= Terrain::meshChunkBudget && frames >= want && frames <= 2 * want + 4,   // buried chunks spend budget and bake nothing
+                  "QA.9 a night flip streams in: no mesh pass over the chunk budget, every chunk re-baked in a few frames", d);
+            SkyCycle::setTime(0.5);
+            tick(600);
+        }
 
         // turning the cycle off at night goes back to the painted (day) sky: one re-mesh, back to day-baked
         SkyCycle::setTime(0.0);

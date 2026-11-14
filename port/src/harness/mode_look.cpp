@@ -1,5 +1,11 @@
 // G.4: split out of the old eden_main_native.cpp (see harness.h). Mode group "look".
 #include "harness.h"
+#include "../../../Classes/Hotbar.h"   // UX.8-5
+#include "../../../Classes/Hud.h"
+#include "../../../Classes/World.h"
+extern "C" int eden_settings_index_of(const char*);   // UX.8-5
+extern "C" int eden_get_hotbar_index(void);
+extern "C" int eden_get_hotbar_slot_type(int);
 
 using namespace harness;
 
@@ -24,7 +30,7 @@ int run_look_selftest() {
             std::fprintf(stderr, "[eden-look] unknown --look-mutate=%s\n", g_opt.lookMutate.c_str());
             return 2;
         }
-        std::printf("[eden-look] mutation: %s\n", g_opt.lookMutate.c_str());
+        std::printf("[eden-look] mutation: %s\n", g_opt.lookMutate.c_str());   // run_mutant requires this banner
     }
     const char* name = g_opt.world.empty() ? "look-selftest" : g_opt.world.c_str();
     if (!open_world(name, g_opt.height)) return 1;
@@ -773,6 +779,69 @@ int run_touch_selftest() {
                           dw, w1.y - w0.y);
             check(dw > 4.0f && std::fabs(w1.y - w0.y) < 0.5f, "a held stick walks with fly OFF", detail);
         }
+    }
+
+    // UX.8-5: the hotbar strip is touchable. Tap selects (the strip claims the finger: nothing is placed and
+    // the camera does not turn), a re-tap opens the picker for that slot and the pick lands there, a
+    // long-press clears, and every hit box is inside the safe rect and disjoint from the other HUD rects.
+    {
+        eden_settings_set(eden_settings_index_of("hotbar"), 1.0f);
+        tick(10);
+        auto rect_of = [&](int idx, float* nx, float* ny) {
+            float x = 0, y = 0, w = 0, h = 0;
+            if (!eden_debug_hotbar_rect(idx, &x, &y, &w, &h)) return false;
+            to_norm(x + w * 0.5f, SCREEN_HEIGHT - (y + h * 0.5f), nx, ny);
+            return true;
+        };
+        auto tap = [&](SDL_FingerID id, float fx, float fy) {
+            push_finger_id(id, SDL_EVENT_FINGER_DOWN, fx, fy); tick(3);
+            push_finger_id(id, SDL_EVENT_FINGER_UP, fx, fy);   tick(6);
+        };
+        float hx = 0, hy = 0;
+        char who[256];
+        const bool have = rect_of(3, &hx, &hy);
+        check(have, "the hotbar strip has a hit rect for slot 4", "setting on, touch profile");
+        if (have) {
+            const int type3 = eden_get_hotbar_slot_type(3);
+            push_finger_id(21, SDL_EVENT_FINGER_DOWN, hx, hy); tick(3);
+            const char* st = eden_debug_menu_state();
+            check(st && std::strstr(st, "\"inuse\":17"), "a finger on a hotbar cell is claimed by the strip", "inuse 17");
+            push_finger_id(21, SDL_EVENT_FINGER_UP, hx, hy); tick(6);
+            std::snprintf(detail, sizeof(detail), "index %d, type %d", eden_get_hotbar_index(), type3);
+            check(eden_get_hotbar_index() == 3 && !eden_ui_wants_cursor(), "tapping a cell selects it and opens nothing", detail);
+            tap(22, hx, hy);
+            check(eden_ui_wants_cursor() && Hotbar::get().pickerTarget() == 3, "re-tapping the selected cell opens the picker for that slot",
+                  "picker open, target 3");
+            // pick a block that is not on the bar: it lands in slot 4
+            const int want = Hud::pickerCell(0, 20);
+            check(want > 0, "the picker has a cell 21", "Hud::pickerCell(0, 20)");
+            if (want > 0) {
+                const CGRect c20 = World::getWorld->hud->blockBounds[20];
+                float px = 0, py = 0;
+                to_norm(c20.origin.x + c20.size.width * 0.5f, SCREEN_HEIGHT - (c20.origin.y + c20.size.height * 0.5f), &px, &py);
+                tap(23, px, py);
+                std::snprintf(detail, sizeof(detail), "slot 4 holds %d, wanted %d", eden_get_hotbar_slot_type(3), want);
+                check(eden_get_hotbar_slot_type(3) == want && !eden_ui_wants_cursor(),
+                      "the pick lands in the targeted slot and closes the picker", detail);
+            }
+            // long-press clears
+            g_app->setFixedEtime(1.0f / 60.0f);
+            tick(30);   // the picker's close animation hides the strip until it ends
+            float lx = 0, ly = 0;
+            const bool haveLp = rect_of(1, &lx, &ly);
+            check(haveLp, "the strip is back after the picker closes", "slot 2 rect");
+            if (haveLp) {
+                push_finger_id(24, SDL_EVENT_FINGER_DOWN, lx, ly);
+                tick(40);
+                push_finger_id(24, SDL_EVENT_FINGER_UP, lx, ly);
+                tick(6);
+                check(Hotbar::get().slot(1).kind == HOTBAR_EMPTY, "a long-press on a cell clears the slot", "slot 2 empty");
+            }
+            g_app->setFixedEtime(0.0f);
+        }
+        const int ov = eden_debug_hotbar_overlaps(who, sizeof(who));
+        std::snprintf(detail, sizeof(detail), "%d overlap(s)%s%s", ov, ov ? ": " : "", who);
+        check(ov == 0, "every hotbar hit box is disjoint from the other HUD rects", detail);
     }
 
     // I.2: every edge-anchored HUD rect (and the rail-screen panel) inside the safe rect. Only a

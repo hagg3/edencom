@@ -25,6 +25,7 @@
 #include "../../../Classes/Ambient.h"
 #include "../../../Classes/Camera.h"
 #include "../../render/render_internal.h"
+#include "../../render/render_passes.h"
 #include "../../../Classes/Graphics.h"
 int eden_lamp_positions(float ex, float ey, float ez, float radius, int cap, float (*out)[3]);   // Terrain.cpp (AT.8; AT.11 halos leg)
 
@@ -1088,11 +1089,43 @@ static void halos_leg() {
     SkyCycle::setTime(t0);
 }
 
+// QA.24 (A1-08): everything Off costs the stock frame and nothing more. The null backend counts draws per pass
+// category (R::counts), so the frame is pinned: the effects pass is 7 draws a frame with the atmosphere Off (the
+// stock player/effect draws, measured 2026-11-14) and the sky pass 1; an atmosphere layer adds draws to one of
+// them (Low's clouds: sky +1). No texture is created or uploaded and no cloud/rain resource lives.
+// --weather-mutate=lowatmo forces Low and must fail this.
+static void off_leg() {
+    char d[400];
+    eden_console_teleport(65536.5f, 40.0f, 65536.5f);
+    eden_weather_set_override(0);
+    eden_atmo_set_override(0);
+    const bool track0 = g_pass.track;
+    g_pass.track = true;                           // the categories need the pass tracker
+    tick(5);
+    const long res0 = rnull::liveTextures() + rnull::liveBuffers();   // the Off baseline: nothing of the effects lives
+    if (g_opt.weatherMutate == "lowatmo") eden_atmo_set_override(1);
+    tick(60);
+    R::resetCounts();
+    for (int i = 0; i < 600; ++i) tick(1);
+    const R::Counts& c = R::counts();
+    const long fx = R::drawsIn(EDEN_RC_EFFECTS), total = c.draws[0] + c.draws[1] + c.draws[2] + c.draws[3] + c.draws[4] + c.draws[5] + c.draws[6] +
+                                                         c.draws[7] + c.draws[8] + c.draws[9];
+    const long res1 = rnull::liveTextures() + rnull::liveBuffers();
+    std::snprintf(d, sizeof(d), "effects draws %ld of %ld (sky %ld other %ld), tex creates %ld updates %ld, Clouds live %d, Precip live %d, R resources %ld -> %ld", fx,
+                  total, c.draws[2], c.draws[9], c.texCreates, c.texUpdates, (int)Clouds::live(), (int)Precip::live(), res0, res1);
+    check(fx == 7 * 600 && c.draws[2] == 600 && c.texCreates == 0 && c.texUpdates == 0 && !Clouds::live() && !Precip::live(),
+          "all Off: 600 frames draw only the stock 7 effects + 1 sky a frame, create or upload no texture", d);
+    g_pass.track = track0;
+    eden_atmo_set_override(-1);
+    eden_weather_set_override(-1);
+}
+
 int run_weather_selftest() {
     g_selftestTag = "eden-weather";
+    if (!mutation_known("eden-weather", "--weather-mutate", g_opt.weatherMutate, {"lowatmo"})) return 2;
     const std::string leg = g_opt.sourceLeg;
-    if (!leg.empty() && leg != "settings" && leg != "schedule" && leg != "region" && leg != "record" && leg != "save" && leg != "verbs" && leg != "precip" && leg != "rain-audio" && leg != "lightning" && leg != "mist" && leg != "clouds" && leg != "ambient" && leg != "halos") {
-        std::fprintf(stderr, "[eden-weather] unknown leg '%s' (settings, schedule, region, record, save, verbs, precip, rain-audio, lightning, mist, clouds, ambient, halos)\n", leg.c_str());
+    if (!leg.empty() && leg != "settings" && leg != "schedule" && leg != "region" && leg != "record" && leg != "save" && leg != "verbs" && leg != "precip" && leg != "rain-audio" && leg != "lightning" && leg != "mist" && leg != "clouds" && leg != "ambient" && leg != "halos" && leg != "off") {
+        std::fprintf(stderr, "[eden-weather] unknown leg '%s' (settings, schedule, region, record, save, verbs, precip, rain-audio, lightning, mist, clouds, ambient, halos, off)\n", leg.c_str());
         return 1;
     }
     const char* name = g_opt.world.empty() ? "weather-selftest" : g_opt.world.c_str();
@@ -1115,6 +1148,7 @@ int run_weather_selftest() {
     if (leg.empty() || leg == "clouds") clouds_leg();
     if (leg.empty() || leg == "ambient") ambient_leg();
     if (leg.empty() || leg == "halos") halos_leg();
+    if (leg.empty() || leg == "off") off_leg();
     std::printf("[eden-weather] %s (%d failure(s))\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
     return g_selftestFailures ? 1 : 0;
 }

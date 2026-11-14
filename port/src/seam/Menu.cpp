@@ -29,10 +29,10 @@
 #include "../../../Classes/Menu.h"
 #include "../../../Classes/WorldPropertiesMenu.h"   // H.15: eden_world_props_menu_back
 #include "../../../Classes/ConsoleMenu.h"           // C.3: eden_console_menu_*
-#include "../../../Classes/ServerListMenu.h"        // MP.6: eden_server_list_back
-#include "../../../Classes/ModsMenu.h"              // K.3-5: eden_mods_menu_back
+#include "../../../Classes/ServerListMenu.h"        // MP.6
+#include "../../../Classes/ModsMenu.h"              // K.3-5
 #include "../../../Classes/FileManager.h"
-#include "../../../Classes/Hud.h"       // eden_hud_draw_menu_screen_hook
+#include "../../../Classes/Hud.h"
 #include "../../../Classes/MpWorld.h"    // MP.7: eden_chat_open needs a session
 #include "../../../Classes/GLDialog.h"  // C.3: eden_console_menu_toggle asks GLDialog::active()
 #include "../../../Classes/Terrain.h"   // eden_menu_load_percent reads terrain->counter
@@ -41,42 +41,6 @@
 #include "../shim/foundation/platform_shims.h"   // (Phase N Stage 1)
 #include <cstring>
 #include <cstdlib>
-
-// Set from Settings.cpp's "legacy_menu" row. One flag decides which UI the player gets, in all
-// three places it matters: eden_menu_active() (the DOM main menu), eden_legacy_ui_active() (read by
-// public/eden-pausemenu.js for the DOM in-game menu), and the Hud hook installed just below.
-extern float eden_legacy_menu;
-
-// Phase N Stage 2: a host with no DOM UI at all. On web `legacy_menu` is a real player choice
-// between two live UIs; on native there is only one — the engine's own GL menus — so the flag has
-// nothing to choose between and every DOM-shaped default below would resolve the wrong way. Most
-// visibly the in-game (ESC) panel, which the hook further down suppresses by default because the
-// DOM pause menu covers it: with no DOM pause menu, Escape sets `hud->inmenu` and then NOTHING
-// DRAWS. That is exactly how it presented in the first native play pass — the corner icon's
-// press animation played (it always draws) and no panel ever appeared.
-//
-// A forced override rather than a different default for the row, because this is a property of
-// the BUILD and not a preference: native must never resolve it to 0, including if a stale
-// NSUserDefaults value says so.
-static bool g_forceLegacyUI = false;
-
-extern "C"
-void eden_ui_force_legacy(int on) { g_forceLegacyUI = (on != 0); }
-
-static bool legacy_ui(void) { return g_forceLegacyUI || eden_legacy_menu != 0.0f; }
-
-// The engine's own in-game menu panel (Hud::renderMenuScreen) draws over the world whenever
-// hud->inmenu is set. That was invisible while public/eden-pausemenu.js was a full-canvas opaque
-// overlay, but it is a shrink-to-fit dialog now, so the 4 GL icons showed THROUGH the scrim behind
-// the DOM panel. Suppress the engine's panel unless the player asked for the legacy UI, in which
-// case it draws and the DOM panel stays away instead (see eden-pausemenu.js's tick()). Exactly one
-// in-game menu is ever on screen.
-//
-// Installed from a static ctor rather than assigned from some init function: there is no ordering
-// hazard (Hud::render cannot run before main()), and it keeps the wiring next to the predicate.
-static struct InstallHudMenuHook {
-    InstallHudMenuHook() { eden_hud_draw_menu_screen_hook = legacy_ui; }
-} g_install_hud_menu_hook;
 
 static Menu* menu_ptr() {
     World* w = World::getWorld;
@@ -107,49 +71,11 @@ static WorldNode* node_at(int index) {
 
 extern "C" {
 
-// -----------------------------------------------------------------------------------------------
-// Visibility
-// -----------------------------------------------------------------------------------------------
-
-// True when the DOM menu overlay should be up: the engine is on its menu screen, the player has
-// not opted into the legacy GL menu, and none of the engine's own sub-screens that this overlay
-// does NOT replace (share flow, shared-world list, settings) is showing. Deliberately conservative
-// — if the engine is showing something we have no DOM equivalent for, get out of the way rather
-// than covering it with an opaque overlay the player cannot dismiss.
-int eden_menu_active(void) {
-    World* w = World::getWorld;
-    Menu* m = menu_ptr();
-    if (!w || !m) return 0;
-    if (legacy_ui()) return 0;
-    if (w->game_mode != GAME_MODE_MENU) return 0;
-    if (m->is_sharing || m->showlistscreen || m->showsettings) return 0;
-    return 1;
-}
-
-// True when the player has opted back into the original 2010 GL UI. Every DOM surface that has a
-// GL counterpart checks this, so the two can never both be on screen.
-int eden_legacy_ui_active(void) { return legacy_ui() ? 1 : 0; }
-
-// Non-zero while a world load is in flight. The DOM menu uses this to show its own progress state
-// and to stop accepting input — the engine is mid-`loading` ladder and a second Play tap would
-// re-enter it.
-int eden_menu_loading(void) {
-    Menu* m = menu_ptr();
-    return (m && m->loading) ? 1 : 0;
-}
 
 /** 0-100 load progress, so the DOM menu can show a real bar instead of an indefinite spinner.
  *  Same expression World::loadWorld uses for its own status line (Classes/World.mm:354) — the
  *  terrain streamer counts up to 324 columns — kept in step by deriving it from the same field
  *  rather than inventing a second notion of "done". */
-int eden_menu_load_percent(void) {
-    World* w = World::getWorld;
-    if (!w || !w->terrain) return 0;
-    int pct = (int)(100.0f * (float)(w->terrain->counter) / 324.0f);
-    if (pct < 0) pct = 0;
-    if (pct > 100) pct = 100;
-    return pct;
-}
 
 // -----------------------------------------------------------------------------------------------
 // World list
@@ -218,7 +144,6 @@ char* eden_menu_name_buffer(void) {
     g_name_buf[0] = 0;
     return g_name_buf;
 }
-int eden_menu_name_buffer_size(void) { return (int)sizeof(g_name_buf); }
 
 /** Create a world and select it — a transcription of the GL menu's rect_create branch
  *  (Classes/Menu.mm:537-550), differing only in where the name comes from: the buffer above if JS
@@ -270,62 +195,13 @@ int eden_menu_delete_at(int index) {
     return 1;
 }
 
-// -----------------------------------------------------------------------------------------------
-// U.5: the "menu" key (Escape) over the New World screen. 1 = consumed (the screen closed, as its
-// Back does, creating nothing); 0 = it is not showing and the key keeps its usual meaning. While
-// the screen's name field has focus Escape never gets here: the text seam hands it to the field.
-// -----------------------------------------------------------------------------------------------
-int eden_new_world_menu_back(void) {
+// QA.22: the "menu" key (Escape) over any menu screen: one call, the routing is Menu::back()'s table
+// (Classes/Menu.cpp). 1 = consumed. UX.9: a GLDialog is first, and Escape over it is its last button.
+int eden_dialog_escape(void) { return GLDialog::escape() ? 1 : 0; }
+int eden_menu_back(void) {
+    if (GLDialog::escape()) return 1;
     Menu* m = menu_ptr();
-    if (!m || !m->shownewworld || !m->newworld) return 0;
-    m->newworld->back();
-    m->shownewworld = false;
-    return 1;
-}
-
-// I.7: Escape on the world list ("My Worlds") goes back to the home screen, as its Back does. Last
-// in Input_native.cpp's chain, so any screen over the list has had the key first; 0 on the home
-// screen itself (Escape there does nothing), mid-load, under a dialog or in play.
-int eden_menu_home_back(void) {
-    World* w = World::getWorld;
-    Menu* m = menu_ptr();
-    if (!w || !m || w->game_mode != GAME_MODE_MENU) return 0;
-    if (m->showhome || m->loading || GLDialog::active()) return 0;
-    if (m->showsettings || m->shownewworld || m->showprops || m->showbrowser || m->showmods || m->showlistscreen ||
-        m->is_sharing || m->showservers) return 0;
-    m->showHome(true);
-    return 1;
-}
-
-// MP.6: Escape over the Multiplayer screen (UI plan §1): the form or Profile closes (discarding),
-// Connecting cancels, the list goes home. A focused field takes Escape itself (the text seam).
-int eden_server_list_back(void) {
-    World* w = World::getWorld;
-    Menu* m = menu_ptr();
-    if (!w || !m || w->game_mode != GAME_MODE_MENU || !m->showservers || !m->servers) return 0;
-    if (m->loading || GLDialog::active()) return 0;
-    const int r = m->servers->back() ? 1 : 0;
-    if (!m->servers->isOpen()) m->showservers = false;
-    return r;
-}
-
-// K.3-5: Escape over the Mods screen closes it (back to where it was opened from).
-int eden_mods_menu_back(void) {
-    Menu* m = menu_ptr();
-    if (!m || !m->showmods || !m->mods) return 0;
-    if (GLDialog::active()) return 0;
-    m->mods->back();
-    m->showmods = false;
-    return 1;
-}
-
-// H.15: the same for the World Properties screen (Back discards, as its button does).
-int eden_world_props_menu_back(void) {
-    Menu* m = menu_ptr();
-    if (!m || !m->showprops || !m->props) return 0;
-    m->props->back();
-    m->showprops = false;
-    return 1;
+    return (m && m->back()) ? 1 : 0;
 }
 
 // C.3: the Console (Classes/ConsoleMenu.h) over a running world. Unlike the screens above it is not
@@ -374,12 +250,6 @@ int eden_chat_open(int slash) {
     return 1;
 }
 
-int eden_console_menu_back(void) {
-    if (!eden_console_menu_active()) return 0;
-    menu_ptr()->console->back();
-    return 1;
-}
-
 // Keys belong to the Console while it is open, even with its field blurred (desktop): typing must
 // never walk the player. Input_native.cpp lets only the `menu` and `console` keys through.
 int eden_ui_captures_keys(void) {
@@ -401,7 +271,6 @@ static int g_pending_world_type = -1;   // -1 none, 0 normal, 1 flat
 
 void eden_menu_set_pending_world_type(int flat) { g_pending_world_type = flat ? 1 : 0; }
 
-void eden_menu_clear_pending_world_type(void) { g_pending_world_type = -1; }
 
 /** Consumed by showAlertWorldType() in seam_link_stubs.mm. Returns -1 when nothing is pending, in
  *  which case the caller must raise the real dialog. */
@@ -425,7 +294,6 @@ void eden_menu_set_pending_world_height(int height) {
     g_pending_world_height = (height == 256) ? 256 : 64;
 }
 
-void eden_menu_clear_pending_world_height(void) { g_pending_world_height = -1; }
 
 /** Consumed by FileManager::probeWorldHeight() (Classes/FileManager.cpp). Returns -1 when nothing
  *  is pending, in which case the caller stays at the 64z default. */
@@ -460,9 +328,5 @@ int eden_menu_take_pending_generator(unsigned char* out28) {
 
 /** Open the engine's settings screen (which the DOM settings panel mirrors via
  *  eden_settings_menu_open()). Same flag the GL menu's Options button sets. */
-void eden_menu_open_settings(void) {
-    Menu* m = menu_ptr();
-    if (m) m->showsettings = true;
-}
 
 } // extern "C"

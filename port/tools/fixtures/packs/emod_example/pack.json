@@ -1,0 +1,47 @@
+// The example mod pack (K.2-4; schema: docs/content-packs.md "Mod packs").
+//
+// Not loaded by default (plan D14: placing a mod block flags a world). To try it, copy this folder into
+// Documents/Packs/ (on iOS through the Files app) and open a world, or run with --packs=<this folder>.
+// Then, in the console: `set ~ ~ ~2 emod_example:oak_planks`. Its tiles are drawn by
+// port/tools/example-pack-art.py. Between them the blocks use every trait, an eden: tile, own tiles with
+// an unpainted twin, and one transparent block.
+//
+// K.4: "scripts" lists Lua files, run in a sandbox in this order when a world opens (docs/scripting.md).
+// scripts/main.lua adds the console command `mod pillar 5` and counts the vault stone you place.
+//
+// "color" tints a block's tiles while it is unpainted (Eden draws most stock tiles as grey art tinted by the
+// block's colour), and colours its debris. Full-colour art wants [255, 255, 255]; grey art gets its colour
+// from here (polished_ice below). A block with the paint_art trait draws its tiles' "unpainted" twins instead.
+{
+  "format": 1,
+  "id": "emod_example",
+  "name": "Example blocks",
+  "version": "1.0.0",
+  "scripts": ["scripts/main.lua"],
+  "tiles": {
+    "oak": {"png": "textures/oak.png", "unpainted": "oak_color"},
+    "oak_color": {"png": "textures/oak_color.png"},
+    "rope": {"png": "textures/rope.png"},
+    "jelly": {"png": "textures/jelly.png"},
+    "vault": {"png": "textures/vault.png"},
+    "stained_glass": {"png": "textures/stained_glass.png"}
+  },
+  "blocks": [
+    // Greyscale art that paint tints; unpainted it draws its twin, oak_color.
+    {"id": "oak_planks", "faces": {"all": "oak"}, "color": [196, 150, 96],
+     "traits": ["solid", "flammable", "paint_art"], "sounds": "eden:wood", "fallback": "eden:wood"},
+    // Own tile on the sides, a stock tile (eden:wood) on top and bottom.
+    {"id": "rope_ladder", "faces": {"sides": "rope", "top": "eden:wood", "bottom": "eden:wood"}, "color": [255, 255, 255],
+     "traits": ["solid", "flammable", "climbable"], "sounds": "eden:wood", "fallback": "eden:ladder"},
+    {"id": "jelly", "faces": {"all": "jelly"}, "color": [255, 255, 255],
+     "traits": ["solid", "bouncy"], "sounds": "eden:leaves", "fallback": "eden:trampoline", "fallback_paint": 0},
+    // Only a stock tile (grey art, tinted by "color"): costs no atlas slot.
+    {"id": "polished_ice", "faces": {"all": "eden:ice"}, "color": [160, 200, 230],
+     "traits": ["solid", "hard", "slippery"], "sounds": "eden:ice", "fallback": "eden:ice"},
+    {"id": "vault_stone", "faces": {"all": "vault"}, "color": [255, 255, 255],
+     "traits": ["solid", "hard", "blastproof", "unbreakable"], "sounds": "eden:steel", "fallback": "eden:steel"},
+    // Drawn from atlas2.png in the transparent pass, like eden:glass.
+    {"id": "stained_glass", "faces": {"all": "stained_glass"}, "color": [255, 255, 255],
+     "traits": ["hard", "transparent", "no_shadow"], "sounds": "eden:glass", "fallback": "eden:glass", "picker": true}
+  ]
+}

@@ -17,18 +17,7 @@ extern float SCREEN_WIDTH;
 extern float SCREEN_HEIGHT;
 
 // The Stage 5.2 model, in the shared seam file port/src/seam/Settings.cpp.
-extern "C" {
-int  eden_keybind_count(void);
-const char* eden_keybind_label(int i);
-const char* eden_keybind_group(int i);
-int  eden_keybind_get(int i);
-int  eden_keybind_secondary(int i);
-int  eden_keybind_native_hidden(int i);
-const char* eden_keybind_code_label(int code);
-void eden_keybind_capture_begin(int i);
-void eden_keybind_capture_cancel(void);
-int  eden_keybind_capture_active(void);
-}
+#include "eden_settings.h"
 
 KeybindsMenu::KeybindsMenu() {
     m_built = false;

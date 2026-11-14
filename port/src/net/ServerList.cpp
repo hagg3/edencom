@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "../shim/foundation/eden_fs.h"   // eden_fs_write_atomic (QA.17)
 #include "NetFramer.h"
 #include "NetSock.h"
 
@@ -271,16 +272,8 @@ bool loadServers(const std::string& path, ServerFile& f) {
 }
 
 bool saveServers(const std::string& path, const ServerFile& f) {
-    const std::string tmp = path + ".tmp";
-    FILE* fp = std::fopen(tmp.c_str(), "wb");
-    if (!fp) return false;
     const std::string o = formatServers(f);
-    const bool ok = std::fwrite(o.data(), 1, o.size(), fp) == o.size();
-    if (std::fclose(fp) != 0 || !ok) { std::remove(tmp.c_str()); return false; }
-#if defined(_WIN32)
-    std::remove(path.c_str());   // Windows' rename fails onto an existing file
-#endif
-    return std::rename(tmp.c_str(), path.c_str()) == 0;
+    return eden_fs_write_atomic(path, o.data(), o.size());   // QA.17: no remove-then-rename gap on Windows
 }
 
 // ---- INFO --------------------------------------------------------------------------------

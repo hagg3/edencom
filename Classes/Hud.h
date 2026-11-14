@@ -49,17 +49,7 @@ static inline bool hud_picker_is_tool(int type){ return type>=HUD_TOOL_SIGN; }
 #define HUD_MOD_BASE 2000
 static inline bool hud_picker_is_mod(int type){ return type>=HUD_MOD_BASE; }
 
-// Host hook: return false to suppress the built-in in-game menu screen (the 4-icon GL panel
-// Hud::renderMenuScreen draws over the world). NULL — the default, and the only value the iOS
-// target ever sees — means "always draw", i.e. stock behaviour. The web port installs a hook that
-// returns false unless the player has opted back into the legacy GL UI, because it draws its own
-// DOM menu in that panel's place and the two would otherwise be visible at the same time.
-//
-// A hook rather than a plain bool because there is then no flag for anyone to keep in sync: the
-// answer is recomputed at the one moment it is needed. It cannot be a --wrap on renderMenuScreen()
-// — that call is intra-TU, so the compiler resolves it directly and the linker never sees it.
-extern bool (*eden_hud_draw_menu_screen_hook)(void);
-
+struct HbLayout;
 class Hud {
 public:
 	int fps;
@@ -143,6 +133,21 @@ public:
     // K.2-5: turn a pending mod selection into a real palette id before a build. TRUE when blocktype is
     // now a placeable type; FALSE when nothing may be placed this tap (confirm dialog up, refusal toasted).
     bool resolveModBlock();
+    // UX.8-3 (docs/ui.md "Hotbar"): the one way a hotbar slot reaches the hand. BLOCK sets blocktype +
+    // block_paintcolor and MODE_BUILD, COLOUR sets paintColor and MODE_PAINT, and an open picker closes.
+    // keepMode (world entry) leaves `mode` alone and shows no toast. false = refused, hand unchanged.
+    bool applyHand(const struct HotbarSlot& s,bool keepMode=false);
+    bool handAvailable(const struct HotbarSlot& s);   // could applyHand hold it in this world
+    struct HotbarSlot handSlot();                     // the hand as a slot (EMPTY when it is not an item)
+    void noteHand();                                  // the hand changed outside the bar: Hotbar::noteHand(handSlot())
+    // UX.8-5 (docs/ui.md "Hotbar"): number key / tap on slot i. A picker open: retarget it to slot i. The
+    // selected (while in use) or an empty slot: open the picker for it (colour slot: the colour picker).
+    // Else select. true = something happened.
+    bool hotbarActivate(int i);
+    void hotbarTarget(int i);                         // the next picker commit lands in slot i (+ a status line)
+    bool hotbarAssignAt(int slot,int x,int y);        // 1-9 over a picker cell: that cell -> slot; false = no cell
+    int hotbarCellAt(float x,float y);                // the slot under a point (point space, y up), -1 none
+    Button hotbarButton(int idx);                     // hit rect: 0-8 slot cells, 9/10 chevrons; zero-size when absent
     // D.2p: the type in picker cell `i` of `page` (-1 = no cell there).
     static int pickerCell(int page,int i);
     // K.2-3: the stock pack's two pages (ContentPack::commitStock).
@@ -166,7 +171,9 @@ private:
     void renderMenuScreen();
     void layoutPauseMenu();       // Stage 5.5: the six action rects + the panel, from SCREEN_*
     void renderBlockScreen();
-    
+    bool hotbarLayout(struct HbLayout* L);   // UX.8-5: shared by the draw and the hit test
+    void renderHotbar();          // UX.8-4: the strip (docs/ui.md "Hotbar"); the toast lift is set here every frame
+
     bool pickSecondBlock;
 };
 

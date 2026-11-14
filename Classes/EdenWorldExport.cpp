@@ -211,7 +211,7 @@ std::string ExportReport::summary() const {
 // =============================================================================================
 // EdenExporter
 // =============================================================================================
-EdenExporter::EdenExporter() : emod_(false), f_(nullptr), phase_(P_END), ord_(0), cur_(nullptr), curLeft_(0), produced_(0), subPal_(false) {
+EdenExporter::EdenExporter() : emod_(false), f_(nullptr), subPal_(false), phase_(P_END), ord_(0), cur_(nullptr), curLeft_(0), produced_(0) {
     std::memset(&rep_, 0, sizeof rep_);
 }
 EdenExporter::~EdenExporter() { close(); }

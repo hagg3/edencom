@@ -245,6 +245,18 @@ void setOriginalLighting(bool on);
 
 // ---- readbacks ---------------------------------------------------------------------------------
 // The POINT space x SCALE_* (eden_gl_set_pick_viewport), never the drawable: what picking's gluUnProject needs.
+// QA.24 (A1-08): what the frame cost, counted at this layer so the null backend reports it too. Draws and
+// vertices are per pass category (eden_render_draw_category(): index = the bit's position, 0..9 = chunks,
+// objects, sky, models, signs, transparent, flowers, effects, hud, other); uploads and creates are totals.
+// Counted always (integer adds); only the selftests read and reset them.
+struct Counts {
+    long draws[10], verts[10];
+    long texCreates, texUpdates, bufCreates, bufUploads;   // bufUploads = bufData + bufSubData calls
+};
+const Counts& counts();
+void resetCounts();
+long drawsIn(int categoryBit);             // counts().draws for one EDEN_RC_* bit
+
 void pickViewport(int out[4]);
 bool readPixels(int x, int y, int w, int h, void* rgba);   // RGBA8, bottom-up; false headless (zeroed)
 void drawableSize(int& w, int& h);         // the window's drawable (the letterbox box) in pixels

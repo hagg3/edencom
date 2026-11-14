@@ -98,7 +98,6 @@ void eden_platform_set_roots(const char* documents, const char* bundle);
 uint32_t eden_arc4random(void);
 void eden_rng_seed(uint64_t seed);   // pin (and restart) the stream
 void eden_rng_unpin(void);
-int  eden_rng_pinned(void);
 
 #ifdef __cplusplus
 }

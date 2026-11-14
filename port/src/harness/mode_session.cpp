@@ -1,5 +1,15 @@
 // G.4: split out of the old eden_main_native.cpp (see harness.h). Mode group "session".
 #include "harness.h"
+#include "../seam/AppLifecycle.h"
+#include "../../../Classes/World.h"
+#include "../../../Classes/Hud.h"
+#include "../../../Classes/statusbar.h"
+#include "../../../Classes/Menu.h"
+#if !defined(_WIN32)
+#include <csignal>
+#include <sys/resource.h>
+#include <unistd.h>
+#endif
 
 using namespace harness;
 
@@ -101,6 +111,48 @@ int run_input_selftest() {
         const int after = eden_hud_in_menu();
         std::snprintf(detail, sizeof(detail), "in_menu %d -> %d", before, after);
         check(after != before, "Escape opens the in-game menu", detail);
+    }
+
+    // --- UX.3: the right-hand mode column takes clicks only while the pointer is free ----------
+    // Menu open = free pointer: a left click on the build button must change the mode (picker
+    // opens); a second click closes the picker (still free). Playing = captured: the same click is
+    // the hold-to-mine slot, never the HUD button. Headless window_to_point is the identity, and
+    // the pointer's y runs down from the top (eden_tap_hud_button_*'s flip).
+    {
+        Hud* hud = World::getWorld->hud;
+        auto click_build = [&]() {
+            const float x = hud->rbuild.origin.x + hud->rbuild.size.width * 0.5f;
+            const float y = SCREEN_HEIGHT - (hud->rbuild.origin.y + hud->rbuild.size.height * 0.5f);
+            for (int down = 1; down >= 0; --down) {
+                SDL_Event e;
+                SDL_zero(e);
+                e.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
+                e.button.button = SDL_BUTTON_LEFT;
+                e.button.down = down != 0;
+                e.button.x = x;
+                e.button.y = y;
+                SDL_PushEvent(&e);
+                tick(8);
+            }
+        };
+        const int menuOpen = eden_hud_in_menu();
+        click_build();
+        const int freeMode = player_state().hudMode;
+        std::snprintf(detail, sizeof(detail), "in_menu %d, mode %d (MODE_PICK_BLOCK %d)", menuOpen, freeMode, (int)MODE_PICK_BLOCK);
+        check(menuOpen && freeMode == MODE_PICK_BLOCK, "pointer free: a click on the build button opens the picker", detail);
+        click_build();   // picker open = pointer still free: closes it again
+        tick(20);
+        const int closed = player_state().hudMode;
+        const int stillMenu = eden_hud_in_menu();
+        click_build();   // playing: captured
+        tick(20);
+        const int capturedMode = player_state().hudMode;
+        std::snprintf(detail, sizeof(detail), "mode %d -> %d, in_menu %d", closed, capturedMode, stillMenu);
+        check(!stillMenu && closed != MODE_PICK_BLOCK && capturedMode != MODE_PICK_BLOCK,
+              "pointer captured: the same click does not press the build button", detail);
+        push_key(SDL_SCANCODE_ESCAPE, true);   // leave the in-game menu open, as the checks below found it
+        push_key(SDL_SCANCODE_ESCAPE, false);
+        tick(30);
     }
 
     // --- mine ---------------------------------------------------------------------------------
@@ -234,6 +286,20 @@ int run_background_selftest() {
     eden_console_setblock((int)g_opt.at[0] + 2, (int)g_opt.at[2] + 2, (int)g_opt.at[1], 1);
     tick(60);
 
+    // QA.8 (A1-01): an unfocused window sleeps. One second of the real interactive loop after a
+    // FOCUS_LOST: the idle branch waits in SDL_WaitEventTimeout (100 ms), so ~10 passes; with the old
+    // spin it was tens of thousands. FOCUS_GAINED brings the frame back at once.
+    {
+        double wake = 0.0;
+        const int passes = run_unfocused(1000.0, &wake);
+        char d[96];
+        std::snprintf(d, sizeof d, "(%d loop passes in 1 s, wake %.1f ms)", passes, wake);
+        std::printf("[%s] unfocused %s\n", g_selftestTag, d);
+        check(passes >= 0, "FOCUS_LOST stops the frame", d);
+        check(passes >= 3 && passes <= 20, "an unfocused window sleeps: 3..20 loop passes/s", d);
+        check(g_app->isAnimating() && wake < 50.0, "FOCUS_GAINED brings the frame back within 50 ms", d);
+    }
+
     SDL_Event ev;
     SDL_zero(ev);
     ev.type = SDL_EVENT_WILL_ENTER_BACKGROUND;
@@ -279,6 +345,33 @@ int run_background_selftest() {
         check(bytes >= 192 + 200 * 60 + 32768, "the world file on disk holds at least one column", detail);
     }
 
+    // QA.18 (A2-09): SDL_EVENT_LOW_MEMORY through the same watch: a save record appears, the loop
+    // keeps running (unlike a background), and the audio clip cache empties. A clip is decoded first
+    // so "empties" is not vacuous (headless has no device, so decode through the probe).
+    {
+        SDL_zero(ev);
+        ev.type = SDL_EVENT_DID_ENTER_FOREGROUND;   // the background above stopped the loop
+        ev.common.timestamp = SDL_GetTicksNS();
+        SDL_PushEvent(&ev);
+        check(g_app->isAnimating(), "foregrounded: the loop is running before the warning", "");
+        int fr = 0, ch = 0, rate = 0;
+        eden_native_audio_probe("block_break_stone_1.caf", &fr, &ch, &rate);
+        const int clipsBefore = eden_native_audio_clip_count();
+        const int savesBefore = eden_app_background_save_count();
+        SDL_zero(ev);
+        ev.type = SDL_EVENT_LOW_MEMORY;
+        ev.common.timestamp = SDL_GetTicksNS();
+        SDL_PushEvent(&ev);
+        check(eden_app_low_memory_count() == 1, "SDL_EVENT_LOW_MEMORY reached the watch", "");
+        check(eden_app_background_save_count() == savesBefore + 1, "low memory saved the open world", "");
+        check(eden_app_background_last_status() == 0, "...and it answered SAVED", "");
+        char d[64];
+        std::snprintf(d, sizeof d, "(%d clip(s) before)", clipsBefore);
+        check(eden_native_audio_clip_count() == 0, "low memory emptied the audio clip cache", d);
+        check(g_app->isAnimating(), "low memory does not stop the loop", "");
+        // The count below (2 after the foreground round trip) now includes this save.
+    }
+
     // Foreground and background again: the round trip must not wedge, and the second departure
     // must still save. On a phone this is the common case, not an edge case.
     SDL_zero(ev);
@@ -290,11 +383,11 @@ int run_background_selftest() {
     ev.type = SDL_EVENT_WILL_ENTER_BACKGROUND;
     ev.common.timestamp = SDL_GetTicksNS();
     SDL_PushEvent(&ev);
-    check(eden_app_background_save_count() == 2, "foreground then background saves again", "");
+    check(eden_app_background_save_count() == 3, "foreground then background saves again", "");
 
     if (!quit_to_menu()) return 1;
     check(eden_app_will_background() == 1, "back on the menu: refuses again (NO_WORLD)", "");
-    check(eden_app_background_save_count() == 2, "quitting to the menu counted no extra save", "");
+    check(eden_app_background_save_count() == 3, "quitting to the menu counted no extra save", "");
 
     std::printf("[eden-background] %s (%d failure(s))\n",
                 g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
@@ -337,6 +430,232 @@ int run_save_roundtrip() {
     std::printf("[eden-stage1] postload.geometry %s\n", eden_debug_terrain_geometry());
     std::fflush(stdout);
     return 0;
+}
+
+// ---------------------------------------------------------------------------------------------
+// --save-fail-selftest  (QA.5, audit A2-01)
+// ---------------------------------------------------------------------------------------------
+// A full disk, in process: RLIMIT_FSIZE set to the world file's committed size with SIGXFSZ ignored,
+// so the next append fails with EFBIG, which is what ENOSPC looks like to the store. Asserts the
+// failure is reported, that nothing that would discard the unsaved edit goes ahead (Save & Quit, a
+// warp, the bulk reload), and that with the limit lifted the dialog's "Try again" saves and the edit
+// reloads. The audit's gate was a shell `ulimit -f` leg; setrlimit is the same limit, settable and
+// liftable inside one process, so the retry half needs no second run.
+int run_save_fail_selftest() {
+    g_selftestTag = "eden-save-fail";
+#if defined(_WIN32)
+    std::printf("[eden-save-fail] SKIP: no RLIMIT_FSIZE on Windows\n");
+    return 0;
+#else
+    const std::string& m = g_opt.saveFailMutate;
+    if (!mutation_known("eden-save-fail", "--save-fail-mutate", m, {"exit", "stream"})) return 2;
+    g_save_test_ignore = m == "exit" ? SAVE_TEST_IGNORE_EXIT : m == "stream" ? SAVE_TEST_IGNORE_STREAM : 0;
+    g_autosave_seconds = 0;   // only the saves this mode asks for
+    const char* name = g_opt.world.empty() ? "save-fail" : g_opt.world.c_str();
+    if (!open_world(name, g_opt.height)) return 1;
+    g_app->setFixedEtime(1.0f / 60.0f);
+    // The bundled map's centre (as --evict-selftest): the default --at is outside the map, where the
+    // player is clamped to the edge and a walk goes nowhere.
+    const float X0 = g_opt.haveAt ? g_opt.at[0] : 65536.5f, Y0 = g_opt.haveAt ? g_opt.at[1] : 60.0f,
+                Z0 = g_opt.haveAt ? g_opt.at[2] : 65536.5f;
+    eden_console_teleport(X0, Y0, Z0);
+    tick(g_opt.frames);
+    World* w = World::getWorld;
+    char d[512];
+
+    // A first save so the file exists with a commit, then the edit that must survive.
+    save_world();
+    check(!w->fm->saveFailing(), "an unlimited save commits", w->fm->lastSaveError().c_str());
+    const int bx = (int)X0 + 2, bz = (int)Z0 + 2, by = (int)Y0;
+    const int before = eden_console_getblock(bx, bz, by);
+    const int want = before == 1 ? 3 : 1;
+    eden_console_setblock(bx, bz, by, want);
+    tick(30);
+    check(w->terrain->anyChunkModified(), "the edit is pending", "");
+
+    std::string path;
+    for (int i = 0; i < eden_menu_world_count(); ++i)
+        if (std::strcmp(eden_menu_world_name(i), name) == 0)
+            path = std::string(eden_platform_documents_root()) + "/" + eden_menu_world_file(i);
+    long long size = -1;
+    if (FILE* f = std::fopen(path.c_str(), "rb")) { std::fseek(f, 0, SEEK_END); size = std::ftell(f); std::fclose(f); }
+    check(size > 0, "the world file has a commit", path.c_str());
+
+    // The limit is per process and covers every regular file, the log this run's stdout/stderr may be
+    // redirected into included (that would swallow the very `emod: save failed:` line under test). So
+    // both go through a pipe to a `cat` forked now, before the limit: it inherits the log, not the limit.
+    std::fflush(stdout); std::fflush(stderr);
+    FILE* relay = popen("cat", "w");
+    if (relay) { dup2(fileno(relay), 1); dup2(fileno(relay), 2); }
+    std::signal(SIGXFSZ, SIG_IGN);
+    struct rlimit old;
+    getrlimit(RLIMIT_FSIZE, &old);
+    struct rlimit lim = old;
+    lim.rlim_cur = (rlim_t)size;
+    check(setrlimit(RLIMIT_FSIZE, &lim) == 0, "RLIMIT_FSIZE set to the file's size", "");
+
+    // 1. The Save button: a failure, counted, said on the status line, the edit still pending.
+    const int fail0 = g_save_failures;
+    save_world();
+    const std::string* st = w->hud->sb->current();
+    std::snprintf(d, sizeof(d), "failures +%d, error \"%s\", status \"%s\"", g_save_failures - fail0,
+                  w->fm->lastSaveError().c_str(), st ? st->c_str() : "(none)");
+    check(g_save_failures > fail0 && w->fm->saveFailing(), "a limited save fails and says so", d);
+    check(st && st->find("Could not save") != std::string::npos, "...on the status line", d);
+    check(w->terrain->anyChunkModified(), "...and the edit is still pending", "");
+
+    // 2. Save & Quit: stays in the world, behind the dialog; Stay closes it.
+    ensure_hud_menu_open();
+    tap_hud(6);
+    tick(60);
+    check(game_mode() != 0 && w->terrain->loaded, "Save & Quit on a failed save stays in the world", "");
+    CGRect b;
+    check(GLDialog::active() && GLDialog::buttonRect(2, &b), "...and asks: Try again / Leave without saving / Stay", "");
+    if (GLDialog::active() && GLDialog::buttonRect(2, &b)) { ui_tap_rect(b); tick(5); }
+    check(!GLDialog::active() && game_mode() != 0, "Stay keeps the world open", "");
+
+    // 3. Warp home: no reload over the edit.
+    if (game_mode() != 0) {
+        const PlayerState p0 = player_state();
+        const bool warped = w->terrain->warpToHome();
+        const PlayerState p1 = player_state();
+        std::snprintf(d, sizeof(d), "returned %d, moved %.1f", warped, std::fabs(p1.x - p0.x) + std::fabs(p1.z - p0.z));
+        check(!warped && w->terrain->anyChunkModified(), "a warp on a failed save does not go ahead", d);
+    }
+
+    // 4a. Walking (the ring stream): two hops of 7 columns each (under the bulk threshold) carry the
+    // edited column out of the window; its evict-save fails, so its slot keeps it.
+    if (game_mode() != 0) {
+        const int held0 = g_ring_evict_held, bulk0 = g_bulk_reloads;
+        // 0.5 block a frame (--evict-selftest's walk), far enough for the trailing edge to pass the edit.
+        const float W = (float)(CHUNK_SIZE * (T_RADIUS + 6));
+        for (int k = 1; k <= (int)(W / 0.5f); ++k) { eden_console_teleport(X0 + k * 0.5f, Y0, Z0); tick(1); }
+        tick(60);
+        std::snprintf(d, sizeof(d), "held column-landings +%d, bulk reloads +%d", g_ring_evict_held - held0,
+                      g_bulk_reloads - bulk0);
+        check(g_ring_evict_held > held0 && g_bulk_reloads == bulk0 && w->terrain->anyChunkModified(),
+              "a walk does not stream over the unsaved column", d);
+    }
+
+    // 4b. A jump (the bulk reload): waits rather than overwrite the window.
+    if (game_mode() != 0) {
+        const int bulk0 = g_bulk_reloads;
+        eden_console_teleport(X0 + 1200, Y0, Z0 + 1200);
+        tick(120);
+        std::snprintf(d, sizeof(d), "bulk reloads +%d", g_bulk_reloads - bulk0);
+        check(g_bulk_reloads == bulk0 && w->terrain->anyChunkModified(), "a jump waits for a save before reloading", d);
+    }
+
+    // 5. Lift the limit; Save & Quit fails once more, then the dialog's Try again saves and leaves.
+    if (game_mode() != 0) {
+        ensure_hud_menu_open();
+        tap_hud(6);
+        tick(60);
+        check(GLDialog::active(), "Save & Quit fails again under the limit", "");
+        check(setrlimit(RLIMIT_FSIZE, &old) == 0, "RLIMIT_FSIZE lifted", "");
+        if (GLDialog::active() && GLDialog::buttonRect(0, &b)) ui_tap_rect(b);
+        tick_until([] { return game_mode() == 0; }, 20000, "game_mode back to MENU");
+        std::snprintf(d, sizeof(d), "error \"%s\"", w->fm->lastSaveError().c_str());
+        check(game_mode() == 0 && !w->fm->saveFailing(), "Try again with space saves and leaves", d);
+    } else {
+        setrlimit(RLIMIT_FSIZE, &old);
+    }
+
+    // 6. The edit is in the file.
+    if (game_mode() == 0) {
+        tick(60);
+        if (!open_world(name, g_opt.height)) return 1;
+        eden_console_teleport(X0, Y0, Z0);
+        tick(g_opt.frames);
+        const int got = eden_console_getblock(bx, bz, by);
+        std::snprintf(d, sizeof(d), "block %d (want %d, was %d)", got, want, before);
+        check(got == want, "the edit made under the full disk reloads", d);
+        quit_to_menu();
+    }
+
+    std::printf("[eden-save-fail] %s (%d failure(s))\n",
+                g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
+    return g_selftestFailures ? 1 : 0;
+#endif
+}
+
+// QA.6 (A2-02): a world that fails to load (its file header's CRC flipped: it still lists, the lister opens
+// header-only) must not poison the next load. Create two worlds, corrupt the first, open it (refused, back
+// at the menu, reason on the status bar), then open the good one in the same process: it must reach PLAY.
+extern "C" int eden_load_failed(void);
+extern "C" const char* eden_load_failed_reason(void);
+int run_load_fail_selftest() {
+    g_selftestTag = "eden-load-fail";
+    g_autosave_seconds = 0;
+    const char* bad = "lf-bad";
+    const char* good = "lf-good";
+    for (const char* n : {bad, good}) {
+        if (!open_world(n, 64)) return 1;
+        tick(30);
+        save_world();
+        if (!quit_to_menu()) return 1;
+    }
+    std::string path;
+    for (int i = 0; i < eden_menu_world_count(); ++i)
+        if (std::strcmp(eden_menu_world_name(i), bad) == 0)
+            path = std::string(eden_platform_documents_root()) + "/" + eden_menu_world_file(i);
+    bool flipped = false;
+    if (FILE* f = std::fopen(path.c_str(), "r+b")) {   // the file header's crc32 is at bytes 60..63
+        unsigned char b;
+        if (std::fseek(f, 60, SEEK_SET) == 0 && std::fread(&b, 1, 1, f) == 1) {
+            b ^= 0xFF;
+            flipped = std::fseek(f, 60, SEEK_SET) == 0 && std::fwrite(&b, 1, 1, f) == 1;
+        }
+        std::fclose(f);
+    }
+    check(flipped, "the file header CRC is flipped", path.c_str());
+
+    int idx = -1;
+    for (int i = 0; i < eden_menu_world_count(); ++i)
+        if (std::strcmp(eden_menu_world_name(i), bad) == 0) idx = i;
+    check(idx >= 0, "the corrupt world still lists", "");
+    eden_menu_select(idx);
+    eden_menu_play();
+    tick(600);
+    char d[512];
+    std::snprintf(d, sizeof(d), "game_mode %d, failed %d, reason \"%s\"", game_mode(), eden_load_failed(), eden_load_failed_reason());
+    check(game_mode() == 0 && eden_load_failed() == 1, "the corrupt world is refused and we stay at the menu", d);
+    const std::string* st = World::getWorld->menu->sbar->current();
+    check(st && st->find("Could not load") != std::string::npos, "the reason is on the status bar", st ? st->c_str() : "(none)");
+
+    check(open_world(good, 64), "the good world reaches PLAY after the failed one", "");
+    check(!eden_load_failed(), "the failure flag is clear", "");
+    {   // QA.17: a clean world says nothing about damage
+        const std::string* s = World::getWorld->hud->sb->current();
+        check(!s || s->find("damaged") == std::string::npos, "a clean world shows no damage notice", s ? s->c_str() : "(none)");
+    }
+    save_world();   // a later commit, so damage inside the first batch is damage, not a torn tail
+    quit_to_menu();
+
+    // QA.17 (A2-06, U8): a byte flipped inside the first batch's first record: the world still opens
+    // (playing what survives) and says so once on the status line, which used to be stderr only.
+    std::string gpath;
+    for (int i = 0; i < eden_menu_world_count(); ++i)
+        if (std::strcmp(eden_menu_world_name(i), good) == 0)
+            gpath = std::string(eden_platform_documents_root()) + "/" + eden_menu_world_file(i);
+    bool hit = false;
+    if (FILE* f = std::fopen(gpath.c_str(), "r+b")) {   // 64-byte file header, 32-byte record header: 104 is payload
+        unsigned char b;
+        if (std::fseek(f, 104, SEEK_SET) == 0 && std::fread(&b, 1, 1, f) == 1) {
+            b ^= 0xFF;
+            hit = std::fseek(f, 104, SEEK_SET) == 0 && std::fwrite(&b, 1, 1, f) == 1;
+        }
+        std::fclose(f);
+    }
+    check(hit, "a byte of the first batch is flipped", gpath.c_str());
+    check(open_world(good, 64), "the damaged world still opens", "");
+    {
+        const std::string* s = World::getWorld->hud->sb->current();
+        check(s && s->find("damaged") != std::string::npos, "the damage is on the status line", s ? s->c_str() : "(none)");
+    }
+    quit_to_menu();
+    std::printf("[eden-load-fail] %s\n", g_selftestFailures ? "FAILURES" : "ALL PASS");
+    return g_selftestFailures ? 1 : 0;
 }
 
 }  // namespace g_session

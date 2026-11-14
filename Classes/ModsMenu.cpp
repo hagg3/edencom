@@ -193,7 +193,7 @@ struct ModsImpl {
         const char* url = eden_mods_catalogue_url();
         if (!url || !*url) return;
         catStatus.clear();
-        catJob = eden_net_fetch(url, NULL);
+        catJob = eden_net_fetch(url, NULL, 0);
         if (!catJob) { catStatus = "Couldn't start the request"; catLoaded = true; }
     }
     void setCatalogue(const char* data, size_t len) {
@@ -242,7 +242,7 @@ struct ModsImpl {
         eden_fs_remove(partialPath());
         dlEntry = *e;
         dlFrac = -1.0f;
-        dlJob = eden_net_fetch(e->url.c_str(), partialPath().c_str());
+        dlJob = eden_net_fetch(e->url.c_str(), partialPath().c_str(), 32ll << 20);
         status = dlJob ? "Downloading..." : "Couldn't start the download";
         gen++;
     }
@@ -657,6 +657,7 @@ void ModsMenu::render() {
     if (!d->open) return;
     mm_layout(d);
     Graphics::kitState();
+    Focus::screen(this);   // UX.7
 
     fill(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, kScrim);
     bevel(d->panel, BEVEL_WINDOW);

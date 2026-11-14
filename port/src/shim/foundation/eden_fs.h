@@ -4,8 +4,7 @@
 //
 // Semantics follow APPLE's, which is what shipped: opening a MISSING file for reading, writing or
 // updating returns null (create it first with eden_fs_create_empty); a bundle miss returns "". EdenFile
-// makes NO backups: the engine's eden_save_backup_hook (top of FileManager::saveWorld) is the only .bak
-// mechanism. Every write is followed by fflush (the shim's long-standing behaviour). Offsets are 64-bit.
+// makes NO backups. Every write is followed by fflush (the shim's long-standing behaviour). Offsets are 64-bit.
 #ifndef EDEN_FS_H
 #define EDEN_FS_H
 
@@ -49,6 +48,17 @@ bool eden_fs_make_dirs(const std::string& path);                    // mkdir -p;
 bool eden_fs_remove_tree(const std::string& path);                  // rm -rf (callers guard the path: FileManager::removeWorldDir)
 long long eden_fs_mtime(const std::string& path);                   // seconds since the epoch, -1 if missing
 bool eden_fs_sync_dir(const std::string& dir);                      // fsync the directory entry (no-op true on Windows)
+// QA.17 (A2-08): small-file durability. A file the app rewrites whole (prefs, servers.txt, mods.json, a
+// finished download) goes through these, never fopen "wb" over the real name or remove-then-rename:
+//   eden_fs_sync_file      fflush + fsync (_commit on Windows); false on either failing.
+//   eden_fs_replace_atomic renames `from` over `to` in one step (POSIX rename + parent-dir fsync;
+//                          Windows MoveFileExW REPLACE_EXISTING | WRITE_THROUGH: no remove-first gap).
+//                          The body of emod::io::replace_file (EdenWorldStore.cpp), which stays the store's own.
+//   eden_fs_write_atomic   writes `<path>.tmp`, checks every write + fsync + close, then replaces. On any
+//                          failure the tmp is removed and `path` is left exactly as it was.
+bool eden_fs_sync_file(FILE* f);
+bool eden_fs_replace_atomic(const std::string& from, const std::string& to);
+bool eden_fs_write_atomic(const std::string& path, const void* data, size_t n);
 bool eden_fs_copy(const std::string& from, const std::string& to);
 bool eden_fs_create_empty(const std::string& path);                 // truncates an existing file
 bool eden_fs_make_dir(const std::string& path);                     // one level; true if it now exists

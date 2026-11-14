@@ -491,9 +491,12 @@ Texture2D* door_cache[100];
 
 Texture2D* paint_cache;
 int paint_cache_color;
-Texture2D* build_cache;
-int build_cache_color;
-int build_cache_type;
+// UX.8-1: getPaintedTex's recoloured icons, least-recently-used out. Was one entry, deleted and
+// rebuilt on every miss: two differently painted doors in one frame (a hotbar) rebuilt a texture each.
+#define BUILD_CACHE_SIZE 16
+struct BuildTex{ Texture2D* tex; int color; int type; unsigned lastUse; };
+static BuildTex build_cache[BUILD_CACHE_SIZE];
+static unsigned build_use_clock=0;
 
 void clearSkinCache(){
     if(paint_cache){
@@ -503,15 +506,10 @@ void clearSkinCache(){
     }
     paint_cache=NULL;
     paint_cache_color=0;
-    if(build_cache){
-        delete build_cache;
-        
-        
-       
+    for(int i=0;i<BUILD_CACHE_SIZE;i++){
+        if(build_cache[i].tex) delete build_cache[i].tex;
+        build_cache[i].tex=NULL;
     }
-    build_cache=NULL;
-    build_cache_color=0;
-    build_cache_type=0;
     for(int i=0;i<100;i++){
         if(i<100){
             if(door_cache[i]){
@@ -545,7 +543,7 @@ extern Vector colorTable[256];
 Texture2D* Resources::getPaintedTex(int type,int color){
    
     if(color==0||(type==TYPE_GOLDEN_CUBE&&color==20)){
-        int tid;
+        int tid=ICO_FLOWER_ICO;   // QA.23: a type outside the four gets the flower icon
         if(type==TYPE_FLOWER){
             tid=ICO_FLOWER_ICO;
         }else if(type==TYPE_GOLDEN_CUBE){
@@ -556,17 +554,25 @@ Texture2D* Resources::getPaintedTex(int type,int color){
             tid=ICO_DOOR2;
         }
         return getTex(tid);
-    }else if(build_cache!=NULL&&build_cache_color==color&&build_cache_type==type){
-        return build_cache;
     }
-    if(build_cache!=NULL){
-        delete build_cache;
-        build_cache=NULL;
+    int slot=0;
+    for(int i=0;i<BUILD_CACHE_SIZE;i++){
+        if(build_cache[i].tex!=NULL&&build_cache[i].color==color&&build_cache[i].type==type){
+            build_cache[i].lastUse=++build_use_clock;
+            return build_cache[i].tex;
+        }
+        // an empty slot first, else the least recently used
+        if(build_cache[slot].tex!=NULL&&(build_cache[i].tex==NULL||build_cache[i].lastUse<build_cache[slot].lastUse)) slot=i;
     }
-    build_cache_color=color;
-    build_cache_type=type;
-    EdenImage* ui1;
-    EdenImage* ui2;
+    if(build_cache[slot].tex!=NULL){
+        delete build_cache[slot].tex;
+        build_cache[slot].tex=NULL;
+    }
+    build_cache[slot].color=color;
+    build_cache[slot].type=type;
+    build_cache[slot].lastUse=++build_use_clock;
+    EdenImage* ui1=storedFlowerico;   // QA.23: default = flower art for a type outside the four
+    EdenImage* ui2=storedFlowericoMask;
     if(type==TYPE_FLOWER){
         ui1=storedFlowerico;
         ui2=storedFlowericoMask;
@@ -588,12 +594,12 @@ Texture2D* Resources::getPaintedTex(int type,int color){
     int rgba= ((int)(255*clr.z)<<24) | ((int)(255*clr.y)<<16) | ((int)(255*clr.x) <<8)  | 0xFF;
     EdenImage* uiImage2=ManipulateImagePixelData(img2,img,rgba);
     //UIImage* uiImage2=[UIImage imageWithCGImage:ManipulateImagePixelData2(img,rgba,1)];
-    build_cache = new Texture2D(uiImage2,false,kTexture2DPixelFormat_Automatic,false);
+    build_cache[slot].tex = new Texture2D(uiImage2,false,kTexture2DPixelFormat_Automatic,false);
     eden_image_free(uiImage2);   // G.2b-1: the texture copied it (was an autoreleased UIImage)
     
     //[uiImage2 release];
     printg("initing build texture ;o");
-    return build_cache;
+    return build_cache[slot].tex;
 }
 
 
@@ -1003,9 +1009,7 @@ Resources::Resources(){
     paint_cache=NULL;
     paint_cache_color=0;
     
-    build_cache=NULL;
-    build_cache_color=0;
-    build_cache_type=0;
+    for(int i=0;i<BUILD_CACHE_SIZE;i++) build_cache[i].tex=NULL;
     
     csbkg=new Texture2D("colorpick_background.png" ,false);
     

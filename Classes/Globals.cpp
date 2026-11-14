@@ -92,10 +92,6 @@ void eden_set_save_inplace_threshold(unsigned long long bytes){
 }
 // C3: see Constants.h. TRUE is the atomic setting; FALSE reproduces B5's tear-one-column trade.
 int g_save_journal_columns=1;
-void eden_set_save_journal_columns(int on){
-    g_save_journal_columns=on?1:0;
-    printf("save: dirty-column journalling %s\n",g_save_journal_columns?"ON":"OFF");
-}
 
 // K.2-3: rows 0..127 of blockinfo, blockColor and blockTypeFaces come from the stock pack
 // (media/packs/eden/pack.json, Classes/ContentPack: loadStock at boot, before any mode runs); the C

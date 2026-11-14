@@ -18,7 +18,7 @@ world-sharing client (`FileDownload.mm`/`FileUpload.mm`/`SharedList.mm`/`ShareUt
 `Alert.mm`, `Appirater.mm`, `md5.c`, `VKeyboard.mm` and `PVRTglesExt.cpp`. Everything else is the
 engine (less the rest of the PowerVR SDK, which LG.7 replaced with `Classes/CreatureModel` + `VecMath.h`), plus the engine files added since the import (`port/tools/engine-sources.txt`).
 
-`Classes/` has been editable since 2026-07-25 under three narrower rules ([`../CLAUDE.md`](../CLAUDE.md));
+`Classes/` has been editable since 2026-07-25 under three narrower rules (see [conventions-and-pitfalls.md](conventions-and-pitfalls.md));
 `git diff pristine-engine -- Classes/` shows exactly what has diverged from the stock 2.1.1 import.
 
 ## The lever you reach for
@@ -60,7 +60,7 @@ are engine code documented in [`../../docs/`](../../docs/README.md), modificatio
 
 ## Reading order
 1. This file, then [conventions-and-pitfalls.md](conventions-and-pitfalls.md).
-2. [`../../native/README.md`](../../native/README.md) — how it's built and run, and the harness modes.
+2. [`../../README.md`](../../README.md) — how it's built and run; `eden_native --help` lists the harness modes.
 3. [`../../docs/execution-flow.md`](../../docs/execution-flow.md) — boot order and the frame loop.
 4. [gl-shim.md](history/gl-shim.md) if touching rendering; [`../../docs/save-load.md`](../../docs/save-load.md) if
    touching persistence; [ui.md](ui.md) if touching HUD/menu/settings.

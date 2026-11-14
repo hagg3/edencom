@@ -1,0 +1,155 @@
+[eden] documents=/Users/sam/emod/native/gate-docs/display-selftest
+[eden] bundle=./build
+[eden-gl] no canvas — staying headless (--headless).
+[eden-gl] pick viewport now 1816x1024 (engine point space x scale).
+[eden-display] profile=desktop ui_scale=125% layout=adaptive -> 908x512 points (aspect 1.773, snap 0 px/pt)
+[eden-p1] tick 0: World::update(0.0060 s) entered
+[eden-p1] tick 0: World::update returned (retinaSwap=0)
+[eden-p1] tick 1: World::update(0.0018 s) entered
+[eden-p1] tick 1: World::update returned (retinaSwap=0)
+[eden-p1] tick 2: World::update(0.0013 s) entered
+[eden-p1] tick 2: World::update returned (retinaSwap=0)
+[eden-gl] pick viewport now 1136x640 (engine point space x scale).
+[eden-display] profile=desktop ui_scale=200% layout=classic -> 568x320 points (aspect 1.775, snap 0 px/pt)
+Texture2D: './build/colorpick_background.png' decoded 582x511 (canvas 582x511) fmt=1 center-rgba=(237,237,237,227)
+Texture2D: './build/menu_autojump.png' decoded 167x24 (canvas 167x24) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/arrow_left.png' decoded 36x89 (canvas 36x89) fmt=1 center-rgba=(255,198,0,255)
+Texture2D: './build/arrow_right.png' decoded 36x89 (canvas 36x89) fmt=1 center-rgba=(255,198,0,255)
+Texture2D: './build/create_world.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(174,174,174,255)
+Texture2D: './build/delete_world.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(200,200,200,255)
+Texture2D: './build/share_world.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(174,174,174,255)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/world_selected.png' decoded 86x85 (canvas 86x85) fmt=1 center-rgba=(183,183,183,255)
+Texture2D: './build/world_unselected.png' decoded 86x85 (canvas 86x85) fmt=1 center-rgba=(118,118,118,255)
+Texture2D: './build/load_world.png' decoded 70x70 (canvas 70x70) fmt=1 center-rgba=(174,174,174,255)
+Texture2D: './build/options.png' decoded 180x62 (canvas 180x62) fmt=1 center-rgba=(8,9,7,255)
+Texture2D: './build/arrow_up.png' decoded 89x36 (canvas 89x36) fmt=1 center-rgba=(255,198,0,255)
+Texture2D: './build/arrow_down.png' decoded 89x36 (canvas 89x36) fmt=1 center-rgba=(255,198,0,255)
+Texture2D: './build/back.png' decoded 40x30 (canvas 40x30) fmt=1 center-rgba=(255,198,0,255)
+Texture2D: './build/menu_shared_worlds.png' decoded 280x29 (canvas 280x29) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/menu_cancel.png' decoded 151x31 (canvas 151x31) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/menu_music.png' decoded 108x28 (canvas 108x28) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/menu_options.png' decoded 246x44 (canvas 246x44) fmt=1 center-rgba=(0,0,0,255)
+Texture2D: './build/menu_save.png' decoded 102x31 (canvas 102x31) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/menu_send.png' decoded 101x30 (canvas 101x30) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/menu_sound_effects.png' decoded 271x30 (canvas 271x30) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/menu_text_box.png' decoded 300x45 (canvas 300x45) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/menu_text_load.png' decoded 103x31 (canvas 103x31) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/menu_text_back.png' decoded 101x31 (canvas 101x31) fmt=1 center-rgba=(255,255,255,0)
+Texture2D: './build/shared_world_selected.png' decoded 40x40 (canvas 40x40) fmt=1 center-rgba=(180,180,180,255)
+Texture2D: './build/shared_world_unselected.png' decoded 37x37 (canvas 37x37) fmt=1 center-rgba=(115,115,115,255)
+Texture2D: './build/menu_fast.png' decoded 81x24 (canvas 81x24) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/menu_best.png' decoded 82x24 (canvas 82x24) fmt=1 center-rgba=(0,0,0,0)
+Texture2D: './build/menu_creatures.png' decoded 192x25 (canvas 192x25) fmt=1 center-rgba=(255,255,255,255)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: no data at '(null)' (load failed or empty)
+Texture2D: './build/report_flag.png' decoded 90x90 (canvas 90x90) fmt=1 center-rgba=(245,55,55,255)
+Texture2D: './build/atlas.png' decoded 32x4096 (canvas 32x4096) fmt=4 center-rgba=(53,91,27,255)
+Texture2D: './build/atlas2.png' decoded 32x4096 (canvas 32x4096) fmt=1 center-rgba=(0,0,0,0)
+[eden-display] classic: 568x320 points                        PASS  568x320 (aspect 1.7750)
+[eden-display] classic: P_ASPECT_RATIO is 1.775               PASS  568x320 (aspect 1.7750)
+[eden-display] classic: IS_WIDESCREEN                         PASS
+[eden-display] classic: Input's point space matches the engine PASS  Input [568,320]
+[eden-display] clas[eden-gl] pick viewport now 2272x1280 (engine point space x scale).
+[eden-display] profile=desktop ui_scale=100% layout=adaptive -> 1136x640 points (aspect 1.775, snap 0 px/pt)
+[eden-gl] pick viewport now 2048x1280 (engine point space x scale).
+[eden-display] profile=desktop ui_scale=100% layout=adaptive -> 1024x640 points (aspect 1.600, snap 0 px/pt)
+[eden-gl] pick viewport now 1640x1024 (engine point space x scale).
+[eden-display] profile=desktop ui_scale=125% layout=adaptive -> 820x512 points (aspect 1.602, snap 0 px/pt)
+[eden-gl] pick viewport now 2048x1280 (engine point space x scale).
+[eden-display] profile=desktop ui_scale=100% layout=adaptive -> 1024x640 points (aspect 1.600, snap 0 px/pt)
+[eden-gl] pick viewport now 2272x1280 (engine point space x scale).
+[eden-display] profile=desktop ui_scale=100% layout=classic -> 1136x640 points (aspect 1.775, snap 0 px/pt)
+[eden-gl] pick viewport now 1136x640 (engine point space x scale).
+[eden-display] profile=desktop ui_scale=200% layout=classic -> 568x320 points (aspect 1.775, snap 0 px/pt)
+[eden-gl] pick viewport now 1816x1024 (engine point space x scale).
+[eden-display] profile=desktop ui_scale=125% layout=classic -> 908x512 points (aspect 1.773, snap 0 px/pt)
+[eden-gl] pick viewport now 1640x1024 (engine point space x scale).
+[eden-display] profile=desktop ui_scale=125% layout=adaptive -> 820x512 points (aspect 1.602, snap 0 px/pt)
+[eden-gl] pick viewport now 1140x712 (engine point space x scale).
+[eden-display] profile=touch ui_scale=200% layout=adaptive -> 570x356 points (aspect 1.601, snap 0 px/pt)
+[eden-gl] pick viewport now 1136x640 (engine point space x scale).
+[eden-display] profile=touch ui_scale=200% layout=adaptive -> 568x320 points (aspect 1.775, snap 0 px/pt)
+[eden-gl] pick viewport now 1136x852 (engine point space x scale).
+[eden-display] profile=touch ui_scale=200% layout=adaptive -> 568x426 points (aspect 1.333, snap 0 px/pt)
+[eden-gl] pick viewport now 1136x948 (engine point space x scale).
+[eden-display] profile=touch ui_scale=200% layout=adaptive -> 568x474 points (aspect 1.198, snap 0 px/pt)
+[eden-gl] pick viewport now 1136x640 (engine point space x scale).
+[eden-display] profile=touch ui_scale=200% layout=adaptive -> 568x320 points (aspect 1.775, snap 0 px/pt)
+[eden-gl] pick viewport now 1136x948 (engine point space x scale).
+[eden-display] profile=desktop ui_scale=125% layout=adaptive -> 568x474 points (aspect 1.198, snap 0 px/pt)
+[eden-gl] pick viewport now 2456x1024 (engine point space x scale).
+[eden-display] profile=desktop ui_scale=125% layout=adaptive -> 1228x512 points (aspect 2.398, snap 0 px/pt)
+[eden-gl] pick viewport now 2272x1280 (engine point space x scale).
+[eden-display] profile=desktop ui_scale=125% layout=adaptive -> 1136x640 points (aspect 1.775, snap 1 px/pt)
+[eden-display] profile=desktop ui_scale=125% layout=adaptive -> 1136x640 points (aspect 1.775, snap 2 px/pt)
+[eden-gl] pick viewport now 1920x1050 (engine point space x scale).
+[eden-display] profile=desktop ui_scale=125% layout=adaptive -> 960x525 points (aspect 1.829, snap 2 px/pt)
+[eden-gl] pick viewport now 2304x1240 (engine point space x scale).
+[eden-display] profile=desktop ui_scale=125% layout=adaptive -> 1152x620 points (aspect 1.858, snap 4 px/pt)
+sic: rmine is the stock rect               PASS  [510,208,45,45], want [510,208,45,45]
+[eden-display] classic: rjumphit is the stock rect            PASS  [493,0,75,68], want [493,0,75,68]
+[eden-display] classic: rmenu is the stock rect               PASS  [0,275,45,45], want [0,275,45,45]
+[eden-display] classic: block0 is the stock rect              PASS  [83,254,38,38], want [83,254,38,38]
+[eden-display] classic: rburn is the stock rect               PASS  [510,272,45,45], want [510,272,45,45]
+[eden-display] classic: rpaint is the stock rect              PASS  [510,85,45,45], want [510,85,45,45]
+[eden-display] classic: rpaintframe is the stock rect         PASS  [61,20,402,282], want [61,20,402,282]
+[eden-display] GL_VIEWPORT is the point space x2              PASS  classic: [1136,640] vs 568x320 x2
+[eden-display] adaptive/100%: point height is 640             PASS  1024x640 (aspect 1.6000)
+[eden-display] adaptive/100%: point width follows the 1.6 aspect PASS  1024x640 (aspect 1.6000)
+[eden-display] adaptive: P_ASPECT_RATIO is always width/height PASS  1024x640 (aspect 1.6000)
+[eden-display] adaptive: the aspect getter agrees             PASS  1024x640 (aspect 1.6000)
+[eden-display] adaptive: Input's point space followed         PASS  Input [1024,640]
+[eden-display] adaptive: the right-anchored column followed   PASS  [966,528,45,45]
+[eden-display] adaptive: the top-anchored icon followed       PASS  [0,595,45,45]
+[eden-display] GL_VIEWPORT is the point space x2              PASS  adaptive/100%: [2048,1280] vs 1024x640 x2
+[eden-display] the picker grid sits inside the picker card    PASS  adaptive/100%: card [289,340,402,282] block0 [311,574,38,38] color0 [307,573,32,32]
+[eden-display] adaptive: the mode column keeps its 64-point pitch PASS  rburn.y 592, rpaint.y 405
+[eden-display] adaptive: the mode column stays top-anchored   PASS  rburn.y 592, rpaint.y 405
+[eden-display] adaptive: the menu card keeps 268x240          PASS  [388,200,268,240]
+[eden-display] ui_scale 125%: point height is 512             PASS  820x512 (aspect 1.6016)
+[eden-display] ui_scale 125%: the aspect is unchanged         PASS  820x512 (aspect 1.6016)
+[eden-display] GL_VIEWPORT is the point space x2              PASS  ui_scale 125%: [1640,1024] vs 820x512 x2
+[eden-display] the picker grid sits inside the picker card    PASS  ui_scale 125%: card [187,212,402,282] block0 [209,446,38,38] color0 [205,445,32,32]
+[eden-display] idempotent: returning to a size reproduces its rects PASS  block0 [311,574,38,38] vs [311,574,38,38]
+[eden-display] idempotent: extra refreshes do not drift       PASS  block0 [311,574,38,38]
+[eden-display] round trip: classic rects identical after adaptive PASS  block0 [83,254,38,38]
+[eden-display] forcing Touch selects the touch profile        PASS
+[eden-display] the touch profile turns the on-screen chrome on PASS
+[eden-display] forcing Keyboard+Mouse selects desktop         PASS
+[eden-display] the desktop profile turns the on-screen chrome off PASS
+[eden-display] Auto + touch on 16:9 is still 568x320          PASS  568x320 (aspect 1.7750)
+[eden-display] Auto + touch reproduces the stock HUD rects    PASS  [83,254,38,38]
+[eden-display] Auto + touch on 4:3 fills it                   PASS  568x426 (aspect 1.3333)
+[eden-display] the classic-width floor keeps >= 568 points    PASS  568x426 (aspect 1.3333)
+[eden-display] the floor holds at the aspect clamp            PASS  568x474 (aspect 1.1983)
+[eden-display] an iPhone-5-sized viewport resolves to 568x320 PASS  568x320 (aspect 1.7750)
+[eden-display] a portrait viewport clamps to aspect 1.20      PASS  568x474 (aspect 1.1983)
+[eden-display] a 32:9 viewport clamps to aspect 2.40          PASS  1228x512 (aspect 2.3984)
+[eden-display] 125%, default window, 1x: 1 px/pt              PASS  1136x640 (aspect 1.7750), snap 1
+[eden-display] 125%, default window, 2x: 2 px/pt, same points PASS  1136x640 (aspect 1.7750), snap 2
+[eden-display] 125%, maximised 1080p: 2 px/pt, art 1:1, odd height kept PASS  960x525 (aspect 1.8286), snap 2
+[eden-display] 125%, maximised 2x 2304-wide: 4 px/pt     [eden-gl] pick viewport now 1152x620 (engine point space x scale).
+[eden-display] profile=desktop ui_scale=200% layout=adaptive -> 576x310 points (aspect 1.858, snap 8 px/pt)
+[eden-gl] pick viewport now 1280x700 (engine point space x scale).
+[eden-display] profile=desktop ui_scale=200% layout=adaptive -> 640x350 points (aspect 1.829, snap 3 px/pt)
+[eden-gl] pick viewport now 1920x1050 (engine point space x scale).
+[eden-display] profile=desktop ui_scale=125% layout=adaptive -> 960x525 points (aspect 1.829, snap 2 px/pt)
+[eden-gl] pick viewport now 1816x1024 (engine point space x scale).
+[eden-display] profile=desktop ui_scale=125% layout=adaptive -> 908x512 points (aspect 1.773, snap 0 px/pt)
+[eden-gl] pick viewport now 1136x640 (engine point space x scale).
+[eden-display] profile=touch ui_scale=200% layout=adaptive -> 568x320 points (aspect 1.775, snap 0 px/pt)
+[eden-gl] pick viewport now 2272x1280 (engine point space x scale).
+[eden-display] profile=desktop ui_scale=125% layout=adaptive -> 1136x640 points (aspect 1.775, snap 2 px/pt)
+     PASS  1152x620 (aspect 1.8581), snap 4
+[eden-display] GL_VIEWPORT is the point space x2              PASS  snapped 4 px/pt: [2304,1240] vs 1152x620 x2
+[eden-display] 200%, maximised 1080p: an odd 3 px/pt when it is much closer PASS  640x350 (aspect 1.8286), snap 3
+[eden-display] no pixel size: unsnapped, the old 512-point space PASS  908x512 (aspect 1.7734), snap 0
+[eden-display] the touch profile is never snapped             PASS  568x320 (aspect 1.7750), snap 0
+[eden-display] ALL PASS (0 failure(s))

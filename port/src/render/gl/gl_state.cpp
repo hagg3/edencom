@@ -318,12 +318,5 @@ const char* eden_debug_gl_buffer_bytes(void) {
     return buf;
 }
 
-// Reset the peak/churn accumulators (not the live count/bytes) so a probe can measure one window.
-void eden_debug_gl_buffer_bytes_reset(void) {
-    g_glbuf_peakBytes = g_glbuf_bytes;
-    g_glbuf_peakCount = g_glbuf_count;
-    g_glbuf_creates = 0;
-    g_glbuf_deletes = 0;
-}
 
 }  // extern "C"

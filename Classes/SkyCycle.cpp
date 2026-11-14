@@ -14,8 +14,7 @@
 #include "Weather.h"
 
 extern Vector colorTable[256];
-extern bool* chunksToUpdate;
-extern bool* columnsToUpdate;
+void terrain_requestWindowRemesh();
 
 bool sky_paintedNight(){
     return v_equals(World::getWorld->terrain->final_skycolor,colorTable[54]);
@@ -29,9 +28,8 @@ bool sky_isNight(){
 
 void sky_requestNightRemesh(){
     if(LOW_MEM_DEVICE)return;
-    if(!chunksToUpdate||!columnsToUpdate)return;   // DN.5: the watcher can run before allocateMemory
-    memset(chunksToUpdate,true,sizeof(bool)*CHUNKS_PER_SIDE*CHUNKS_PER_SIDE*CHUNKS_PER_COLUMN);
-    memset(columnsToUpdate,true,sizeof(bool)*CHUNKS_PER_SIDE*CHUNKS_PER_SIDE);
+    // QA.9: marks the whole window dirty and budgets the mesh pass until it has drained (Terrain.cpp).
+    terrain_requestWindowRemesh();
 }
 
 namespace {

@@ -1189,6 +1189,8 @@ bool joinReady() {
 
 void serverSpawn(float x, float y, float z) {
     World* w = World::getWorld;
+    // QA.2: finite is parseNum's job; this is the range (the console's own =N ceiling), or a hostile SPAWN overflows the window origin.
+    if (!(std::fabs(x) <= 1e7f && std::fabs(y) <= 1e7f && std::fabs(z) <= 1e7f)) return;
     setSpawn(x, y, z);
     if (w->terrain && w->terrain->loaded && w->game_mode == GAME_MODE_PLAY) w->terrain->warpToPoint(x, z, y);
     Pacer& p = g_pacer;

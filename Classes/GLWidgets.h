@@ -67,6 +67,7 @@ extern const Color kWindowKeyline; // --eden-gray-700
 extern const Color kText;          // --eden-text
 extern const Color kTextSecondary; // --eden-text-secondary
 extern const Color kTextPressed;   // --eden-text-pressed
+extern const Color kTextHint;      // UX.4: hints, list dates, headings (AA contrast)
 extern const Color kTextMuted;     // --eden-text-muted (U.1: a muted row, a disabled rail tile)
 extern const Color kWhite;
 extern const Color kBlack;
@@ -167,6 +168,9 @@ public:
     bool visible() const     { return !m_text.empty() && m_life > 0.0f; }
     const std::string& text() const { return m_text; }
     CGRect rect() const;                      // the pill as it will draw, point space
+    // UX.8-4: raise the pill by `pts` (point space) for as long as something sits on the bottom edge (the
+    // desktop hotbar strip). 0 = as before. Hud sets it every frame it draws.
+    static void setLift(float pts);
 
 private:
     Toast(const Toast&);
@@ -260,6 +264,56 @@ CGRect safeRect();
 // reports how many were logged in `total`.
 void debugRecordControls(bool on);
 int  debugControlsOutside(CGRect sr, char* buf, int cap, int* total, const std::vector<CGRect>& excused);
+// UX.2: the number of leaf-control pairs (button/toggle/slider/stepper/field) that overlap each other.
+int  debugControlsOverlap(char* buf, int cap, const std::vector<CGRect>& excused);
+
+// --- Focus + hover (UX.7) -------------------------------------------------------------------
+// KEYBOARD FOCUS. One focused control per screen, with no per-screen list to maintain: every kit
+// control's render() registers itself (rect + kind), so the focus order is whatever the screen drew
+// last frame, sorted top-to-bottom then left-to-right. A screen opts in with ONE call at the top of
+// its render(): Focus::screen(this, &defaultButton). The LAST screen() call of a frame wins (painter's
+// order: a dialog over a screen, Settings over the pause column), and controls drawn under another
+// owner are neither focusable nor hovered.
+//
+//   Tab / Shift-Tab   next / previous stop. A list's rows, a TabRail and an IconRail are ONE stop each
+//                     (entered at the selected member).
+//   arrows            the nearest control that way. Inside a list, Up/Down also SELECT the row and
+//                     scroll at the edge; Left/Right on a Slider or Stepper change its value.
+//   Return            a focused button; otherwise the screen's default button (Play/Join/Save/OK).
+//   Space             the focused control.
+//   Escape            not Focus's: the back chain (Input_native.cpp) keeps it.
+//
+// ACTIVATION IS A SYNTHETIC TAP on the control's rect (eden_input_pointer_event, like the HUD keys in
+// Input_native.cpp), so a screen's own claim protocol runs unchanged and there is no second action
+// path to keep in step. Scrolling is a synthetic wheel notch (eden_ui_push_wheel), which every list
+// screen already turns into scrollBy().
+//
+// The 2u ring (--eden-green-700, 2u outside the control; inside a list row) shows only after a
+// navigation key and goes at the next click or touch (`:focus-visible`). HOVER is a TINT wash drawn
+// in each control's render() while the mouse pointer (eden_ui_pointer) is inside its hit box and no
+// button is down. On the touch input profile (touchFloor() > 0) there is no ring, no tint, and the
+// keys are not consumed.
+class Button;
+class ScrollView;
+namespace Focus {
+    enum Key { K_TAB = 1, K_BACKTAB, K_UP, K_DOWN, K_LEFT, K_RIGHT, K_RETURN, K_SPACE, K_POINTER };
+
+    // keys == false: hover only (the Console, whose code field owns Tab and the arrows).
+    void screen(const void* owner, const Button* defaultButton = 0, bool keys = true);
+    // A row a screen draws itself (the server list): registers it like a ListRow and draws its hover
+    // tint and focus ring. Call it after the row's own background, before its text.
+    void row(const void* obj, int sub, CGRect r, bool selected);
+
+    void frame();            // once a frame, after the event pump and before World::update
+    bool key(int k);         // true = consumed. K_POINTER (a click or touch began) hides the ring.
+    bool live();             // a keys screen drew last frame, on a pointer profile
+
+    // --ui-selftest.
+    bool focusedRect(CGRect* r);   // the focused control's rect; false = nothing focused
+    bool ringShown();
+    int  stops();                  // Tab stops on the current screen
+    void debugCounts(int* rings, int* hovers, bool reset);   // ring / tint draws since the last reset
+}
 
 // --- Toggle (Stage 5.4, U.1) ---------------------------------------------------------------
 // `.eden-toggle`: a SUNKEN split pill, no sliding knob. The left half is lime when on, the right
@@ -721,7 +775,7 @@ private:
 // style). The string is EMOD_VERSION_STRING from the repo-root VERSION.txt file (native/CMakeLists.txt).
 // Rasterises lazily on the first call and again when the UI scale changes; call it inside a
 // Graphics::prepareMenu()/beginHud() pass.
-void drawVersionTag();
+void drawVersionTag(float xOffset = 0.0f);   // UX.3: xOffset (points) moves it right of the HUD's corner buttons
 
 }  // namespace GLW
 
@@ -735,6 +789,7 @@ void drawVersionTag();
 #define EDEN_TEXT_KEY_TAB   0x09
 #define EDEN_TEXT_KEY_UP    0x11
 #define EDEN_TEXT_KEY_DOWN  0x12
+#define EDEN_TEXT_KEY_BACKTAB 0x13   // UX.7: Shift-Tab (a code field reads it as Tab)
 // MP.6: eden_text_input_start_kind()'s kinds.
 #define EDEN_TEXT_KIND_PLAIN    0
 #define EDEN_TEXT_KIND_CODE     1
@@ -773,6 +828,14 @@ float eden_text_input_keyboard_top(void);
 // Stage 5.6: mouse-wheel notches the platform saw while NOT in mouse-look, positive = away from
 // the user (scroll up), drained by the call. Native: Input_native.cpp. Web: 0 (the DOM scrolls).
 int  eden_ui_take_wheel(void);
+// UX.7: the mouse pointer for hover, point space y up. 1 = a mouse is over the window with the cursor
+// free and no button down; 0 = no pointer (mouse-look, a finger was the last input, the cursor left).
+int  eden_ui_pointer(float* x, float* y);
+// UX.7: `notches` more for eden_ui_take_wheel() (Focus scrolls a list the way the wheel does).
+void eden_ui_push_wheel(int notches);
+// UX.7: Input_native.cpp's entry points to GLW::Focus (key() and frame()).
+int  eden_ui_focus_key(int key);
+void eden_ui_focus_frame(void);
 }
 
 #endif

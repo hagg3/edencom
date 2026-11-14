@@ -161,11 +161,19 @@ exactly that until R.3 and now imports `"../Lighting.h"`.
   vertex colors. Skylight is 1.0 by day, 0.35 at night: `sky_isNight()` (`Classes/SkyCycle`), which is the
   painted sky being the night palette entry (`colorTable[54]`, `sky_paintedNight()`) unless Experiments ›
   *Day/night cycle* is on (Stage DN; then the clock's bit, flipped with hysteresis at -4.5° / -3.5° of sun
-  elevation, each flip one full-window re-mesh). **DN.5 (2026-10-31), cycle on only:** each chunk records the
+  elevation, each flip one full-window re-mesh request). **DN.5 (2026-10-31), cycle on only:** each chunk records the
   bit it was baked with (`TerrainChunk::bakedNight`, published by `prepareVBO`) and is drawn under
   `R::setWorldLight(SkyCycle::worldLight(bakedNight))`: `L(t)` for a day bake, `L(t)/0.35` for a night one
   (times a warm/cool tint), so the two match away from lamps and the flip's re-mesh streams in without a
-  patchwork (`--sky-shot` flip frames: ≤ 1 level). `L` is 1.0 above 15°, 0.35 at -4°, 0.2625 by -18°. Flowers
+  patchwork (`--sky-shot` flip frames: ≤ 1 level). **It really streams since QA.9 (2026-11-13):** every
+  whole-window request (`sky_requestNightRemesh` → `terrain_requestWindowRemesh`, `Terrain.cpp`: the flip, a
+  cycle toggle at night, `paintSky`, the region walk) sets `window_remesh_owed`, which holds the mesh pass to
+  `BULK_RELOAD_CHUNK_BUDGET` (96) non-empty chunks a frame until a pass defers nothing (about 7 frames at
+  the default radius). Before that the pass was unbudgeted outside a bulk reload, so a flip meshed and
+  uploaded the window in one frame (42–50 ms on an M2, ~330 ms on an Air 2). An edit made during those frames
+  waits its turn in the same scan. Gate: `--console-selftest` "QA.9" leg (chunks per pass ≤ the budget, by
+  count, and all re-baked within a bounded number of frames); `--console-mutate=flipburst` fails it. The
+  Shadows setting's two whole-window re-meshes (`Shadow.cpp`) are still one frame. `L` is 1.0 above 15°, 0.35 at -4°, 0.2625 by -18°. Flowers
   take the current bit's light; door / golden-cube / creature LightSets blend the stock day and night values
   (`SkyCycle::blendLight`). Cycle off, none of this runs (`--scene-shot` 0/66). There is no sun direction in the lighting; `getShadow` still returns a constant 1.0
   and the 1.x `shadowarray` code stays commented out as archaeology. The port's replacement is the
@@ -174,6 +182,8 @@ exactly that until R.3 and now imports `"../Lighting.h"`.
 ### Baked shadows (`Classes/Shadow.{h,mm}`) — *modified from stock (H.2, 2026-10-14)*
 The 1.x feature (top faces under a canopy, roof or overhang are darker), restored on the port's
 terms. Plan and gates: `WORKING/feature-archaeology-2026-10-13/shadows-plan.md`.
+- **Lamp tint:** Video › *Tinted lamp shadows* (`shadow_lamp_tint`, default off, `shadow_setLampTint`): by day (skylight 1) a shaded top face
+  adds no brick-store (lamp) light in `shadow_lightTops`, so shadows are plain grey like any block's; on = the earlier behaviour (lamp colour tints shade).
 - **Setting:** Video › *Shadows* = Off / Classic / Smooth (`shadows` in `Settings.cpp`; engine
   global `g_shadow_mode`). **Default Off** until the user's T look picks the shipped one. Not in
   the graphics presets (CPU meshing only). Native `--shadows=off|classic|smooth` is a

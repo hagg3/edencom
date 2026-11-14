@@ -25,7 +25,7 @@ the entire audio layer (sound effects, ambience, music, creature voices).
 - `atlas` — the opaque block atlas: a vertical strip of `ATLAS_TILES` (128) tiles; the mesher stores
   a tile index and the texture matrix scales v by 1/`ATLAS_TILES` ([rendering.md](rendering.md)).
   Tiles 0–31 are stock; 32–47 / 48–63 are blocks 112–127 in colour / greyscale (D.2t, 2026-10-10,
-  from the 2026 game's atlas via `port/tools/atlas-d2t.py`, which also pads `atlas2` to 64). Tile 64 is the 1.x flower patch (H.14, `port/tools/atlas-h14.py`, which grows both to 128).
+  from the 2026 game's atlas via `archive/tools/atlas-d2t.py`, which also pads `atlas2` to 64). Tile 64 is the 1.x flower patch (H.14, `port/tools/atlas-h14.py`, which grows both to 128).
   `getBlockTexShort(texId)` returns the tile origin/height.
 - `atlas2` — the transparent/animated atlas (water/lava frames, glass, leaves…);
   rows are animation frames advanced by the render pass.
@@ -49,7 +49,10 @@ the entire audio layer (sound effects, ambience, music, creature voices).
   that every world entry leaked ~5 MB (`--leak-probe`, 2026-10-22). Stock `Texture2D.mm` has the same
   overwrite on `LOW_MEM_DEVICE`.
 - `getDoorTex(color)`, `getPaintTex`, `getPaintedTex(type,color)`,
-  `getSkin(model,color,state)` — lazily-built colored variants. `getSkin` keeps at most
+  `getSkin(model,color,state)` — lazily-built colored variants. `getPaintedTex` keeps 16 recoloured
+  icons (`build_cache`, type + colour, least recently used out; UX.8-1: it was one entry rebuilt on every
+  miss, so two differently painted doors on screen rebuilt a texture each frame); the returned pointer is
+  only good until the 16th other icon is asked for, so draw with it, never store it. `getSkin` keeps at most
   `SKIN_CACHE_SIZE` 48 recoloured creature skins, evicting the least recently used (P.15; was 200,
   worst case ≈ 68 → 16 MB). Gate for the recolour inputs: `--recolor-selftest`.
 

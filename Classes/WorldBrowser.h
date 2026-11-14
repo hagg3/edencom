@@ -71,6 +71,8 @@ public:
     bool   busy() const;                    // a download or unpack is in flight
     static bool anyBusy();                  // K.0w-2: the menu's browser is busy (FileManager's adoption waits)
     bool   previewShown() const;            // a preview texture is on screen for the selection
+    bool   previewRefused() const;          // QA.4: the selection's preview PNG was over the size cap (never decoded)
+    static bool previewTooBig(unsigned w, unsigned h);   // QA.4: either IHDR side > 2048 px (so <= 4 Mpx decoded)
     const char* statusText() const;
 
 private:
@@ -85,8 +87,10 @@ private:
 extern "C" {
 int  eden_net_available(void);
 // `destPath` NULL keeps the body in memory (eden_net_body); otherwise it streams to `destPath`,
-// which appears only when the whole 2xx body has arrived. Returns a job id, 0 if it cannot start.
-int  eden_net_fetch(const char* url, const char* destPath);
+// which appears only when the whole 2xx body has arrived. `maxBytes` (QA.15) aborts the job past that many body
+// bytes (0 = no cap for a file; 32 MB for an in-memory body). A file job also aborts when the volume drops below
+// 32 MB free. Returns a job id, 0 if it cannot start.
+int  eden_net_fetch(const char* url, const char* destPath, long long maxBytes);
 // 0 running, 1 done, -1 failed. `total` is -1 when the server did not say.
 int  eden_net_poll(int job, long long* got, long long* total);
 const char* eden_net_error(int job);

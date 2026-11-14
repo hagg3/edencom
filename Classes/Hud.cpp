@@ -24,6 +24,8 @@ extern bool pendingRespawnSound;
 #include "BlockTraits.h"   // K.2-1: per-type behaviour
 #include "ContentPack.h"   // K.2-5: the Mods page
 #include "BlockRegistry.h"
+#include "Hotbar.h"      // UX.8-3: applyHand / noteHand
+#include "BlockIcon.h"   // UX.8-1: the build button's block picture
 
 // FM.3: fly state for the jump/crouch/cycle buttons (Player.mm; fly_* are declared in Player.h)
 extern bool FLY_ALLOWED;
@@ -133,8 +135,6 @@ static int marginLeft2=10-6;
 //static int marginRight=60;
 Vector colorTable[256];
 
-// See Hud.h. NULL = stock: the in-game menu screen always draws.
-bool (*eden_hud_draw_menu_screen_hook)(void)=NULL;
 //@implementation Hud
 //@synthesize mode,blocktype,leftymode,use_joystick,paintColor,liquidColor,block_paintcolor,heartbeat,goldencubes,build_size,fade_out;
 //@synthesize m_jump,m_back,m_fwd,m_left,m_right,test_a,m_joy,fps,justLoaded,flash,flashcolor;
@@ -214,13 +214,15 @@ void Hud::genColorTable(){
 // The engine's own action icons stay, drawn on the left of each button — design-system.md's
 // "Action icons" rule: the same painted objects the 2010 HUD used for these actions.
 extern "C" int eden_gl_settings_available(void);   // port/src/seam/Settings.cpp (both targets)
+extern "C" int eden_get_hotbar_shown(void);       // Settings.cpp: Settings > Gameplay > Hotbar (UX.8-4)
 extern "C" int eden_get_crosshair(void);           // Settings.cpp: Settings > Interface > Crosshair
 extern "C" void eden_console_menu_open(void);      // Menu.cpp (C.3): opens ConsoleMenu over the world
+extern "C" int  eden_profile_touch_chrome(void);   // DisplayProfile.cpp (UX.3): hide the jump button on keyboard + mouse
 extern "C" int  eden_chat_open(int slash);          // Menu.cpp (MP.7): the Console screen on its Chat tile
 
 enum { PM_RESUME, PM_SAVE, PM_HOME, PM_PHOTO, PM_SETTINGS, PM_CONSOLE, PM_QUIT, PM_COUNT };
 static const char* kPauseLabels[PM_COUNT] = {
-    "Resume", "Save Game", "Warp Home", "Take Photo", "Settings", "Console", "Quit to Menu"
+    "Resume", "Save game", "Warp home", "Take photo", "Settings", "Console", "Quit to menu"   // ui-label
 };
 
 struct HudPauseKit {
@@ -545,7 +547,7 @@ void Hud::layoutPauseMenu(){
         rows=1+(n-1+1)/2;
         ph=pad+titleH+rows*btnH+(rows-1)*gap+pad;
     }
-    const float colW=twoCol?bw*0.75f:bw;   // each of the pair: wide enough for "Quit to Menu"
+    const float colW=twoCol?bw*0.75f:bw;   // each of the pair: wide enough for "Quit to menu"
     const float fullW=twoCol?colW*2.0f+gap:bw;
     const float pw=fullW+pad*2.0f;
     const float px=safe.origin.x+(safe.size.width-pw)*0.5f, py=safe.origin.y+(safe.size.height-ph)*0.5f;
@@ -633,10 +635,88 @@ bool Hud::resolveModBlock(){
     return mod_acquire_now(this);
 }
 
+// UX.8-3: the hotbar's side of the hand (Classes/Hotbar.h).
+bool Hud::handAvailable(const HotbarSlot& s){
+    if(s.kind==HOTBAR_COLOUR) return s.colour>=1&&s.colour<=NUM_COLORS;
+    if(s.kind!=HOTBAR_BLOCK) return false;
+    if(!s.mod.empty()) return !MpWorld::active()&&!ContentPack::modReport().session&&mod_sentinel_of(s.mod)>=0;
+    if(s.type==HUD_TOOL_SIGN||s.type==HUD_TOOL_CMD) return pickerToolEnabled(s.type);
+    if(s.type==TYPE_GOLDEN_CUBE) return goldencubes>0;   // as the picker
+    return s.type>0&&s.type<=STOCK_BLOCK_MAX&&s.type!=TYPE_BEDROCK;
+}
+bool Hud::applyHand(const HotbarSlot& s,bool keepMode){
+    if(!handAvailable(s)){
+        if(!keepMode&&s.kind==HOTBAR_BLOCK&&!s.mod.empty())
+            sb->setStatus(MpWorld::active()?"Mod blocks are not available in a multiplayer world"
+                                           :"This mod block is not installed",4);
+        return false;
+    }
+    if(s.kind==HOTBAR_COLOUR){
+        paintColor=s.colour;
+        if(!keepMode) mode=MODE_PAINT;
+    }else{
+        if(!s.mod.empty()){
+            blocktype=mod_sentinel_of(s.mod);   // a palette id only at the first placement (resolveModBlock)
+            s_modSel=s.mod;
+        }else blocktype=s.type;
+        block_paintcolor=s.colour;
+        if(!keepMode) mode=MODE_BUILD;
+    }
+    if(!keepMode){   // an open picker is closed: nothing of it may commit later
+        blocktype_pressed=-1;
+        pickSecondBlock=false;
+    }
+    return true;
+}
+HotbarSlot Hud::handSlot(){
+    if(mode==MODE_PAINT)
+        return (paintColor>=1&&paintColor<=NUM_COLORS)?HotbarSlot::paint(paintColor):HotbarSlot();
+    const int c=(block_paintcolor>=0&&block_paintcolor<=NUM_COLORS)?block_paintcolor:0;
+    if(hud_picker_is_mod(blocktype)){
+        const std::string n=modCellName(blocktype);
+        return n.empty()?HotbarSlot():HotbarSlot::modBlock(n,c);
+    }
+    if(blocktype==HUD_TOOL_SIGN||blocktype==HUD_TOOL_CMD) return HotbarSlot::block(blocktype,c);
+    if(blocktype>STOCK_BLOCK_MAX){   // a resolved mod block: by name, never by this world's id
+        const char* n=BlockRegistry::nameOf(blocktype);
+        return n?HotbarSlot::modBlock(n,c):HotbarSlot();
+    }
+    if(blocktype<=0||blocktype==TYPE_BEDROCK) return HotbarSlot();
+    return HotbarSlot::block(blocktype,c);
+}
+void Hud::noteHand(){ Hotbar::get().noteHand(handSlot()); }
+
 static const int usage_id=15;
 static const int usage_id2=16;
+static const int usage_hb=17;   // UX.8-5: a touch that went down on the hotbar strip
 static int delayedaction=0;
 static int delayedtimer=0;
+
+// QA.5 (A2-01): Save & Quit whose save failed stays in the world and asks. Before, it tore the world
+// down regardless, and every edit since the last commit went with it. "Leave without saving" is the
+// way out when the disk cannot be freed; it goes through exit_to_menu, as the MP link's exit does.
+extern bool exit_to_menu;   // World.cpp: renderFrame's end leaves the world
+static void save_fail_exit_cb(int chosen){
+    World* w=World::getWorld;
+    if(chosen==0){                       // Try again: the same delayed Save & Quit
+        delayedtimer=1;
+        delayedaction=5;
+        w->hud->sb->setStatus("Saving and quitting...",999);
+    }else if(chosen==1){                 // Leave without saving
+        fprintf(stderr,"emod: left the world without saving (%s)\n",w->fm->lastSaveError().c_str());
+        exit_to_menu=true;
+        Resources::getResources->playSound(S_EXIT_WORLD);
+    }                                    // Stay: the status line already says why
+}
+static void show_save_fail_exit(){
+    static const char* const kBtn[]={"Try again","Leave without saving","Stay"};
+    static std::string body;
+    body="The changes since the last save are still here. "+
+         std::string(World::getWorld->fm->lastSaveError().find("disk full")!=std::string::npos
+                     ?"The device may be full: free some space, then try again."
+                     :"Reason: "+World::getWorld->fm->lastSaveError());
+    GLDialog::show("Could not save this world",body.c_str(),kBtn,3,save_fail_exit_cb);
+}
 extern int chunks_rendered;
 extern int chunks_rendered2;
 extern int vertices_rendered;
@@ -648,7 +728,25 @@ int flamecount=0;
 static int lmode=MODE_NONE;
 //static int warpCount=0;
 
+struct HbLayout{
+    bool touch;
+    int n,start;
+    float cell,gap,left,y,stripW;
+    CGRect strip;
+};
+static int s_hbSlide=-1,s_hbSlideSel=-2;   // UX.8-5: slid window start; the selection it was slid under
+static float s_hbLabelT=0;                  // UX.8-4: seconds left on the strip's name label
+static bool s_hbChoosing=false;   // UX.8-5: a picker is open for a slot (its status line is up)
+static int hbCell[MAX_TOUCHES],hbBase[MAX_TOUCHES];   // UX.8-5: per-touch strip state (slot or chevron, window start at down)
+static float hbHeld[MAX_TOUCHES];
+static bool hbDone[MAX_TOUCHES],hbMoved[MAX_TOUCHES];
 bool Hud::update(float etime){
+    if(s_hbLabelT>0) s_hbLabelT-=etime;
+    if(s_hbChoosing&&mode!=MODE_PICK_BLOCK&&mode!=MODE_PICK_COLOR){   // UX.8-5: picker closed (commit or Escape)
+        s_hbChoosing=false;
+        Hotbar::get().setPickerTarget(-1);
+        sb->clear();
+    }
 	if(flash>0){
 		flash-=etime;
 	}
@@ -664,9 +762,12 @@ bool Hud::update(float etime){
             fade_out+=etime/4;
         }else if(fade_out>=1){
             printg("warping home\n");
-            pendingRespawnSound=true;   // H.9: played by Terrain::render once firstframe clears
-            World::getWorld->terrain->warpToHome();
-            printg("finished warping\n");
+            // QA.5: a respawn is a warp. On a failed save the player stays down and it retries after
+            // the hold, rather than reload the window over the unsaved edits.
+            if(!World::getWorld->fm->saveHeld()&&World::getWorld->terrain->warpToHome()){
+                pendingRespawnSound=true;   // H.9: played by Terrain::render once firstframe clears
+                printg("finished warping\n");
+            }
         }
     }else{
         if(fade_out>0){
@@ -778,17 +879,17 @@ bool Hud::update(float etime){
             // rest of this frame, and Resources::playSound drops everything while firstframe is set
             // -- called after, this sound was silently discarded every time.
             Resources::getResources->playSound(S_WARP_HOME_ACTIVATED);
-			World::getWorld->terrain->warpToHome();
-			sb->clear();
+			if(World::getWorld->terrain->warpToHome())sb->clear();   // QA.5: a failed save keeps its status line
 		}else if(delayedaction==5){
             mode=MODE_NONE;
            // printg("trying to exit\n!!!");
-			World::getWorld->fm->saveWorld();
-            World::getWorld->exitToMenu();
-            Resources::getResources->playSound(S_EXIT_WORLD);
-            
-			
-			sb->clear();
+			if(!World::getWorld->fm->saveWorld()&&!(g_save_test_ignore&SAVE_TEST_IGNORE_EXIT)){
+                show_save_fail_exit();   // QA.5: stay in the world; the dialog offers retry / leave / stay
+            }else{
+                World::getWorld->exitToMenu();
+                Resources::getResources->playSound(S_EXIT_WORLD);
+                sb->clear();
+            }
 			
 		}
         delayedaction=0;
@@ -807,6 +908,41 @@ bool Hud::update(float etime){
 	
 	
 	for(int i=0;i<MAX_TOUCHES;i++){
+        if(touches[i].inuse==usage_hb){   // UX.8-5: tap selects, hold clears, drag slides the window
+            hbHeld[i]+=etime;
+            const bool rel=touches[i].down==M_RELEASE;
+            const int c=hbCell[i];
+            const float dx=(float)(touches[i].mx-touches[i].fx);
+            HbLayout L;
+            if(!hbDone[i]&&!rel&&c>=0&&!hbMoved[i]&&hbHeld[i]>=0.5f){   // long-press: clear
+                hbDone[i]=true;
+                Hotbar::get().clear(c);
+                sb->setStatus("Slot "+std::to_string(c+1)+" cleared",2.0f);
+                Resources::getResources->playSound(S_MENU_BUTTON_RELEASE);
+            }
+            if(!hbDone[i]&&fabsf(dx)>10.0f&&hotbarLayout(&L)&&L.n<Hotbar::SLOTS){   // swipe: slide, never select
+                hbMoved[i]=true;
+                int st=hbBase[i]-(int)floorf(dx/(L.cell+L.gap)+0.5f);
+                if(st<0)st=0;
+                if(st>Hotbar::SLOTS-L.n)st=Hotbar::SLOTS-L.n;
+                s_hbSlide=st;s_hbSlideSel=Hotbar::get().selected();
+            }
+            if(rel){
+                if(!hbDone[i]&&!hbMoved[i]){
+                    if(c>=0) hotbarActivate(c);
+                    else if(hotbarLayout(&L)){   // chevron: slide by a window
+                        int st=L.start+(c==-2?-L.n:L.n);
+                        if(st<0)st=0;
+                        if(st>Hotbar::SLOTS-L.n)st=Hotbar::SLOTS-L.n;
+                        s_hbSlide=st;s_hbSlideSel=Hotbar::get().selected();
+                        Resources::getResources->playSound(S_MENU_BUTTON_PRESS);
+                    }
+                }
+                touches[i].inuse=0;
+                touches[i].down=M_NONE;
+            }
+            continue;
+        }
         if(touches[i].inuse==usage_id2&&touches[i].down==M_RELEASE){
             bool handled;
             Resources::getResources->playSound(S_MENU_BUTTON_RELEASE);
@@ -897,6 +1033,17 @@ bool Hud::update(float etime){
             
         
         if(touches[i].inuse==0&&touches[i].down==M_DOWN){
+            if(!inmenu){   // UX.8-5: the hotbar strip claims the touch (no placing, no camera turn)
+                const int hc=hotbarCellAt((float)touches[i].mx,(float)touches[i].my);
+                if(hc!=-1){
+                    HbLayout L;
+                    touches[i].inuse=usage_hb;
+                    touches[i].down=M_NONE;
+                    hbCell[i]=hc;hbHeld[i]=0;hbDone[i]=false;hbMoved[i]=false;
+                    hbBase[i]=hotbarLayout(&L)?L.start:0;
+                    continue;
+                }
+            }
             if(inmenu){
                 if(inbox3(touches[i].mx,touches[i].my,&rresume)||
                    inbox3(touches[i].mx,touches[i].my,&rsettings)||
@@ -980,6 +1127,7 @@ bool Hud::update(float etime){
                 if(mode==MODE_PAINT){
                     block_paintcolor=paintColor;
                     mode=MODE_BUILD;
+                    noteHand();   // UX.8-3: the painted block is a hotbar item
                 }else
                     if(mode!=MODE_PICK_BLOCK){
                         mode=MODE_PICK_BLOCK;
@@ -1125,7 +1273,7 @@ bool Hud::update(float etime){
 		}
 	}
 
-	if(use_joystick){
+	if(use_joystick&&mode!=MODE_PICK_BLOCK&&mode!=MODE_PICK_COLOR){   // UX.2 (B11): the picker window covers the pad; it must not take (or draw under) the touch
 		joystick->update((float)etime);
 	}else{
 		//[gamepad update:(float) etime];
@@ -1135,6 +1283,7 @@ bool Hud::update(float etime){
 		
 		if(touches[i].inuse==usage_id&&touches[i].down==M_RELEASE){
 			if(blocktype_pressed!=-1){
+                const int pickedIn=mode;
                 if(mode==MODE_PICK_BLOCK&&pickSecondBlock==false){
                     
                     
@@ -1178,6 +1327,7 @@ bool Hud::update(float etime){
                     
                     printg("paint color-1:%d\n",paintColor-1);
                 }
+                if(mode!=pickedIn) noteHand();   // UX.8-3: a committed pick (block or colour) reaches the hotbar
                 blocktype_pressed=-1;
                 
             }
@@ -1263,14 +1413,14 @@ bool Hud::handlePickMenu(int x,int y){
 	}
 	if(inbox2(x,y,&rsave)||inbox2(x,y,&rtSave)){
         rsave.pressed=rtSave.pressed=false;
-		World::getWorld->fm->saveWorld();
-        Resources::getResources->playSound(S_WORLD_SAVED);
+		const bool saved=World::getWorld->fm->saveWorld();
+        if(saved)Resources::getResources->playSound(S_WORLD_SAVED);
         //[World::getWorld->terrain updateAllImportantChunks];
       //  NSLog(@"saving..");
         Input::getInput()->clearAll();
         
         World::getWorld->terrain->startDynamics();
-		sb->setStatus("World Saved" ,3);
+		if(saved)sb->setStatus("World Saved" ,3);   // QA.5: else saveFailed's status line stays
         
         
         
@@ -1508,7 +1658,7 @@ void Hud::renderBlockAndBorder(CGRect recto){
     
     
 	Pen::color(1.0f,1.0f,1.0f,1.0f);
-    if(type==TYPE_FLOWER||type==TYPE_GOLDEN_CUBE||type==TYPE_DOOR_TOP||type==TYPE_PORTAL_TOP){
+    if(BlockIcon::isFlat(type)){
         float offsetx;
         float offsety;
         float osize=90;
@@ -1528,7 +1678,7 @@ void Hud::renderBlockAndBorder(CGRect recto){
              ICOICO_DOOR_ACTIVE=96,
              ICOICO_PORTAL_ACTIVE=97,
              */
-            int tid;
+            int tid=ICOICO_FLOWER_ACTIVE;   // QA.23: a flat type outside the four (palette block) gets the flower icon
             if(type==TYPE_FLOWER){
                 tid=ICOICO_FLOWER_ACTIVE;
             }else if(type==TYPE_GOLDEN_CUBE){
@@ -1542,11 +1692,11 @@ void Hud::renderBlockAndBorder(CGRect recto){
             offrect.origin.x-=offsetx;
             offrect.origin.y-=offsety;
             Resources::getResources->getTex(tid)->drawTextHalfsies(offrect);
-            Resources::getResources->getPaintedTex(type,block_paintcolor)->drawTextHalfsies(recto);
+            BlockIcon::flat(type,block_paintcolor,recto);
           
         }else{
             
-            int tid;
+            int tid=ICO_FLOWER_ICO;   // QA.23: a flat type outside the four (palette block) gets the flower icon
             if(type==TYPE_FLOWER){
                 tid=ICO_FLOWER_ICO;
             }else if(type==TYPE_GOLDEN_CUBE){
@@ -1557,7 +1707,7 @@ void Hud::renderBlockAndBorder(CGRect recto){
                 tid=ICO_DOOR2;
             }
 
-            Resources::getResources->getPaintedTex(type,block_paintcolor)->drawTextHalfsies(recto);
+            BlockIcon::flat(type,block_paintcolor,recto);
             
             
         }
@@ -1657,284 +1807,46 @@ void Hud::renderBlockAndBorder(CGRect recto){
 	//glDisable(GL_BLEND);
 	
     
-    if(blockinfo[type]&IS_ATLAS2){
-        Pen::texture(Resources::getResources->atlas2->name);
-    }else{
-        Pen::texture(Resources::getResources->atlas->name);
-    }
-    CGPoint tp;
-    if(type==TYPE_TNT||type==TYPE_FIREWORK||type==TYPE_LADDER||type==TYPE_BLOCK_TNT){
-        if(type==TYPE_TNT){
-            if (block_paintcolor!=0)
-                tp=Resources::getResources->getBlockTex(TEX_TNT_SIDE);
-            else
-                tp=Resources::getResources->getBlockTex(TEX_TNT_SIDE_COLOR);
-            
-        }else if(type==TYPE_FIREWORK){
-            if (block_paintcolor!=0)
-                tp=Resources::getResources->getBlockTex(TEX_FIREWORK);
-            else
-                tp=Resources::getResources->getBlockTex(TEX_FIREWORK);
-
-            
-        }else if(type==TYPE_BLOCK_TNT){
-            if (block_paintcolor!=0)
-                tp=Resources::getResources->getBlockTex(TEX_BLOCKTNT);
-            else
-                tp=Resources::getResources->getBlockTex(TEX_BLOCKTNT);
-        }else
-            tp=Resources::getResources->getBlockTex(blockTypeFaces[type][3]);
-    }else{
-        
-        if (block_paintcolor==0){
-          if(type==TYPE_BRICK)
-                tp=Resources::getResources->getBlockTex(TEX_BRICK_COLOR);
-            else if(IS_NEWBLOCK_TEX(blockTypeFaces[type][5]))
-                tp=Resources::getResources->getBlockTex(NEWBLOCK_COLOR_TEX(blockTypeFaces[type][5]));   // D.2t
-            else
-                tp=Resources::getResources->getBlockTex(blockTypeFaces[type][5]);
-        }else
-            tp=Resources::getResources->getBlockTex(blockTypeFaces[type][5]);
-    }
-    if(blockinfo[type]&IS_BLOCKTNT){
-        tp=Resources::getResources->getBlockTex(TEX_BLOCKTNT);
-    }
-    float				coordinates[] = {
-        0,			tp.y+tp.x,
-        1,			tp.y+tp.x,
-        0,				tp.x,
-        1,				tp.x,
-        
-        0,			tp.y+tp.x,
-        1,			tp.y+tp.x,
-        0,				tp.x,
-        1,				tp.x,
-        
-        0,			tp.y+tp.x,
-        1,			tp.y+tp.x,
-        0,				tp.x,
-        1,				tp.x,
-    };
-  /*  1,1,//top face
-	1,0,
-	0,1,	
-	
-	0,0,
-*/
-        float				coordinates2[] = {
-            0,			tp.y+tp.x,
-            1,			tp.y+tp.x,
-            0,				tp.x,
-            1,				tp.x,
-            
-            
-            1,			tp.y+tp.x,
-            1,			tp.x,
-            0,			tp.y+tp.x	,
-            0,				tp.x,
-
-            
-            
-            0,			tp.y+tp.x,
-            1,			tp.y+tp.x,
-            0,				tp.x,
-            1,				tp.x,
-		};
-        int bb=0;
-        int size=29;
-   
-        float off=2;
-    float offx=0;
-    float offy=4;
+    // UX.8-1: the cube itself is BlockIcon's; these are the stock sizes that fit this button's frame art.
+    BlockIcon::Geo geo;
+    int size=29;
+    geo.off=2;
+    geo.offx=0;
+    geo.offy=4;
     int depth=24;
     if(build_size==0){
         depth=17;
         if(type>=TYPE_STONE_RAMP1&&type<=TYPE_ICE_RAMP4)depth=19;
         size=24;
-        offx+=9;
-        offy+=9;
+        geo.offx+=9;
+        geo.offy+=9;
     }
     if(build_size==2)size=45;
-    
-    //if(blockinfo[type]&IS_RAMP)
-    //    offy=-1;
-    
+
     CGRect rect=recto;
     if(!IS_RETINA&&SUPPORTS_RETINA){
-     //   bb/=2;
-      //  size;
         depth/=2;
-        offy-=2;
-        
+        geo.offy-=2;
     }
-    
-        if(IS_IPAD){
-            rect.origin.x*=SCALE_WIDTH;
-            rect.origin.y*=SCALE_HEIGHT;
-            size*=2;
-            bb*=2;
-            off*=2;
-        }
-   
-		/*float				vertices[] = {
-			rect.origin.x+off+bb-offx,							rect.origin.y+off-bb-offy,							0,
-			rect.origin.x + size+bb-offx,		rect.origin.y+off-bb-offy,							0,
-			rect.origin.x+off+bb-offx,							rect.origin.y + size-bb-offy,		0,
-			rect.origin.x + size+bb-offx,		rect.origin.y + size-bb-offy,		0
-		};*/
-    
-    float				bvertices[] = {
-        off+bb+offx,			off-bb+offy,							0,
-        size+bb+offx,		off-bb+offy,							0,
-        off+bb+offx,			size-bb+offy,                        0,
-        size+bb+offx,		size-bb+offy,                        0,
-        
-        //off+bb,			off-bb,							0,
-        //size+bb,		off-bb,							0,
-        off+bb+offx,			size-bb+offy,                        0,
-        size+bb+offx,		size-bb+offy,                        0,
-        off+bb+depth+offx,			size-bb+depth+offy,          0,
-        size+bb+depth+offx,		size-bb+depth+offy,              0,
-        
-        size+bb+offx,			off-bb+offy,							0,
-        size+bb+depth+offx,		off-bb+depth+offy,							0,
-        size+bb+offx,			size-bb+offy,                        0,
-        size+bb+depth+offx,		size-bb+depth+offy,                        0,
-        
-    };
-    
-    
-    float				vertices[3*6*3]; 
-    for(int i=0;i<3*6*2;i+=3){
-        vertices[i]=bvertices[i]+rect.origin.x;
-        vertices[i+1]=bvertices[i+1]+rect.origin.y;
-        vertices[i+2]=bvertices[i+2];
-    }    
-    int cory=-3;
-    float				bvertices2[] = {
-        off+bb+offx,			off-bb+offy,					 0,
-        size+bb+offx,		off-bb+offy,						 0,
-        off+bb+offx,			size-bb+offy+cory,                    0,
-        size+bb+offx,		size-bb+offy+cory,                        0,
-        
-        //off+bb,			off-bb,							0,
-        //size+bb,		off-bb,							0,
-        off+bb+offx,			size-bb+offy+cory,                    0,
-        size+bb+offx,		off-bb+offy,                        0,
-        off+bb+depth+offx,			size-bb+depth+offy+cory,          0,
-        size+bb+depth+offx+1,		off-bb+depth+offy,              0,
-        
-       // size+bb+offx,			off-bb+offy,					 0,
-       // size+bb+depth+offx,		off-bb+depth+offy,				 0,
-      //  size+bb+offx,			size-bb+offy,                    0,
-      //  size+bb+depth+offx,		size-bb+depth+offy,              0,
-        
-    };
-    
-    float				vertices2[3*6*3];
-    
-    /*= {
-        rect.origin.x+off+bb-offx,							rect.origin.y+off-bb-offy,			0,
-        rect.origin.x + size+bb-offx,		rect.origin.y+off-bb-offy,							0,
-        //rect.origin.x+off+bb,							rect.origin.y + size-bb,		0,
-        rect.origin.x + size+bb-offx,		rect.origin.y + size-bb-offy,		0
-    };*/
-    
-    // G.2s (UBSan): stock copied 3*6*2 floats out of the 24-float bvertices2 (a stack over-read); only
-    // vertices2's first 8 vertices are ever drawn, so the bound is its source's size.
-    for(int i=0;i<(int)(sizeof(bvertices2)/sizeof(bvertices2[0]));i+=3){
-        vertices2[i]=bvertices2[i]+rect.origin.x;
-        vertices2[i+1]=bvertices2[i+1]+rect.origin.y;
-        vertices2[i+2]=bvertices2[i+2];
+    if(IS_IPAD){
+        rect.origin.x*=SCALE_WIDTH;
+        rect.origin.y*=SCALE_HEIGHT;
+        size*=2;
+        geo.off*=2;
     }
-    
-    if (block_paintcolor!=0) {
-        Vector clr=colorTable[block_paintcolor];
-        Pen::color(clr.x,clr.y,clr.z,1.0f);
-    }
-    else if(trait_paintArtIcon(type))   // K.2-1; FT.1: weeds (GRASS2) take blockColor like the world mesh
-        Pen::color(1.0f, 1.0f, 1.0f, 1.0f);
-    else
-        Pen::colorub(blockColor[type][0], blockColor[type][1], blockColor[type][2], 255);
-    
-    // G.5b-7: the stock glVertexPointer/glTexCoordPointer/glDrawArrays triples are Pen::strip draws.
-    if(type==TYPE_CLOUD&&holding_creature){
-        Pen::strip(vertices, coordinates, 0, 4);
-        Pen::color(1.0f, 1.0f, 1.0f, 1.0f);
-        Resources::getResources->getTex(ICO_MOOF)->drawTextNoScale(
-         CGRectMake(rect.origin.x+off+bb-offx, rect.origin.y+off-bb-offy,32, 32));
-    }else
-    if(type>=TYPE_STONE_RAMP1&&type<=TYPE_ICE_RAMP4){
-       // glVertexPointer(3, GL_FLOAT, 0, vertices2);
-       // glTexCoordPointer(2, GL_FLOAT, 0, coordinates2);
-       // glDrawArrays(GL_TRIANGLE_STRIP, 0, 3);
-        
-        Pen::strip(vertices2, coordinates2, 0, 3);        
-        Pen::strip(vertices2, coordinates2, 4, 4);
-       // glDrawArrays(GL_TRIANGLE_STRIP, 8, 4);
-    }else{
-        if(blockinfo[type]&IS_BLOCKTNT){
-             Pen::color(1.0f, 1.0f, 1.0f, 1.0f);
-            Pen::strip(vertices, coordinates, 0, 4);
-                       Pen::strip(vertices, coordinates, 8, 4);
-            
-             Pen::color(1.0f, 1.0f, 1.0f, 1.0f);
-            extern  int blockTntMap[BLOCK_IDS];
-            int subtype=blockTntMap[type];
-            if (block_paintcolor!=0) {
-                Vector clr=colorTable[block_paintcolor];
-                Pen::color(clr.x,clr.y,clr.z,1.0f);
-            }
-           // else if(subtype==TYPE_GRASS2||subtype==TYPE_GRASS3||subtype==TYPE_TNT||subtype==TYPE_FIREWORK||subtype==TYPE_BRICK||subtype==TYPE_VINE)
-            //    glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
-            else{
-                Pen::colorub(blockColor[subtype][0], blockColor[subtype][1], blockColor[subtype][2], 255);
-            }
-            if(subtype==TYPE_TNT||subtype==TYPE_FIREWORK||subtype==TYPE_LADDER){
-                 tp= Resources::getResources->getBlockTex(blockTypeFaces[subtype][3]);
-                if(subtype==TYPE_TNT){
-                     tp= Resources::getResources->getBlockTex(TEX_TNT_SIDE_COLOR);
-                }
-            }else
-           tp= Resources::getResources->getBlockTex(blockTypeFaces[subtype][5]);
-            if(subtype==TYPE_GLASS){
-                  tp= Resources::getResources->getBlockTex(TEX_CLOUD);
-            }else if(subtype==TYPE_WATER){
-                 tp= Resources::getResources->getBlockTex(TEX_DIRT);
-            }else if(subtype==TYPE_LAVA){
-                 tp= Resources::getResources->getBlockTex(TEX_DIRT);
-            }else if(subtype==TYPE_WEAVE){
-                 tp= Resources::getResources->getBlockTex(TEX_CLOUD);
-            }
-            float				coordinates3[] = {
-                0,			tp.y+tp.x,
-                1,			tp.y+tp.x,
-                0,				tp.x,
-                1,				tp.x,
-                
-                
-                1,			tp.y+tp.x,
-                 0,			tp.y+tp.x	,
-                1,			tp.x,
-               
-                0,				tp.x,
-                
-                
-                
-                0,			tp.y+tp.x,
-                1,			tp.y+tp.x,
-                0,				tp.x,
-                1,				tp.x,
-            };
+    geo.x=rect.origin.x;
+    geo.y=rect.origin.y;
+    geo.size=size;
+    geo.depth=depth;
+    geo.cory=-3;
 
-             Pen::strip(vertices, coordinates3, 4, 4);
-        }else{
-       Pen::strip(vertices, coordinates, 0, 4);
-        Pen::strip(vertices, coordinates, 4, 4);
-        Pen::strip(vertices, coordinates, 8, 4);
-        }
-    }
-    
+    if(type==TYPE_CLOUD&&holding_creature){
+        BlockIcon::cube(type,block_paintcolor,geo,BlockIcon::FRONT_ONLY);
+        Resources::getResources->getTex(ICO_MOOF)->drawTextNoScale(
+         CGRectMake(rect.origin.x+geo.off-geo.offx, rect.origin.y+geo.off-geo.offy,32, 32));
+    }else
+        BlockIcon::cube(type,block_paintcolor,geo);
+
     Pen::color(1.0f,1.0f,1.0f,1.0f);
     if(type>=TYPE_STONE_RAMP1&&type<=TYPE_ICE_RAMP4){
              
@@ -1983,6 +1895,7 @@ void Hud::renderMenuScreen(){
     Pen::blendFunc(R::B_ALPHA);
     Pen::color(1.0f,1.0f,1.0f,1.0f);
 
+    Focus::screen(k,&k->btn[0]);   // UX.7: Return = Resume
     fill(CGRectMake(0,0,SCREEN_WIDTH,SCREEN_HEIGHT), kScrim);
     bevel(k->panel, BEVEL_WINDOW);
     k->title.drawCentered(k->panel.origin.x+k->panel.size.width*0.5f,
@@ -1997,7 +1910,7 @@ void Hud::renderMenuScreen(){
         k->btn[j].setRect(CGRectMake(r[j]->origin.x,r[j]->origin.y,r[j]->size.width,r[j]->size.height));
         k->btn[j].setPressed(r[j]->pressed||rtp[j]);
         k->btn[j].render();
-        if(icon[j]){
+        if(icon[j]&&r[j]->size.width>=du(236)){   // UX.2 (B6): no icon in the narrow two-column cells (it sat over the label)
             const float sz=r[j]->size.height-du(8);
             Pen::color(1.0f,1.0f,1.0f,1.0f);
             icon[j]->drawInRect(CGRectMake(r[j]->origin.x+du(6),
@@ -2027,8 +1940,10 @@ void Hud::renderBlockScreen(){
     if(!pickerKit) pickerKit=new HudPickerKit();
     HudPickerKit* k=pickerKit;
     if(!k->built){
-        k->prev.setLabel("<",18.0f);
-        k->next.setLabel(">",18.0f);
+        // UX.8-6: keyboard hint on the arrows (native `[` `]`); touch has no keys.
+        const bool keys=eden_profile_touch_chrome()==0;
+        k->prev.setLabel(keys?"[ <":"<",18.0f);
+        k->next.setLabel(keys?"> ]":">",18.0f);
         k->built=true;
     }
     if(memcmp(&k->prevAt,&pickerPrev,sizeof(CGRect))){ k->prevAt=pickerPrev; k->prev.setRect(pickerPrev); }
@@ -2198,6 +2113,278 @@ void Hud::renderBlockScreen(){
 }
 //extern float P_ZFAR;
 
+
+// ---- UX.8-4: the hotbar strip (docs/ui.md "Hotbar"). Drawn in the HUD's point space; the icons are
+// BlockIcon's, which draw in raw pass units (point x `sc`). No hit rects yet (UX.8-5).
+#include "eden_settings.h"   // the keybind accessors (QA.19)
+
+static void hb_box(CGRect r,float t,GLW::Color c){   // a t-thick border inside r
+    GLW::fill(r.origin.x,r.origin.y,r.size.width,t,c);
+    GLW::fill(r.origin.x,r.origin.y+r.size.height-t,r.size.width,t,c);
+    GLW::fill(r.origin.x,r.origin.y,t,r.size.height,c);
+    GLW::fill(r.origin.x+r.size.width-t,r.origin.y,t,r.size.height,c);
+}
+
+// UX.8-5: where the strip is this frame. Shared by renderHotbar and every hit test, so a cell is
+// exactly where it is drawn. `start` is the first visible slot (the window follows the selection until a
+// swipe or chevron slides it; the slide is dropped when the selection changes).
+
+bool Hud::hotbarLayout(HbLayout* L){
+    using namespace GLW;
+    if(!eden_get_hotbar_shown()||inmenu||at1>0||mode==MODE_NONE||hideui) return false;
+    const bool touch=eden_profile_touch_chrome()!=0;
+    const CGRect safe=GLW::safeRect();
+    const float s0x=safe.origin.x,s0y=safe.origin.y;
+    const float sT=s0y+safe.size.height;
+    const float gap=2*GLW::u();
+    const int NS=Hotbar::SLOTS;
+    int n=NS;
+    float cell,y,left;
+    if(!touch){   // desktop: bottom centre
+        cell=du(40);
+        y=s0y+du(8);
+        left=s0x+(safe.size.width-(NS*cell+(NS-1)*gap))*0.5f;
+        left=floorf(left);
+    }else{        // touch: top centre, between the corner buttons and the mode column; 9, else 7, else 5 cells
+        const float tagEnd=s0x+((consoleBtnShown()||MpWorld::active())?175.0f:121.0f);
+        const float lo=tagEnd+8,hi=HUDR_X-8;
+        const int tiers[3]={9,7,5};
+        cell=0;
+        for(int t=0;t<3;t++){
+            const float c=floorf(fminf(44.0f,(hi-lo-gap*(tiers[t]-1))/tiers[t]));
+            n=tiers[t];
+            cell=c;
+            if(c>=36.0f) break;
+        }
+        if(cell<20.0f) return false;   // below the guard tier nothing sensible fits
+        y=sT-cell;
+        left=floorf(lo+((hi-lo)-(n*cell+(n-1)*gap))*0.5f);
+    }
+    const float stripW=n*cell+(n-1)*gap;
+    const CGRect strip=CGRectMake(left,y,stripW,cell+du(2));
+    // A picker hides the strip when its panel is in the way (always, on the touch top strip).
+    if(mode==MODE_PICK_BLOCK||mode==MODE_PICK_COLOR||at2>0||at3>0){
+        const CGRect& p=rpaintframe;
+        if(touch||(strip.origin.x<p.origin.x+p.size.width&&strip.origin.x+strip.size.width>p.origin.x&&
+                   strip.origin.y<p.origin.y+p.size.height&&strip.origin.y+strip.size.height>p.origin.y)) return false;
+    }
+    const int sel=Hotbar::get().selected();
+    int start=0;
+    if(n<NS){
+        if(s_hbSlide>=0&&s_hbSlideSel==sel) start=s_hbSlide;
+        else{
+            start=(sel>=0?sel:0)-n/2;
+            if(start<0)start=0;
+            if(start>NS-n)start=NS-n;
+        }
+    }
+    L->touch=touch;L->n=n;L->start=start;L->cell=cell;L->gap=gap;L->left=left;L->y=y;L->stripW=stripW;L->strip=strip;
+    return true;
+}
+
+// Hit rects, in the HUD's point space (y up): the nine cells abut (each takes half a gap either side) so no
+// two overlap, and on touch each is at least touchFloor() tall, hanging down from the top edge. The chevrons
+// sit just outside the strip, between its ends and the neighbouring HUD buttons.
+Button Hud::hotbarButton(int idx){
+    Button b;
+    b.origin=CGPointMake(0,0);b.size=CGSizeMake(0,0);b.pressed=false;
+    HbLayout L;
+    if(idx<0||idx>10||!hotbarLayout(&L)) return b;
+    const float pitch=L.cell+L.gap;
+    float top,h;
+    if(L.touch){
+        h=fmaxf(L.cell,GLW::touchFloor());
+        top=L.y+L.cell;
+    }else{
+        h=L.cell+2*GLW::u();
+        top=L.y+h;
+    }
+    const float y0=top-h;
+    if(idx<9){
+        const int k=idx-L.start;
+        if(k<0||k>=L.n) return b;
+        const float x0=L.left+k*pitch-(k==0?0:L.gap*0.5f);
+        const float x1=L.left+k*pitch+L.cell+(k==L.n-1?0:L.gap*0.5f);
+        b.origin=CGPointMake(x0,y0);b.size=CGSizeMake(x1-x0,h);
+        return b;
+    }
+    if(L.n>=Hotbar::SLOTS) return b;
+    const float w=GLW::du(14);
+    if(idx==9&&L.start>0){b.origin=CGPointMake(L.left-L.gap-w,y0);b.size=CGSizeMake(w,h);}
+    if(idx==10&&L.start+L.n<Hotbar::SLOTS){b.origin=CGPointMake(L.left+L.stripW+L.gap,y0);b.size=CGSizeMake(w,h);}
+    return b;
+}
+
+static bool hb_in(float x,float y,const Button& b){
+    return b.size.width>0&&x>=b.origin.x&&x<b.origin.x+b.size.width&&y>=b.origin.y&&y<b.origin.y+b.size.height;
+}
+
+// The strip target under a point: a slot 0-8, -1 none, -2/-3 the left/right chevron.
+int Hud::hotbarCellAt(float x,float y){
+    if(hb_in(x,y,hotbarButton(9))) return -2;
+    if(hb_in(x,y,hotbarButton(10))) return -3;
+    for(int i=0;i<Hotbar::SLOTS;i++) if(hb_in(x,y,hotbarButton(i))) return i;
+    return -1;
+}
+
+void Hud::hotbarTarget(int i){
+    Hotbar::get().setPickerTarget(i);
+    s_hbChoosing=true;
+    char buf[40];
+    std::snprintf(buf,sizeof(buf),"Choosing for slot %d",i+1);
+    sb->setStatus(buf,999);
+}
+
+bool Hud::hotbarActivate(int i){
+    if(i<0||i>=Hotbar::SLOTS) return false;
+    Hotbar& hb=Hotbar::get();
+    const HotbarSlot& s=hb.slot(i);
+    if(mode==MODE_PICK_BLOCK||mode==MODE_PICK_COLOR){hotbarTarget(i);return true;}
+    const bool inUse=(mode==MODE_BUILD||mode==MODE_PAINT);
+    if(s.kind==HOTBAR_EMPTY||(i==hb.selected()&&inUse)){   // H7: open the picker for this slot
+        if(s.kind==HOTBAR_COLOUR) mode=MODE_PICK_COLOR;
+        else{
+            mode=MODE_PICK_BLOCK;
+            pickerPage=picker_page_of(blocktype);
+            pickSecondBlock=false;
+        }
+        inmenu=false;
+        blocktype_pressed=-1;
+        Input::getInput()->clearAll();
+        Resources::getResources->playSound(S_MENU_BUTTON_PRESS);
+        hotbarTarget(i);
+        return true;
+    }
+    return hb.select(i);
+}
+
+bool Hud::hotbarAssignAt(int slot,int x,int y){
+    if(slot<0||slot>=Hotbar::SLOTS) return false;
+    HotbarSlot hs;
+    if(mode==MODE_PICK_COLOR){
+        for(int i=0;i<NUM_COLORS;i++)
+            if(inbox(x,y,colorBounds[i])){hs=HotbarSlot::paint(i+1);break;}
+    }else if(mode==MODE_PICK_BLOCK){
+        int cells[NUM_DISPLAY_BLOCKS];
+        page_cells(pickerPage,cells);
+        for(int i=0;i<pickerCellCount(pickerPage);i++){
+            if(!inbox(x,y,blockBounds[i])) continue;
+            const int t=cells[i];
+            if(hud_picker_is_mod(t)){
+                const std::string nm=modCellName(t);
+                if(!nm.empty()) hs=HotbarSlot::modBlock(nm);
+            }else if(hud_picker_is_tool(t)){
+                if(pickerToolEnabled(t)) hs=HotbarSlot::block(t,t==HUD_TOOL_SIGN?paintColor:0);
+            }else if(t==TYPE_GOLDEN_CUBE){
+                if(goldencubes>0) hs=HotbarSlot::block(t,20);
+            }else if(t==TYPE_DOOR_TOP){
+                hs=HotbarSlot::block(t,20);
+            }else if(t!=TYPE_BLOCK_TNT&&t!=TYPE_CUSTOM&&t>0){
+                hs=HotbarSlot::block(t,0);
+            }
+            break;
+        }
+    }
+    if(hs.kind==HOTBAR_EMPTY) return false;
+    Hotbar::get().assign(slot,hs);
+    sb->setStatus("Slot "+std::to_string(slot+1)+": "+Hotbar::label(hs),2.0f);
+    return true;
+}
+
+void Hud::renderHotbar(){
+    using namespace GLW;
+    GLW::Toast::setLift(0);
+    HbLayout L;
+    if(!hotbarLayout(&L)) return;
+    const bool touch=L.touch;
+    const int NS=Hotbar::SLOTS;
+    const int n=L.n;
+    const float cell=L.cell,gap=L.gap,left=L.left,y=L.y,stripW=L.stripW;
+    if(!touch) GLW::Toast::setLift(cell+du(8)+du(8));   // the status toast sits above the strip
+
+    Hotbar& hb=Hotbar::get();
+    const int sel=hb.selected();
+    const int start=L.start;
+    static int lastSel=-2;
+    if(sel!=lastSel){
+        if(lastSel!=-2&&sel>=0) s_hbLabelT=1.5f;
+        lastSel=sel;
+    }
+    const float sc=IS_IPAD?SCALE_WIDTH:1.0f;
+    const bool inUse=(mode==MODE_BUILD||mode==MODE_PAINT||mode==MODE_PICK_BLOCK||mode==MODE_PICK_COLOR);
+    const float u1=GLW::u();
+    Pen::color(1,1,1,1);
+    Pen::blend(true);
+    Pen::blendFunc(R::B_ALPHA);
+    static GLW::Label hintLbl[Hotbar::SLOTS];
+    static std::string hintTxt[Hotbar::SLOTS];
+    static GLW::Label chevL,chevR;
+    for(int k=0;k<n;k++){
+        const int i=start+k;
+        const HotbarSlot& sl=hb.slot(i);
+        const bool cur=(i==sel);
+        CGRect r=CGRectMake(left+k*(cell+gap),y+(cur?2*u1:0),cell,cell);
+        GLW::fill(r.origin.x+2*u1,r.origin.y-2*u1,r.size.width,r.size.height,GLW::rgb(0x000000,0.35f));   // the hard drop shadow
+        GLW::fill(r,GLW::rgb(cur?0x2c2b2b:0x000000,cur?0.8f:0.55f));
+        const float pad=fmaxf(2.0f,floorf(cell*0.12f));
+        const CGRect in=CGRectMake(r.origin.x+pad,r.origin.y+pad,r.size.width-pad*2,r.size.height-pad*2);
+        const CGRect raw=CGRectMake(in.origin.x*sc,in.origin.y*sc,in.size.width*sc,in.size.height*sc);
+        Pen::textured(true);
+        Pen::color(1,1,1,1);
+        const bool ok=sl.kind==HOTBAR_EMPTY||handAvailable(sl);
+        if(sl.kind==HOTBAR_EMPTY){
+            BlockIcon::drawEmpty(raw);
+        }else if(sl.kind==HOTBAR_COLOUR){
+            BlockIcon::drawSwatch(sl.colour,raw);
+        }else if(!sl.mod.empty()){
+            BlockIcon::drawMod(sl.mod,sl.colour,raw);
+            if(sl.colour) BlockIcon::chip(sl.colour,raw);
+        }else if(hud_picker_is_tool(sl.type)){
+            Resources::getResources->getArtTex(sl.type==HUD_TOOL_SIGN?ART_SIGN_ICON:ART_CMD_BLOCK)->drawInRect(in);
+        }else{
+            BlockIcon::draw(sl.type,sl.colour,raw);
+            if(sl.colour) BlockIcon::chip(sl.colour,raw);
+        }
+        Pen::textured(false);
+        Pen::color(1,1,1,1);
+        Pen::blend(true);
+        Pen::blendFunc(R::B_ALPHA);
+        if(!ok){   // not holdable here (a mod block this world lacks): dimmed
+            GLW::fill(r,GLW::rgb(0x000000,0.6f));
+            Pen::textured(true);
+            BlockIcon::drawEmpty(raw);
+            Pen::textured(false);
+        }
+        if(cur) hb_box(r,3*u1,GLW::rgb(0x89c31f,inUse?1.0f:0.45f));   // the picker's "chosen" lime; dim when the hand is a mine/burn tool
+        else    hb_box(r,2*u1,GLW::rgb(0x646464));
+        if(!touch){   // key hint: the live binding of hotbarN
+            char nm[16];
+            std::snprintf(nm,sizeof(nm),"hotbar%d",i+1);
+            const char* kl=eden_keybind_code_label(eden_keybind_get(eden_keybind_index(nm)));
+            if(kl&&*kl){
+                if(hintTxt[i]!=kl){hintTxt[i]=kl;hintLbl[i].set(kl,du(11),UITextAlignmentLeft);}
+                hintLbl[i].draw(r.origin.x+3*u1+(cur?3*u1:0),r.origin.y+r.size.height-2*u1-(cur?3*u1:0),GLW::rgb(0xffffff,0.85f));
+            }
+        }
+    }
+    if(n<NS){   // more slots that way
+        if(chevL.empty()){chevL.set("<",du(14),UITextAlignmentCenter);chevR.set(">",du(14),UITextAlignmentCenter);}
+        if(start>0) chevL.drawCentered(left-du(6),y+cell*0.5f+chevL.height()*0.5f,GLW::kText);
+        if(start+n<NS) chevR.drawCentered(left+stripW+du(6),y+cell*0.5f+chevR.height()*0.5f,GLW::kText);
+    }
+    // The item name for 1.5 s after a selection change; above the strip (desktop) or below it (touch).
+    static GLW::Label nameLbl;
+    static std::string nameTxt;
+    if(s_hbLabelT>0&&sel>=0){
+        const std::string t=Hotbar::label(hb.slot(sel));
+        if(t!=nameTxt||nameLbl.empty()){nameTxt=t;nameLbl.set(t.c_str(),du(16),UITextAlignmentCenter);}
+        const float cx=left+stripW*0.5f;
+        const float yTop=touch?y-du(6):y+cell+du(2)*2+du(6)+nameLbl.height();
+        nameLbl.drawChrome(cx,yTop,GLW::kText,GLW::rgb(0x000000,0.8f));
+    }
+    Pen::textured(true);
+    Pen::color(1,1,1,1);
+}
 
 void Hud::render(){
 	//if(mode==MODE_MINE)return;
@@ -2369,10 +2556,10 @@ void Hud::render(){
 	
 	if(m_jump||m_flyup){
         rjumprender.pressed=true;
-        res->getTex(ICO_JUMP_ACTIVE)->drawButton(rjumprender);
+        if(eden_profile_touch_chrome()) res->getTex(ICO_JUMP_ACTIVE)->drawButton(rjumprender);   // UX.3 (P6): no dead chrome on keyboard + mouse; the hit rect stays (Space drives it)
 	}else{
         rjumprender.pressed=false;
-        tjump->drawButton(rjumprender);
+        if(eden_profile_touch_chrome()) tjump->drawButton(rjumprender);
     }
 
     // Crouch button: its own art (Maysunbo, 2026-10-27; it was jump's, mirrored, with the shadow on
@@ -2411,15 +2598,13 @@ void Hud::render(){
 
 
 	res->getTex(ICO_OPEN_MENU)->drawButton(rmenu);
-    // The corner icon above always draws — it is how the menu gets OPENED. Only the panel itself is
-    // suppressible (see eden_hud_draw_menu_screen_hook in Hud.h).
-    if((inmenu||at1>0) && (!eden_hud_draw_menu_screen_hook || eden_hud_draw_menu_screen_hook())){
+    if(inmenu||at1>0){
 
 
         renderMenuScreen();
     }
 	
-	if(use_joystick){
+	if(use_joystick&&mode!=MODE_PICK_BLOCK&&mode!=MODE_PICK_COLOR){
 		Pen::blendFunc(R::B_ALPHA);
 		joystick->render();
 	}
@@ -2442,6 +2627,7 @@ void Hud::render(){
         ChatFeed::renderHud(World::getWorld->menu&&World::getWorld->menu->showconsole);
         if(!inmenu) ChatFeed::renderButton(CGRectMake(rchat.origin.x,rchat.origin.y,rchat.size.width,rchat.size.height),rchat.pressed);
     }
+    renderHotbar();   // UX.8-4 (sets the toast lift before the toast draws)
 	sb->render();
     // Crosshair: a small cross with a gap at the screen centre (where mouse mine/build aims), drawn
     // dark first then light so it reads on any background. Hidden with no tool in hand and while a
@@ -2508,7 +2694,8 @@ void Hud::render(){
     Pen::color(1.0f,1.0f,1.0f,1.0f);
   
     Pen::textured(true);
-    GLW::drawVersionTag();
+    // UX.3 (B2): right of the corner buttons (menu gear, then chat/console), not over the gear.
+    GLW::drawVersionTag((consoleBtnShown()||MpWorld::active()?rchat.origin.x+rchat.size.width:rmenu.origin.x+rmenu.size.width)-rmenu.origin.x+6);
     
     Graphics::endHud();
     
@@ -2522,14 +2709,14 @@ void Hud::asetHome(){
     thome.z=pp.z-.5f;
     thome.y=pp.y-1;
     World::getWorld->terrain->home=thome;
-    World::getWorld->fm->saveWorld();
+    const bool saved=World::getWorld->fm->saveWorld();   // QA.5: home is set either way; the next save carries it
     //[World::getWorld->terrain updateAllImportantChunks);
     //NSLog(@"saving..");
     Input::getInput()->clearAll();
 
     World::getWorld->terrain->startDynamics();
     Resources::getResources->playSound(S_WARP_HOME_LOCATION_SET);
-    sb->setStatus("World Saved",3);
+    if(saved)sb->setStatus("World Saved",3);
 
 }
 void Hud::awarpHome(){

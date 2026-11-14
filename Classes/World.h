@@ -11,6 +11,8 @@
 
 
 #include <stdint.h>
+#include <atomic>
+#include <pthread.h>
 #include "Texture2D.h"
 #include "Terrain.h"
 #include "Graphics.h"
@@ -45,8 +47,15 @@ public:
     int target_game_mode;
 	int game_mode;
 	//BOOL FLIPPED;
-    int doneLoading;
+    // QA.7 (A2-03): written by the world-load pthread (2 = done) and polled by the main thread, the MP
+    // link and the background-save/convert guards, so it is atomic: the thread's store of 2 releases
+    // everything it wrote (chunk tables, header, palette) to the main thread's load of it.
+    std::atomic<int> doneLoading;
+    pthread_t loadThread;          // QA.7: joined in World::loadWorld's doneLoading==2 branch
+    bool loadThreadLive=false;
+    void joinLoadThread();          // QA.14: also at quit, so no load thread outlives main()
     bool modsNoticePending=false;   // K.3-6: say which of the world's mods are off/missing, once, after entry
+    void showModsNotice();          // QA.7 (A2-04): called once the load is done, not on its first frame
     float realtime;
     bool bestGraphics;
     bool sanityCheck;

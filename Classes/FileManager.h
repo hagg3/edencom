@@ -83,30 +83,17 @@ typedef struct{
 // carries a ClassicGen, and TerrainGenerator.h -> Terrain.h -> this file would be a cycle).
 struct WorldProps;
 
-// PORT SEAM (Phase N Stage 2), same shape as Hud.h's eden_hud_draw_menu_screen_hook: NULL by
-// default, so stock behaviour is unchanged and this costs one null test per save.
-//
-// Called at the top of FileManager::saveWorld(Vector) with the world file's full path, BEFORE
-// anything writes to it, so a host that wants a "previous save" slot can copy the last-known-good
-// bytes aside. The WEB build leaves it NULL — its Foundation shim owns every file open and puts
-// the same guard on NSFileHandle instead, which is strictly better placed (it also covers the
-// rollback journal). NATIVE installs it, because it links Apple's real Foundation and has no such
-// choke point. See port/src/shim/foundation/save_backup.h.
-extern void (*eden_save_backup_hook)(const char* worldFilePath);
-
-// The save directory, for a host that wants to choose it rather than let the platform decide.
-// NULL by default, in which case FileManager's constructor keeps its original
-// NSSearchPathForDirectoriesInDomains(NSDocumentDirectory) lookup unchanged — which is what the
-// web build uses, because its Foundation shim already answers that call with the port's own root.
-// Native installs this: real Foundation would otherwise put worlds in ~/Documents, and Stage 2
-// chose ~/Library/Application Support/Eden. The returned string must outlive the process.
-extern const char* (*eden_documents_root_hook)(void);
-
 // B.5b-1b: engine seconds since the open world's last committed save (any kind). Terrain::update
 // advances it and runs the autosave when it passes g_autosave_seconds with edits pending;
 // saveEmodWorld zeroes it on a commit. g_autosave_seconds <= 0 turns the autosave off (tests).
 extern float g_seconds_since_save;
 extern float g_autosave_seconds;
+// QA.5: saves that failed in this process (the save-fail gate counts them).
+extern int g_save_failures;
+// QA.5 mutations (--save-fail-mutate=): SAVE_TEST_IGNORE_EXIT lets Save & Quit and warps, and
+// SAVE_TEST_IGNORE_STREAM the ring and bulk streaming, go ahead on a failed save, as before QA.5.
+enum { SAVE_TEST_IGNORE_EXIT=1, SAVE_TEST_IGNORE_STREAM=2 };
+extern int g_save_test_ignore;
 
 class FileManager {
 public:
@@ -120,6 +107,13 @@ public:
     // MP.3a: the open world is a multiplayer session (Classes/MpWorld.h): no file; loadWorld synthesises it
     // from MpWorld's header, readColumn is the flat recipe + overlay, and the three saves commit to RAM.
     bool sessionWorld;
+    // QA.14 (A2-03): this load runs on the world-load pthread (World::loadWorld sets it before
+    // pthread_create and clears it after the join), so loadWorld leaves what the main thread owns while
+    // the menu is up to finishLoadOnMain(): the input/effects/HUD resets and a new world's first save.
+    // An inline load (warp, reload, LOW_MEM_DEVICE) has it false and does both in loadWorld, as always.
+    bool loadOnThread=false;
+    bool firstSaveOwed=false;
+    void finishLoadOnMain();
     FileManager();
     bool worldExists(std::string name,bool appendArchive);
     void saveGenColumn(int cx,int cz,int origin);
@@ -134,13 +128,26 @@ public:
     // was dispatched and the column will land in a later frame. readColumn() itself is unchanged
     // and still synchronous for every other caller, world load included.
     bool columnWillGenerate(int cx,int cz);   // H.4: readColumn would run the Classic generator
-    void saveWorld();
-    void saveWorld(Vector warp);
+    // QA.5: every save answers whether it committed. On a failure the store has rolled back to the
+    // last commit and kept every `modified` flag (nothing is lost while the world stays open); the
+    // reason is on stderr (`emod: save failed: ...`) and on the HUD's status line, and a caller that
+    // would discard the window (exit, warp, a stream overwrite) must not go ahead (docs/save-load.md).
+    bool saveWorld();
+    bool saveWorld(Vector warp);
     // B.5b-1b: saveWorld() WITHOUT its opening endDynamics -- fire keeps burning and water keeps
     // flowing across it. The ring stream's evict-save (a modified column is about to be overwritten)
     // and the autosave timer use it; warp, exit, the Save button, app background and the bulk reload
     // keep the full saveWorld() (render-distance plan, decision 1).
-    void saveWorldKeepDynamics();
+    // QA.5: false without trying while saveHeld() (an automatic retry would fail the same way).
+    bool saveWorldKeepDynamics();
+    // QA.5: the last save failed and no save has committed since; why, as the store said it.
+    bool saveFailing() const { return saveFailing_; }
+    const std::string& lastSaveError() const { return lastSaveError_; }
+    // QA.5: within SAVE_RETRY_HOLD_MS of a failure: the automatic saves (autosave, the ring's evict-save,
+    // the bulk reload's, a death respawn's) skip rather than hammer a full disk every frame. The
+    // player's own saves (button, exit, warp) always try.
+    bool saveHeld() const;
+    static const int SAVE_RETRY_HOLD_MS=2000;
     void loadGenFromDisk();
     void writeGenToDisk();
     void fwriteDirectory();
@@ -284,7 +291,13 @@ public:
 private:
     void loadTrailer(const std::string& name,const unsigned char* bytes,unsigned long long len);
     bool loadEmodWorld(const std::string& name);
-    void saveEmodWorld(Vector warp);
+    bool saveEmodWorld(Vector warp);
+    bool saveFailed(const std::string& why);   // QA.5: stderr + status line; always returns false
+    void saveCommitted();                       // QA.5: clears the failing state
+    bool saveFailing_=false;
+    std::string lastSaveError_;
+    double saveFailedAtMs_=0;
+    int saveFailStreak_=0;
     void loadSessionWorld();   // MP.3a
     void commitSession(Vector warp);
     int oldOffsetX;

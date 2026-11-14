@@ -522,8 +522,10 @@ int run_shadow_selftest() {
 // so the evict-save is the only thing that can save the edits mid-walk.
 int run_evict_selftest() {
     g_selftestTag = "eden-evict";
+    if (!mutation_known("eden-evict", "--evict-mutate", g_opt.evictMutate, {"nosave", "nodrop", "noceiling"})) return 2;
     Terrain::testNoEvictSave = g_opt.evictMutate == "nosave";
     Terrain::testNoDropDynamics = g_opt.evictMutate == "nodrop";
+    TerrainChunk::testNoCeilingTop = g_opt.evictMutate == "noceiling";
     const char* name = g_opt.world.empty() ? "evict-selftest" : g_opt.world.c_str();
     if (!open_world(name, g_opt.height)) return 1;
     g_autosave_seconds = 0;
@@ -680,6 +682,31 @@ int run_evict_selftest() {
     check(same == 3, "gate 2: edits survive a save and reload", d);
     g_autosave_seconds = 60;
     g_app->setFixedEtime(0.0f);
+
+    // ---- QA.24 (A5-08): the ceiling layer. A block at y = H-1 has nothing above it in the window: its top face
+    // must still be meshed (rebuild2's `pbounds[1]+CHUNK_SIZE==T_HEIGHT` branch). A 3x3 stone slab there, then
+    // the top chunk's FACE_TOP bucket (num_vertices[5], opaque) must hold 6 vertices per face.
+    {
+        eden_console_teleport(X0, Y0, Z0);
+        tick(30);
+        const int cx0 = (int)X0 + 4, cz0 = (int)Z0 + 4;
+        const int cx = cx0 / CHUNK_SIZE, cz = cz0 / CHUNK_SIZE, topCy = CHUNKS_PER_COLUMN - 1;
+        TerrainChunk* top = t->chunkTable[threeToOne(cx, topCy, cz)];
+        const int before = top->num_vertices[5];
+        int placed = 0;
+        for (int dx = 0; dx < 3; ++dx)
+            for (int dz = 0; dz < 3; ++dz) {
+                t->updateChunks(cx0 + dx, cz0 + dz, H - 1, TYPE_STONE);
+                ++placed;
+            }
+        tick(60);
+        const int after = top->num_vertices[5];
+        std::snprintf(d, sizeof(d), "%d blocks at y=%d: top-face vertices %d -> %d (want +%d)", placed, H - 1, before, after, placed * 6);
+        check(after - before == placed * 6, "ceiling layer: blocks at y = H-1 mesh their top faces", d);
+        for (int dx = 0; dx < 3; ++dx)
+            for (int dz = 0; dz < 3; ++dz) t->updateChunks(cx0 + dx, cz0 + dz, H - 1, TYPE_NONE);
+        tick(30);
+    }
 
     std::printf("[eden-evict] %s (%d failure(s))%s\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures,
                 g_opt.evictMutate.empty() ? "" : (" [mutation " + g_opt.evictMutate + "]").c_str());

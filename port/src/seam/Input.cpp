@@ -46,6 +46,7 @@
 // force-included prefix header, so it has to be pulled in explicitly for the TYPE_* hotbar list.
 #include "../../../Classes/World.h"
 #include "../../../Classes/Constants.h"
+#include "../../../Classes/Hotbar.h"   // UX.8-3
 #include "../../../Classes/GLDialog.h"
 #include "../../../Classes/TouchLook.h"
 #include "../../../Classes/SrclikeMove.h"   // SRC.2   // --look-trace reads what the new touch look consumed
@@ -545,12 +546,18 @@ static Button hudTapButtonRect(Hud* hud, int which) {
         case 8: return hud->rjumphit;     // FM.4: fly up while flying
         case 9: return hud->rcrouchhit;   // FM.4: fly down while flying
         case 10: return hud->rflyhit;     // FM.4: the fly-mode cycle button
+        // UX.8-5: 11-19 the hotbar's nine cells, 20/21 its left/right chevrons (zero-sized while the strip
+        // is hidden or the cell is outside the window, so a tap lands nowhere).
+        case 11: case 12: case 13: case 14: case 15: case 16: case 17: case 18: case 19:
+            return hud->hotbarButton(which - 11);
+        case 20: return hud->hotbarButton(9);
+        case 21: return hud->hotbarButton(10);
         default: return hud->rmenu;
     }
 }
 void eden_tap_hud_button_begin(int which) {
     if (!World::getWorld || !World::getWorld->hud) return;
-    if (which < 0 || which > 10) return;
+    if (which < 0 || which > 21) return;
     Button b = hudTapButtonRect(World::getWorld->hud, which);
     float cx = b.origin.x + b.size.width / 2.0f;
     float cy = b.origin.y + b.size.height / 2.0f;
@@ -558,7 +565,7 @@ void eden_tap_hud_button_begin(int which) {
 }
 void eden_tap_hud_button_end(int which) {
     if (!World::getWorld || !World::getWorld->hud) return;
-    if (which < 0 || which > 10) return;
+    if (which < 0 || which > 21) return;
     Button b = hudTapButtonRect(World::getWorld->hud, which);
     float cx = b.origin.x + b.size.width / 2.0f;
     float cy = b.origin.y + b.size.height / 2.0f;
@@ -584,46 +591,36 @@ int eden_hud_in_menu(void) {
     return World::getWorld->hud->inmenu ? 1 : 0;
 }
 
-// Does the current hud->mode want the crosshair hidden? True in "empty hand" (MODE_NONE — see
-// eden_click_begin's click-on-nothing handling above) and in photo/camera mode (MODE_CAMERA,
-// entered via the in-game menu's Take Photo button, `which=5` in hudTapButtonRect) — neither has
-// anything to aim at a block with, same reasoning as eden_update_block_preview's own mode check
-// already excluding both from the block-preview ghost. public/eden-st.html ANDs this with the
-// player's "Crosshair" settings toggle (eden_get_crosshair) each frame.
-int eden_crosshair_hidden_by_mode(void) {
-    if (!World::getWorld || !World::getWorld->hud) return 0;
-    const int m = World::getWorld->hud->mode;
-    return (m == MODE_NONE || m == MODE_CAMERA) ? 1 : 0;
-}
 
-// 1-9 hotbar and wheel scroll. Eden's actual block picker is a scrolling grid (Hud::
-// handlePickBlock, NUM_DISPLAY_BLOCKS=35 cells addressed by a `static int hudBlocks[]` that is
-// file-static to Hud.mm and not reachable from here) opened via the 'E' tap above, not a 9-slot
-// hotbar strip — there is no engine concept this maps to 1:1. This is a deliberate simplification:
-// a fixed, curated 9-block palette (common build blocks, by TYPE_* from Classes/Constants.h) that
-// number keys/wheel index into directly via the same public hud->blocktype/hud->mode fields
-// Hud::handlePickBlock itself writes on a real pick (Classes/Hud.mm ~811-841), so a build click
-// right after still builds the selected type.
-// Phase 4 (PC controls audit): no longer `const` — the engine's real 35-cell picker
-// (Hud::handlePickBlock) now feeds it, see eden_ui_tick's picker->camera edge below. This array
-// is just the INITIAL contents; public/eden-st.html persists whatever the player ends up with to
-// localStorage and restores it via eden_set_hotbar_slot_type on the next load.
-static int kHotbarBlocks[9] = {
-    TYPE_STONE, TYPE_DIRT, TYPE_GRASS, TYPE_WOOD, TYPE_BRICK,
-    TYPE_COBBLESTONE, TYPE_SAND, TYPE_GLASS, TYPE_LIGHTBOX,
-};
-static int hotbarIndex = 0;
+// UX.8-3: the hotbar is the engine's (Classes/Hotbar: nine slots of block / painted block / colour, per
+// world). These are the thin wrappers the key, wheel and pad translators and the selftests call.
+void eden_select_hotbar_slot(int slot) { Hotbar::get().select(slot); }
 
-void eden_select_hotbar_slot(int slot) {
+void eden_hotbar_scroll(int dir) { Hotbar::get().scroll(dir); }
+
+// UX.8-5: a hotbar number key. With a picker open and the mouse over one of its cells, that cell is
+// assigned to slot n; otherwise Hud::hotbarActivate (select, re-select/empty opens the picker, retarget).
+extern "C" int eden_ui_pointer(float* x, float* y);   // Input_native.cpp
+void eden_hotbar_key(int n) {
     if (!World::getWorld || !World::getWorld->hud) return;
-    if (slot < 0 || slot > 8) return;
-    hotbarIndex = slot;
-    World::getWorld->hud->blocktype = kHotbarBlocks[slot];
-    World::getWorld->hud->mode = MODE_BUILD;
+    Hud* hud = World::getWorld->hud;
+    if (hud->mode == MODE_PICK_BLOCK || hud->mode == MODE_PICK_COLOR) {
+        float x = 0, y = 0;
+        if (eden_ui_pointer(&x, &y) && hud->hotbarAssignAt(n, (int)x, (int)y)) return;
+    }
+    hud->hotbarActivate(n);
 }
 
-void eden_hotbar_scroll(int dir) {
-    eden_select_hotbar_slot(((hotbarIndex + (dir > 0 ? 1 : -1)) % 9 + 9) % 9);
+// UX.8-5: right-click on the strip (cursor free) clears that slot. 1 = it was on the strip.
+int eden_hotbar_right_click(float x, float yUp) {
+    if (!World::getWorld || !World::getWorld->hud) return 0;
+    const int c = World::getWorld->hud->hotbarCellAt(x, yUp);
+    if (c == -1) return 0;
+    if (c >= 0) {
+        Hotbar::get().clear(c);
+        World::getWorld->hud->sb->setStatus("Slot " + std::to_string(c + 1) + " cleared", 2.0f);
+    }
+    return 1;
 }
 
 // SRC.2 (plan §4.6): a captured-mouse wheel notch. In Srclike movement it is a jump pulse in either
@@ -634,18 +631,12 @@ void eden_wheel_action(int dir) {
     eden_hotbar_scroll(dir);
 }
 
-int eden_get_hotbar_index(void) { return hotbarIndex; }
+int eden_get_hotbar_index(void) { return Hotbar::get().selected(); }
 
+// The slot's block id or tool sentinel; TYPE_NONE for an empty, colour or mod-block slot.
 int eden_get_hotbar_slot_type(int slot) {
-    if (slot < 0 || slot > 8) return TYPE_NONE;
-    return kHotbarBlocks[slot];
-}
-
-// Restores a slot's contents (public/eden-st.html's localStorage round-trip). Does NOT select
-// the slot or touch hud->mode/blocktype — only the array cell backing eden_select_hotbar_slot.
-void eden_set_hotbar_slot_type(int slot, int type) {
-    if (slot < 0 || slot > 8) return;
-    kHotbarBlocks[slot] = type;
+    const HotbarSlot& s = Hotbar::get().slot(slot);
+    return (s.kind == HOTBAR_BLOCK && s.mod.empty()) ? s.type : TYPE_NONE;
 }
 
 // Project audit 2026-07-30, row F3 — middle-click "pick block" (standard voxel-game affordance,
@@ -664,10 +655,6 @@ int eden_pick_block_at_crosshair(void) {
     if (point.x == -1) return TYPE_NONE;
     int type = World::getWorld->terrain->getLand(point.x, point.z, point.y);
     if (type == TYPE_NONE || type == -1 || type == TYPE_BEDROCK) return TYPE_NONE;   // FT.1: bedrock is never pickable
-    // Same convention Hud::handlePickBlock's real 35-cell picker already established (Phase 4
-    // comment above eden_select_hotbar_slot: a real pick overwrites the CURRENTLY selected slot,
-    // not just the initial palette) — and switches to build mode so a follow-up click places it.
-    eden_set_hotbar_slot_type(hotbarIndex, type);
     World::getWorld->hud->blocktype = type;
     // The 35-cell picker only ever sets a fixed color (0, or 20 for doors) since it picks from a
     // fixed palette, not a placed block. This eyedropper picks a real in-world block, so carry its
@@ -675,6 +662,7 @@ int eden_pick_block_at_crosshair(void) {
     // the color and the next placed block comes out unpainted.
     World::getWorld->hud->block_paintcolor = World::getWorld->terrain->getColor(point.x, point.z, point.y);
     World::getWorld->hud->mode = MODE_BUILD;
+    World::getWorld->hud->noteHand();   // UX.8-3: smart replace into the hotbar (painted blocks and mod blocks too)
     return type;
 }
 
@@ -882,15 +870,6 @@ void eden_ui_tick(void) {
     const bool leftPicker = (prevMode == MODE_PICK_BLOCK || prevMode == MODE_PICK_COLOR);
     if (leftPicker && m == MODE_CAMERA && lastActionMode != -1) {
         World::getWorld->hud->mode = lastActionMode;
-        // Phase 4 (PC controls audit F9f): a real pick from the engine's own 35-cell picker
-        // overwrites the CURRENTLY SELECTED hotbar slot with whatever the player just chose, so
-        // the curated kHotbarBlocks[] becomes the initial contents rather than the only ones —
-        // same edge lastActionMode's restore already uses, so this fires exactly once per pick.
-        // K.2-5: a mod block (pending sentinel or this world's id) is world-bound: never kept in the hotbar.
-        if (prevMode == MODE_PICK_BLOCK) {
-            const int bt = World::getWorld->hud->blocktype;
-            if (bt <= STOCK_BLOCK_MAX || (bt >= HUD_TOOL_SIGN && bt < HUD_MOD_BASE)) kHotbarBlocks[hotbarIndex] = bt;
-        }
     }
     prevMode = World::getWorld->hud->mode;
 }
@@ -906,9 +885,7 @@ int eden_get_fly_mode(void) {      // flying (Fly or Noclip)
 
 void eden_cycle_fly_mode(void) { fly_cycle_state(); }   // Off -> Fly -> Noclip -> Off; no-op unless allowed
 
-int eden_get_fly_state(void) { return fly_get_state(); }
 
-void eden_set_fly_state(int s) { fly_set_state(s < 0 ? 0 : (s > 2 ? 2 : s)); }
 
 void eden_set_fly_allowed(int on) {
     extern bool FLY_ALLOWED;
@@ -931,57 +908,8 @@ int eden_get_camera_view(void) {
     return CAMERA_VIEW;
 }
 
-// Audit row 17/G1 (touch-draggable controls card): a "move controls" mode for the on-screen
-// joystick pad, driven from eden-input.js's existing touch pipeline rather than a new one — the
-// page tracks the drag itself (same touchstart/touchmove/touchend it already has) and only pushes
-// the resulting rect origin here. Classes/Joystick.mm's joystickCustomizeMode flag is the actual
-// feature (Joystick::update no-ops while it's on, so this can't fight a real touch's movement
-// input); the three exports below are just the platform-specific wiring a JS drag gesture needs,
-// which is why they live in this seam file and not in Classes/ (web/CLAUDE.md rule 2).
-void eden_joystick_set_customize_mode(int on) {
-    extern bool joystickCustomizeMode;
-    joystickCustomizeMode = (on != 0);
-    // Entering mid-walk must not leave a stale nonzero walk_dir latched forever — Joystick::update
-    // is the only thing that would otherwise zero it (on the next frame with no touch in the pad),
-    // and it is about to stop running entirely.
-    if (joystickCustomizeMode && World::getWorld && World::getWorld->player) {
-        World::getWorld->player->setSpeed(MakeVector(0, 0, 0), 0);
-    }
-}
 
-int eden_joystick_get_customize_mode(void) {
-    extern bool joystickCustomizeMode;
-    return joystickCustomizeMode ? 1 : 0;
-}
 
-// origin = padbounds.origin, i.e. the pad's top-left corner in the engine's POINT space (same
-// space Input.cpp's touch coordinates already arrive in — see toEnginePoint() in
-// eden-viewport.js). Plain float returns rather than out-params: nothing else in this port's JS
-// exports asks the JS side to allocate wasm memory for a pointer, and two scalar getters are
-// simpler for eden-input.js to call than managing a malloc'd float* just to read two numbers back.
-// Clamping to stay on-screen is the CALLER's job (JS knows the live ENGINE_WIDTH/HEIGHT and the
-// pad's own size; this file has no reason to duplicate that).
-float eden_joystick_get_origin_x(void) { extern CGRect padbounds; return padbounds.origin.x; }
-float eden_joystick_get_origin_y(void) { extern CGRect padbounds; return padbounds.origin.y; }
-float eden_joystick_get_pad_size(void) { extern CGRect padbounds; return padbounds.size.width; }
 
-void eden_joystick_set_origin(float x, float y) {
-    // Live-browser finding (audit row 17/G1, 2026-08-04): padbounds is the translucent pad ring
-    // Joystick::render() draws first; the solid knob it draws second is joystick_pos, which
-    // Joystick::update() only ever resets to default_pos (Classes/Joystick.mm's ctor: a FIXED rect
-    // that happens to equal padbounds' original (20,20) because both start at the same size, not
-    // because anything keeps them in sync). Moving only padbounds here left the ring following the
-    // drag while the knob stayed glued to the pre-move spot, on-screen AND after Done (update()'s
-    // "no touch active" branch keeps re-snapping joystick_pos to the stale default_pos every
-    // frame) — visibly two disconnected controls. Move both, and keep joystick_pos matching so the
-    // knob tracks live during the drag instead of only jumping once the player next touches it.
-    extern CGRect padbounds, default_pos, joystick_pos;
-    padbounds.origin.x = x;
-    padbounds.origin.y = y;
-    default_pos.origin.x = x;
-    default_pos.origin.y = y;
-    joystick_pos.origin.x = x;
-    joystick_pos.origin.y = y;
-}
 
 } // extern "C"

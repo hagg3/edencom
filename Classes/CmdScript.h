@@ -136,7 +136,13 @@ public:
         const char* needs;       // the error's wording when it is not the usage; NULL = the usage
         const char* help;        // one line
         unsigned char kinds[9];  // ARG_* per argument, 0-terminated (optional ones included)
+        int op;                  // the Op the parser makes of it (several verbs may share one: day/noon/time...)
+        unsigned flags;          // QA.20: V_* -- exactly one per row; the multiplayer gate reads it (0 = refused)
     };
+    // V_SAFE runs in a multiplayer session; V_TIME only with the Day/night cycle on (session-local clock);
+    // V_EDITS_WORLD never (an edit nobody else sees, or a teleport that belongs to the server).
+    enum { V_SAFE = 1, V_EDITS_WORLD = 2, V_TIME = 4 };
+    static unsigned stmtFlags(const Stmt& s);
     static const Verb* verbs(size_t* count);
     static const Verb* findVerb(const char* name);   // case-insensitive; NULL if not a verb
 
@@ -195,6 +201,8 @@ public:
     static bool testNoDepthCap;
     // Mutation hook for --console-selftest: playerAnchor() answers the feet cell, not the one under.
     static bool testAnchorFeet;
+    static bool testForceMp;      // QA.20 selftest: the multiplayer gate runs as if a session were open
+    static bool testFlagMutant;   // QA.20 --console-mutate=noflag: fill loses its flags
 };
 
 #endif

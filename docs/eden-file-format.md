@@ -460,7 +460,7 @@ block**, the adversarial case for the derived-size logic above. Regenerate them 
 ## Compressibility and band occupancy (measured 2026-10-03)
 
 The `.emod` Phase 0 study measured real worlds against this format with
-`port/tools/eden-format-measure.py`. The tool is read-only, and its `--corrupt-gate` proves the
+`archive/tools/eden-format-measure.py`. The tool is read-only, and its `--corrupt-gate` proves the
 round-trip check can fail. Raw results: `WORKING/emod-format-phase0-f1-results-2026-10-03.md`. Plan and
 recommendation: `WORKING/emod-format-phase0-f2-plan-2026-10-03.md`. The facts that outlive the study:
 

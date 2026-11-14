@@ -9,11 +9,12 @@
 //
 // With no scripted mode it just plays: SDL event pump plus the frame loop.
 
+#include <initializer_list>
+#include <string>
 #include "../seam/App.h"
 #include "../seam/Input_native.h"
 #include "../seam/SimpleAudioEngine_native.h"
-#include "save_backup.h"                 // port/src/shim/foundation — the shared backup rules
-#include "../../../Classes/FileManager.h"  // eden_save_backup_hook
+#include "../../../Classes/FileManager.h"
 #include "../../../Classes/EdenWorldStore.h" // --background-selftest's `.emod` leg
 #include "../../../Classes/SimpleAudioEngine.h"
 #include "../../../Classes/Resources.h"
@@ -48,7 +49,8 @@ extern float NOCLIP_SPEED;                          // Classes/Player.mm (--fly-
 extern int g_classic_cave_votes_cells, g_classic_cave_votes_air;   // FileManager.cpp (H.4), --classic-selftest
 extern bool g_wp_test_skip_generator;   // FileManager.cpp (H.15), --props-mutate=nogen
 extern Vector colorTable[256];               // --cmds-selftest: the night sky (palette 54)
-extern int g_ring_columns_landed, g_bulk_reloads, g_ring_evict_saves, g_ring_dynamics_dropped, g_autosaves; // Terrain.mm, --evict-selftest
+extern int g_load_thread_delay_ms; // World.cpp, QA.7: --mods-selftest leg 9
+extern int g_ring_columns_landed, g_bulk_reloads, g_ring_evict_saves, g_ring_evict_held, g_ring_dynamics_dropped, g_autosaves; // Terrain.mm, --evict-selftest
 extern int g_light_test_mutation;            // Lighting.mm (B.5b-1c), --light-mutate
 bool light_columnKnownFree(int cx, int cz);  // Lighting.mm (P.10), --ring-light-selftest's last leg
 extern int g_offcx, g_offcz;                 // Terrain.mm: the toroidal offset (--light-selftest's edge step)
@@ -95,9 +97,6 @@ extern "C" void eden_click_begin(int);               // Input.cpp
 extern "C" void eden_click_end(int);
 extern "C" {
 int   eden_get_fps_cap(void);
-void  eden_settings_init(void);
-void  eden_set_detected_touch(int isTouch);
-int   eden_settings_loaded(void);
 void  eden_heap_pressure_tick(void);
 int   eden_native_thermal_state(void);   // App.cpp (P.1a)
 void  eden_native_gl_set_headless(int on);
@@ -110,10 +109,8 @@ SDL_Window* eden_native_gl_window(void);
 #define EDEN_PEXP_MENU30     16
 #define EDEN_PEXP_DISCARD    32768   // PW.3: keep the alpha-test `discard` in every world/lit program (old path, for the A/B)
 
-void  eden_ui_force_legacy(int on);
 int   eden_get_fly_mode(void);
 
-int   eden_menu_active(void);
 int   eden_menu_world_count(void);
 const char* eden_menu_world_name(int index);
 const char* eden_menu_world_file(int index);
@@ -138,14 +135,10 @@ int   eden_hud_in_menu(void);
 void  eden_console_menu_open(void);      // C.3 (Menu.cpp)
 int   eden_chat_open(int slash);         // MP.7 (Menu.cpp)
 int   eden_console_menu_toggle(void);
-int   eden_console_menu_back(void);
+int   eden_menu_back(void);              // QA.22 (Menu.cpp)
 int   eden_ui_captures_keys(void);
 int   eden_ui_wants_cursor(void);
 
-void  eden_settings_menu_open_now(void);
-void  eden_settings_menu_close(void);
-int   eden_settings_menu_open(void);   // SX.1: --ui-selftest sub-page leg
-int   eden_settings_menu_back(void);   // Escape over the settings screen
 
 int   eden_gl_stat(int which);
 int   eden_console_teleport(float x, float y, float z);
@@ -179,11 +172,17 @@ int   eden_console_getblock(int x, int z, int y);
 void  eden_debug_set_mesh_checksum(int on);
 const char* eden_debug_world_format(void);
 const char* eden_debug_heap(void);
-void  eden_debug_heap_reset_peak(void);
-void  eden_native_apply_display_mode(void);   // src/seam/DisplayMode_native.cpp
+void  eden_native_apply_display_mode(void);
+extern "C" void eden_window_fullscreen_changed(int on);   // src/seam/WindowState_native.cpp (UX.5)
+extern "C" void eden_window_boot(int restorePosition);
+extern "C" void eden_window_remember(void);
+extern "C" int  eden_window_fullscreen_wanted(void);
+extern "C" int  eden_window_prefs_load(int* x, int* y, int* w, int* h);   // src/seam/DisplayMode_native.cpp
 void  eden_native_set_safe_area_override(float l, float t, float r, float b);   // I.2, same file
 void  eden_safe_rect(float* x, float* y, float* w, float* h);   // I.2, DisplayProfile.cpp
 void  eden_display_debug_ignore_safe_area(int on);
+int   eden_debug_hotbar_rect(int idx, float* x, float* y, float* w, float* h);   // UX.8-5, DebugState.cpp
+int   eden_debug_hotbar_overlaps(char* buf, int cap);                            // UX.8-5
 int   eden_debug_safe_area_violations(float sx, float sy, float sw, float sh, char* buf, int cap);       // I.2, DebugState.cpp
 void  eden_live_commands_init(const char* path);   // src/seam/LiveCommands_native.cpp (diagnostics)
 void  eden_live_commands_tick(void);
@@ -213,6 +212,7 @@ int fmh_selftestCompare(const char* edenPath, const char* emodPath, int* compare
 extern "C" int eden_base_selftest_run(const char* workDir);   // port/src/seam/BaseSelftest_native.cpp (G.2b-0)
 extern "C" int eden_net_selftest_run(const char* server);   // port/src/net/NetSelftest.cpp (MP.1)
 extern "C" int eden_mp_selftest_run(const char* server);    // same file (MP.2)
+extern "C" int eden_mp_idle_pump(float etime);   // QA.8: src/seam/MpLink_native.cpp
 extern "C" int eden_emod_selftest_run(const char* fixtureDir, const char* workDir, int flags,
                                       const char* file, const char* ref);       // Classes/EdenWorldStoreSelftest.cpp
 extern "C" int eden_creature_selftest_run(const char* bundleRoot);   // Classes/CreatureModelSelftest.cpp (LG.7)
@@ -232,56 +232,18 @@ extern "C" void eden_display_set_viewport(int css_w, int css_h);   // DisplayPro
 extern "C" void eden_net_set_fixture_root(const char* dir);
 extern "C" void eden_display_refresh(void);
 extern "C" void eden_prefs_set_ephemeral(int on);    // Prefs_native.cpp (X.21)
-extern "C" void eden_atmo_set_override(int tier);     // Settings.cpp (AT.1a): --atmo=, the pins
-extern "C" int  eden_atmo_override(void);
-extern "C" void eden_weather_set_override(int kind); // Settings.cpp (AT.1a): --weather=, the pins
-extern "C" int  eden_weather_override(void);
 
-extern "C" int eden_settings_count(void);
-extern "C" const char* eden_settings_key(int i);
-extern "C" void eden_settings_set(int i, float v);
-extern "C" int eden_settings_native_hidden(int i);
+#include "../seam/eden_settings.h"   // QA.19: every settings/keybind accessor
 extern "C" void eden_set_fly_mode(int);
 
-extern "C" {
-int  eden_keybind_count(void);
-int  eden_keybind_index(const char* action);
-int  eden_keybind_get(int i);
-int  eden_keybind_default(int i);
-void eden_keybind_set(int i, int code);
-void eden_keybind_reset_all(void);
-int  eden_keybind_action_after(int prev, int code);
-int  eden_keybind_capture_active(void);
-void eden_keybind_capture_begin(int i);
-int  eden_keybind_capture_feed(int code);
-const char* eden_keybind_code_name(int code);
-}
-extern "C" {   // port/src/seam/Settings.cpp -- C.2's gates read the tables the cvars were built from
-int         eden_settings_count(void);
-const char* eden_settings_key(int i);
-const char* eden_settings_label(int i);
-const char* eden_settings_group(int i);
-int         eden_settings_kind(int i);
-float       eden_settings_min(int i);
-float       eden_settings_max(int i);
-float       eden_settings_def(int i);
-float       eden_settings_get(int i);
-void        eden_settings_set(int i, float v);
-int         eden_settings_enum_count(int i);
-const char* eden_settings_enum_label(int i, int j);
-int         eden_settings_native_hidden(int i);
-int         eden_settings_apply(int i);
-int         eden_keybind_count(void);
-int         eden_keybind_index(const char* action);
-int         eden_keybind_get(int i);
-int         eden_keybind_default(int i);
-int         eden_keybind_native_hidden(int i);
-const char* eden_keybind_action(int i);
-int         eden_keybind_action_after(int prev, int code);
-void        eden_keybind_set(int i, int code);
-}
-
 namespace harness {
+
+// QA.26: the source tree (CMake passes EDEN_SOURCE_ROOT), so fixture defaults work from any cwd.
+#ifdef EDEN_SOURCE_ROOT
+#define EDEN_SRC EDEN_SOURCE_ROOT
+#else
+#define EDEN_SRC ".."
+#endif
 
 struct Options {
     bool headless = false;
@@ -305,6 +267,7 @@ struct Options {
     int mpType = 0;                      // --mp-type=N (characterType)
     bool mpEdits = false;                // --mp-edits: MP.4's two-client leg, the builder
     std::string mpHold;                  // --mp-hold=FILE: ... the watcher, until FILE exists
+    int mpUnfocusSecs = 0;               // --mp-unfocus=SECS: QA.8, the session survives an unfocused window
     std::string codecFile;               // --codec-file=PATH: the raw .eden --codec-bench samples
     std::string emodFixtures, emodWork, emodFile, emodRef;   // --emod-selftest's inputs
     std::string bundledEden, bundledEmod;                    // --bundled-map-selftest's inputs
@@ -316,12 +279,16 @@ struct Options {
     bool trailerNoDirty = false;         // --trailer-no-dirty-mark: the mutation (live leg only)
     bool trailerKeep = false;            // --trailer-keep: stop after the reload (leave the edited world for emod.py --diff)
     std::vector<std::string> trailerFiles;   // --trailer-file=W.eden|W.emod (repeatable): --trailer-selftest's byte gate
+    std::string weatherMutate;           // --weather-mutate=lowatmo: --weather-selftest's `off` leg (QA.24)
     std::string evictMutate;             // --evict-mutate=nosave|nodrop: --evict-selftest's mutation legs
     std::string signsMutate;             // --signs-mutate=bottom|nohook: --signs-selftest's mutation legs
     std::string cmdsMutate;              // --cmds-mutate=nodepth: --cmds-selftest's mutation leg
-    std::string consoleMutate;           // --console-mutate=anchor: --console-selftest's mutation leg (C.1)
-    std::string consoleCorpus = "../port/tools/fixtures/cmds/corpus.txt";   // --console-corpus=
-    std::string consoleRef = "../docs/console-reference.md";                // --console-reference=
+    std::string consoleMutate;           // --console-mutate=anchor|noreg|flipburst: --console-selftest's mutation legs (C.1, C.2, QA.9)
+    std::string consoleCorpus = EDEN_SRC "/port/tools/fixtures/cmds/corpus.txt";   // --console-corpus=
+    std::string settingsCapture;                                           // --settings-capture=<dir> (QA.19)
+    std::string settingsFixtures = EDEN_SRC "/port/tools/fixtures/settings";      // --settings-fixtures=
+    bool settingsDump = false;                                             // --settings-dump
+    std::string consoleRef = EDEN_SRC "/docs/console-reference.md";                // --console-reference=
     bool cmdsTrace = false;              // --cmds-trace: print every command-block statement
     float look[2] = {0.0f, 0.0f};        // --look=YAW,PITCH (degrees): --sign-shot's view
     bool haveLook = false;
@@ -336,13 +303,15 @@ struct Options {
     bool passFinish = false;             // --pass-finish: glFinish at every pass boundary (upper bound per pass)
     bool passVsync = false;              // --pass-vsync: keep vsync on (the player's frame; present then holds the vsync wait)
     std::string convertAnswer;           // --convert-answer=upgrade|keep|cancel: --convert-prompt-selftest
-    std::string classicFixture = "../port/tools/fixtures/classic/legacy-1315365413.bin.gz";   // --classic-fixture=
+    std::string classicFixture = EDEN_SRC "/port/tools/fixtures/classic/legacy-1315365413.bin.gz";   // --classic-fixture=
     std::string sourceLeg;               // --srclike-selftest=<leg> (SRC): empty = every leg built so far
-    std::string srclikeVectors = "../port/tools/fixtures/srclike-pm/vectors.txt";   // --srclike-vectors= (SRC.4 leg move)
+    std::string srclikeVectors = EDEN_SRC "/port/tools/fixtures/srclike-pm/vectors.txt";   // --srclike-vectors= (SRC.4 leg move)
     std::string flyMutate;               // --fly-mutate=move: --fly-selftest's mutation leg (FM.4)
     std::string lookMutate;              // --look-mutate=<name>: --look-selftest's mutation legs (Stage L)
     std::string classicMutate;           // --classic-mutate=tables|trunc|noborder: --classic-selftest's mutation legs
+    std::string uiMutate;                // --ui-mutate=menuback: --ui-selftest's mutation leg (QA.22: leaves one screen out of Menu::back()'s table)
     std::string propsMutate;             // --props-mutate=nogen: --props-selftest's mutation leg (H.15)
+    std::string saveFailMutate;          // --save-fail-mutate=exit|stream: --save-fail-selftest's mutation legs (QA.5)
     std::string luaMutate;               // --lua-mutate=hook|sandbox: --lua-selftest's mutation legs (K.4)
     std::string propsWorld;              // --props-world=FILE: --props-selftest times reading this world (gate 4)
     std::string classicNew;              // --classic=SEED[,SCALE4]: a world open_world() CREATES is Classic (ring-walk gate)
@@ -376,8 +345,17 @@ extern int g_selftestFailures;
 extern const char* g_selftestTag;
 extern bool g_ignoreUserInput;   // G.5b-0: --scene-shot drops input and focus events (core.cpp)
 void check(bool ok, const char* what, const char* detail);
+// QA.11: a --*-mutate= value must name a hook the mode has. Unknown -> message + false (the mode
+// returns 2, which run_mutant reads as "not caught"); known and non-empty -> a "mutation: <name>"
+// banner that run_mutant requires in the log. Empty -> true, silently.
+bool mutation_known(const char* tag, const char* flag, const std::string& value,
+                    std::initializer_list<const char*> names);
 extern bool g_running;
 void pump_events();
+bool interactive_iteration(double& nextFrameMs);   // QA.8: one pass of the interactive loop (core.cpp)
+extern int g_idleIterations;                        // QA.8: idle-branch passes so far
+extern int g_idleMpPumps;                           // QA.8: ...that pumped an MP session
+int run_unfocused(double ms, double* wakeMs);       // QA.8: FOCUS_LOST, ms of the real loop, FOCUS_GAINED
 std::string default_bundle(const char* argv0);
 std::string default_docs();
 bool is_eden_save_name(const std::string& n);
@@ -413,14 +391,16 @@ namespace g_packs { int run_packs_selftest(); }
 namespace g_lua { int run_lua_selftest(); }   // K.4
 using g_lua::run_lua_selftest;
 using g_packs::run_packs_selftest;
+namespace g_hotbar { int run_hotbar_selftest(); }   // UX.8-3
 namespace g_mods { int run_mods_selftest(); std::string ui_pack_zip(const std::string& id, const std::string& version); }
 using g_mods::run_mods_selftest;
 namespace g_content { int run_content_dump(); int run_json_selftest(); int run_pack_selftest(const std::string& dir); }   // K.2-1, K.2-3
 using g_content::run_content_dump;
 using g_content::run_json_selftest;
 using g_content::run_pack_selftest;
-namespace g_props { int run_camera_selftest(); int run_props_selftest(); int run_signs_selftest(); int run_sign_shot(); }
+namespace g_props { int run_settings_selftest(); int run_camera_selftest(); int run_props_selftest(); int run_signs_selftest(); int run_sign_shot(); }
 using g_props::run_camera_selftest;
+using g_props::run_settings_selftest;
 using g_props::run_props_selftest;
 using g_props::run_signs_selftest;
 using g_props::run_sign_shot;
@@ -459,7 +439,7 @@ namespace g_browser { int run_browser_selftest_body(bool live); int run_browser_
 using g_browser::run_browser_selftest_body;
 using g_browser::run_browser_selftest;
 using g_browser::run_keybind_selftest;
-namespace g_session { int run_input_selftest(); int run_background_selftest(); int run_save_roundtrip(); }
+namespace g_session { int run_input_selftest(); int run_background_selftest(); int run_save_roundtrip(); int run_save_fail_selftest(); int run_load_fail_selftest(); }
 namespace g_weather { int run_weather_selftest(); }   // AT.1a
 using g_weather::run_weather_selftest;
 namespace g_render { int run_scene_shot(); int run_sky_shot(); int run_atmo_shot(); int run_render_selftest(); int run_lit_oracle(); }
@@ -471,6 +451,8 @@ using g_render::run_lit_oracle;
 using g_session::run_input_selftest;
 using g_session::run_background_selftest;
 using g_session::run_save_roundtrip;
+using g_session::run_save_fail_selftest;
+using g_session::run_load_fail_selftest;
 struct PassAgg {
     std::vector<double> frame, ms[P_COUNT];
     std::vector<long> draws[P_COUNT], verts[P_COUNT], setup[P_COUNT];

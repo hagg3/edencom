@@ -1,4 +1,4 @@
-// K.3: --mods-selftest, the mod manager's model (WORKING/mod-manager-plan-2026-11-01.md §6). Headless, no world;
+// K.3: --mods-selftest, the mod manager's model (WORKING/mod-manager-plan-2026-11-01.md §6). Headless (leg 9 plays a world);
 // give it a fresh --docs. Mode group "packs".
 //
 //   1. no mods.json: every Packs/ folder loads, by name; the mod-list hash is stable across loads
@@ -12,6 +12,8 @@
 //   7. installZip: top-folder and root zips, deflate + stored, update in place (folder name kept), and every
 //      refusal (unsafe name, no pack.json, refused pack, checksum, CRC, folder clash) leaves Packs/ untouched
 //   8. parseCatalogue
+//   9. QA.7: the world-entry "mods that are off or missing" notice names the world's disabled pack (needs a world:
+//      plays two small 64z worlds in --docs)
 #include <algorithm>
 #include <zlib.h>
 #include "harness.h"
@@ -244,8 +246,10 @@ int run_mods_selftest() {
     {
         const std::string zdir = docs + "/zips";
         eden_fs_make_dirs(zdir);
-        std::string png = readFile(std::string(eden_platform_bundle_root()) + "/packs/emod_example/textures/oak.png");
-        if (png.empty()) png = readFile(std::string(eden_platform_bundle_root()) + "/media/packs/emod_example/textures/oak.png");
+        std::string png;
+        for (const std::string& base : {std::string(eden_platform_documents_root()) + "/pack-fixtures", std::string(eden_platform_bundle_root()) + "/packs",
+                                        std::string(eden_platform_bundle_root()) + "/../../port/tools/fixtures/packs"})
+            if (png.empty()) png = readFile(base + "/emod_example/textures/oak.png");
         auto deltaJson = [&](const char* ver, const char* id = "delta") {
             return std::string("{\"format\": 1, \"id\": \"") + id + "\", \"version\": \"" + ver +
                    "\", \"tiles\": {\"oak\": {\"png\": \"textures/oak.png\"}}, \"blocks\": [{\"id\": \"plank\", \"faces\": "
@@ -328,30 +332,48 @@ int run_mods_selftest() {
         check(ok && out.size() == 1 && out[0].id == "stairs" && out[0].size == 1234 && out[0].needs.size() == 1 && dropped == 4 && notJson,
               "parseCatalogue keeps valid entries, drops no-sha / non-http / duplicate / reserved ones, refuses non-JSON", d);
     }
-    // ---- 9. the bundled example pack (WB): copied once, the marker remembers, a removal sticks, an id that
-    // another folder already holds is not copied again
+    // ---- 9. the world-entry notice (QA.7, A2-04): said once the load is done, from THIS world's palette. A world
+    //      placing alpha:cube is saved, a world without mods is played next (so a notice computed on the load's
+    //      first frame, the old placement, reads a palette without alpha), alpha is switched off, the first world
+    //      reopens: the status names alpha. Reopening the plain world says nothing.
     {
-        const std::string bundle = eden_platform_bundle_root();
-        eden_fs_remove_tree(packs);
-        std::vector<std::string> l1, l2, l3, l4;
-        const int n1 = ContentPack::seedBundledPacks(docs, bundle, &l1);
-        std::vector<ContentPack::ModPack> sv = scan(docs);
-        const ContentPack::ModPack* w = byId(sv, "wonders");
-        const bool loaded = w && w->state == ContentPack::PACK_LOADED && w->scripts.size() == 13 && w->blocks.size() == 23;
-        const bool marked = readFile(packs + "/.bundled") == "wonders\n" && !eden_fs_exists(packs + "/.seed.partial");
-        const int n2 = ContentPack::seedBundledPacks(docs, bundle, &l2);
-        const bool removed = ContentPack::removePackFolder(docs, "wonders");
-        const int n3 = ContentPack::seedBundledPacks(docs, bundle, &l3);
-        const bool stayedGone = !eden_fs_exists(packs + "/wonders");
-        eden_fs_remove(packs + "/.bundled");
-        mkPack(packs + "/my_copy", packJson("wonders", "0.1", ""));
-        const int n4 = ContentPack::seedBundledPacks(docs, bundle, &l4);
-        const bool notDuplicated = !eden_fs_exists(packs + "/wonders") && readFile(packs + "/.bundled") == "wonders\n";
-        std::snprintf(d, sizeof d, "n %d %d %d %d loaded %d marked %d removed %d gone %d dup %d first '%s' last '%s'", n1, n2, n3, n4,
-                      loaded, marked, removed, stayedGone, notDuplicated, l1.empty() ? "" : l1[0].c_str(), l4.empty() ? "" : l4[0].c_str());
-        check(n1 == 1 && loaded && marked && n2 == 0 && l2.empty() && removed && n3 == 0 && stayedGone && n4 == 0 && notDuplicated &&
-                  !l4.empty() && l4[0] == "wonders: already in Packs",
-              "seedBundledPacks: Wonder Blocks copied once and loads; a removal sticks; a folder holding its id is enough", d);
+        auto toast = []() {
+            const std::string* t = World::getWorld->hud->sb->current();
+            return t ? *t : std::string();
+        };
+        ContentPack::setPackEnabled(docs, "alpha", true);
+        std::string why;
+        int id = -1;
+        bool opened = open_world("mods-notice", 64);
+        if (opened) {
+            id = BlockRegistry::acquire("alpha:cube", &why);
+            const PlayerState p = player_state();
+            eden_console_setblock((int)p.x, (int)p.z, (int)p.y + 3, id);
+            tick(10);
+            save_world();
+            opened = quit_to_menu();
+        }
+        opened = opened && open_world("mods-plain", 64);
+        tick(10);
+        const std::string plain0 = toast();
+        opened = opened && quit_to_menu();
+        ContentPack::setPackEnabled(docs, "alpha", false);
+        g_load_thread_delay_ms = 400;   // the load outlives several frames, so the old first-frame read sees the plain palette
+        opened = opened && open_world("mods-notice", 64);
+        g_load_thread_delay_ms = 0;
+        tick(10);
+        const std::string got = toast();
+        opened = opened && quit_to_menu();
+        opened = opened && open_world("mods-plain", 64);
+        tick(10);
+        const std::string plain1 = toast();
+        opened = opened && quit_to_menu();
+        ContentPack::setPackEnabled(docs, "alpha", true);
+        std::snprintf(d, sizeof d, "opened %d id %d (%s) notice \"%s\" plain \"%s\" / \"%s\"", opened, id, why.c_str(), got.c_str(),
+                      plain0.c_str(), plain1.c_str());
+        check(opened && id >= 128 && got.find("mods that are off or missing") != std::string::npos && got.find("alpha") != std::string::npos &&
+                  plain0.find("mods that") == std::string::npos && plain1.find("mods that") == std::string::npos,
+              "entering a world whose palette names a disabled pack says so; a world without mods says nothing", d);
     }
     eden_fs_remove_tree(packs);
     ContentPack::loadMods(docs, false);

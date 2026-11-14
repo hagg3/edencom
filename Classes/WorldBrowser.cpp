@@ -48,6 +48,8 @@ namespace {
 // ---------------------------------------------------------------------------------------------
 const char* const kArchiveManifest = "https://hagg3.github.io/edenarchive/assets/data/worlds.json";
 const char* const kArchiveFiles    = "https://hagg3.github.io/edenarchive/assets/worldfiles/";
+// QA.4 (A3-04): the largest preview PNG side decoded (IHDR checked first, so <= 16 MB RGBA; docs/networking.md).
+const unsigned PREVIEW_MAX_SIDE = 2048;
 
 struct Server { const char* app; const char* files; };
 // Index = source - 1. The legacy pair is what ShareUtil.mm's commented-out history calls the
@@ -394,6 +396,7 @@ struct BrowserImpl {
     Texture2D* previewTex;
     float previewAspect, previewDelay;
     bool  previewMissing;
+    bool  previewTooBig;                  // QA.4: refused by PREVIEW_MAX_* (IHDR), never decoded
 
     int   dlJob, dlSrc;
     DlState dl;
@@ -406,7 +409,7 @@ struct BrowserImpl {
 
     BrowserImpl() : open(false), src(WorldBrowser::SRC_ARCHIVE), pitch(30), btnH(30), titleY(0), fieldPt(0), built(false),
                     showTitle(true), shownBusy(false), listTouch(-1), barTouch(-1), downRow(-1), tabTouch(-1), modeTouch(-1),
-                    previewJob(0), previewTex(NULL), previewAspect(0), previewDelay(0), previewMissing(false),
+                    previewJob(0), previewTex(NULL), previewAspect(0), previewDelay(0), previewMissing(false), previewTooBig(false),
                     dlJob(0), dlSrc(0), dl(DL_IDLE), dlFrac(0), clock(0) {
         panel = list = detail = previewBox = CGRectMake(0, 0, 0, 0);
         for (int r = 0; r < WB_MAX_ROWS; r++) rowBuilt[r] = false;
@@ -475,7 +478,7 @@ struct BrowserImpl {
         SourceState& s = S[source];
         eden_net_release(s.listJob);
         const int start = append ? (int)s.all.size() : 0;
-        s.listJob = eden_net_fetch(listUrl(source, s.mode, s.query, start).c_str(), NULL);
+        s.listJob = eden_net_fetch(listUrl(source, s.mode, s.query, start).c_str(), NULL, 0);
         s.listAppend = append;
         if (!append) { s.all.clear(); s.view.clear(); s.selected = -1; s.first = 0; s.more = false; }
         s.status = s.listJob ? "" : "No network on this device";
@@ -528,6 +531,7 @@ struct BrowserImpl {
         if (previewTex) { delete previewTex; previewTex = NULL; }
         previewKey.clear();
         previewMissing = false;
+        previewTooBig = false;
     }
 
     void pollPreview(float etime) {
@@ -542,7 +546,7 @@ struct BrowserImpl {
         if (!previewJob) {
             previewDelay -= etime;
             if (previewDelay > 0.0f) return;
-            previewJob = eden_net_fetch(previewUrl(src, e->id).c_str(), NULL);
+            previewJob = eden_net_fetch(previewUrl(src, e->id).c_str(), NULL, 0);
             if (!previewJob) { previewKey = want; previewMissing = true; std::fprintf(stderr, "[eden-browser] preview fetch could not start: %s\n", previewUrl(src, e->id).c_str()); }
             return;
         }
@@ -562,8 +566,13 @@ struct BrowserImpl {
             if (b && len > 24 && b[0] == 0x89 && b[1] == 'P' && b[2] == 'N' && b[3] == 'G') {
                 const unsigned w = (b[16] << 24) | (b[17] << 16) | (b[18] << 8) | b[19];
                 const unsigned h = (b[20] << 24) | (b[21] << 16) | (b[22] << 8) | b[23];
+                // QA.4 (A3-04): a preview is a thumbnail; one past 2048 px a side is refused before it is
+                // written or decoded (a 747 KB 16000x16000 PNG of zeros decodes to 1.78 GB). "Preview missing".
+                const bool tooBig = WorldBrowser::previewTooBig(w, h);
+                previewTooBig = tooBig;
+                if (tooBig) std::fprintf(stderr, "[eden-browser] preview PNG %ux%u refused (over %u px a side)\n", w, h, PREVIEW_MAX_SIDE);
                 const std::string path = documents_dir() + "/.emod-preview.png";
-                FILE* f = std::fopen(path.c_str(), "wb");
+                FILE* f = tooBig ? NULL : std::fopen(path.c_str(), "wb");
                 if (f && w > 0 && h > 0) {
                     const bool wrote = std::fwrite(b, 1, (size_t)len, f) == (size_t)len;
                     std::fclose(f);
@@ -629,7 +638,7 @@ struct BrowserImpl {
         dlEntry = *e;
         dlSrc = src;
         dlFrac = 0;
-        dlJob = eden_net_fetch(worldUrl(src, e->id).c_str(), dlFile.c_str());
+        dlJob = eden_net_fetch(worldUrl(src, e->id).c_str(), dlFile.c_str(), 4ll << 30);
         if (!dlJob) { cleanTemps(); dlStatus = "No network on this device"; return; }
         dl = DL_FETCH;
         dlStatus.clear();
@@ -1031,6 +1040,7 @@ void WorldBrowser::render() {
     SourceState& s = d->cur();
 
     Graphics::kitState();
+    Focus::screen(this, &d->download);   // UX.7: Return = Download (in the search field it is still Search)
 
     fill(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, kScrim);
     bevel(d->panel, BEVEL_WINDOW);
@@ -1093,8 +1103,12 @@ void WorldBrowser::render() {
         bevel(pb, BEVEL_SUNKEN);
         d->name.draw(d->detail.origin.x + dp, yTop, kText);
         yTop -= d->name.height() + du(4);
+        // UX.2 (B5): the meta lines stop above the action bar (the Download button, and More), dropping
+        // lines from the end rather than running under it.
+        const float metaFloor = d->download.rect().origin.y + d->download.rect().size.height + du(4);
         for (int k = 0; k < WB_META; k++) {
             if (d->meta[k].empty()) continue;
+            if (yTop - d->meta[k].height() < metaFloor) break;
             d->meta[k].draw(d->detail.origin.x + dp, yTop, kTextSecondary);
             yTop -= d->meta[k].height();
         }
@@ -1190,6 +1204,8 @@ bool WorldBrowser::listLoading() const { return d->S[d->src].listJob != 0; }
 bool WorldBrowser::anyBusy() { return s_browser && s_browser->busy(); }
 bool WorldBrowser::busy() const { return d->dl != DL_IDLE; }
 bool WorldBrowser::previewShown() const { return d->previewTex != NULL; }
+bool WorldBrowser::previewRefused() const { return d->previewTooBig; }
+bool WorldBrowser::previewTooBig(unsigned w, unsigned h) { return w > PREVIEW_MAX_SIDE || h > PREVIEW_MAX_SIDE; }
 const char* WorldBrowser::statusText() const {
     return !d->dlStatus.empty() ? d->dlStatus.c_str() : d->S[d->src].status.c_str();
 }

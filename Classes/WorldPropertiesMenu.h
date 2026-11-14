@@ -43,7 +43,7 @@ public:
     bool open(WorldNode* node);
     void close();
     bool isOpen() const       { return m_open; }
-    void back();              // Escape / Back: discards, as New World's Back does
+    void back();              // Escape / Back: closes at once, or asks "Discard changes?" when saveEnabled() (UX.9)
     void update(float etime);
     void render();
 

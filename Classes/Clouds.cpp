@@ -15,7 +15,7 @@
 #include "Globals.h"
 
 extern "C" int eden_atmo_tier(void);      // port/src/seam/Settings.cpp (AT.1a): 0 Off, 1 Low, 2 High
-extern "C" int eden_atmo_element(int e);  // 2 = atmo.clouds, 3 = atmo.cloud_shadows
+extern "C" int eden_atmo_element(int e);  // AT_CLOUDS, AT_CLOUD_SHADOWS (Weather.h)
 extern float P_ZFAR;
 
 namespace {
@@ -29,8 +29,8 @@ bool g_drawn = false, g_shadow = false;
 float g_shadowStrength = 0;
 long g_uploads = 0;
 
-bool layerOn() { return eden_atmo_tier() > 0 && eden_atmo_element(2); }
-bool shadowOn() { return eden_atmo_tier() >= 2 && eden_atmo_element(3); }
+bool layerOn() { return eden_atmo_element(AT_CLOUDS); }
+bool shadowOn() { return eden_atmo_tier() >= 2 && eden_atmo_element(AT_CLOUD_SHADOWS); }
 
 // splitmix64 of a lattice point: the map's noise, the same in every run.
 float lattice(int x, int y, int period, uint64_t seed) {

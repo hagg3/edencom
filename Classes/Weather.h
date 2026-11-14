@@ -13,6 +13,10 @@
 // (0,0) is the snow mountain, (0,1) the pyramid, (0,2) the oasis.
 bool eden_default_region(float x, float z, int* px, int* pz);
 
+// AT.1a: the Atmosphere element switches (the argument of eden_atmo_element(), the index of the seam's
+// kAtmoKey[] / kAtmoTier[] in port/src/seam/Settings.cpp). Insert only at the end, before AT_COUNT.
+enum { AT_PRECIP, AT_SPLASH, AT_CLOUDS, AT_CLOUD_SHADOWS, AT_HEIGHT_FOG, AT_AMBIENT, AT_WATER_TINT, AT_GLINT, AT_HALOS, AT_COUNT };
+
 namespace Weather {
     // A spell's kind (the record's byte 0). Snow and dry are where, not what (plan A5): precipAt().
     enum Kind { CLEAR = 0, OVERCAST = 1, RAIN = 2, STORM = 3, KIND_COUNT = 4 };
@@ -65,6 +69,12 @@ namespace Weather {
     // Start a spell of `k` now (secs <= 0: a drawn length). snow: precipitation is snow everywhere
     // until the next set() or the end of this spell (flags bit 1).
     void set(Kind k, float secs, bool snow);
+    // QA.25: the one name table. name(k) is "clear".."storm" (NULL out of range). kindByName takes those names
+    // and "snow" (a where, not a kind: returns RAIN and sets *snow); -1 for anything else. setByName is the
+    // console / Lua / cvar path: false (nothing changed) for an unknown name, else Weather::set().
+    const char* name(int k);
+    int kindByName(const char* s, bool* snow);
+    bool setByName(const char* s, float secs);
     // The kind's intensity target: clear 0, overcast 0.4, rain 0.7, storm 1.
     float targetFor(Kind k);
     // A spell's mean length in days (clear 0.5, overcast 0.2, rain 0.15, storm 0.06; drawn from

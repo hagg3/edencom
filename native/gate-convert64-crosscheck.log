@@ -1,0 +1,40 @@
+[eden-convert64] the world opened at height 256                 PASS  {"height":256,"bands":16,"column_bytes":131072,"creature_slots":400,"t_blocks":21233664,"xz_stride":73728,"container":"emod"}
+[eden-convert64] a high-band block reads back before saving     PASS  getblock(64234,64235,220) = 13
+[eden-convert64] a door pair straddles the cut                  PASS  door at 63/64: 66/70
+[eden-convert64] three creatures spawn on the deck above the cut PASS  3 of 3
+[eden-convert64] the world is listed after the save             PASS  convert64-xcheck
+[eden-convert64] the 256z world exports to a NewDawn256z .eden (twice) PASS  Worlds/1794591070-tsoc/world.emod -> /Users/sam/emod/native/gate-docs/convert64-crosscheck/convert64-ref/src256.eden: ok
+[eden-convert64] ref /Users/sam/emod/native/gate-docs/convert64-crosscheck/convert64-ref/src256.eden
+[eden-convert64] placed 172
+[eden-convert64] engine-emod {"ok":true,"columns":39,"blocksDiscarded":172,"columnsAffected":39,"doorsOrphaned":3,"creaturesDropped":3,"creaturesRelocated":0,"creaturesOverflow":0}
+[eden-convert64] convertWorldTo64 succeeds                      PASS  emod: ok 1 "", discarded 172, orphaned doors 3
+[eden-convert64] it discards at least the bricks and door tops placed PASS  emod: ok 1 "", discarded 172, orphaned doors 3
+[eden-convert64] it clears exactly the three orphaned doors     PASS  emod: ok 1 "", discarded 172, orphaned doors 3
+[eden-convert64] it drops the creatures above the cut           PASS  emod: dropped 3, relocated 0, overflow 0
+[eden-convert64] engine-eden {"ok":true,"columns":39,"blocksDiscarded":172,"columnsAffected":39,"doorsOrphaned":3,"creaturesDropped":3,"creaturesRelocated":0,"creaturesOverflow":0}
+[eden-convert64] convertWorldTo64 succeeds                      PASS  eden: ok 1 "", discarded 172, orphaned doors 3
+[eden-convert64] it discards at least the bricks and door tops placed PASS  eden: ok 1 "", discarded 172, orphaned doors 3
+[eden-convert64] it clears exactly the three orphaned doors     PASS  eden: ok 1 "", discarded 172, orphaned doors 3
+[eden-convert64] it drops the creatures above the cut           PASS  eden: dropped 3, relocated 0, overflow 0
+[eden-convert64] ALL PASS (0 failure(s))
+[convert64-xcheck] eden_native --convert64-selftest passes              PASS  exit 0
+[convert64-xcheck] the run left a reference .eden                       PASS  /Users/sam/emod/native/gate-docs/convert64-crosscheck/convert64-ref/src256.eden
+[convert64-xcheck] eden-convert.js --to-64 {"columns":39,"blocksDiscarded":172,"columnsAffected":39,"doorsOrphaned":3,"creaturesDropped":3,"creaturesRelocated":0,"creaturesOverflow":0}
+[convert64-xcheck] the CLI saw real content above y=63                  PASS  172 blocks, 3 creatures
+[convert64-xcheck] engine (emod) reported ok                            PASS  {"ok":true,"columns":39,"blocksDiscarded":172,"columnsAffected":39,"doorsOrphaned":3,"creaturesDropped":3,"creaturesRelocated":0,"creaturesOverflow":0}
+[convert64-xcheck] columns agrees (engine emod 39 == CLI 39)            PASS
+[convert64-xcheck] blocksDiscarded agrees (engine emod 172 == CLI 172)  PASS
+[convert64-xcheck] columnsAffected agrees (engine emod 39 == CLI 39)    PASS
+[convert64-xcheck] doorsOrphaned agrees (engine emod 3 == CLI 3)        PASS
+[convert64-xcheck] creaturesDropped agrees (engine emod 3 == CLI 3)     PASS
+[convert64-xcheck] creaturesRelocated agrees (engine emod 0 == CLI 0)   PASS
+[convert64-xcheck] creaturesOverflow agrees (engine emod 0 == CLI 0)    PASS
+[convert64-xcheck] engine (eden) reported ok                            PASS  {"ok":true,"columns":39,"blocksDiscarded":172,"columnsAffected":39,"doorsOrphaned":3,"creaturesDropped":3,"creaturesRelocated":0,"creaturesOverflow":0}
+[convert64-xcheck] columns agrees (engine eden 39 == CLI 39)            PASS
+[convert64-xcheck] blocksDiscarded agrees (engine eden 172 == CLI 172)  PASS
+[convert64-xcheck] columnsAffected agrees (engine eden 39 == CLI 39)    PASS
+[convert64-xcheck] doorsOrphaned agrees (engine eden 3 == CLI 3)        PASS
+[convert64-xcheck] creaturesDropped agrees (engine eden 3 == CLI 3)     PASS
+[convert64-xcheck] creaturesRelocated agrees (engine eden 0 == CLI 0)   PASS
+[convert64-xcheck] creaturesOverflow agrees (engine eden 0 == CLI 0)    PASS
+[convert64-xcheck] ALL PASS (0 failure(s))

@@ -28,7 +28,7 @@ A mod pack (`docs/content-packs.md`) may list Lua sources:
   world closes (`Terrain::unloadTerrain(true)`) or the next one loads. A **multiplayer session runs none** (no
   pack loads in a session; K.3-S, the server side, is deferred). Runtime state is never saved.
 
-A larger worked example is the bundled `media/packs/wonders/` (`docs/content-packs.md`, and its own
+A larger worked example is the bundled `port/tools/fixtures/packs/wonders/` (`docs/content-packs.md`, and its own
 `README.md`): thirteen files sharing helpers through a global table, one feature per file, every event, all of it
 driven by placing, mining, painting or standing on blocks (no console needed): throttled `tick` loops (`eden.wait`
 inside a `tick` handler makes it skip frames), timed builds laid out facing the player, a breadth-first flood over
@@ -41,7 +41,9 @@ inside a `tick` handler makes it skip frames), timed builds laid out facing the 
 | `assert error getmetatable ipairs next pairs pcall rawequal rawget rawlen rawset select setmetatable tonumber tostring type xpcall _G _VERSION` | `print` writes to the console (`[pack] text`, at most 50 lines a frame) |
 | `coroutine` `string` `table` `math` `utf8` | `load(chunk [, name [, mode [, env]]])`: a **string** chunk, **text only** (the mode is ignored) |
 | `eden` (below) | `collectgarbage`: only `"count"`, `"collect"`, `"step"` |
-| | `string.dump` removed; `string.find/match/gmatch/gsub` refuse a subject over 64 KiB (C code can't be paused) |
+| | `setmetatable` refuses a metatable with a `__gc` field: **finalizers are not available to mod scripts** (Lua runs them with the count hook off, so a looping one would hang the game; QA.3) |
+| | `string.dump` removed; `string.find/match/gmatch/gsub` raise `pattern too complex` past 10 M match steps per call (per `gmatch` iteration), and refuse a subject over 64 KiB (a backstop for the plain `find`) |
+| | `string.rep` with an empty string and separator returns `""` at once; `table.move/insert/remove` raise `too many elements to move` past 2^24 elements (a lying `__len`, `table.move({}, 1, 2^62, 2)`) |
 | | `dofile`, `loadfile` removed; `io`, `os`, `package`, `debug`, `require` **do not exist** (never compiled: the vendored tree has no `liolib.c`, `loslib.c`, `loadlib.c`, `ldblib.c`, `linit.c`) |
 
 No filesystem, network, clock or process access exists to escape to. `math.random` is seeded per state.
@@ -54,11 +56,14 @@ No filesystem, network, clock or process access exists to escape to. `math.rando
 | `packPerFrame` instructions | 100 000 | the running handler is **paused to the next frame** (the count hook yields it) |
 | `allPerFrame` (every pack) | 250 000 | same, for whichever pack is running |
 | `maxPreempts` | 600 frames | a handler paused that many frames in a row without an `eden.wait` is **stopped** with an error |
-| `hardPerResume` | 5 000 000 | code that can't pause (a `table.sort` comparator, a `gsub` callback, a `__gc`, a coroutine the script made itself) gets an error instead; also past 2× in a frame |
+| `hardPerResume` | 5 000 000 | code that can't pause (a `table.sort` comparator, a `gsub` callback, a metamethod called from C, a coroutine the script made itself) gets an error instead; also past 2× in a frame |
 | `maxErrors` | 100 | the pack's scripts are stopped (`scripts` says why) |
 | world edits | `CmdScript::WORK_PER_FRAME` (20 000, shared with command blocks) | the edit call pauses the handler to the next frame and carries on where it stopped |
 
-The hook runs every 1000 instructions (`HOOK_EVERY`). A pack over its frame budget starts no new handler that
+The hook runs every 1000 instructions (`HOOK_EVERY`) of Lua code; it never runs inside a C function's own loop,
+so the vendored Lua bounds every loop whose length a script chooses (above; the patch is
+`port/tools/vendor-lua-emod.patch`, applied by `vendor-lua.sh`). Gate: `--lua-selftest` leg 12, each hostile call
+erroring in under 2 s (they ran 20 s to forever before). A pack over its frame budget starts no new handler that
 frame (events and ticks wait in their coroutines), so one pack can't starve the game; it can only slow itself.
 
 ## The `eden` API (version 1)
@@ -77,7 +82,7 @@ does not raise, it shows in the return values.
 | `eden.cmd(line [, ax, ay, az])` | `cells, refused, why` | any block line; anchored at the player's feet cell (or the anchor given); `wait` is refused (use `eden.wait`) |
 | `eden.paint(x, y, z, colour)`, `eden.explode(x, y, z)`, `eden.fire(x, y, z)`, `eden.tp(x, y, z)`, `eden.run(x, y, z)` | `ok` | `paint` `explode` `fire` `tp` `run` |
 | `eden.spawn(creature [, x, y, z])`, `eden.say(text)`, `eden.time(t)`, `eden.timefreeze(on)`, `eden.heal()`, `eden.hurt(n)`, `eden.gold(n)`, `eden.sound(n)`, `eden.flash()` | `ok` | the verbs of those names |
-| `eden.weather([kind [, secs]])` | `kind, intensity, locked, precip` | AT.1c: with `kind` (`clear` `overcast` `rain` `storm` `snow`) starts that spell now (`secs` optional); `precip` is what falls at the player (`none` `rain` `snow` `dry`). Errors while Gameplay > Weather is off |
+| `eden.weather([kind [, secs]])` | `kind, intensity, locked, precip` | AT.1c: with `kind` (`clear` `overcast` `rain` `storm` `snow`; names from `Weather::kindByName`, shared with the console `weather` verb and the `weather.now` cvar, QA.25) starts that spell now (`secs` optional); `precip` is what falls at the player (`none` `rain` `snow` `dry`). Errors while Gameplay > Weather is off |
 | `eden.weatherlock(on)` | — | AT.1c: a locked spell never ends |
 | `eden.get(x, y, z)` | `name, colour`, or nothing if the cell is not resident | — |
 | `eden.blockid(name)` | the byte this world uses for a name, or nothing | `CmdScript::blockByName` |
@@ -144,5 +149,11 @@ in a first script to keep the handlers and call them from an `eden.command` (`TE
 - The count hook yields only the coroutine the scheduler resumed (`Pack::running`) and only when
   `lua_isyieldable`; anywhere else it can only raise. Lua copies the hook and the extra space (the `Pack*`) into
   every coroutine from the thread that creates it.
-- `lua_close` runs pending `__gc` finalizers; `Pack::closing` makes the hook raise at once, so none runs script
-  code at close.
+- No script finalizer exists: `safeSetmetatable` refuses a `__gc` field, and Lua only marks an object for
+  finalization inside `setmetatable` (adding `__gc` later does nothing). That matters because `lgc.c` `GCTM` runs a
+  finalizer with `allowhook = 0`, at a collect and inside `lua_close`, where no budget could stop it. The only
+  finalizer is the host's own `editGc` (C). `Pack::closing` still makes the hook raise at close.
+- Upstream Lua's C loops that a script sizes are patched (`MATCH_STEP` in `lstrlib.c`, `str_rep`, `TAB_MAXMOVE` in
+  `ltablib.c`; every hunk is marked `Emod (QA.3)`). A re-vendor keeps them: `vendor-lua.sh` applies
+  `port/tools/vendor-lua-emod.patch` and stops if it doesn't apply. Any new library function a script can reach
+  that loops over a script-chosen count needs the same treatment.

@@ -19,6 +19,11 @@ void eden_native_audio_tick(void);
 // Closes the device and drops every voice. Reached from SimpleAudioEngine::end() as well.
 void eden_native_audio_shutdown(void);
 
+// QA.18: SDL_EVENT_LOW_MEMORY. Stops every effect voice and frees the decoded-clip cache.
+void eden_native_audio_drop_clips(void);
+int eden_native_audio_clip_count(void);
+long long eden_native_audio_clip_bytes(void);
+
 // --- probes, for --audio-selftest --------------------------------------------------------------
 // Decode `name` (through the same cache a real play uses) and report what came out. Returns 1 on
 // success. This is the only way to assert "the decoder handled this format" without a listener,

@@ -26,6 +26,7 @@
 #include "../../../Classes/BlockTraits.h"
 #include "../../../Classes/Hud.h"
 #include "../../../Classes/Json.h"
+#include <chrono>
 
 extern "C" int hudBlocksMap[BLOCK_IDS];
 extern "C" int blockTntMap[BLOCK_IDS];
@@ -295,6 +296,30 @@ int run_json_selftest() {
         check(!v.get("missing") && !v.get("arr")->get("x"), "get on a missing key / a non-object");
         check(v.get("arr")->arr.size() == 2 && v.get("arr")->arr[1].offset == 64, "array element offset");
         n += 9;
+    }
+    // QA.10: duplicate-key detection is O(n) and its message/offset are unchanged (1 MiB, ~96k keys < 200 ms).
+    {
+        std::string doc = "{";
+        int keys = 0;
+        for (; doc.size() < Json::kMaxBytes - 32; ++keys) {
+            if (keys) doc += ",";
+            doc += strf("\"k%d\":0", keys);
+        }
+        doc += "}";
+        Json::Value v;
+        Json::Error e;
+        const auto t0 = std::chrono::steady_clock::now();
+        const bool okBig = Json::parse(doc.data(), doc.size(), &v, &e);
+        const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+        check(okBig && (int)v.obj.size() == keys, strf("%d distinct keys accepted", keys));
+        check(ms < 200, strf("%d keys parsed in %lld ms (< 200)", keys, ms));
+        const size_t dupAt = doc.size() - 1;
+        doc.insert(dupAt, strf(",\"k%d\":1", keys / 2));
+        check(!Json::parse(doc.data(), doc.size(), &v, &e) && e.offset == dupAt + 1 && e.message.find("duplicate key") != std::string::npos,
+              strf("late duplicate refused at %zu (%zu: %s)", dupAt + 1, e.offset, e.message.c_str()));
+        const char* small = "{\"a\":1,\"b\":2,\"a\":3}";
+        check(!Json::parse(small, std::strlen(small), &v, &e) && e.offset == 13 && e.message.find("duplicate key") != std::string::npos, "small duplicate at 13");
+        n += 4;
     }
     std::printf("[json] %d checks, %d failure(s) -> %s\n", n, g_fail, g_fail ? "FAILURES" : "ALL PASS");
     return g_fail ? 1 : 0;

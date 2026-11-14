@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """example-pack-art.py -- draws the PNG tiles of the bundled example mod pack (K.2-4).
 
-  python3 port/tools/example-pack-art.py media/packs/emod_example/textures
+  python3 port/tools/example-pack-art.py port/tools/fixtures/packs/emod_example/textures
 
 Procedural 32x32 art, written once and committed; kept so the tiles can be redrawn. Stdlib only.
 """
@@ -86,4 +86,4 @@ def main(out):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else "media/packs/emod_example/textures")
+    main(sys.argv[1] if len(sys.argv) > 1 else "port/tools/fixtures/packs/emod_example/textures")

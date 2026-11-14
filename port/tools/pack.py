@@ -216,6 +216,7 @@ class _Reader(object):
             if self.i < self.n and self.p[self.i] == close:
                 self.i += 1
                 return V("object" if is_obj else "array", items, off)
+            seen = set()  # QA.10: O(1) duplicate check
             while True:
                 if is_obj:
                     self.skip()
@@ -223,8 +224,9 @@ class _Reader(object):
                         self.fail("object key (a string) expected")
                     key_at = self.i
                     key = self.string()
-                    if any(k == key for k, _ in items):
+                    if key in seen:
                         self.fail("duplicate key", key_at)
+                    seen.add(key)
                     self.skip()
                     if self.i >= self.n or self.p[self.i] != 0x3A:
                         self.fail("':' expected")

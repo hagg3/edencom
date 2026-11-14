@@ -106,6 +106,7 @@ private:
     CGRect m_panel, m_list, m_paneRect, m_barRect;
     float  m_titleY, m_rowH, m_phase;
     std::string m_profileName;
+    bool m_hasName=false;   // UX.4 (U10): Join waits for a profile name
 
     struct RowUi {
         GLW::Label title, sub, players, ping, q;

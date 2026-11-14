@@ -1024,6 +1024,152 @@ void section_fallback() {
     std::remove(p.c_str());
 }
 
+// QA.4 (A3-03): a record whose RecordHeader declares more decoded bytes than its type allows is
+// refused BEFORE the buffer is sized ("does not decode" = damage), so a 36 KB file cannot ask for 1 GiB.
+void section_ceiling() {
+    say("== decode ceilings (QA.4): an oversized CREATURES record is damage, never an allocation");
+    std::string p = P("ceiling.emod");
+    std::remove(p.c_str());
+    Rng r(44);
+    std::vector<uint8_t> hdr = eden_header(4, "ceil", 0), c0 = make_column(r, 4, 10, 10, 40), got;
+    std::vector<uint8_t> full(EDEN_MAX_SLOTS * EDEN_ENT, 0), over(full.size() + EDEN_ENT, 0);
+    check(record_decoded_max(T_CREATURES) == 24000 && record_decoded_max(T_SIGN_TRAILER) == (1u << 20) &&
+          record_decoded_max(T_BLOCK_PALETTE) == 8 + 128 * 68 && record_decoded_max(T_PROVENANCE) == MAX_PAYLOAD &&
+          record_decoded_max(200) == MAX_PAYLOAD && record_decoded_max(T_COLUMN) == 16 * BAND,
+          "the ceiling table (emod.py DECODED_MAX, docs/emod-file-format.md)");
+    {
+        EdenWorldStore s;
+        check(s.create(p.c_str(), 4, 1234567), "create()", s.error());
+        s.beginBatch();
+        s.putRecord(T_WORLD_HEADER, hdr.data(), hdr.size());
+        s.putRecord(T_CREATURES, full.data(), full.size());
+        s.putColumn(10, 10, c0.data());
+        check(s.commitBatch(), "a world with 400 creature slots commits", s.error());
+        s.close();
+        check(s.open(p.c_str(), false) && s.readRecord(T_CREATURES, got) == EdenWorldStore::READ_OK && got.size() == full.size() &&
+              !s.damaged(), "400 slots (exactly the ceiling) read back undamaged");
+        s.close();
+    }
+    std::remove(p.c_str());
+    {
+        EdenWorldStore s;
+        check(s.create(p.c_str(), 4, 1234567), "create()", s.error());
+        s.testUncheckedPut = true;
+        s.beginBatch();
+        s.putRecord(T_WORLD_HEADER, hdr.data(), hdr.size());
+        s.putRecord(T_CREATURES, over.data(), over.size());
+        s.putColumn(10, 10, c0.data());
+        check(s.commitBatch(), "a 401-slot CREATURES commits under the test hook", s.error());
+        s.testUncheckedPut = false;
+        s.close();
+        check(s.open(p.c_str(), false) && !s.damaged(), "the file frames and commits cleanly", s.error());
+        check(s.readRecord(T_CREATURES, got) == EdenWorldStore::READ_AIR_DAMAGED && got.empty() && s.damaged(),
+              "401 slots (one over the ceiling) does not decode: READ_AIR_DAMAGED");
+        s.close();
+    }
+    // The audit's bomb: the same record with `aux` rewritten to 1 GiB, CRCs resealed.
+    std::vector<uint8_t> f;
+    read_file(p, f);
+    bool patched = false;
+    for (const RecPos& q : walk(f)) {
+        if (q.type != T_CREATURES) continue;
+        wr32(&f[(size_t)q.off + 16], 1u << 30);
+        reseal(f, q);
+        patched = true;
+    }
+    write_file(p, f);
+    EdenWorldStore s;
+    check(patched && s.open(p.c_str(), false) && !s.damaged(), "the 1 GiB-aux file frames and commits cleanly", s.error());
+    got.clear();
+    got.shrink_to_fit();
+    check(s.readRecord(T_CREATURES, got) == EdenWorldStore::READ_AIR_DAMAGED && s.damaged(),
+          "a CREATURES declaring 1 GiB does not decode: READ_AIR_DAMAGED");
+    check(got.capacity() < (1u << 20), sfmt("and nothing was sized for it (buffer capacity %zu B < 1 MiB)", got.capacity()).c_str());
+    std::vector<std::string> v = s.verify();
+    check(!v.empty(), "verify reports it", v.empty() ? "" : v[0]);
+    uint8_t col[4 * BAND];
+    check(s.readColumn(10, 10, col) == EdenWorldStore::READ_OK, "the world's columns still load");
+    s.close();
+    std::remove(p.c_str());
+}
+
+// QA.13 (audit A3-05): the resync budget. A tail of nothing but tags, each claiming the rest of the file,
+// made open() quadratic (1 MiB = 7.9 s). emod.py's resync_selftest builds the same tail and asserts the same numbers.
+void resync_tail(std::vector<uint8_t>& f, size_t n) {
+    size_t at = f.size(), size = at + n;
+    f.resize(size);
+    for (size_t c = at; c + 8 <= size; c += 8) {
+        std::memcpy(&f[c], "EmR1", 4);
+        wr32(&f[c + 4], (uint32_t)(size - c - 16));   // read as payload_len by the candidate 16 bytes back
+    }
+}
+
+// The spec's rule, restated: candidates from p + 8, each charged 32 + payload_len (= the rest of the file here).
+void resync_expect(uint64_t p, uint64_t size, uint64_t* charged, uint64_t* attempts, bool* out) {
+    uint64_t left = EdenWorldStore::resyncBudget(size);
+    *charged = 0; *attempts = 0; *out = false;
+    for (uint64_t q = p + 8; q + REC_HEADER <= size; q += 8) {
+        uint64_t c = size - q;
+        if (c > left) { *out = true; return; }
+        left -= c; *charged += c; ++*attempts;
+    }
+}
+
+void section_resync() {
+    say("== resync budget (QA.13): a tail of tags that each claim the rest of the file opens in linear time");
+    std::string p = P("resync.emod");
+    std::remove(p.c_str());
+    Rng r(45);
+    std::vector<uint8_t> hdr = eden_header(4, "resync", 0), c0 = make_column(r, 4, 10, 10, 40), base;
+    {
+        EdenWorldStore s;
+        check(s.create(p.c_str(), 4, 1234567), "create()", s.error());
+        s.beginBatch();
+        std::vector<uint8_t> cre(200 * EDEN_ENT, 0);
+        s.putRecord(T_WORLD_HEADER, hdr.data(), hdr.size());
+        s.putRecord(T_CREATURES, cre.data(), cre.size());
+        s.putColumn(10, 10, c0.data());
+        check(s.commitBatch(), "a one-column world commits", s.error());
+    }
+    read_file(p, base);
+    check(EdenWorldStore::resyncBudget(1000) == 4000 + (64u << 20), "budget = 4 x file size + 64 MiB (emod.py resync_budget, the spec)");
+    struct { size_t tail; bool out; const char* name; } cases[] = {
+        {16u << 10, false, "16 KiB tail (under the budget: reads as before)"},
+        {4u << 20, true, "4 MiB tail (the gate)"},
+    };
+    for (const auto& k : cases) {
+        std::vector<uint8_t> f = base;
+        resync_tail(f, k.tail);
+        write_file(p, f);
+        uint64_t wantCharged, wantAttempts;
+        bool wantOut;
+        resync_expect(base.size(), f.size(), &wantCharged, &wantAttempts, &wantOut);
+        EdenWorldStore s;
+        double t0 = now_ms();
+        bool ok = s.open(p.c_str(), false);
+        double ms = now_ms() - t0;
+        say("   %s: open %.1f ms, %llu attempts, %.1f MiB CRC'd of a %.1f MiB budget", k.name, ms,
+            (unsigned long long)s.resyncAttempts(), s.resyncCharged() / 1048576.0, EdenWorldStore::resyncBudget(f.size()) / 1048576.0);
+        check(ok, sfmt("%s opens", k.name).c_str(), s.error());
+        check(ms < 1000, sfmt("in under 1 s (%.1f ms)", ms).c_str());
+        check(wantOut == k.out && s.resyncExhausted() == k.out, k.out ? "the budget runs out" : "the budget does not run out");
+        check(s.resyncCharged() == wantCharged && s.resyncAttempts() == wantAttempts &&
+              s.resyncCharged() <= EdenWorldStore::resyncBudget(f.size()),
+              sfmt("charged exactly what the rule says (%llu B in %llu attempts)", (unsigned long long)wantCharged,
+                   (unsigned long long)wantAttempts).c_str(),
+              sfmt("got %llu B in %llu", (unsigned long long)s.resyncCharged(), (unsigned long long)s.resyncAttempts()));
+        check(s.damaged() == k.out, k.out ? "running out is damage (blocks compaction)" : "a tail alone is not damage");
+        check(s.tailBytes() == k.tail && s.truncationPoint() == base.size(), "the tail is the whole appended region; truncation point = the world's end");
+        uint8_t col[4 * BAND];
+        check(s.columnCount() == 1 && s.readColumn(10, 10, col) == EdenWorldStore::READ_OK && !std::memcmp(col, c0.data(), sizeof col),
+              "the world before it still loads");
+        s.close();
+        EdenWorldStore h;
+        check(h.open(p.c_str(), false, true, true) && h.resyncCharged() <= f.size(), "header-only open stays cheap");
+    }
+    std::remove(p.c_str());
+}
+
 // K.1-2: the block palette (WORKING/block-registry-plan-2026-10-31.md §3, §6 "Format").
 bool palette_has(EdenWorldStore& s, int id, const char* name) {
     std::vector<uint8_t> b;
@@ -1805,6 +1951,8 @@ extern "C" EMOD_EXPORT int eden_emod_selftest_run(const char* fixtureDir, const 
         section_skyclock();
         section_weather();
         section_fallback();
+        section_ceiling();
+        section_resync();
         section_palette();
         if (fixtureDir && *fixtureDir) section_interchange(fixtureDir);
         section_crash();
@@ -1816,9 +1964,4 @@ extern "C" EMOD_EXPORT int eden_emod_selftest_run(const char* fixtureDir, const 
     return g_fails == 0 && g_checks > 0 ? 0 : 1;
 }
 
-// web-port-final:web/tools/headless-emod-store-test.js: the build exports no string helpers, so the paths are
-// fixed — the test copies the pack into MEMFS /emod-fixtures first.
-extern "C" EMOD_EXPORT int eden_emod_selftest_web(int flags) {
-    return eden_emod_selftest_run("/emod-fixtures", "/emod-work", flags, "", "");
-}
 

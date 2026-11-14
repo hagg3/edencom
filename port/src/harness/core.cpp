@@ -1,5 +1,6 @@
 // G.4: the harness core, split out of the old eden_main_native.cpp (see harness.h).
 #include "harness.h"
+#include "../seam/AppLifecycle.h"   // QA.18: eden_app_low_memory
 void eden_settings_focus_changed(int focused);   // SX.7, port/src/seam/Settings.cpp
 
 namespace harness {
@@ -30,6 +31,9 @@ bool SDLCALL eden_lifecycle_event_watch(void*, SDL_Event* ev) {
         case SDL_EVENT_WILL_ENTER_BACKGROUND:
         case SDL_EVENT_TERMINATING:
             g_app->onPageHide();          // save the open world, then stop the loop
+            break;
+        case SDL_EVENT_LOW_MEMORY:
+            eden_app_low_memory();        // QA.18: save + drop caches, keep running
             break;
         case SDL_EVENT_DID_ENTER_FOREGROUND:
             g_app->onVisibilityVisible(); // ...and start it again on the way back
@@ -261,6 +265,17 @@ void check(bool ok, const char* what, const char* detail) {
     if (!ok) g_selftestFailures++;
 }
 
+bool mutation_known(const char* tag, const char* flag, const std::string& value,
+                    std::initializer_list<const char*> names) {
+    if (value.empty()) return true;
+    for (const char* n : names)
+        if (value == n) { std::printf("[%s] mutation: %s\n", tag, value.c_str()); return true; }
+    std::string list;
+    for (const char* n : names) { if (!list.empty()) list += "|"; list += n; }
+    std::fprintf(stderr, "[%s] unknown %s=%s (%s)\n", tag, flag, value.c_str(), list.c_str());
+    return false;
+}
+
 // I.3: every kit control drawn on a screen of --shot's tour lies inside the safe rect (the screen,
 // where there are no insets). Run at a device preset (`--fit-selftest --device=iphone16`). The pause
 // menu fits a phone since I.4 (two columns when one does not fit), so it is a plain pass too; the
@@ -305,6 +320,8 @@ void pump_events() {
                 eden_settings_focus_changed(1);
                 if (g_app) g_app->onVisibilityVisible();
                 break;
+            case SDL_EVENT_WINDOW_ENTER_FULLSCREEN: eden_window_fullscreen_changed(1); break;   // UX.5
+            case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN: eden_window_fullscreen_changed(0); break;
             case SDL_EVENT_WINDOW_SAFE_AREA_CHANGED:   // I.2: rotation, island side, home bar
                 eden_native_apply_display_mode();
                 break;
@@ -595,5 +612,120 @@ void mkdirs(const std::string& path) {
 
 bool starts_with(const char* s, const char* p) { return std::strncmp(s, p, std::strlen(p)) == 0; }
 
+
+
+// ---------------------------------------------------------------------------------------------
+// One iteration of the interactive loop (main() runs it while g_running; the pacing rules are the
+// comment above that call). FALSE = g_app is gone, leave the loop.
+//
+// QA.8 (A1-01): while the app is not animating (an unfocused desktop window, App::onVisibilityHidden;
+// also iOS between WILL_ENTER_BACKGROUND and the suspend) the iteration is the IDLE branch: block in
+// SDL_WaitEventTimeout until an event or kIdleWaitMs, pump, and draw nothing. Before it the loop had no
+// wait at all with the fps cap at 0 and spun a core at 91-100 % (tens of thousands of iterations/s).
+// U9: a multiplayer session keeps running at the wait timeout (eden_mp_idle_pump: MpWorld::tick +
+// update, the GLDialog modal's path), so its queues drain, its POSVEL keeps going out and the server
+// sees no difference; single-player stays frozen. PW.7 / FT.18 add callers to this branch.
+// ---------------------------------------------------------------------------------------------
+int g_idleIterations = 0;   // --background-selftest's focus leg counts them
+int g_idleMpPumps = 0;      // ...and --mp-join --mp-unfocus= these
+
+bool interactive_iteration(double& nextFrameMs) {
+    if (!g_app) return false;
+    if (!g_app->isAnimating()) {
+        constexpr int kIdleWaitMs = 100;
+        SDL_WaitEventTimeout(nullptr, kIdleWaitMs);   // returns at once on any event (focus back, quit)
+        nextFrameMs = 0.0;                            // the frame schedule restarts on the way back
+        ++g_idleIterations;
+        pump_events();
+        if (!g_app) return false;
+        settings_pump();
+        // etime as App::drawFrame clamps it; a stale stamp (focus came and went) is just the clamp.
+        static double lastIdleMs = 0.0;
+        const double now = eden_platform_now_ms();
+        const float etime = lastIdleMs > 0.0 ? (float)std::min((now - lastIdleMs) / 1000.0, 0.1) : 0.1f;
+        lastIdleMs = now;
+        if (!g_app->isAnimating() && eden_mp_idle_pump(etime)) ++g_idleMpPumps;
+        eden_native_audio_tick();
+        eden_heap_pressure_tick();
+        return true;
+    }
+    constexpr double kPaceSlackMs = 2.0;
+    power_frame();
+    // FT.15a --power-exp lever (off by default): menu30.
+    int capFps = eden_get_fps_cap();
+    if (eden_power_exp(EDEN_PEXP_MENU30) && power_game_mode() != GAME_MODE_PLAY && (capFps == 0 || capFps > 30))
+        capFps = 30;
+    if (capFps > 0) {
+        const double interval = 1000.0 / (double)capFps;
+        const double now = eden_platform_now_ms();
+        // First frame, a cap change, or a stall (a slow load, a backgrounded app): restart
+        // the schedule rather than rushing frames out to catch up. The early side allows the
+        // slack: a frame that wakes kPaceSlackMs early and finishes in under that (a cheap menu
+        // frame) is on schedule, and restarting there skipped every other sleep (FT.15c:
+        // menu30 ran ~58 fps on the Air 2).
+        if (nextFrameMs == 0.0 || now - nextFrameMs > interval ||
+            nextFrameMs - now > interval + kPaceSlackMs)
+            nextFrameMs = now;
+        const double wait = nextFrameMs - now - kPaceSlackMs;
+        if (wait > 0.0) {
+            const double p0 = eden_platform_now_ms();
+            // PW.5 (G5): a true sleep to the slack, no busy tail. SDL_DelayPrecise spun the last
+            // stretch (~7 CPU points, 0 W measured). `spin` restores it for A/B.
+            if (eden_power_exp(EDEN_PEXP_SPIN)) SDL_DelayPrecise((Uint64)(wait * 1e6));
+            else SDL_Delay((Uint32)wait);
+            power_note_pace(eden_platform_now_ms() - p0);
+        }
+        nextFrameMs += interval;
+    } else {
+        nextFrameMs = 0.0;
+    }
+    pump_events();
+    if (!g_app) return false;
+    settings_pump();
+    // BEFORE drawFrame: World::update() is what consumes the queued touches, so input
+    // pushed after it would land a frame late — the same ordering public/eden-input.js
+    // gets by running inside the rAF callback ahead of the engine tick.
+    eden_native_input_tick();
+    eden_live_commands_tick();
+    eden_look_trace_frame();   // L.0: after the pump, before World::update reads the touches
+    if (g_app->isAnimating()) g_app->drawFrame(true);
+    power_frame_end();
+    // AFTER the tick that queued this frame's sounds, so a sound fired now is bound to
+    // the device in the same frame rather than the next one.
+    eden_native_audio_tick();
+    eden_heap_pressure_tick();
+    return true;
+}
+
+// QA.8: an unfocused spell through the REAL loop: SDL_EVENT_WINDOW_FOCUS_LOST pushed and pumped like
+// alt-tab, `ms` of interactive_iteration(), then FOCUS_GAINED. Returns the loop passes made while
+// unfocused, or -1 if the focus loss did not stop the frame; *wakeMs = how long FOCUS_GAINED took to
+// bring the frame back. pump_events() needs g_tickInput to run headless; it is restored.
+int run_unfocused(double ms, double* wakeMs) {
+    const bool prevTick = g_tickInput;
+    g_tickInput = true;
+    auto push = [](Uint32 type) {
+        SDL_Event ev;
+        SDL_zero(ev);
+        ev.type = type;
+        ev.common.timestamp = SDL_GetTicksNS();
+        SDL_PushEvent(&ev);
+    };
+    double next = 0.0;
+    push(SDL_EVENT_WINDOW_FOCUS_LOST);
+    interactive_iteration(next);
+    int passes = -1;
+    if (!g_app->isAnimating()) {
+        passes = 0;
+        const double t0 = eden_platform_now_ms();
+        while (eden_platform_now_ms() - t0 < ms && interactive_iteration(next)) ++passes;
+    }
+    push(SDL_EVENT_WINDOW_FOCUS_GAINED);
+    const double t1 = eden_platform_now_ms();
+    for (int i = 0; i < 5 && g_app && !g_app->isAnimating(); ++i) interactive_iteration(next);
+    if (wakeMs) *wakeMs = eden_platform_now_ms() - t1;
+    g_tickInput = prevTick;
+    return passes;
+}
 
 }  // namespace harness

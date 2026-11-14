@@ -16,7 +16,6 @@ extern "C" {
 // 1 while a real GL context is current; 0 headless (or before creation / after a failed one), when
 // every R:: call goes to the null backend.
 int  eden_gl_have_context(void);
-int  eden_gl_context_is_lost(void);   // always 0 natively (no context loss on SDL's GL)
 
 // Context ownership. The context exists before the engine is built: Graphics::initGraphics runs during
 // World::World(). Returns 1 on success, 0 headless (not an error).
@@ -33,8 +32,6 @@ void eden_gl_context_get_drawable_size(int* width, int* height);
 void eden_gl_set_pick_viewport(int width, int height);
 void eden_gl_context_set_drawable_size(int width, int height);
 void eden_set_drawable_size(int width, int height);
-// Binds the default framebuffer and the letterbox viewport.
-void eden_gl_context_bind_default_framebuffer(void);
 // The 3D pass's render resolution (N.4.11): below 100 % render scale the play-mode world pass draws into
 // an offscreen framebuffer that _end upscales into the letterbox; at 100 % both are no-ops.
 void eden_scene_pass_begin(void);

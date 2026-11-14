@@ -63,6 +63,7 @@ format itself is specified in [eden-file-format.md](eden-file-format.md).
 - File-scope statics in `FileManager.cpp`: `saveFile` (an `EdenFile*` since G.2b-4), `sfh` (in-memory
   header), `indexes` (directory hashmap), `cur_dir_offset`, `file_version`,
   `imgHash` (a `std::string`, `""` = none), and since Stage S/D `emodStore` (the open `EdenWorldStore`), `emodHeader`, `worldTrailer`.
+  **Header values are sanitised at read (QA.2):** `loadEmodWorld` runs `fm_sanitizeHeader` on the in-memory copy before anything reads `sfh`: `pos`/`home` must be finite and within ±10,000,000 (else the default map centre for `home`, `home` for `pos`), `yaw` finite (else 0); stderr says `[eden] header: …`. The 192 bytes on disk are not rewritten by the load (rule 5); a bad value is replaced by whatever normal commit comes next. Gate: `port/tools/hostile-world-gate.sh` (`emod.py hostile` writes the bad header/creature).
   **The FileManager is effectively a singleton with global mutable state**
   — two worlds can never be open at once.
 
@@ -79,7 +80,7 @@ flowchart TD
     N --> N1[choose seed: flat=0 / default=333333]
     N1 --> N2[pick spawn: default world → 1 of 10<br/>hand-authored spawn points]
     N2 --> N3[readColumn ×18×18 window<br/>← bundle RLE / generator]
-    N3 --> N4[saveWorld → creates the .eden file]
+    N3 --> N4[first saveWorld → creates the .emod<br/>main thread, finishLoadOnMain]
     E --> E1[read header, detect version]
     E1 --> E2{version garbage?}
     E2 -- yes --> E3[convertFile: 1.x → v2 rewrite]
@@ -98,6 +99,10 @@ Notes:
   types 0–8 (dirt/rivers/mountains/desert/ponies/beach/mix/flat) are the offline
   generator's biome recipes and are only reachable by editing the code. The menu's
   "flat world" option sets `genflat` → seed 0.
+- A new world's first save is not in `loadWorld`'s body since QA.14: it sets `firstSaveOwed`, and
+  `FileManager::finishLoadOnMain` saves on the main thread (at once on an inline load; in
+  `World::loadWorld`'s `doneLoading==2` branch on a threaded one, docs/execution-flow.md). The save's
+  `endDynamics` reaches audio, which the main thread ticks during the load.
 - The 10 default spawn points (`spx/spz/spy/spyaw` arrays in `FileManager::loadWorld`) are
   hand-picked scenic locations; consecutive new worlds avoid repeating the last one.
 - `player->pos`/`yaw`, `home`, seed, golden cubes, region sky colors all come from the
@@ -262,6 +267,33 @@ from the directory alone, with no extra I/O:
   save there**; the 2010 target could get away with that, but a modern iOS kills a backgrounded app
   with no further callback.
 
+#### When a save fails (QA.5, 2026-11-12; audit A2-01)
+`saveWorld()`, `saveWorld(Vector)`, `saveWorldKeepDynamics()` and `saveEmodWorld` return `bool`
+(`true` = committed; a session's RAM commit is always `true`). A failure (the commit's write, most
+often a full disk: the store says "write failed (disk full?)"; or a record that would not stage, the
+`CREATURES`/`WORLD_HEADER` puts included) goes through `FileManager::saveFailed`: an
+`emod: save failed: <why>` line on stderr (the first of a run, then every 30th; `emod: save committed
+again after N failure(s)` when one succeeds), the HUD status line ("Could not save: the device may be
+full. ..."), `saveFailing()`/`lastSaveError()`, `g_save_failures`. The store has rolled back and every
+`modified` flag is still set, so **nothing is lost while the window stays as it is**, and the rule for
+callers is: whatever would overwrite or drop the window does not go ahead on a failed save.
+
+| Caller | On a failed save |
+|---|---|
+| Save & Quit (`Hud`, `delayedaction==5`) | stays in the world; `GLDialog` "Could not save this world": **Try again** (the same Save & Quit), **Leave without saving** (`exit_to_menu`, logs `emod: left the world without saving`), **Stay** |
+| `warpToHome` / `warpToPoint` (now `bool`) | return `false` before `unloadTerrain`: no reload, the player stays put. The HUD warp keeps the status line; a death respawn waits out `saveHeld()` and retries |
+| Bulk reload (a jump) | starts only if the save committed or `anyChunkModified()` is false; else `hit_load_counter` stays 1 and it retries after the hold. Nothing streams meanwhile |
+| Ring evict-save (a walk) | the slot keeps its modified occupant and the incoming column waits (`g_ring_evict_held`); one failed attempt a frame |
+| Autosave, Save button, Set Home, console `save` | report only (the button no longer says "World Saved"; `save` prints the error) |
+| App background / terminate | can't stay: logs, and `eden_app_will_background` answers `EDEN_BG_FAILED` (3) |
+
+**The hold:** for `SAVE_RETRY_HOLD_MS` (2 s) after a failure `saveHeld()` is true and the automatic
+saves (`saveWorldKeepDynamics`: evict and autosave; the bulk reload's and a respawn's) skip without
+writing, so a stream against a full disk does not retry every frame. The player's own saves always
+try. Gate: `--save-fail-selftest` (RLIMIT_FSIZE at the file's size, SIGXFSZ ignored; stdout/stderr
+relayed through a `cat` forked first, or the limit would also stop the log); `--save-fail-mutate=exit`
+/ `=stream` must fail it (linux CI).
+
 #### Save-on-background — the ports' addition (Phase N Stage 4.2, 2026-09-06)
 `eden_app_will_background()` (`port/src/seam/AppLifecycle.cpp`, a portable seam file the native
 build compiles unchanged) is the one entry point every host calls when the app is going away. It
@@ -272,6 +304,7 @@ owns the "is it safe?" policy, so no host re-implements it:
 | `EDEN_BG_SAVED` (0) | `game_mode == GAME_MODE_PLAY`, `target_game_mode == GAME_MODE_PLAY`, `menu->loading == 0`, `terrain->loaded`, and both `menu->selected_world` and `terrain->world_name` are non-NULL → `fm->saveWorld()` |
 | `EDEN_BG_NO_WORLD` (1) | on the menu / between worlds |
 | `EDEN_BG_BUSY` (2) | a load is in flight, or the world is not settled |
+| `EDEN_BG_FAILED` (3) | QA.5: settled, but the save failed (stderr says why; the last commit is intact, the edits since are lost when the OS ends the process) |
 | `EDEN_BG_NO_ENGINE` (-1) | `World::getWorld` not up (or already gone) |
 
 Two things about this that are easy to get wrong:
@@ -290,7 +323,7 @@ The watch is not a stylistic choice: `SDL_events.h` requires it for those events
 iOS/Android they are delivered synchronously from inside the OS's background callback and the main
 loop may never reach `SDL_PollEvent` again. `SDL_EVENT_WINDOW_FOCUS_LOST` deliberately does **not**
 save — a desktop window that lost focus is not going anywhere (it only pauses the loop,
-`onVisibilityHidden`). Regression gates: `eden_native --background-selftest` (policy and SDL wiring; the web policy test is retired).
+`onVisibilityHidden`; since QA.8 the paused loop sleeps in `SDL_WaitEventTimeout`, docs/execution-flow.md). `SDL_EVENT_LOW_MEMORY` (QA.18, iOS/Android warning before jetsam/LMK) runs the same save without stopping the loop (`eden_app_low_memory`) and frees the audio clip cache. Regression gates: `eden_native --background-selftest` (policy and SDL wiring; the web policy test is retired).
 
 ## `.emod` worlds (Stage S / S.4, 2026-10-09) — modified from stock
 The port's second world container: an append-only log of per-column zstd records
@@ -313,6 +346,19 @@ The port's second world container: an append-only log of per-column zstd records
   print an `emod:` line on stderr (`printg`/`NSLog` compile out of Release). A record lost to a
   **frame CRC** failure has no trustworthy key, so that column reads as never saved (the spec's
   rule); its bytes stay in the file because damage blocks compaction.
+  **QA.17 (A2-06, U8 = notice only):** a damaged store also says so **once per load** on the HUD status
+  line ("Part of this world's file is damaged…", `fm_damageNotice`): from `finishLoadOnMain` (damage found at
+  open or by the load's column reads, which may be on the load thread) or from a column read in play
+  (`doneLoading==0`, main thread). No repair (export + reimport is the remedy; a one-tap repair is a Stage E
+  row). Gate: `--load-fail-selftest`'s last three legs (a byte of the first batch flipped).
+- **Small files are written whole and atomically (QA.17, A2-08):** prefs, `servers.txt`, `mods.json`,
+  `hotbar.json` and a finished download go through `eden_fs_write_atomic` / `eden_fs_replace_atomic`
+  (`port/src/shim/foundation/eden_fs.h`: `.tmp`, every write + `fsync` + `fclose` checked, one replacing
+  rename, `MoveFileExW(REPLACE_EXISTING | WRITE_THROUGH)` on Windows). A failed write leaves the old file
+  byte for byte; prefs keep the new value in memory and print one `emod: could not write …` line per 50.
+  The old code renamed an unchecked scratch file over prefs (a full disk lost every setting) and, on
+  Windows, removed the old file first. Gate: `--base-selftest`'s `test_prefs_full_disk` (RLIMIT_FSIZE at
+  half the file, SIGXFSZ ignored; SKIP on Windows). A new whole-file writer (K.P's `Packs/.bundled`) uses it too.
 - **Save** (`saveEmodWorld`, from `saveWorld` after `endDynamics`, or from `saveWorldKeepDynamics`
   without it — B.5b-1b's evict-save and autosave; a commit zeroes `g_seconds_since_save`): every resident column with a
   `modified` chunk, plus `CREATURES` and `WORLD_HEADER`, in **one** committed batch (the store adds
@@ -432,13 +478,12 @@ Plan: `WORKING/world-folders-plan-2026-10-30.md` (§3 layout, §4 adoption). A l
 `Documents/<X>.emod` to `Documents/Worlds/<id>/world.emod`; the world *key* (`WorldNode::file_name`,
 `Terrain::world_name`) is the Documents-relative path, so a folder world's key is `Worlds/<id>/world.emod` and every
 `docs+"/"+key` join still works. New worlds save into a folder since K.0w-1 (`newWorldFileName`).
-**Not yet (K.0w-3/4):** convert-on-play, Get Worlds and Storage import still write a loose `.emod` into the root (the
+**Not yet (K.0w-3/4):** convert-on-play and Get Worlds still write a loose `.emod` into the root (the
 next scan adopts it); the shared lister and "last played first" order.
 
-`FileManager::adoptLooseWorlds()` runs at the top of every world-list scan (`Menu::loadWorlds`, the Storage seam's
-`eden_storage_scan`) and in the harness's `play_file`/`open_props`. It is a no-op while a conversion
+`FileManager::adoptLooseWorlds()` runs at the top of every world-list scan (`Menu::loadWorlds`) and in the harness's `play_file`/`open_props`. It is a no-op while a conversion
 (`conversionActive`), a Get Worlds download (`WorldBrowser::anyBusy`, a static: `Menu`'s constructor scans before
-`World::menu` is set) or a Storage import (`eden_storage_import_active`) runs, and it never touches the open world
+`World::menu` is set) runs, and it never touches the open world
 (`emodStore->path()` or `Terrain::world_name`).
 - **Recovery first.** Each `Worlds/.<id>.migrating/`: holding `world.emod` → roll forward (delete the `.adopt`
   journal, then no-replace rename to `<id>`, a fresh `<id>-xxxx` on a clash); not holding it → roll back (each
@@ -467,8 +512,7 @@ next scan adopts it); the shared lister and "last played first" order.
   points on the fixture). Every existing gate that writes a loose world and plays it now goes through adoption.
 
 ### World folders: staging (K.0w-3)
-Convert-on-play (`FileManager::convertStep`), Get Worlds (`WorldBrowser`) and the Storage import
-(`eden_storage_import_*`) no longer write into the Documents root. Each writes `Worlds/.<id>.partial/world.emod`
+Convert-on-play (`FileManager::convertStep`) and Get Worlds (`WorldBrowser`) no longer write into the Documents root. Each writes `Worlds/.<id>.partial/world.emod`
 (Get Worlds also `download` there; id = `downloadWorldId`, else `newWorldId`), and the **commit point is one
 no-replace rename** of that dir to `Worlds/<id>` (`FileManager::commitStaging`; a fresh `-xxxx` id if taken).
 Before it the world is only a dot-dir (swept by `cleanConversionTemps` when no job is live; the browser removes
@@ -549,12 +593,12 @@ more; convert-on-play reports progress through `convertStep`'s percent. A 1.x fi
   tail. The mode it means is `"r+b"`. If sharing ever ships, point it at `renameWorld` rather than
   reviving this.
 
-## Where "Documents" is, and the two port hooks (Phase N Stage 2, 2026-09-05)
-`FileManager`'s constructor and `saveWorld` each grew one NULL-by-default hook, declared in
-`Classes/FileManager.h`. With both NULL — the stock path — behaviour is byte-for-byte what it was.
-The native entry point installs both (`port/src/harness/`).
+## Where "Documents" is (Phase N Stage 2, 2026-09-05)
+`FileManager`'s constructor takes the save directory from `eden_platform_documents_root()` (QA.21 turned the
+`eden_documents_root_hook` and `eden_save_backup_hook` function pointers into this direct call; the backup hook had
+no caller since S.8, and `save_backup.cpp` went with it: an `.emod` save makes no `.bak`, the append-only commit is the protection).
 
-- **`eden_documents_root_hook`** returns the save directory. NULL falls back to
+- **The save directory.** returns the save directory. NULL falls back to
   `eden_platform_documents_root()` (G.2b-4; before that, the stock
   `NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)` + `objectAtIndex:0`
   lookup, which the retired web build's Foundation shim answered with that same root). The native build installs it and points it at `~/Library/Application Support/Emod` on macOS, `%APPDATA%\Emod\
@@ -571,22 +615,6 @@ The native entry point installs both (`port/src/harness/`).
   `Library/Caches` it is backed up and never purged.
   Why the else branch was once load-bearing for the web build's Foundation shim is in the comment
   above it in `FileManager.cpp`; since G.2b-4 it asks the seam directly.
-- **`eden_save_backup_hook`** — *dormant since S.8 (2026-10-11):* native still installs it, but its
-  only call site was the deleted `.eden` branch of `saveWorld(Vector)`, so nothing calls it and an
-  `.emod` save makes no `.bak` (the append-only commit is the protection). As built: it ran at the top
-  of the `.eden` save with the world file's path, before anything wrote to it, so a host could copy
-  the last-known-good bytes to `<path>.bak`. The web build guarded file opens in its Foundation shim
-  instead. Native installed it, because
-  Apple's real `NSFileHandle` is a class cluster with `-writeData:` on a private subclass — there
-  is no honest place to hang the shim's deferred-until-first-write guard. Both call the same
-  implementation, `port/src/shim/foundation/save_backup.cpp`, which is where the rules live
-  (skip a missing/zero-length source, skip at or above `g_save_inplace_threshold`, delete a
-  partial `.bak`, skip if Settings › World › Saves › "Keep a save backup" (`save_backup` in `kSettings[]`,
-  `Settings.cpp`) is off). (The Linux/Windows Foundation shim's `NSFileHandle` writer also called
-  them until G.2b-4/G.3 removed it.) The `.emod` store writes through `FILE*`, not `NSFileHandle`, so the toggle has no
-  effect on a world save today. The `.bak` was what `eden_load_restore_backup()` (web recovery
-  dialog) restored.
-
 Why the native default is not `~/Documents`: macOS will not let an unsigned command-line tool
 write there and **redirects the writes into `~/Library/Containers/<UUID>/Data/Documents` with no
 error at any layer** — so every pre-Stage-2 native save landed in an opaque directory the OS may
@@ -599,7 +627,8 @@ point migrates those in once (`migrate_legacy_saves`, `port/src/harness/`).
   both are owned by the load pthread during a load and the main thread after — never both.
   Lifetime bugs lurk if you reorder operations.
 - A modified column must be saved **before** streaming overwrites it — the evict-save in the ring
-  streamer and the call order in `prepareAndLoadGeometry` are deliberate.
+  streamer and the call order in `prepareAndLoadGeometry` are deliberate. **And only if that save
+  committed** (QA.5): check the `bool`; "When a save fails" lists what each caller does instead.
 - (`.eden`, historical) The directory hashmap and the file could diverge between `readDirectory()`
   calls; the stock save re-read it at the start of every save.
 - (`.eden` layout) Appended columns place themselves relative to the creature block, whose size is now derived
@@ -622,9 +651,10 @@ point migrates those in once (`migrate_legacy_saves`, `port/src/harness/`).
   reports a refused load through `eden_report_load_failure` (`port/src/seam/LoadFailure.cpp`),
   and `World::update` checks `eden_load_failed()` at the `doneLoading==2` transition and stays on
   the menu, or the engine would render a `Terrain` that was cleared-but-never-repopulated
-  (reproducibly crashed within a frame or two). On native the refusal is silent: the recovery
-  dialog that showed the reason and offered `eden_load_restore_backup()` was the web build's JS, and
-  nothing native reads `eden_load_failed_world()` yet.
+  (reproducibly crashed within a frame or two). QA.6: the flag is cleared where the next load starts (it used to
+  stay set, refusing every later world until restart), and the menu status bar shows the reason. The web build's
+  recovery dialog and its `eden_load_restore_backup()`/`eden_load_failed_world()` exports are gone.
+  Gate: `--load-fail-selftest` (a world with a flipped file-header CRC, then a good one in the same process).
 
 ## Safe vs. risky to modify
 - **Safe:** adding data to the `reserved` header bytes (that's what it's for —
@@ -646,10 +676,28 @@ point migrates those in once (`migrate_legacy_saves`, `port/src/harness/`).
 - **F12:** `getName`, `probeWorldHeight` and `emodPairsWith` open the `.emod` header-only (`open(path,false,true,true)`). A world whose column records are corrupt is no longer listed as `error~`; it fails on load via the load-failure path.
 
 ### World folders: the shared lister (K.0w-4)
-`FileManager::listWorlds(std::vector<WorldEntry>*)` is the only world list: `Menu::loadWorlds` and the Storage seam
-(`eden_storage_scan/nth/list_worlds`) both call it (after `adoptLooseWorlds`), so row N cannot disagree. Order (D6):
+`FileManager::listWorlds(std::vector<WorldEntry>*)` is the only world list: `Menu::loadWorlds` calls it (after `adoptLooseWorlds`). Order (D6):
 folder worlds and loose `.emod` by `world.emod` mtime, newest first, ties by key; then dropped sources
 (`needs_convert`) by name. A `.eden`/archive with a paired `.emod` is hidden and its size goes on that entry's
 `original_bytes` (a folder world reads its `original.*`). Skips: `Eden.eden.archive`, PNGs, `error~` names. Behaviour
 change: Storage now lists archives too (the menu always did). Delete, photo, share and trailer paths were already on
 `worldDirOf`/`photoPathOf`/`sidecarPathOf` (K.0w-1…3).
+
+## The hotbar sidecar `Worlds/<id>/hotbar.json` (UX.8-3)
+Not part of the save format: a small JSON file beside `world.emod`, owned by `Classes/Hotbar` (model in `docs/ui.md`
+"Hotbar model"). Never exported into `.eden`, never sent in multiplayer; deleting it only resets that world's bar.
+```
+{ "v":1, "sel":3, "bars":[[ {"id":2}, {"id":7,"c":12}, {"mod":"wonders:marble"}, {"c":31}, null, ... ]] }
+```
+- `id` = stock block id 1..127 (frozen, rule 4) or a tool sentinel (1000 sign, 1001 command block); `mod` = a mod
+  block's `ns:path` (at most 64 chars; never a palette id, which is per world); `c` = paint colour 0..54 (alone: a
+  colour slot, 1..54); `null` = empty. `sel` -1..8. `bars` holds 1..8 bars of at most 9 slots (short ones are padded);
+  only the first is used until bar flipping exists. Unknown keys are ignored.
+- **Untrusted input.** Read through `Classes/Json` with a 64 KiB cap; any wrong type or out-of-range field refuses the
+  whole file and the world gets the default bar (prefs `hotbar.last` without mod slots, else the stock nine), with one
+  stderr line. A refused file is replaced by the next write, **except** one with `"v"` above 1 (a newer build's),
+  which is never overwritten.
+- **Read** in `FileManager::finishLoadOnMain` (main thread). **Written** only when the bar changed: after
+  `FileManager::saveWorld` and in `World::exitToMenu`, as `hotbar.json.tmp` + rename. Every write also stores the
+  same text in prefs as `hotbar.last`; a world with no folder (loose key, multiplayer session) has only that.
+- Gate: `--hotbar-selftest`.

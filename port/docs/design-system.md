@@ -96,7 +96,11 @@ press state, which is fine for full-colour objects and wrong for glyphs.
 
 The hotbar, toast and status line sit **over the rendered world** rather than on a panel, so they
 invert the palette: dark surfaces, light text. Same bevel mechanics, flipped colors — recognizably
-part of the same UI without fighting the scene for attention.
+part of the same UI without fighting the scene for attention. The hotbar strip (`Hud::renderHotbar`, UX.8-4) follows this:
+dark cells, square corners, hard shadows, no motion; the selected cell is outlined, empty and unavailable cells read
+differently (chip, dimmed). Cell art is the shared `BlockIcon`; sizes scale with `GLW::du()` and keep the `touchFloor()`
+hit size. Desktop: bottom centre with the live key binding as a hint; touch: top centre, 9/7/5 sliding window
+(`docs/ui.md` "Hotbar strip").
 
 ### Disabled controls
 

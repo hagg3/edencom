@@ -129,6 +129,16 @@ bool tileIs(const std::vector<uint8_t>& strip, int index, const uint8_t* rgba, b
     return true;
 }
 
+// K.3-8: the example pack is no longer bundled; it lives in port/tools/fixtures/packs/ (reached from the
+// build dir, native/build) or, on a device, in <Documents>/pack-fixtures/ (CI copies it in).
+std::string fixturePack(const char* id) {
+    const std::string b = eden_platform_bundle_root(), rel = std::string(id);
+    const std::string c[] = {std::string(eden_platform_documents_root()) + "/pack-fixtures/" + rel, b + "/packs/" + rel,
+                             b + "/../../port/tools/fixtures/packs/" + rel};   // <repo>/native/build
+    for (const std::string& s : c) if (eden_fs_exists(s + "/pack.json")) return s;
+    return c[2];
+}
+
 }  // namespace
 
 int run_packs_selftest() {
@@ -136,12 +146,11 @@ int run_packs_selftest() {
     char d[1024];
     const std::string docs = eden_platform_documents_root();
     const std::string packs = docs + "/Packs", off = docs + "/Packs-off";
-    std::string src = std::string(eden_platform_bundle_root()) + "/packs/emod_example";
-    if (!eden_fs_exists(src + "/pack.json")) src = std::string(eden_platform_bundle_root()) + "/media/packs/emod_example";
+    const std::string src = fixturePack("emod_example");
     eden_fs_remove_tree(packs);
     eden_fs_remove_tree(off);
     const bool copied = copyTree(src, packs + "/emod_example");
-    check(copied, "the bundled example pack copies into Documents/Packs", src.c_str());
+    check(copied, "the example pack fixture copies into Documents/Packs", src.c_str());
     if (!copied) return 1;
     eden_fs_make_dirs(packs + "/aa_impostor");
     writeFile(packs + "/aa_impostor/pack.json", "{\"format\": 1, \"id\": \"eden\", \"blocks\": []}\n");

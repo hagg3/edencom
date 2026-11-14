@@ -148,7 +148,6 @@ void eden_rng_seed(uint64_t seed) {
 }
 
 void eden_rng_unpin(void) { g_rng_pinned = false; }
-int  eden_rng_pinned(void) { return g_rng_pinned ? 1 : 0; }
 
 #if defined(EDEN_PROVIDE_RANDOM)
 // Windows only — see platform_shims.h. Built on the same generator as arc4random above (which is

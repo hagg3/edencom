@@ -1,6 +1,7 @@
 // MpSession.cpp — see MpSession.h.
 #include "MpSession.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -37,7 +38,7 @@ static bool parseNum(const std::string& s, double& v) {
     if (s.empty()) return false;
     char* e = nullptr;
     v = std::strtod(s.c_str(), &e);
-    return !*e;
+    return !*e && std::isfinite(v);   // QA.2: SPAWN/POS/VEL reach (int) casts
 }
 
 static bool startsWith(const std::string& s, const char* p) { return s.compare(0, std::strlen(p), p) == 0; }
@@ -52,9 +53,23 @@ void MpSession::setStage(MpStage s) {
     pushSide(std::move(e));
 }
 
+// QA.8 (A3-08): a consumer that stops draining (a stalled main thread, a chat or POSVEL flood) must
+// not grow the side queue without bound. Past the cap the session ends with TooMuchData, as the world
+// queue does. Stage and Error are exempt: they are few, and fail() itself pushes an Error.
+size_t MpSession::eventBytes(const MpSideEvent& e) { return sizeof(MpSideEvent) + e.text.size() + e.name.size(); }
+
 void MpSession::pushSide(MpSideEvent&& e) {
-    std::lock_guard<std::mutex> g(mu_);
-    sideQ_.push_back(std::move(e));
+    const size_t bytes = eventBytes(e);
+    const bool exempt = e.kind == MpSideEvent::Stage || e.kind == MpSideEvent::Error;
+    {
+        std::lock_guard<std::mutex> g(mu_);
+        if (exempt || sideBytes_ + bytes <= cfg_.sideQueueCapBytes) {
+            sideBytes_ += bytes;
+            sideQ_.push_back(std::move(e));
+            return;
+        }
+    }
+    fail(MpError::TooMuchData, "Server sent more than this device can hold");   // net thread: only it parses lines
 }
 
 void MpSession::fail(MpError err, const std::string& text) {
@@ -91,6 +106,7 @@ bool MpSession::start(const MpConfig& cfg) {
     {
         std::lock_guard<std::mutex> g(mu_);
         sideQ_.clear();
+        sideBytes_ = 0;
         worldQ_.clear();
         outQ_.clear();
     }
@@ -130,6 +146,7 @@ bool MpSession::drainSide(std::vector<MpSideEvent>& out) {
     if (sideQ_.empty()) return false;
     for (auto& e : sideQ_) out.push_back(std::move(e));
     sideQ_.clear();
+    sideBytes_ = 0;
     return true;
 }
 

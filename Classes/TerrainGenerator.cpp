@@ -98,7 +98,7 @@ void TerrainGenerator::generateEmptyColumn(int cx,int cz){
 		bounds[3]=(ocx+1)*CHUNK_SIZE;
 		bounds[4]=(cy+1)*CHUNK_SIZE;
 		bounds[5]=(ocz+1)*CHUNK_SIZE;
-        TerrainChunk* chunk;
+        TerrainChunk* chunk=nullptr;
         TerrainChunk* old=ter->chunkTable[threeToOne(ocx,cy,ocz)];  //crash count: 1
         if(old){chunk=old;
             chunk->resetForReuse();
@@ -169,7 +169,7 @@ void TerrainGenerator::generateColumn(int cx,int cz,bool bgthread){
 		bounds[3]=(ocx+1)*CHUNK_SIZE;
 		bounds[4]=(cy+1)*CHUNK_SIZE;
 		bounds[5]=(ocz+1)*CHUNK_SIZE;
-        TerrainChunk* chunk;
+        TerrainChunk* chunk=nullptr;
         TerrainChunk* old=ter->chunkTable[threeToOne(ocx,cy,ocz)];  //crash count: 1
         if(old){chunk=old;
            chunk->resetForReuse();

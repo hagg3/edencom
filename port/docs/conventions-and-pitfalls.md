@@ -14,8 +14,7 @@ and recorded in full in `../../WORKING/archive/PORT-STATUS-2026-08-13.md`'s "dis
 section — this is the durable summary of that.
 
 ## Editing engine code
-Permitted since 2026-07-25; see [`../CLAUDE.md`](../CLAUDE.md) for the three rules that
-replaced the blanket prohibition. In short: the **format/compat freeze is still absolute**
+Permitted since 2026-07-25; three rules replaced the blanket prohibition. In short: the **format/compat freeze is still absolute**
 (no renumbering block types, no regenerating `colorTable`, no reordering or resizing the
 raw-memcpy'd on-disk structs, no touching `CHUNK_SIZE` or the save-format height rules —
 `T_SIZE` reaches no save file since B.5b-2); **platform

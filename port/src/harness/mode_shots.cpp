@@ -1,6 +1,9 @@
 // G.4: split out of the old eden_main_native.cpp (see harness.h). Mode group "shots".
 #include "harness.h"
 #include "eden_fs.h"
+#include "../../../Classes/BlockIcon.h"
+#include "../../../Classes/BlockRegistry.h"
+#include "../../../Classes/Graphics.h"
 extern "C" { int eden_settings_count(void); const char* eden_settings_key(int i); void eden_settings_set_text(int, const char*); }   // K.3-6
 
 using namespace harness;
@@ -229,6 +232,87 @@ void render_kit_page() {
 }
 
 
+// UX.8-2: the `icons` pages: every stock block as BlockIcon draws it, plus a painted few, a mod block
+// (a registered definition, never placed), the missing block, a colour swatch and an empty slot. Drawn full-screen over the
+// in-world frame (the flat icons load with a world). Row-major in block id from 1 (id = row*cols + col + 1; 15 columns at 1136 wide with 64 px cells); the log carries the legend.
+struct IconItem { int kind; int type; int colour; };   // kind 0 stock, 1 mod, 2 swatch, 3 empty
+static std::vector<IconItem> g_iconItems;
+static float g_iconCell = 64;
+static size_t g_iconFirst = 0, g_iconCount = 0;
+static int g_iconCols = 1;
+
+void render_icons_page() {
+    using namespace GLW;
+    const float sc = IS_IPAD ? SCALE_WIDTH : 1.0f;
+    Pen::depthTest(false);
+    Pen::blend(true);
+    Pen::blendFunc(::R::B_ALPHA);
+    Pen::textured(true);
+    ::R::begin2D(SCREEN_WIDTH * sc, SCREEN_HEIGHT * sc, 1.0f);
+    ::Graphics::fillRect(0, 0, SCREEN_WIDTH * sc, SCREEN_HEIGHT * sc, 0.16f, 0.16f, 0.16f, 1.0f);   // the in-game chrome's dark ground
+    const float gap = 8, cell = g_iconCell;
+    for (size_t i = 0; i < g_iconCount; ++i) {
+        const IconItem& it = g_iconItems[g_iconFirst + i];
+        const int col = (int)i % g_iconCols, row = (int)i / g_iconCols;
+        const float x = gap + col * (cell + gap), y = SCREEN_HEIGHT - gap - (row + 1) * (cell + gap) + gap;
+        const CGRect r = CGRectMake(x * sc, y * sc, cell * sc, cell * sc);
+        ::Graphics::fillRect(r.origin.x, r.origin.y, r.origin.x + r.size.width, r.origin.y + r.size.height, 0, 0, 0, 0.55f);
+        const CGRect in = CGRectMake(r.origin.x + 4 * sc, r.origin.y + 4 * sc, r.size.width - 8 * sc, r.size.height - 8 * sc);
+        Pen::textured(true);
+        Pen::color(1, 1, 1, 1);
+        if (it.kind == 0) {
+            BlockIcon::draw(it.type, it.colour, in);
+            if (it.colour) BlockIcon::chip(it.colour, in);
+        } else if (it.kind == 1) {
+            BlockIcon::drawMod("icons:marble", it.colour, in);
+        } else if (it.kind == 2) {
+            BlockIcon::drawSwatch(it.colour, in);
+        } else {
+            BlockIcon::drawEmpty(in);
+        }
+    }
+    ::R::end2D();
+}
+
+static void shoot_icon_pages() {
+    BlockRegistry::BlockDef d = BlockRegistry::defLike("icons:marble", TYPE_STONE);
+    d.faces[5] = d.faces[0];
+    const bool haveDef = BlockRegistry::registerDef(d);
+    g_iconItems.clear();
+    for (int t = 1; t <= STOCK_BLOCK_MAX; ++t) g_iconItems.push_back({0, t, 0});
+    g_iconItems.push_back({0, TYPE_STONE, 12});
+    g_iconItems.push_back({0, TYPE_GRASS, 30});
+    g_iconItems.push_back({0, TYPE_WOOD_RAMP1, 20});
+    g_iconItems.push_back({0, TYPE_WOOD_SIDE3, 20});
+    g_iconItems.push_back({0, TYPE_TNT, 12});
+    g_iconItems.push_back({0, TYPE_FLOWER, 40});
+    if (haveDef) { g_iconItems.push_back({1, 0, 0}); g_iconItems.push_back({1, 0, 12}); }
+    g_iconItems.push_back({0, 200, 0});            // a palette byte with no definition: the missing block
+    g_iconItems.push_back({2, 0, 12});
+    g_iconItems.push_back({2, 0, 40});
+    g_iconItems.push_back({3, 0, 0});
+    std::printf("[eden-shot] icons legend: row-major, block id 1..%d, then painted stone/grass/wood_ramp1/wood_side3/tnt/flower, "
+                "mod block x2, missing(200), swatch x2, empty\n", STOCK_BLOCK_MAX);
+    const float sizes[2] = {64, 32};
+    for (int si = 0; si < 2; ++si) {
+        g_iconCell = sizes[si];
+        const float cell = g_iconCell + 8;
+        g_iconCols = std::max(1, (int)((SCREEN_WIDTH - 8) / cell));
+        const int rows = std::max(1, (int)((SCREEN_HEIGHT - 8) / cell));
+        const size_t per = (size_t)g_iconCols * rows;
+        int page = 1;
+        for (size_t first = 0; first < g_iconItems.size(); first += per, ++page) {
+            g_iconFirst = first;
+            g_iconCount = std::min(per, g_iconItems.size() - first);
+            char label[32];
+            std::snprintf(label, sizeof(label), "icons%s%s%s", si ? "32" : "", page > 1 ? "-" : "", page > 1 ? std::to_string(page).c_str() : "");
+            capture(label, render_icons_page);
+        }
+    }
+    if (haveDef) BlockRegistry::unregisterDef("icons:marble");
+}
+
+
 int run_shot() {
     const char* name = g_opt.world.empty() ? "shot" : g_opt.world.c_str();
     // No vsync: a capture needs drawn frames, not paced ones, and a vsync-blocked swap never
@@ -262,6 +346,22 @@ int run_shot() {
     if (World::getWorld && World::getWorld->menu) World::getWorld->menu->showHome(false);
     tick(4);
     capture("menu");
+    // UX.7: the focus ring (Tab twice: Back, New) and the hover tint (the pointer on Back).
+    // The tour never runs the input tick, so the focus model is stepped by hand here and nowhere else:
+    // every other page draws with no ring and no tint, as before.
+    if (World::getWorld && World::getWorld->menu && GLW::touchFloor() <= 0.0f) {
+        const CGRect pr = World::getWorld->menu->controlRect("back");
+        eden_native_debug_set_pointer(pr.origin.x + pr.size.width * 0.5f, pr.origin.y + pr.size.height * 0.5f, 1);
+        eden_ui_focus_frame();
+        for (int i = 0; i < 2; ++i) eden_ui_focus_key(GLW::Focus::K_TAB);
+        tick(1);
+        eden_ui_focus_frame();
+        capture("menu-focus");
+        eden_native_debug_set_pointer(0, 0, -1);
+        eden_ui_focus_key(GLW::Focus::K_POINTER);
+        eden_ui_focus_frame();
+        eden_ui_focus_frame();                 // two swaps with no render between: no owner, nothing live
+    }
     capture("kit", render_kit_page);
 
     // Stage 5.9: Get Worlds, on the archive tab and on the current server's, each with its first
@@ -498,6 +598,7 @@ int run_shot() {
     eden_console_teleport(g_opt.at[0], g_opt.at[1], g_opt.at[2]);
     tick(g_opt.frames);
     capture("hud");
+    shoot_icon_pages();   // UX.8-2: in a world, where the HUD's flat icons (flower, door, portal, golden cube) are loaded
 
     // The HUD's status line (statusbar.mm, the full-width box). It printed two and a bit copies
     // side by side until Stage 5.6 (Texture2D.cpp's text-texture cap); this is the artefact.
@@ -902,6 +1003,12 @@ void fit_check(const char* label) {
     }
     std::snprintf(what, sizeof(what), "%s: every control inside", label);
     check(total > 0 ? bad == 0 : true, what, detail);
+    // UX.2: and no two controls drawn over each other (B1: the New World Height pair).
+    char ov[600];
+    // A modal dialog (rename, sign-prompt) is drawn over the screen it was opened from; that layering is not an overlap.
+    const int over = (std::strcmp(label, "rename") && std::strcmp(label, "sign-prompt")) ? GLW::debugControlsOverlap(ov, sizeof(ov), pause) : 0;
+    std::snprintf(what, sizeof(what), "%s: no controls overlap", label);
+    check(over == 0, what, ov);
 }
 
 int run_fit_selftest() {
