@@ -327,8 +327,8 @@ def check(out, pages):
         bad.append("publish-to-edencom.sh still removes pages.yml")
     if pub is not None and '"$SRC/site/"' not in pub:
         bad.append("publish-to-edencom.sh does not sync site/")
-    if not (HERE / "pages.yml").exists():
-        bad.append("site/pages.yml is missing")
+    if not ((HERE / "pages.yml").exists() or (REPO / ".github" / "workflows" / "pages.yml").exists()):
+        bad.append("site/pages.yml (or .github/workflows/pages.yml on edencom) is missing")
     for b in bad:
         print("site:", b)
     print(f"site: {len(pages)} pages, {len(bad)} problem(s)")
