@@ -1,6 +1,7 @@
 // UX.8-3: see Hotbar.h.
 #include "Hotbar.h"
 #include "Hud.h"
+#include "Tutorial.h"   // UX.10-3
 #include "World.h"
 #include "Json.h"
 #include "Resources.h"
@@ -278,6 +279,7 @@ bool Hotbar::select(int i) {
         m_dirty = true;
     }
     Resources::getResources->playSound(S_MENU_BUTTON_PRESS);   // UX.8-5: one sound per select, any route
+    Tutorial::note(Tutorial::EV_HOTBAR);
     return true;
 }
 

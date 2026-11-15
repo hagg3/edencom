@@ -25,7 +25,8 @@ extern bool pendingRespawnSound;
 #include "BlockTraits.h"   // K.2-1: per-type behaviour
 #include "ContentPack.h"   // K.2-5: the Mods page
 #include "BlockRegistry.h"
-#include "Hotbar.h"      // UX.8-3: applyHand / noteHand
+#include "Hotbar.h"
+#include "Tutorial.h"   // UX.10-3: the hint card      // UX.8-3: applyHand / noteHand
 #include "BlockIcon.h"   // UX.8-1: the build button's block picture
 
 // FM.3: fly state for the jump/crouch/cycle buttons (Player.mm; fly_* are declared in Player.h)
@@ -690,6 +691,7 @@ void Hud::noteHand(){ Hotbar::get().noteHand(handSlot()); }
 static const int usage_id=15;
 static const int usage_id2=16;
 static const int usage_hb=17;   // UX.8-5: a touch that went down on the hotbar strip
+static const int usage_tut=18;  // UX.10-3: a touch that went down on the tutorial hint card's close box
 static int delayedaction=0;
 static int delayedtimer=0;
 
@@ -742,6 +744,7 @@ static int hbCell[MAX_TOUCHES],hbBase[MAX_TOUCHES];   // UX.8-5: per-touch strip
 static float hbHeld[MAX_TOUCHES];
 static bool hbDone[MAX_TOUCHES],hbMoved[MAX_TOUCHES];
 bool Hud::update(float etime){
+    Tutorial::update(etime);   // UX.10-3: first, before any early return below (it hides itself while a menu is up)
     if(s_hbLabelT>0) s_hbLabelT-=etime;
     if(s_hbChoosing&&mode!=MODE_PICK_BLOCK&&mode!=MODE_PICK_COLOR){   // UX.8-5: picker closed (commit or Escape)
         s_hbChoosing=false;
@@ -909,6 +912,14 @@ bool Hud::update(float etime){
 	
 	
 	for(int i=0;i<MAX_TOUCHES;i++){
+        if(touches[i].inuse==usage_tut){   // UX.10-3: a touch that went down on the hint card's close box
+            if(touches[i].down==M_RELEASE){
+                if(Tutorial::closeHit((float)touches[i].mx,(float)touches[i].my)) Tutorial::tapClose();
+                touches[i].inuse=0;
+                touches[i].down=M_NONE;
+            }
+            continue;
+        }
         if(touches[i].inuse==usage_hb){   // UX.8-5: tap selects, hold clears, drag slides the window
             hbHeld[i]+=etime;
             const bool rel=touches[i].down==M_RELEASE;
@@ -1034,6 +1045,11 @@ bool Hud::update(float etime){
             
         
         if(touches[i].inuse==0&&touches[i].down==M_DOWN){
+            if(!inmenu&&Tutorial::closeHit((float)touches[i].mx,(float)touches[i].my)){   // UX.10-3: the hint card's close box
+                touches[i].inuse=usage_tut;
+                touches[i].down=M_NONE;
+                continue;
+            }
             if(!inmenu){   // UX.8-5: the hotbar strip claims the touch (no placing, no camera turn)
                 const int hc=hotbarCellAt((float)touches[i].mx,(float)touches[i].my);
                 if(hc!=-1){
@@ -2238,6 +2254,23 @@ int Hud::hotbarCellAt(float x,float y){
     return -1;
 }
 
+bool Hud::overlayBlocked(){
+    return hideui||inmenu||at1>0||at2>0||at3>0||fade_out>0||mode==MODE_CAMERA||mode==MODE_PICK_BLOCK||mode==MODE_PICK_COLOR||
+           World::getWorld->player->dead;
+}
+
+int Hud::touchChromeRects(CGRect* out,int cap){
+    int n=0;
+    const Button* bs[]={&rmine,&rburn,&rbuild,&rpaint,&rjumphit,&rcrouchhit,&rmenu};
+    for(const Button* b:bs){
+        if(n<cap&&b->size.width>0) out[n++]=CGRectMake(b->origin.x,b->origin.y,b->size.width,b->size.height);
+    }
+    if(FLY_ALLOWED&&n<cap&&rflyhit.size.width>0) out[n++]=CGRectMake(rflyhit.origin.x,rflyhit.origin.y,rflyhit.size.width,rflyhit.size.height);
+    if(consoleBtnShown()&&n<cap&&rcons.size.width>0) out[n++]=CGRectMake(rcons.origin.x,rcons.origin.y,rcons.size.width,rcons.size.height);
+    if(use_joystick&&n<cap){extern CGRect padbounds;out[n++]=padbounds;}
+    return n;
+}
+
 void Hud::hotbarTarget(int i){
     Hotbar::get().setPickerTarget(i);
     s_hbChoosing=true;
@@ -2641,6 +2674,7 @@ void Hud::render(){
     }
     renderHotbar();   // UX.8-4 (sets the toast lift before the toast draws)
 	sb->render();
+    Tutorial::render();   // UX.10-3: the hint card, above the status toast
     // Crosshair: a small cross with a gap at the screen centre (where mouse mine/build aims), drawn
     // dark first then light so it reads on any background. Hidden with no tool in hand and while a
     // picker is open.

@@ -22,6 +22,7 @@
 #include "SkyCycle.h"   // DN.2: the session-local clock
 #include "Weather.h"    // AT.1b: session-local weather, never saved
 #include "ModScript.h"  // K.4: the player's edits are mod-script events
+#include "Tutorial.h"   // UX.10-3: the tutorial hints watch the same edits
 
 #include <algorithm>
 #include <chrono>
@@ -1284,6 +1285,7 @@ void intentBuild(int x, int z, int y) {
         const int before = World::getWorld->terrain->getLand(x, z, y);
         World::getWorld->terrain->buildBlock(x, z, y);
         ModScript::noteEdit(ModScript::EV_BUILD, x, z, y, before);   // K.4: mod scripts' "build" event
+        Tutorial::note(Tutorial::EV_PLACE);
         return;
     }
     if (World::getWorld->hud->blocktype > STOCK_BLOCK_MAX) return;   // K.1-3 (D7): refused before the edit
@@ -1297,6 +1299,7 @@ void intentMine(int x, int z, int y) {
         const int before = World::getWorld->terrain->getLand(x, z, y);
         World::getWorld->terrain->destroyBlock(x, z, y);
         ModScript::noteEdit(ModScript::EV_MINE, x, z, y, before);   // K.4
+        Tutorial::note(Tutorial::EV_BREAK);
         return;
     }
     Intent in(x, z, y);
@@ -1308,6 +1311,7 @@ void intentPaint(int x, int z, int y, int color) {
     if (!active()) {
         World::getWorld->terrain->paintBlock(x, z, y, color);
         ModScript::noteEdit(ModScript::EV_PAINT, x, z, y, World::getWorld->terrain->getLand(x, z, y));   // K.4
+        Tutorial::note(Tutorial::EV_PAINT);
         return;
     }
     Intent in(x, z, y);
@@ -1319,7 +1323,10 @@ void intentBurn(int x, int z, int y) {
     Terrain* ter = World::getWorld->terrain;
     const int type = ter->getLand(x, z, y);
     ter->burnBlock(x, z, y, false);
-    if (!active()) ModScript::noteEdit(ModScript::EV_BURN, x, z, y, type);   // K.4
+    if (!active()) {
+        ModScript::noteEdit(ModScript::EV_USE, x, z, y, type);    // K.6-1a: any fire tap on a non-air block, first
+        ModScript::noteEdit(ModScript::EV_BURN, x, z, y, type);   // K.4
+    }
     // E10: the server deletes whatever it is told to burn; the game burns only flammables.
     if (!active() || type <= 0 || !(blockinfo[type] & IS_FLAMMABLE)) return;
     bool lit = false;

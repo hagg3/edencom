@@ -41,6 +41,11 @@ public:
     static void render();
     // Frees every cached text texture (a world closing; the next frame rebuilds what it needs).
     static void releaseTextures();
+    // K.6-3: drops the cached textures of this text (every board kind): a sign edited or deleted by
+    // SignTool leaves no stale texture behind. Harmless if another sign still shows it (rebuilt).
+    static void forget(const char* text);
+    // Is a texture for this text cached (any board kind)? The harness's check.
+    static bool cached(const char* text);
     // Off = the pass draws nothing and builds nothing (the harness's --signs=0, the memory A/B).
     static bool enabled;
 

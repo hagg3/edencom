@@ -32,7 +32,7 @@ shape of the difference (a whole column, rather than a few dozen bytes in one) i
 human even though it cannot be a threshold.
 
 The real interchange proof is not here at all: it is that each platform LOADS the world Linux
-wrote and reports Linux's geometry checksum for it. See the "read the world Linux wrote" gate.
+wrote and reports Linux's geometry checksum for it. See the "read the world Linux wrote" gate (the `crossload-*` jobs).
 
     usage: compare-worlds.py <ref.eden> <other.eden> [<other.eden> ...]
 """

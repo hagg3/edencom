@@ -230,6 +230,14 @@ inline void polygonOffset(GLfloat f, GLfloat u) {
 }  // namespace
 
 void bindTextureNow(GLuint t) { bindTex(t); }
+static bool g_uploadTrustsCache = false;   // --rejoin-mutate=elide: the pre-X.32 elided upload bind
+void bindTextureForUpload(GLuint t) {
+    if (g_uploadTrustsCache) { bindTex(t); return; }
+    activeTexture0();
+    glBindTexture(GL_TEXTURE_2D, t);
+    g_actual.tex2d = t;
+    stat_issued();
+}
 void depthWriteNow(bool on) { depthMask(on); }
 
 void applyRenderer(const R::State& s, GLuint tex) {
@@ -268,6 +276,11 @@ using namespace rgl;
 
 // ---- the accounting's exports (unchanged names and meanings; moved from the shim) ------------------
 extern "C" {
+
+// X.32: --rejoin-selftest's bind-cache leg. The first binds through the cache exactly as a draw does;
+// the second puts the elided upload bind back (--rejoin-mutate=elide).
+void eden_gl_debug_bind_texture(unsigned t) { rgl::bindTextureNow((GLuint)t); }
+void eden_gl_set_upload_trusts_cache(int on) { rgl::g_uploadTrustsCache = (on != 0); }
 
 // The frame boundary for the accounting. Called from the host's drawFrame, not inferred from glClear:
 // prepareScene does not clear colour, so a colour-bit boundary froze the counters in play.

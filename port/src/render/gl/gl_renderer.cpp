@@ -27,7 +27,7 @@ std::unordered_map<GLuint, BufInfo> g_bufKind;
 GLuint white() {
     if (g_white) return g_white;
     glGenTextures(1, &g_white);
-    bindTextureNow(g_white);
+    bindTextureForUpload(g_white);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -347,6 +347,23 @@ bool readPixels(int x, int y, int w, int h, void* rgba) {
     return true;
 }
 
+// X.32: one mip level of a texture read back through a scratch framebuffer (ES 3.0 and desktop GL both
+// attach a non-zero level). False when the level cannot be attached (no such level: a lost mip chain).
+bool texReadLevel(R::Tex t, int level, int w, int h, void* rgba) {
+    if (!t || !rgba || w <= 0 || h <= 0) return false;
+    GLint prev = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev);
+    GLuint fbo = 0;
+    glGenFramebuffers(1, &fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, (GLuint)t, level);
+    const bool ok = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+    if (ok) glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, rgba);   // RGBA8 rows: 4-byte aligned
+    glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prev);
+    glDeleteFramebuffers(1, &fbo);
+    return ok;
+}
+
 // The clear (R::clear): glClearColor every time (uncached: cheap, and nothing can go stale), and a
 // depth clear writes depth whatever the last draw's mask was.
 void clear(bool color, bool depth, const R::Rgba& c) {
@@ -391,7 +408,7 @@ R::Tex texCreate(const R::TexDesc& d, const void* px) {
     GLuint t = 0;
     glGenTextures(1, &t);
     if (!t) return 0;
-    bindTextureNow(t);
+    bindTextureForUpload(t);
     const GLint mag = d.linear ? GL_LINEAR : GL_NEAREST;
     const GLint min = d.mipmaps ? (d.linear ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_LINEAR) : mag;
     texParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, min);
@@ -419,14 +436,14 @@ void texUpdate(R::Tex t, int x, int y, int w, int h, R::TexFormat f, const void*
     if (format == GL_LUMINANCE || format == GL_ALPHA) format = 0x1903 /* GL_RED */;
     else if (format == GL_LUMINANCE_ALPHA) format = 0x8227 /* GL_RG */;
 #endif
-    bindTextureNow((GLuint)t);
+    bindTextureForUpload((GLuint)t);
     UnpackAlign1 a;
     glTexSubImage2D(GL_TEXTURE_2D, 0, x, y, w, h, format, type, px);
 }
 
 void texSampling(R::Tex t, const R::TexDesc& d) {
     if (!t) return;
-    bindTextureNow((GLuint)t);
+    bindTextureForUpload((GLuint)t);
     const GLint mag = d.linear ? GL_LINEAR : GL_NEAREST;
     const GLint min = d.mipmaps ? (d.linear ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_LINEAR) : mag;
     texParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, min);

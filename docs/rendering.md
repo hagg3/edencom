@@ -275,7 +275,7 @@ builds one dynamic VBO per frame: command-block buttons as untextured vertex-col
 FT.14, turned a quarter so the planks run along the board, modulated by the sign's paint colour) and the standing post with the same planks tile unturned and 30% darker, ending at the board's lower edge (no overlap), one draw; then one textured quad per sign's text. Text textures come from the text
 raster seam (`eden_rasterize_text_rgba`, one call per wrapped line, body face), outlined here by
 dilating the coverage, 256 texels across the board, mipmapped; an LRU cache keyed by (board kind, text),
-≤ 256 textures / 24 MB (64 / 8 MB until 2026-10-17: past the 64 nearest a dense server spawn drew blank boards), nearest signs first, ≤ 4 built a frame. Shapes (D.4b resized them to Minecraft's
+`SignRenderer::forget(text)` (K.6-3) drops a text's textures when `SignTool` edits or deletes a sign that showed it; ≤ 256 textures / 24 MB (64 / 8 MB until 2026-10-17: past the 64 nearest a dense server spawn drew blank boards), nearest signs first, ≤ 4 built a frame. Shapes (D.4b resized them to Minecraft's
 2:1, the user 2026-10-10): a standing sign (a = 3) is a 1 × 0.5 board on a 0.5 post facing `c`; a wall
 sign is a 7/8 × 1/2 board centred on the face, 1/32 off it; on a face of a block with a `CMB1` record it
 fills the skin's 0.75 panel instead. Since G.5b-4 the pass is all `R::` (`texCreate`/`texDestroy` for the

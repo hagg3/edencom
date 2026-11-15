@@ -6,9 +6,9 @@
 //
 //
 
-#import "Lighting.h"
+#include "Lighting.h"
 #include "F3Timing.h"
-#import "Terrain.h"
+#include "Terrain.h"
 // Stage R / R.3: no longer the light store (see Lighting.h). NULL unless g_light_selfcheck, when it
 // is the stock dense array again, written by the stock code beside the bricks as a reference.
 extern Vector8* lightarray;

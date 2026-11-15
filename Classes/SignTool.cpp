@@ -14,6 +14,8 @@
 #include "Player.h"
 #include "Liquids.h"
 #include "MpWorld.h"   // MP.4: signs out
+#include "ModScript.h"  // K.6-3: the `sign` event
+#include "SignRenderer.h"
 #include "WorldTrailer.h"
 
 #include <cmath>
@@ -35,10 +37,45 @@ int buildPaint() {
     return (c >= 1 && c <= 54) ? c : 0;
 }
 
+// The one commit both the prompt and eden.setsign go through: add / retext (+recolour) / delete one
+// sign, drop the renderer's texture for the old text, tell the server. `colour` 0 = keep an existing
+// board's, charcoal for a new one. Returns the WorldTrailer result (nothing changed unless TR_OK).
+int commitSign(const TrailerPos& pos, int face, int facing, const std::string& clean, bool blank, int colour, bool sound) {
+    World* w = World::getWorld;
+    WorldTrailer* t = w->fm->trailer();
+    const int existing = t->findSign(pos, face);
+    char old[96] = {0};
+    if (existing >= 0) { memcpy(old, t->sign((size_t)existing).text, 95); old[95] = 0; }
+    int r = WorldTrailer::TR_OK;
+    if (blank) {
+        if (existing >= 0) r = t->removeSign((size_t)existing);   // an empty edit deletes the sign
+    } else if (existing >= 0) {
+        r = t->setSignText((size_t)existing, clean.c_str());
+        if (r == WorldTrailer::TR_OK && colour) r = t->setSignColour((size_t)existing, colour);
+    } else {
+        r = t->addSign(pos, face, colour ? colour : kDefaultColour, facing, clean.c_str());
+        if (r == WorldTrailer::TR_OK && sound) Resources::getResources->playSound(S_BUILD_WOOD);
+    }
+    if (r != WorldTrailer::TR_OK) return r;
+    if (old[0] && !SignTool::testNoCache) SignRenderer::forget(old);
+    // MP.4 (engine plan §10): a placed or edited sign goes to the server as it now stands. An
+    // emptied one (removed) sends nothing, as retail: the server drops signs with their block.
+    const int now = blank ? -1 : t->findSign(pos, face);
+    if (now >= 0) {
+        const TrailerSign& sg = t->sign((size_t)now);
+        char text[96];
+        memcpy(text, sg.text, 95);
+        text[95] = 0;
+        MpWorld::intentSign(sg.x, sg.y, sg.z, sg.a, sg.b, sg.c, text);
+    }
+    return r;
+}
+
 }  // namespace
 
 bool SignTool::testAllowBottom = false;
 bool SignTool::testNoAnchorHook = false;
+bool SignTool::testNoCache = false;
 
 int SignTool::facingForYaw(float yaw) {
     // The camera looks along (cos yaw, sin yaw) in (x, z); the text faces back along it.
@@ -108,33 +145,67 @@ void SignTool::answer(int chosen, const char* text) {
     bool blank = true;
     for (char ch : clean) if (ch != ' ') { blank = false; break; }
 
-    WorldTrailer* t = w->fm->trailer();
     const TrailerPos& pos = g_pending.pos;
-    const int existing = t->findSign(pos, g_pending.face);
-    int r = WorldTrailer::TR_OK;
-    if (blank) {
-        if (existing >= 0) r = t->removeSign((size_t)existing);   // an empty edit deletes the sign
-    } else if (existing >= 0) {
-        r = t->setSignText((size_t)existing, clean.c_str());
-        if (r == WorldTrailer::TR_OK && buildPaint()) r = t->setSignColour((size_t)existing, buildPaint());
-    } else {
-        // The anchor may have gone while the prompt was up.
-        if (w->terrain->getLand(pos.x, pos.y, pos.z) <= 0) return;
-        const int colour = buildPaint() ? buildPaint() : kDefaultColour;
-        r = t->addSign(pos, g_pending.face, colour, g_pending.facing, clean.c_str());
-        if (r == WorldTrailer::TR_OK) Resources::getResources->playSound(S_BUILD_WOOD);
-    }
+    // The anchor may have gone while the prompt was up.
+    if (!blank && w->fm->trailer()->findSign(pos, g_pending.face) < 0 && w->terrain->getLand(pos.x, pos.y, pos.z) <= 0) return;
+    const int r = commitSign(pos, g_pending.face, g_pending.facing, clean, blank, buildPaint(), true);
     if (r != WorldTrailer::TR_OK) { w->fm->reportTrailerRefusal(r); return; }
-    // MP.4 (engine plan §10): a placed or edited sign goes to the server as it now stands. An
-    // emptied one (removed) sends nothing, as retail: the server drops signs with their block.
-    const int now = blank ? -1 : t->findSign(pos, g_pending.face);
-    if (now >= 0) {
-        const TrailerSign& sg = t->sign((size_t)now);
-        char text[96];
-        memcpy(text, sg.text, 95);
-        text[95] = 0;
-        MpWorld::intentSign(sg.x, sg.y, sg.z, sg.a, sg.b, sg.c, text);
+    if (!blank) {   // K.6-3: the `sign` event (a script's own eden.setsign is not one)
+        int ex, ey, ez;
+        pos.toEngine(&ex, &ey, &ez);
+        ModScript::noteSign(ex, ez, ey, g_pending.face, clean.c_str());
     }
+}
+
+bool SignTool::set(int x, int z, int y, int face, const char* text, int colour, float yaw, std::string* why) {
+    std::string e;
+    std::string* W = why ? why : &e;
+    World* w = World::getWorld;
+    if (!w || !w->fm || !w->terrain) { *W = "no world is open"; return false; }
+    if (!(face == 0 || face == 1 || face == 3 || face == 4 || face == 5)) {
+        *W = "face must be 0 (-x), 1 (+x), 3 (top), 4 (-z) or 5 (+z)";
+        return false;
+    }
+    if (colour != 0 && (colour < 1 || colour > 54)) { *W = "colour must be 1 to 54"; return false; }
+    const size_t n = text ? strlen(text) : 0;
+    if (n > 95) { *W = "a sign holds up to 95 bytes"; return false; }
+    bool blank = true;
+    for (size_t i = 0; i < n; ++i) {
+        if ((unsigned char)text[i] < 32 || (unsigned char)text[i] > 126) { *W = "a sign holds printable ASCII only (32 to 126)"; return false; }
+        if (text[i] != ' ') blank = false;
+    }
+    WorldTrailer* t = w->fm->trailer();
+    if (!t->parsed()) { *W = WorldTrailer::resultMessage(WorldTrailer::TR_OPAQUE); return false; }
+    const TrailerPos pos = TrailerPos::fromTerrainArgs(x, z, y);
+    if (!blank && t->findSign(pos, face) < 0 && w->terrain->getLand(x, z, y) <= 0) {
+        *W = "no block there to hang a sign on";
+        return false;
+    }
+    // A new standing sign faces the player, like the prompt's; a wall sign its face's direction.
+    static const int kFacing[6] = {0, 2, 0, 0, 1, 3};
+    const int facing = face == 3 ? facingForYaw(yaw) : kFacing[face];
+    const int r = commitSign(pos, face, facing, blank ? std::string() : std::string(text, n), blank, colour, false);
+    if (r != WorldTrailer::TR_OK) { *W = WorldTrailer::resultMessage(r); return false; }
+    return true;
+}
+
+bool SignTool::get(int x, int z, int y, int face, std::string* text, int* colour, int* faceOut) {
+    World* w = World::getWorld;
+    if (!w || !w->fm) return false;
+    WorldTrailer* t = w->fm->trailer();
+    const TrailerPos pos = TrailerPos::fromTerrainArgs(x, z, y);
+    int i = -1;
+    if (face >= 0) i = t->findSign(pos, face);
+    else { const std::vector<int> v = t->signsOn(pos); if (!v.empty()) i = v[0]; }
+    if (i < 0) return false;
+    const TrailerSign& sg = t->sign((size_t)i);
+    char b[96];
+    memcpy(b, sg.text, 95);
+    b[95] = 0;
+    *text = b;
+    *colour = sg.b;
+    *faceOut = sg.a;
+    return true;
 }
 
 void SignTool::anchorBecameAir(int x, int z, int y) {

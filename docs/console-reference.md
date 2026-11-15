@@ -148,8 +148,8 @@ meaning can never change.
 | `save` | - | Saves the world (the pause menu's Save). | a world |
 | `packs` | `[PACK \| on PACK \| off PACK]` | The mod packs this world loaded, with every problem; or the blocks of one PACK; on/off switches a pack for the next world load. | - |
 | `lua` | `CODE` | Runs Lua in the console's own sandboxed state (an expression prints its value). One line, no ';'. | a world |
-| `scripts` | `[reload]` | The mod packs' Lua scripts: memory, CPU, errors; reload restarts them. | - |
-| `mod` | `[NAME ARGS...]` | Lists the commands mod scripts added, or runs one. | a world |
+| `scripts` | `[reload]` | The mod packs' Lua scripts: memory, CPU, errors; reload re-reads their script files and restarts them. | - |
+| `mod` | `[NAME \| PACK:NAME] [ARGS...]` | Lists the commands mod scripts added, or runs one (PACK:NAME when two packs share a name). | a world |
 | `getblock` | `X Y Z` | The raw type:colour of a cell. | a world, a diagnostics build |
 | `cmdtrace` | `[0\|1]` | Prints every statement a script runs. | a diagnostics build |
 | `stats` | - | The command interpreter's counters. | a diagnostics build |

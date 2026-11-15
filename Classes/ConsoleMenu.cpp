@@ -479,7 +479,7 @@ RailFrame ConsoleMenu::frame(float kbTop){
     const float pad=du(9), gap=du(6), barH=du(29), barW=du(18);
     const float left=f.panel.origin.x+pad, right=f.panel.origin.x+f.panel.size.width-pad;
     const float barTop=top-du(7);
-    f.titlebar=CGRectMake(left,barTop-barH,right-left,barH);
+    f.titlebar=CGRectMake(left,barTop-barH,right-left-du(6),barH);   // UX.2 (B7): same right margin as railFrame()
     const float bodyTop=barTop-barH-pad, bodyBot=bottom+pad;
     const float bodyH=std::max(0.0f,bodyTop-bodyBot);
     f.rail=CGRectMake(left,bodyBot,0,bodyH);

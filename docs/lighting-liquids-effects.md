@@ -98,7 +98,7 @@ exactly that until R.3 and now imports `"../Lighting.h"`.
     160,0,0,160` from 65536 with no lightboxes (360 rebuilds, mean of 3 reps after a discarded one):
     **0.215 → 0.011 ms per rebuild at 64z, 0.369 → 0.016 ms at 256z**, walked `geom` unchanged.
     `eden_debug_light_state()` reports `cols_scanned` / `cols_skipped`.
-  - **Gates.** `WORKING/b5b1/ring-light-gate.sh H OUT` (fresh load at the end of 7 walks on a lightbox
+  - **Gates.** `port/tools/ring-light-gate.sh H OUT` (fresh load at the end of 7 walks on a lightbox
     lattice world at night = walked geometry, chunk state and light) and native `--ring-light-selftest`
     (the in-process CI form: walked light + meshes = a full re-sweep + re-mesh; since P.10 it also
     builds a lightbox in a remembered-free column at the +x edge and walks one more chunk so that

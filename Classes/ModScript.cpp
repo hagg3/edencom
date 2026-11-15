@@ -21,6 +21,8 @@
 #include "BlockRegistry.h"
 #include "MpWorld.h"
 #include "Weather.h"
+#include "SignTool.h"
+#include "EdenWorldStore.h"
 
 #include "lua/lua.h"
 #include "lua/lauxlib.h"
@@ -32,6 +34,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <map>
 #include <memory>
 #include <new>
 
@@ -39,10 +42,14 @@ namespace ModScript {
 
 bool testNoHook = false;
 bool testNoSandbox = false;
+bool testLoadEarly = false;
+bool testCapError = false;
+bool testUseFilter = false;
+bool testStoreNotDirty = false;
 
 namespace {
 
-const char* const kEventNames[] = {"load", "tick", "build", "mine", "paint", "burn", "weather", NULL};
+const char* const kEventNames[] = {"load", "tick", "build", "mine", "paint", "burn", "weather", "use", "sign", NULL};
 const char* const kEditMeta = "emod.edit";
 
 struct Co {
@@ -53,6 +60,7 @@ struct Co {
     int ev = -1;                          // the event that started it (-1: a chunk, the console, a command)
     int handler = LUA_NOREF;              // the handler's registry ref (tick: one live call per handler)
     bool started = false;
+    bool top = false;                     // a file's top level (the pack's `load` waits for all of them)
     int nargs = 0;                        // pushed on T before the first resume
     CmdScript::Sink* sink = NULL;         // console / `mod` output; NULL = the console scrollback
     bool printResults = false;            // the console's `lua`: print what the chunk returns
@@ -74,6 +82,10 @@ struct Pack {
     bool stopped = false;
     std::string why;
     int errors = 0, preempts = 0;
+    int skipped = 0;                      // K.8-2: ticks skipped / events dropped at the coroutine cap
+    float capQuiet = 0;                   // seconds until the next cap console line
+    int booting = 0;                      // K.8-1: top-level chunks not finished yet
+    bool loadDue = false;                 // the last of them finished: dispatch `load` at the next safe point
     std::string lastError;
     int printsFrame = 0;
     float toastQuiet = 0;
@@ -82,9 +94,13 @@ struct Pack {
     std::vector<Co> cos;
     std::vector<Cmd> cmds;
 };
-struct QEvent { int ev, x, y, z, a, b; };
+struct QEvent { int ev, x, y, z, a, b; std::string text; };
 
 Limits g_lim;
+}  // namespace
+extern "C" int eden_script_low_memory(void);   // port/src/seam/DisplayProfile.cpp
+size_t defaultAllMemBytes() { return eden_script_low_memory() ? (size_t)24 << 20 : (size_t)64 << 20; }
+namespace {
 Stats g_stats;
 std::vector<std::unique_ptr<Pack>> g_packs;
 std::vector<QEvent> g_queue;
@@ -104,16 +120,21 @@ bool worldOpen() {
 }
 
 // ---- memory (S5) --------------------------------------------------------------------------------------
+size_t g_allMem = 0;   // every state's bytes together (K.8-5: Limits::allMemBytes)
+
 void* luaAlloc(void* ud, void* ptr, size_t osize, size_t nsize) {
     Pack* p = (Pack*)ud;
     const size_t old = ptr ? osize : 0;   // ptr NULL: osize is the object's type, not a size
     if (nsize == 0) {
-        if (ptr) { p->mem -= old; std::free(ptr); }
+        if (ptr) { p->mem -= old; g_allMem -= old; std::free(ptr); }
         return NULL;
     }
-    if (nsize > old && p->mem - old + nsize > g_lim.memBytes) { p->memRefusals++; return NULL; }   // a shrink never fails
+    // A shrink never fails. A refusal is Lua's "not enough memory" in that pack only: the pack that asked is the one
+    // that hits the total, the others keep what they hold.
+    if (nsize > old && (p->mem - old + nsize > g_lim.memBytes || g_allMem - old + nsize > g_lim.allMemBytes)) { p->memRefusals++; return NULL; }
     void* n = std::realloc(ptr, nsize);
     if (!n) return NULL;
+    g_allMem = g_allMem - old + nsize;
     p->mem = p->mem - old + nsize;
     if (p->mem > p->memPeak) p->memPeak = p->mem;
     return n;
@@ -223,6 +244,7 @@ int liveCos(const Pack* p) {
 
 void finishCo(Pack* p, Co& c) {
     c.done = true;
+    if (c.top) { c.top = false; if (--p->booting == 0) p->loadDue = true; }
     if (p->L && c.ref != LUA_NOREF) luaL_unref(p->L, LUA_REGISTRYINDEX, c.ref);
     c.ref = LUA_NOREF;
     c.T = NULL;
@@ -286,7 +308,18 @@ bool spawn(Pack* p, int fnRef, const std::function<int(lua_State*)>& push, int e
            CmdScript::Sink* sink, bool printResults) {
     if (p->stopped || !p->L) return false;
     if (liveCos(p) >= MAX_COROUTINES) {
-        scriptError(p, what + ": not started, " + std::to_string((int)MAX_COROUTINES) + " handlers are still waiting", sink);
+        const std::string msg = what + ": not started, " + std::to_string((int)MAX_COROUTINES) + " handlers are still waiting";
+        if (testCapError) { scriptError(p, msg, sink); return false; }
+        // K.8-2: the cap is a limit, not a fault: skipped / dropped, counted, never an error. A command or the console
+        // answers its caller; an event says so on the console once per 10 s.
+        p->skipped++;
+        g_stats.skipped++;
+        if (ev < 0) say(p, CmdScript::Sink::ERR, msg, sink);
+        else if (p->capQuiet <= 0) {
+            say(p, CmdScript::Sink::ERR, std::string(ev == EV_TICK ? "tick skipped" : "event dropped") + " (" + what + "): " +
+                std::to_string((int)MAX_COROUTINES) + " handlers are still waiting (" + std::to_string(p->skipped) + " so far)", NULL);
+            p->capQuiet = 10;
+        }
         return false;
     }
     Co c;
@@ -586,6 +619,39 @@ int apiGet(lua_State* L) {
     lua_pushinteger(L, t->getColor(x, z, y));
     return 2;
 }
+// K.6-3: eden.sign(x, y, z [, face]) -> text, colour, face (nothing if no sign there; face omitted = the first one on
+// the block); eden.setsign(x, y, z, face, text [, colour]) -> true, or false, why. Both go through SignTool.
+// Lua's (x, y up, z) is the trailer's (x, z, y) of the Terrain argument order; faces are the record's: 0 -x, 1 +x,
+// 3 top, 4 -z, 5 +z.
+int apiSign(lua_State* L) {
+    const int x = coordArg(L, 1), y = coordArg(L, 2), z = coordArg(L, 3);
+    const int face = lua_isnoneornil(L, 4) ? -1 : coordArg(L, 4);
+    if (!worldOpen() || MpWorld::active()) return 0;
+    std::string text;
+    int colour, f;
+    if (!SignTool::get(x, z, y, face, &text, &colour, &f)) return 0;
+    lua_pushlstring(L, text.data(), text.size());
+    lua_pushinteger(L, colour);
+    lua_pushinteger(L, f);
+    return 3;
+}
+int apiSetSign(lua_State* L) {
+    const int x = coordArg(L, 1), y = coordArg(L, 2), z = coordArg(L, 3), face = coordArg(L, 4);
+    size_t n;
+    const char* text = luaL_checklstring(L, 5, &n);
+    const int colour = lua_isnoneornil(L, 6) ? 0 : coordArg(L, 6);
+    if (!worldOpen()) return luaL_error(L, "no world is open");
+    if (MpWorld::active()) return luaL_error(L, "not in a multiplayer world");
+    std::string why;
+    bool ok;
+    if (std::strlen(text) != n) { why = "a sign holds printable ASCII only (32 to 126)"; ok = false; }   // an embedded NUL
+    else if (!CmdScript::residentCell(x, y, z)) { why = "that cell is not loaded"; ok = false; }
+    else ok = SignTool::set(x, z, y, face, text, colour, World::getWorld->player->yaw, &why);
+    lua_pushboolean(L, ok);
+    if (ok) return 1;
+    lua_pushstring(L, why.c_str());
+    return 2;
+}
 int apiBlockId(lua_State* L) {
     const int id = CmdScript::blockByName(luaL_checkstring(L, 1));
     if (id < 0) return 0;
@@ -642,9 +708,20 @@ int apiCommand(lua_State* L) {
     const char* help = luaL_optstring(L, 2, "");
     luaL_checktype(L, 3, LUA_TFUNCTION);
     if (!cmdNameOk(name, n)) return luaL_argerror(L, 1, "a command name matches [a-z0-9_]{1,24}");
-    for (const std::unique_ptr<Pack>& o : g_packs)
-        for (const Cmd& c : o->cmds)
-            if (c.name == name) return luaL_error(L, "the mod command \"%s\" is taken (pack %s)", name, o->id.c_str());
+    for (const Cmd& c : p->cmds)
+        if (c.name == name) return luaL_error(L, "the mod command \"%s\" is registered twice in pack %s", name, p->id.c_str());
+    // K.8-4: another pack holding the short name is a warning, not an error: this file runs to the end, `mod <pack>:<name>`
+    // always reaches this pack's command and the short name stays with the first pack that registered it.
+    for (const std::unique_ptr<Pack>& o : g_packs) {
+        if (o.get() == p) continue;
+        bool taken = false;
+        for (const Cmd& c : o->cmds) taken |= c.name == name;
+        if (taken) {
+            Console::print(CmdScript::Sink::ERR, "[" + p->id + "] warning: the mod command \"" + name + "\" is also pack " + o->id +
+                           "'s: `mod " + name + "` runs " + o->id + "'s, `mod " + p->id + ":" + name + "` runs this one");
+            break;
+        }
+    }
     if (p->cmds.size() >= MAX_HANDLERS) return luaL_error(L, "at most %d commands a pack", (int)MAX_HANDLERS);
     lua_pushvalue(L, 3);
     const int ref = luaL_ref(L, LUA_REGISTRYINDEX);
@@ -652,11 +729,291 @@ int apiCommand(lua_State* L) {
     return 0;
 }
 
+// ---- K.6-5: eden.store, the world's per-pack saved data (record 13 MOD_DATA; docs/scripting.md "Saved data") ----------
+// Host-side, so it outlives a pack's Lua state (`scripts reload`) and a warp; loaded by FileManager::finishLoadOnMain,
+// written into the next save's batch when dirty, dropped when the world closes (reset()). Each pack's entry is kept as
+// the record's bytes until the pack first touches it, so a pack that is not loaded, or only reads, is written back
+// verbatim. A blob (the runtime's encoding, below) is: u8 version 1, then per key in ascending byte order u8 klen
+// (1..64), the key, a value. Value: tag 0 false | 1 true | 2 i64 | 3 f64 (finite) | 4 u32 len + bytes (<= 4 KiB)
+// | 5 u16 n (<= 256) + n x (key value, value), a key value being tag 2 or tag 4 (1..64 bytes); integer keys
+// ascending, then string keys in byte order. Tables nest <= 4 deep. Every number is exact: an integer stays one.
+enum { STORE_KEY_MAX = 64, STORE_STRING_MAX = 4096, STORE_TABLE_MAX = 256, STORE_DEPTH_MAX = 4, STORE_BLOB_VERSION = 1 };
+enum { SV_FALSE = 0, SV_TRUE, SV_INT, SV_FLOAT, SV_STRING, SV_TABLE };
+struct StoreEntry {
+    std::vector<uint8_t> raw;                       // the record's bytes for this pack (as loaded, or as last saved)
+    bool decoded = false;                           // kv holds raw's keys (or raw did not decode: bad)
+    bool bad = false;
+    bool touched = false;                           // a set since the load / last save: raw is rebuilt from kv
+    std::map<std::string, std::string> kv;          // key -> encoded value
+    size_t size = 1;                                // the blob kv encodes to
+};
+std::map<std::string, StoreEntry> g_store;          // by pack id: ascending, the record's order
+bool g_storeDirty = false;
+
+void storePut(std::string& o, const void* p, size_t n) { o.append((const char*)p, n); }
+void storePutU(std::string& o, uint64_t v, int bytes) { for (int i = 0; i < bytes; ++i) o.push_back((char)(uint8_t)(v >> (8 * i))); }
+
+// A Lua value -> its encoding, or false with the why (never raises on a value: eden.store.set returns it).
+bool storeEncodeKey(lua_State* L, int idx, std::string& out, std::string* why) {
+    if (lua_type(L, idx) == LUA_TNUMBER && lua_isinteger(L, idx)) {
+        out.push_back((char)SV_INT);
+        storePutU(out, (uint64_t)lua_tointeger(L, idx), 8);
+        return true;
+    }
+    if (lua_type(L, idx) == LUA_TSTRING) {
+        size_t n;
+        const char* k = lua_tolstring(L, idx, &n);
+        if (n >= 1 && n <= STORE_KEY_MAX) {
+            out.push_back((char)SV_STRING);
+            storePutU(out, n, 4);
+            storePut(out, k, n);
+            return true;
+        }
+    }
+    *why = "a table key must be a string of 1 to 64 bytes or an integer";
+    return false;
+}
+bool storeEncodeValue(lua_State* L, int idx, int depth, std::string& out, std::string* why) {
+    idx = lua_absindex(L, idx);
+    switch (lua_type(L, idx)) {
+    case LUA_TBOOLEAN: out.push_back((char)(lua_toboolean(L, idx) ? SV_TRUE : SV_FALSE)); return true;
+    case LUA_TNUMBER:
+        if (lua_isinteger(L, idx)) { out.push_back((char)SV_INT); storePutU(out, (uint64_t)lua_tointeger(L, idx), 8); return true; }
+        else {
+            const double d = lua_tonumber(L, idx);
+            if (!std::isfinite(d)) { *why = "can't store a number that is not finite"; return false; }
+            uint64_t b;
+            std::memcpy(&b, &d, 8);
+            out.push_back((char)SV_FLOAT);
+            storePutU(out, b, 8);
+            return true;
+        }
+    case LUA_TSTRING: {
+        size_t n;
+        const char* v = lua_tolstring(L, idx, &n);
+        if (n > STORE_STRING_MAX) { *why = "can't store a string over 4096 bytes"; return false; }
+        out.push_back((char)SV_STRING);
+        storePutU(out, n, 4);
+        storePut(out, v, n);
+        return true;
+    }
+    case LUA_TTABLE: {
+        if (depth >= STORE_DEPTH_MAX) { *why = "can't store tables nested more than 4 deep"; return false; }
+        luaL_checkstack(L, 4, "eden.store");
+        std::vector<std::pair<std::string, std::string> > ints, strs;   // (encoded key, encoded value)
+        lua_pushnil(L);
+        while (lua_next(L, idx)) {   // raw: metatables are not consulted
+            if (ints.size() + strs.size() >= STORE_TABLE_MAX) { lua_pop(L, 2); *why = "can't store a table over 256 entries"; return false; }
+            std::string k, v;
+            if (!storeEncodeKey(L, -2, k, why) || !storeEncodeValue(L, -1, depth + 1, v, why)) { lua_pop(L, 2); return false; }
+            (k[0] == SV_INT ? ints : strs).push_back(std::make_pair(k, v));
+            lua_pop(L, 1);
+        }
+        auto ikey = [](const std::string& k) { int64_t v = 0; for (int i = 7; i >= 0; --i) v = (int64_t)(((uint64_t)v << 8) | (uint8_t)k[1 + i]); return v; };
+        std::sort(ints.begin(), ints.end(), [&](const std::pair<std::string, std::string>& a, const std::pair<std::string, std::string>& b) { return ikey(a.first) < ikey(b.first); });
+        // a string key is tag + u32 len + bytes: byte order of the bytes after the length
+        std::sort(strs.begin(), strs.end(), [](const std::pair<std::string, std::string>& a, const std::pair<std::string, std::string>& b) { return a.first.compare(5, std::string::npos, b.first, 5, std::string::npos) < 0; });
+        out.push_back((char)SV_TABLE);
+        storePutU(out, ints.size() + strs.size(), 2);
+        for (const auto& kv : ints) { out += kv.first; out += kv.second; }
+        for (const auto& kv : strs) { out += kv.first; out += kv.second; }
+        return true;
+    }
+    case LUA_TNIL: *why = "nil deletes a key: it is not stored"; return false;
+    default:
+        *why = std::string("can't store a ") + luaL_typename(L, idx);
+        return false;
+    }
+}
+
+// Checks one encoded value (bounds, tags, depth); `push` (with L) also builds it on L's stack.
+bool storeDecodeValue(const uint8_t* p, size_t n, size_t* o, int depth, lua_State* L) {
+    if (*o >= n) return false;
+    const uint8_t tag = p[(*o)++];
+    auto rdU = [&](int bytes, uint64_t* v) {
+        if (n - *o < (size_t)bytes) return false;
+        *v = 0;
+        for (int i = bytes - 1; i >= 0; --i) *v = (*v << 8) | p[*o + i];
+        *o += bytes;
+        return true;
+    };
+    uint64_t v;
+    switch (tag) {
+    case SV_FALSE: case SV_TRUE: if (L) lua_pushboolean(L, tag == SV_TRUE); return true;
+    case SV_INT: if (!rdU(8, &v)) return false; if (L) lua_pushinteger(L, (lua_Integer)(int64_t)v); return true;
+    case SV_FLOAT: {
+        if (!rdU(8, &v)) return false;
+        double d;
+        std::memcpy(&d, &v, 8);
+        if (!std::isfinite(d)) return false;
+        if (L) lua_pushnumber(L, d);
+        return true;
+    }
+    case SV_STRING:
+        if (!rdU(4, &v) || v > STORE_STRING_MAX || n - *o < v) return false;
+        if (L) lua_pushlstring(L, (const char*)p + *o, (size_t)v);
+        *o += (size_t)v;
+        return true;
+    case SV_TABLE: {
+        if (depth >= STORE_DEPTH_MAX || !rdU(2, &v) || v > STORE_TABLE_MAX) return false;
+        if (L) { luaL_checkstack(L, 4, "eden.store"); lua_createtable(L, 0, (int)v); }
+        for (uint64_t i = 0; i < v; ++i) {
+            const size_t k0 = *o;
+            if (*o >= n || (p[*o] != SV_INT && p[*o] != SV_STRING)) return false;
+            if (!storeDecodeValue(p, n, o, STORE_DEPTH_MAX, L)) return false;   // a key: no table, so any depth
+            if (p[k0] == SV_STRING && (*o - k0 - 5 < 1 || *o - k0 - 5 > STORE_KEY_MAX)) return false;
+            if (!storeDecodeValue(p, n, o, depth + 1, L)) return false;
+            if (L) lua_rawset(L, -3);
+        }
+        return true;
+    }
+    }
+    return false;
+}
+
+// raw -> kv (the keys' value bytes, unchecked by Lua). False: the blob breaks a rule (the entry starts empty).
+bool storeDecodeBlob(const std::vector<uint8_t>& raw, std::map<std::string, std::string>& kv) {
+    kv.clear();
+    const uint8_t* p = raw.data();
+    const size_t n = raw.size();
+    if (n == 0) return true;   // no bytes: an empty store (this writer never writes one; another may)
+    if (p[0] != STORE_BLOB_VERSION) return false;
+    size_t o = 1;
+    std::string last;
+    while (o < n) {
+        const size_t kl = p[o++];
+        if (kl < 1 || kl > STORE_KEY_MAX || n - o < kl) return false;
+        std::string k((const char*)p + o, kl);
+        o += kl;
+        if (!kv.empty() && !(last < k)) return false;
+        const size_t v0 = o;
+        if (!storeDecodeValue(p, n, &o, 0, NULL)) return false;
+        kv[k] = std::string((const char*)p + v0, o - v0);
+        last = k;
+    }
+    return true;
+}
+size_t storeBlobSize(const std::map<std::string, std::string>& kv) {
+    size_t n = 1;
+    for (const auto& e : kv) n += 1 + e.first.size() + e.second.size();
+    return n;
+}
+// The bytes this entry goes out as at the next save (raw, or kv rebuilt).
+size_t storeEntryBytes(const StoreEntry& e) { return e.touched ? (e.kv.empty() ? 0 : e.size) : e.raw.size(); }
+bool storeEntryPresent(const StoreEntry& e) { return e.touched ? !e.kv.empty() : true; }
+std::vector<uint8_t> storeBlob(const StoreEntry& e) {
+    if (!e.touched) return e.raw;
+    std::vector<uint8_t> b(1, (uint8_t)STORE_BLOB_VERSION);
+    for (const auto& kv : e.kv) {
+        b.push_back((uint8_t)kv.first.size());
+        b.insert(b.end(), kv.first.begin(), kv.first.end());
+        b.insert(b.end(), kv.second.begin(), kv.second.end());
+    }
+    return b;
+}
+
+StoreEntry* storeOf(Pack* p, bool create) {
+    std::map<std::string, StoreEntry>::iterator it = g_store.find(p->id);
+    if (it == g_store.end()) {
+        if (!create) return NULL;
+        it = g_store.insert(std::make_pair(p->id, StoreEntry())).first;
+        it->second.decoded = true;
+        it->second.touched = true;   // empty and touched: written only once it holds a key (a refused first set leaves nothing)
+    }
+    StoreEntry& e = it->second;
+    if (!e.decoded) {
+        e.decoded = true;
+        if (!storeDecodeBlob(e.raw, e.kv)) {
+            e.bad = true;
+            e.kv.clear();
+            Console::print(CmdScript::Sink::ERR, "[" + p->id + "] eden.store: this world's saved data for the pack does not decode (" +
+                           std::to_string(e.raw.size()) + " B); it starts empty, and the old bytes are kept until the pack stores something");
+        }
+        e.size = storeBlobSize(e.kv);
+    }
+    return &e;
+}
+
+Pack* storePack(lua_State* L) {
+    Pack* p = packOf(L);
+    if (p->console) luaL_error(L, "eden.store belongs to a pack's scripts (the console has none)");
+    if (!worldOpen() || g_session) luaL_error(L, "no world is open");
+    return p;
+}
+const char* storeKeyArg(lua_State* L, size_t* n) {
+    if (lua_type(L, 1) != LUA_TSTRING) luaL_typeerror(L, 1, "string");
+    const char* k = lua_tolstring(L, 1, n);
+    if (*n < 1 || *n > STORE_KEY_MAX) luaL_argerror(L, 1, "a store key is a string of 1 to 64 bytes");
+    return k;
+}
+int apiStoreGet(lua_State* L) {
+    Pack* p = storePack(L);
+    size_t n;
+    const std::string k(storeKeyArg(L, &n), n);
+    StoreEntry* e = storeOf(p, false);
+    std::map<std::string, std::string>::const_iterator it;
+    size_t o = 0;
+    if (!e || (it = e->kv.find(k)) == e->kv.end() ||
+        !storeDecodeValue((const uint8_t*)it->second.data(), it->second.size(), &o, 0, L))   // checked at load
+        lua_pushnil(L);
+    return 1;
+}
+int apiStoreSet(lua_State* L) {
+    Pack* p = storePack(L);
+    size_t n;
+    const std::string k(storeKeyArg(L, &n), n);
+    luaL_checkany(L, 2);
+    auto refuse = [&](const std::string& why) { lua_pushboolean(L, 0); lua_pushstring(L, why.c_str()); return 2; };
+    std::string v, why;
+    const bool del = lua_isnil(L, 2);
+    if (!del && !storeEncodeValue(L, 2, 0, v, &why)) return refuse(why);
+    StoreEntry* e = storeOf(p, !del);
+    if (!e) { lua_pushboolean(L, 1); return 1; }     // deleting from a store that has nothing
+    std::map<std::string, std::string>::iterator it = e->kv.find(k);
+    const size_t old = it == e->kv.end() ? 0 : 1 + k.size() + it->second.size();
+    if (del ? it == e->kv.end() : (it != e->kv.end() && it->second == v && !e->bad)) { lua_pushboolean(L, 1); return 1; }   // no change
+    const size_t next = e->size - old + (del ? 0 : 1 + k.size() + v.size());
+    if (!del) {
+        if (next > emod::MOD_DATA_ENTRY_MAX) return refuse("this pack's store is full (64 KiB)");
+        // the whole record: every pack's entry as it would go out, with this one at `next`
+        size_t total = emod::MOD_DATA_HEAD, packs = 0;
+        for (const auto& se : g_store) {
+            const bool self = &se.second == e;
+            if (!self && !storeEntryPresent(se.second)) continue;
+            packs++;
+            total += emod::MOD_DATA_ENTRY_HEAD + (self ? next : storeEntryBytes(se.second));
+        }
+        if (packs > emod::MOD_DATA_MAX_PACKS) return refuse("too many packs store data in this world (64)");
+        if (total > emod::MOD_DATA_MAX) return refuse("this world's mod data is full (1 MiB)");
+    }
+    if (del) e->kv.erase(it);
+    else e->kv[k] = v;
+    e->size = next;
+    e->touched = true;
+    e->bad = false;
+    if (!testStoreNotDirty) g_storeDirty = true;
+    lua_pushboolean(L, 1);
+    return 1;
+}
+int apiStoreKeys(lua_State* L) {
+    Pack* p = storePack(L);
+    StoreEntry* e = storeOf(p, false);
+    lua_createtable(L, e ? (int)e->kv.size() : 0, 0);
+    int i = 0;
+    if (e)
+        for (const auto& kv : e->kv) {
+            lua_pushlstring(L, kv.first.data(), kv.first.size());
+            lua_rawseti(L, -2, ++i);
+        }
+    return 1;
+}
+const luaL_Reg kStoreApi[] = {{"get", apiStoreGet}, {"set", apiStoreSet}, {"keys", apiStoreKeys}, {NULL, NULL}};
+
 const luaL_Reg kApi[] = {
     {"cmd", apiCmd}, {"set", apiSet}, {"fill", apiFill}, {"paint", apiPaint}, {"explode", apiExplode},
     {"fire", apiFire}, {"tp", apiTp}, {"run", apiRun}, {"spawn", apiSpawn}, {"say", apiSay},
     {"time", apiTime}, {"timefreeze", apiTimefreeze}, {"heal", apiHeal}, {"hurt", apiHurt}, {"gold", apiGold},
-    {"sound", apiSound}, {"flash", apiFlash}, {"get", apiGet}, {"blockid", apiBlockId}, {"player", apiPlayer},
+    {"sound", apiSound}, {"flash", apiFlash}, {"get", apiGet}, {"sign", apiSign}, {"setsign", apiSetSign}, {"blockid", apiBlockId}, {"player", apiPlayer},
     {"weather", apiWeather}, {"weatherlock", apiWeatherlock}, {"clock", apiClock}, {"wait", apiWait}, {"on", apiOn}, {"command", apiCommand}, {NULL, NULL}};
 
 void openLib(lua_State* L, const char* name, lua_CFunction open) {
@@ -698,6 +1055,8 @@ void setupState(lua_State* L) {
     lua_setfield(L, -2, "__gc");
     lua_pop(L, 1);
     luaL_newlib(L, kApi);
+    luaL_newlib(L, kStoreApi);
+    lua_setfield(L, -2, "store");
     lua_pushstring(L, p->id.c_str());
     lua_setfield(L, -2, "pack");
     lua_pushinteger(L, API_VERSION);
@@ -775,6 +1134,17 @@ void dispatch(Pack* p, int ev, const std::function<int(lua_State*)>& push) {
     }
 }
 
+// K.8-1: `load` once, when the pack's last top-level chunk has finished (it may be paused by the instruction budget
+// for frames, or not yet started when earlier packs used the frame's share). Called where no coroutine is running.
+void fireLoads() {
+    for (size_t i = 0; i < g_packs.size(); ++i) {
+        Pack* p = g_packs[i].get();
+        if (!p->loadDue) continue;
+        p->loadDue = false;
+        if (!p->stopped) dispatch(p, EV_LOAD, nullptr);
+    }
+}
+
 void startPacks() {
     g_started = true;
     g_clock = 0;
@@ -789,10 +1159,13 @@ void startPacks() {
                 if (!syntax.empty()) { scriptError(p, syntax, NULL); stopPack(p, s.path + " does not compile"); }
                 break;
             }
+            p->cos.back().top = true;
+            p->booting++;
             runNew(p);   // its top level runs now, in list order, up to its first eden.wait
         }
-        if (!p->stopped) dispatch(p, EV_LOAD, nullptr);
+        if (testLoadEarly) { p->loadDue = false; p->booting = -1000000; if (!p->stopped) dispatch(p, EV_LOAD, nullptr); }   // mutation: the old dispatch at start
     }
+    fireLoads();
 }
 
 void sweep() {
@@ -813,6 +1186,7 @@ Pack* consolePack(bool create) {
 
 }  // namespace
 
+size_t totalMem() { return g_allMem; }
 Limits& limits() { return g_lim; }
 void restoreLimits() { g_lim = Limits(); }
 
@@ -825,12 +1199,23 @@ void worldEntered(bool session) {
 void reset() {
     if (g_depth > 0) { g_resetPending = true; return; }
     closeAll();
+    g_store.clear();   // K.6-5: the world closed (its exit save has been written) or the next one is loading
+    g_storeDirty = false;
     g_pending = g_started = false;
     g_clock = 0;
 }
 
 void restart() {
     if (g_depth > 0) return;
+    // K.8-7: read the script files again first (a refused pack keeps its old sources and says why); then start over.
+    if (!g_session)
+        for (const ContentPack::ModPack& mp : ContentPack::modReport().packs) {
+            if (mp.state != ContentPack::PACK_LOADED || mp.refused || mp.scripts.empty()) continue;
+            std::vector<std::string> why;
+            if (!ContentPack::rereadScripts(mp.id, &why))
+                for (const std::string& w : why)
+                    Console::print(CmdScript::Sink::ERR, "[" + mp.id + "] scripts reload: " + w + " (keeping the sources read when the world opened)");
+        }
     closeAll();
     g_started = false;
     g_pending = !g_session;
@@ -843,12 +1228,13 @@ void noteEdit(int ev, int x, int z, int y, int before) {
     if (!any) return;
     Terrain* t = World::getWorld->terrain;
     const int after = t->getLand(x, z, y);
-    QEvent q{ev, x, y, z, 0, 0};
+    QEvent q{ev, x, y, z, 0, 0, std::string()};
     switch (ev) {
     case EV_BUILD: if (after == before || after <= 0) return; q.a = after; break;
     case EV_MINE: if (after == before || before <= 0) return; q.a = before; break;
     case EV_PAINT: if (before <= 0) return; q.a = t->getColor(x, z, y); q.b = before; break;
     case EV_BURN: if (before <= 0 || !(blockinfo[before] & IS_FLAMMABLE)) return; q.a = before; break;
+    case EV_USE: if (before <= 0 || (testUseFilter && !(blockinfo[before] & IS_FLAMMABLE))) return; q.a = before; break;   // K.6-1a: any non-air block
     }
     if ((int)g_queue.size() >= MAX_EVENTS) { g_stats.eventsDropped++; return; }
     g_queue.push_back(q);
@@ -860,7 +1246,16 @@ void noteWeather(int kind, int previous) {
     for (const std::unique_ptr<Pack>& p : g_packs) any |= !p->stopped && !p->handlers[EV_WEATHER].empty();
     if (!any) return;
     if ((int)g_queue.size() >= MAX_EVENTS) { g_stats.eventsDropped++; return; }
-    g_queue.push_back(QEvent{EV_WEATHER, 0, 0, 0, kind, previous});
+    g_queue.push_back(QEvent{EV_WEATHER, 0, 0, 0, kind, previous, std::string()});
+}
+
+void noteSign(int x, int z, int y, int face, const char* text) {
+    if (!g_started || g_session || !worldOpen()) return;
+    bool any = false;
+    for (const std::unique_ptr<Pack>& p : g_packs) any |= !p->stopped && !p->handlers[EV_SIGN].empty();
+    if (!any) return;
+    if ((int)g_queue.size() >= MAX_EVENTS) { g_stats.eventsDropped++; return; }
+    g_queue.push_back(QEvent{EV_SIGN, x, y, z, face, 0, text ? text : ""});
 }
 
 void update(float etime) {
@@ -873,6 +1268,7 @@ void update(float etime) {
         p->instrFrame = 0;
         p->printsFrame = 0;
         if (p->toastQuiet > 0) p->toastQuiet -= etime;
+        if (p->capQuiet > 0) p->capQuiet -= etime;
     }
     if (g_pending) { g_pending = false; startPacks(); }
 
@@ -887,6 +1283,7 @@ void update(float etime) {
             resumeCo(p, i);
         }
     }
+    fireLoads();   // a top level that finished above (K.8-1)
     // 2. the player's edits since the last frame
     std::vector<QEvent> q;
     q.swap(g_queue);
@@ -904,7 +1301,9 @@ void update(float etime) {
                 lua_pushinteger(L, e.y);
                 lua_pushinteger(L, e.z);
                 if (e.ev == EV_PAINT) { lua_pushinteger(L, e.a); pushBlock(L, e.b); return 5; }
+                if (e.ev == EV_SIGN) { lua_pushinteger(L, e.a); lua_pushlstring(L, e.text.data(), e.text.size()); return 5; }   // K.6-3: face, text
                 pushBlock(L, e.a);
+                if (e.ev == EV_USE) { lua_pushstring(L, "fire"); return 5; }   // K.6-1a: how (K.6-1b adds "tap")
                 return 4;
             });
         }
@@ -950,6 +1349,7 @@ std::vector<Info> info() {
         i.coroutines = liveCos(p.get());
         i.errors = p->errors;
         i.preempts = p->preempts;
+        i.skipped = p->skipped;
         i.memRefusals = p->memRefusals;
         i.stopped = p->stopped;
         i.why = p->stopped ? p->why : p->lastError;
@@ -958,43 +1358,114 @@ std::vector<Info> info() {
     return v;
 }
 
+// The pack that owns a short command name: the first (load order) running pack that registered it.
+static const Cmd* shortOwner(const std::string& name, Pack** owner) {
+    for (std::unique_ptr<Pack>& up : g_packs) {
+        if (up->stopped) continue;
+        for (const Cmd& c : up->cmds)
+            if (c.name == name) { *owner = up.get(); return &c; }
+    }
+    return NULL;
+}
+
 std::vector<std::string> commands() {
     std::vector<std::string> v;
     for (const std::unique_ptr<Pack>& p : g_packs)
         if (!p->stopped)
-            for (const Cmd& c : p->cmds) v.push_back(c.name + (c.help.empty() ? "" : " - " + c.help) + " (" + p->id + ")");
+            for (const Cmd& c : p->cmds) {
+                Pack* own = NULL;
+                const bool shortOk = shortOwner(c.name, &own) && own == p.get();
+                v.push_back((shortOk ? c.name : p->id + ":" + c.name) + (c.help.empty() ? "" : " - " + c.help) + " (" + p->id + ")");
+            }
+    return v;
+}
+
+std::vector<std::string> commandNames() {
+    std::vector<std::string> v;
+    for (const std::unique_ptr<Pack>& p : g_packs)
+        if (!p->stopped)
+            for (const Cmd& c : p->cmds) { v.push_back(c.name); v.push_back(p->id + ":" + c.name); }
     return v;
 }
 
 bool runCommand(const std::string& name, const std::vector<std::string>& args, CmdScript::Sink* sink) {
-    for (std::unique_ptr<Pack>& up : g_packs) {
-        Pack* p = up.get();
-        if (p->stopped) continue;
-        for (const Cmd& c : p->cmds) {
-            if (c.name != name) continue;
-            if (spawn(p, c.fn, [&](lua_State* L) {
-                    for (const std::string& a : args) lua_pushstring(L, a.c_str());
-                    return (int)args.size();
-                }, -1, "mod " + name, sink, false))
-                resumeCo(p, p->cos.size() - 1);
-            sweep();
-            return true;
+    Pack* p = NULL;
+    const Cmd* cmd = NULL;
+    const size_t colon = name.find(':');
+    if (colon != std::string::npos) {   // `mod <pack>:<name>`: that pack's command, whoever else has the short name
+        const std::string pid = name.substr(0, colon), cn = name.substr(colon + 1);
+        for (std::unique_ptr<Pack>& up : g_packs) {
+            if (up->stopped || up->id != pid) continue;
+            for (const Cmd& c : up->cmds)
+                if (c.name == cn) { p = up.get(); cmd = &c; }
         }
+    } else {
+        cmd = shortOwner(name, &p);
     }
-    return false;
+    if (!cmd) return false;
+    if (spawn(p, cmd->fn, [&](lua_State* L) {
+            for (const std::string& a : args) lua_pushstring(L, a.c_str());
+            return (int)args.size();
+        }, -1, "mod " + name, sink, false))
+        resumeCo(p, p->cos.size() - 1);
+    sweep();
+    return true;
 }
+
+// ---- K.6-5: the store's host side (FileManager)
+void storeLoad(const uint8_t* rec, size_t n) {
+    g_store.clear();
+    g_storeDirty = false;
+    if (!rec || g_session) return;   // a session world loads none (and writes none: storeNeedsSave)
+    std::vector<emod::ModDataEntry> es;
+    std::string why;
+    if (!emod::mod_data_parse(rec, n, &es, &why)) {
+        // The whole record is ignored and stays in the file until a pack stores something (then a valid one supersedes it).
+        Console::print(CmdScript::Sink::ERR, "eden.store: this world's mod data record is ignored: " + why);
+        std::fprintf(stderr, "emod: MOD_DATA ignored: %s\n", why.c_str());
+        return;
+    }
+    for (emod::ModDataEntry& m : es) g_store[m.id].raw.swap(m.data);
+}
+bool storeNeedsSave() { return g_storeDirty && !g_session; }
+void storeEncode(std::vector<uint8_t>& out) {
+    std::vector<emod::ModDataEntry> es;
+    for (const auto& se : g_store) {
+        const StoreEntry& e = se.second;
+        if (!storeEntryPresent(e)) continue;
+        emod::ModDataEntry m;
+        m.id = se.first;
+        m.data = storeBlob(e);
+        es.push_back(std::move(m));
+    }
+    emod::mod_data_build(es, out);
+}
+void storeSaved() {
+    // the bytes just committed become each touched entry's raw (so the next save copies them, and an emptied one goes)
+    for (std::map<std::string, StoreEntry>::iterator it = g_store.begin(); it != g_store.end();) {
+        StoreEntry& e = it->second;
+        if (e.touched) {
+            if (e.kv.empty()) { it = g_store.erase(it); continue; }
+            e.raw = storeBlob(e);
+            e.touched = false;
+        }
+        ++it;
+    }
+    g_storeDirty = false;
+}
+size_t storeEntries() { return g_store.size(); }
 
 Stats stats() { return g_stats; }
 
 const char* describe() {
-    static char buf[320];
+    static char buf[360];
     int packs = 0, cos = 0;
     for (const std::unique_ptr<Pack>& p : g_packs) { packs += !p->console; cos += liveCos(p.get()); }
     std::snprintf(buf, sizeof buf,
                   "{\"packs\":%d,\"coroutines\":%d,\"started\":%d,\"finished\":%d,\"errors\":%d,\"preempted\":%d,"
-                  "\"stopped\":%d,\"events\":%d,\"eventsDropped\":%d,\"edits\":%d}",
+                  "\"stopped\":%d,\"events\":%d,\"eventsDropped\":%d,\"edits\":%d,\"skipped\":%d}",
                   packs, cos, g_stats.started, g_stats.finished, g_stats.errors, g_stats.preempted, g_stats.stopped,
-                  g_stats.events, g_stats.eventsDropped, g_stats.edits);
+                  g_stats.events, g_stats.eventsDropped, g_stats.edits, g_stats.skipped);
     return buf;
 }
 

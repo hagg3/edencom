@@ -68,6 +68,8 @@ Classes/MpWorld.cpp
 Classes/ChatFeed.cpp
 Classes/BlockIcon.cpp
 Classes/Hotbar.cpp
+Classes/Tutorial.cpp
+Classes/TutorialInstall.cpp
 Classes/ServerListMenu.cpp
 Classes/ServerFormMenu.cpp
 Classes/TouchLook.cpp

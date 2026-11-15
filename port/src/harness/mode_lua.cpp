@@ -10,6 +10,8 @@
 //      eden.cmd is anchored at the player's feet, eden.get reads back name + colour
 //   4. events: the local player's build / paint / mine / burn (MpWorld::intent*) reach the handlers once each, in
 //      order; a script's own edits are not events
+//      K.6-1a: a fire tap on stone fires `use` once (how "fire") and no `burn`; on wood `use` then `burn`; eden.version is 2
+//      (--lua-mutate=usefilter keeps the flammable test on `use`: must FAIL)
 //   5. eden.wait: a handler waits 0.5 s of game time before its edit
 //   6. the shared WORK_PER_FRAME: 6 fills of 4096 cells finish over more than one frame, every cell set
 //   7. CPU: a 300k-iteration loop is paused across frames (the gate the count-hook mutation fails); an endless
@@ -21,6 +23,14 @@
 //      a backtracking pattern, string.rep("", 2^62), table.move/insert/remove over 2^62 elements each return or
 //      error in < 2 s (they ran 20 s to forever before); ordinary patterns and table calls still work
 //  11. a session starts no scripts; a closed world closes them; reopening starts them afresh (runs after 12)
+// K.8-B legs: 15 (a short command name two packs register: both files run to the end, `mod pack:name`), 16 (a total memory
+// cap across all states), 17 (`scripts reload` re-reads the script files).
+// K.8 legs: 13 (`load` once, after a top level that the budget paused / starved; --lua-mutate=loadearly must FAIL it)
+// and 14 (the 64-coroutine cap skips a tick, never errors; --lua-mutate=caperror must FAIL it).
+// K.6-5 leg 22: eden.store (record 13 MOD_DATA): every value type survives save + reopen exactly; the caps return
+// false, why; a pack that is not loaded keeps its bytes through two saves; a blob that does not decode starts empty and
+// is kept until its pack stores something; the 1 MiB / 64-pack record caps; a session world loads none
+// (--lua-mutate=storenotdirty: set never marks the store dirty, so the reopen reads nothing: must FAIL).
 // --lua-mutate=hook (count hook off: leg 7's paused loop must FAIL; the endless legs are skipped) and
 // --lua-mutate=sandbox (base escapes left in: leg 2 must FAIL; leg 12's __gc cases are skipped, they would hang).
 #include <algorithm>
@@ -30,8 +40,12 @@
 #include "../../../Classes/BlockRegistry.h"
 #include "../../../Classes/Console.h"
 #include "../../../Classes/ContentPack.h"
+#include "../../../Classes/EdenWorldStore.h"
+#include "../../../Classes/FileManager.h"
 #include "../../../Classes/ModScript.h"
 #include "../../../Classes/MpWorld.h"
+#include "../../../Classes/SignTool.h"
+#include "../../../Classes/SignRenderer.h"
 
 using namespace harness;
 
@@ -97,7 +111,7 @@ const char* kTestMain = R"(order[#order + 1] = "main"
 local log, loads, ticks = {}, 0, 0
 eden.on("load", function() loads = loads + 1 end)
 eden.on("tick", function(dt) ticks = ticks + 1 end)
-for _, ev in ipairs({"build", "mine", "paint", "burn"}) do
+for _, ev in ipairs({"build", "mine", "paint", "burn", "use", "sign"}) do
   eden.on(ev, function(...) log[#log + 1] = ev .. " " .. lib.fmt(...) end)
 end
 eden.command("probe", "test state", function(what)
@@ -148,6 +162,126 @@ eden.command("alive", "", function() print("alive " .. math.floor(collectgarbage
 eden.command("boom", "", function() error("boom") end)
 )";
 
+// K.8-1: top levels of 3 x packPerFrame instructions, then a `load` handler. The three burners (ae, af, ag) use up
+// allPerFrame (250000) in the first frame, so ah's top level is not even started then.
+std::string loadPack(const char* id, long packPerFrame, bool burn) {
+    std::string t = burn ? "for i = 1, " + std::to_string(3 * packPerFrame) + " do end\n" : "";
+    t += "local loads, topEnd, loadAt = 0, eden.clock(), -1\n"
+         "eden.on(\"load\", function() loads = loads + 1; loadAt = eden.clock() end)\n";
+    t += std::string("eden.command(\"probe_") + id + "\", \"\", function() print(string.format(\"loads %d top %.4f load %.4f\", loads, topEnd, loadAt)) end)\n";
+    return t;
+}
+// K.8-2: "hold" waits 6 s of game time; with 64 of them live, a tick must be skipped, not fail.
+const char* kCap = R"(local n = 0
+eden.on("tick", function() n = n + 1 end)
+eden.command("hold", "", function() eden.wait(6) end)
+eden.command("captick", "", function() print("ticks " .. n) end)
+)";
+
+// K.8-4: two packs register `go`; the second's file must run to the end (end_<pack> is registered after the clash).
+const char* kGo = R"(eden.command("go", "", function() print("go from " .. eden.pack) end)
+eden.command("end_" .. eden.pack, "", function() print("end " .. eden.pack) end)
+)";
+// K.8-5: a command that takes 6 MiB in one allocation, one that lets it go.
+const char* kMem = R"(local keep
+eden.command("grab", "", function()   -- 96 x 64 KiB (one 6 MiB string.rep would briefly need twice that)
+  keep = {}
+  for i = 1, 96 do keep[i] = string.rep("x", 65536) end
+  print("grabbed " .. eden.pack)
+end)
+eden.command("drop", "", function() keep = nil; collectgarbage(); print("dropped") end)
+eden.command("still", "", function() print("still " .. eden.pack) end)
+)";
+// K.6-5: eden.store. `dump` is exact: an integer prints as i<n>, a float as f<%a>, a string as s<len>:<hex>.
+const char* kStore = R"(local S = eden.store
+local function hex(s) return (s:gsub(".", function(c) return string.format("%02x", c:byte()) end)) end
+local function order(a, b)
+  if type(a) ~= type(b) then return type(a) == "number" end
+  return a < b
+end
+local function dump(v)
+  local t = type(v)
+  if t == "number" then return math.type(v) == "integer" and "i" .. tostring(v) or "f" .. string.format("%a", v) end
+  if t == "string" then return "s" .. #v .. ":" .. hex(v) end
+  if t == "table" then
+    local ks, o = {}, {}
+    for k in pairs(v) do ks[#ks + 1] = k end
+    table.sort(ks, order)
+    for _, k in ipairs(ks) do o[#o + 1] = dump(k) .. "=" .. dump(v[k]) end
+    return "{" .. table.concat(o, ",") .. "}"
+  end
+  return tostring(v)
+end
+local V = {
+  int = 42, big = math.maxinteger, small = math.mininteger, odd = 9007199254740993,
+  flt = 0.1, third = 1 / 3, negz = -0.0, tiny = 4.9e-324, whole = 2.0,
+  yes = true, no = false,
+  bin = "\0\1\2\255" .. string.rep("\128", 10) .. "\0",
+  empty = "",
+  max4k = string.rep("z", 4095) .. "\0",
+  nest = {1, 2.5, "three", {deep = {deeper = {"four"}}}, x = true, [-3] = "neg", [10] = 10},
+}
+local function fill(prefix)
+  local i, ok, why = 0, true, nil
+  while ok do ok, why = S.set(prefix .. i, string.rep("f", 4000)); i = i + 1 end
+  for j = 0, i - 1 do S.set(prefix .. j, nil) end
+  return "fill " .. (i - 1) .. " " .. tostring(why)
+end
+eden.command("sput", "", function()
+  for k, v in pairs(V) do
+    local ok, why = S.set(k, v)
+    if not ok then print("sput fail " .. k .. " " .. tostring(why)) return end
+  end
+  print("sput ok")
+end)
+eden.command("vdump", "", function()
+  local ks, o = {}, {}
+  for k in pairs(V) do ks[#ks + 1] = k end
+  table.sort(ks)
+  for _, k in ipairs(ks) do o[#o + 1] = k .. "=" .. dump(V[k]) end
+  print(table.concat(o, ";"))
+end)
+eden.command("sget", "", function()
+  local o = {}
+  for _, k in ipairs(S.keys()) do if k ~= "step" then o[#o + 1] = k .. "=" .. dump(S.get(k)) end end
+  print(table.concat(o, ";"))
+end)
+eden.command("sone", "", function(k, v) local ok, why = S.set(k, v); print(tostring(ok) .. " " .. tostring(why)) end)
+eden.command("sstep", "", function() print("step " .. tostring(S.get("step"))) end)
+eden.command("sfill", "", function(prefix) print(fill(prefix)) end)
+eden.command("scaps", "", function()
+  local r = {}
+  local function try(k, v) local ok, why = S.set(k, v); r[#r + 1] = tostring(ok) .. ":" .. tostring(why) end
+  try("fn", function() end)
+  try("nan", 0 / 0)
+  try("inf", math.huge)
+  try("s4097", string.rep("x", 4097))
+  try("deep", {{{{{1}}}}})
+  local cyc = {}; cyc.me = cyc; try("cyc", cyc)
+  local wide = {}; for i = 1, 257 do wide[i] = i end; try("wide", wide)
+  try("bkey", {[true] = 1})
+  try("fkey", {[1.5] = 1})
+  try("co", coroutine.create(function() end))
+  r[#r + 1] = "keyerr " .. tostring(pcall(S.set, "", 1)) .. tostring(pcall(S.set, string.rep("k", 65), 1)) ..
+              tostring(pcall(S.set, 5, 1)) .. tostring(pcall(S.get, {}))
+  r[#r + 1] = "after " .. tostring(S.get("fn")) .. tostring(S.get("deep"))
+  S.set("tmp", 5); local had = S.get("tmp"); S.set("tmp", nil)
+  r[#r + 1] = "del " .. tostring(had) .. " " .. tostring(S.get("tmp"))
+  local t = S.get("nest"); t.x = false
+  r[#r + 1] = "copy " .. tostring(S.get("nest").x)
+  r[#r + 1] = fill("fill")
+  r[#r + 1] = "keys " .. #S.keys()
+  print(table.concat(r, "|"))
+end)
+)";
+// K.6-5: a pack whose saved blob the test replaces with bytes that do not decode.
+const char* kStoreBad = R"(eden.command("bkeys", "", function() print("bkeys " .. #eden.store.keys()) end)
+eden.command("bset", "", function() print("bset " .. tostring(eden.store.set("fixed", 1))) end)
+)";
+
+// K.8-7: a one-command pack whose answer the test edits on disk.
+std::string verPack(const char* v) { return std::string("eden.command(\"ver\", \"\", function() print(\"") + v + "\") end)\n"; }
+
 }  // namespace
 
 int run_lua_selftest() {
@@ -155,9 +289,14 @@ int run_lua_selftest() {
     char d[2048];
     const std::string docs = eden_platform_documents_root();
     const std::string packs = docs + "/Packs";
-    if (!mutation_known("eden-lua", "--lua-mutate", g_opt.luaMutate, {"hook", "sandbox"})) return 2;
+    if (!mutation_known("eden-lua", "--lua-mutate", g_opt.luaMutate, {"hook", "sandbox", "loadearly", "caperror", "usefilter", "signnocache", "storenotdirty"})) return 2;
     const bool mutHook = g_opt.luaMutate == "hook", mutSandbox = g_opt.luaMutate == "sandbox";
+    ModScript::testLoadEarly = g_opt.luaMutate == "loadearly";
+    ModScript::testCapError = g_opt.luaMutate == "caperror";
+    ModScript::testUseFilter = g_opt.luaMutate == "usefilter";
+    ModScript::testStoreNotDirty = g_opt.luaMutate == "storenotdirty";
     ModScript::testNoHook = mutHook;
+    SignTool::testNoCache = g_opt.luaMutate == "signnocache";
     ModScript::testNoSandbox = mutSandbox;
     eden_fs_remove_tree(packs);
     bool wrote = writeFile(packs + "/aa_test/pack.json",
@@ -168,8 +307,38 @@ int run_lua_selftest() {
                  writeFile(packs + "/ac_spin/pack.json", "{\"format\": 1, \"id\": \"ac_spin\", \"scripts\": [\"spin.lua\"]}\n") &&
                  writeFile(packs + "/ac_spin/spin.lua", kSpin) &&
                  writeFile(packs + "/ad_bad/pack.json", "{\"format\": 1, \"id\": \"ad_bad\", \"scripts\": [\"bad.lua\"]}\n") &&
-                 writeFile(packs + "/ad_bad/bad.lua", "this is not lua\n");
-    check(wrote, "the four test packs are written to Documents/Packs", packs.c_str());
+                 writeFile(packs + "/ad_bad/bad.lua", "this is not lua\n") &&
+                 writeFile(packs + "/ae_load/pack.json", "{\"format\": 1, \"id\": \"ae_load\", \"scripts\": [\"a.lua\"]}\n") &&
+                 writeFile(packs + "/ae_load/a.lua", loadPack("ae", ModScript::limits().packPerFrame, true)) &&
+                 writeFile(packs + "/af_load/pack.json", "{\"format\": 1, \"id\": \"af_load\", \"scripts\": [\"a.lua\"]}\n") &&
+                 writeFile(packs + "/af_load/a.lua", loadPack("af", ModScript::limits().packPerFrame, true)) &&
+                 writeFile(packs + "/ag_load/pack.json", "{\"format\": 1, \"id\": \"ag_load\", \"scripts\": [\"a.lua\"]}\n") &&
+                 writeFile(packs + "/ag_load/a.lua", loadPack("ag", ModScript::limits().packPerFrame, true)) &&
+                 writeFile(packs + "/ah_load/pack.json", "{\"format\": 1, \"id\": \"ah_load\", \"scripts\": [\"a.lua\"]}\n") &&
+                 writeFile(packs + "/ah_load/a.lua", loadPack("ah", ModScript::limits().packPerFrame, false)) &&
+                 writeFile(packs + "/ai_cap/pack.json", "{\"format\": 1, \"id\": \"ai_cap\", \"scripts\": [\"a.lua\"]}\n") &&
+                 writeFile(packs + "/ai_cap/a.lua", kCap) &&
+                 writeFile(packs + "/aj_one/pack.json", "{\"format\": 1, \"id\": \"aj_one\", \"scripts\": [\"a.lua\"]}\n") &&
+                 writeFile(packs + "/aj_one/a.lua", kGo) &&
+                 writeFile(packs + "/ak_two/pack.json", "{\"format\": 1, \"id\": \"ak_two\", \"scripts\": [\"a.lua\"]}\n") &&
+                 writeFile(packs + "/ak_two/a.lua", kGo) &&
+                 writeFile(packs + "/al_mem/pack.json", "{\"format\": 1, \"id\": \"al_mem\", \"scripts\": [\"a.lua\"]}\n") &&
+                 writeFile(packs + "/al_mem/a.lua", kMem) &&
+                 writeFile(packs + "/am_mem/pack.json", "{\"format\": 1, \"id\": \"am_mem\", \"scripts\": [\"a.lua\"]}\n") &&
+                 writeFile(packs + "/am_mem/a.lua", kMem) &&
+                 writeFile(packs + "/an_mem/pack.json", "{\"format\": 1, \"id\": \"an_mem\", \"scripts\": [\"a.lua\"]}\n") &&
+                 writeFile(packs + "/an_mem/a.lua", kMem) &&
+                 writeFile(packs + "/ao_rel/pack.json", "{\"format\": 1, \"id\": \"ao_rel\", \"scripts\": [\"a.lua\"]}\n") &&
+                 writeFile(packs + "/ao_rel/a.lua", verPack("v1")) &&
+                 writeFile(packs + "/ap_rel/pack.json", "{\"format\": 1, \"id\": \"ap_rel\", \"scripts\": [\"a.lua\"]}\n") &&
+                 writeFile(packs + "/ap_rel/a.lua", verPack("v1")) &&
+                 writeFile(packs + "/aq_rel/pack.json", "{\"format\": 1, \"id\": \"aq_rel\", \"scripts\": [\"a.lua\"]}\n") &&
+                 writeFile(packs + "/aq_rel/a.lua", verPack("v1")) &&
+                 writeFile(packs + "/ar_store/pack.json", "{\"format\": 1, \"id\": \"ar_store\", \"scripts\": [\"a.lua\"]}\n") &&
+                 writeFile(packs + "/ar_store/a.lua", kStore) &&
+                 writeFile(packs + "/as_bad/pack.json", "{\"format\": 1, \"id\": \"as_bad\", \"scripts\": [\"a.lua\"]}\n") &&
+                 writeFile(packs + "/as_bad/a.lua", kStoreBad);
+    check(wrote, "the test packs are written to Documents/Packs", packs.c_str());
     if (!wrote) return 1;
     ModScript::Limits& lim = ModScript::limits();
     lim.memBytes = 2u << 20;
@@ -192,6 +361,22 @@ int run_lua_selftest() {
                   bad && bad->stopped && bad->why.find("bad.lua does not compile") != std::string::npos &&
                   counts == "order lib,main loads 1",
               "packs' scripts run in list order, load fires once; a pack that does not compile is stopped alone", d);
+    }
+
+    // ---- 13. K.8-1: `load` fires once, after a top level the budget paused (ae, af, ag) or starved (ah)
+    {
+        std::string all, bad;
+        for (const char* id : {"ae", "af", "ag", "ah"}) {
+            const std::string out = mod(std::string("probe_") + id);
+            int loads = -1;
+            double top = -1, load = -1;
+            std::sscanf(out.c_str(), "loads %d top %lf load %lf", &loads, &top, &load);
+            all += std::string(id) + ": " + out + "; ";
+            if (loads != 1 || load < top) bad += id;
+            if (std::string(id) != "ah" && top < 1.5 / 60) bad += std::string(id) + "(not paused)";   // 3 x packPerFrame: >= 3 frames
+            if (std::string(id) == "ah" && top < 0.5 / 60) bad += "ah(not starved)";                 // its top level began a frame or more late
+        }
+        check(bad.empty(), "`load` fires exactly once, after a top level paused by packPerFrame or starved by allPerFrame", (all + "bad: " + bad).c_str());
     }
 
     // ---- 2. the sandbox (the console's state is set up by the same code as a pack's)
@@ -259,9 +444,31 @@ return table.concat(r, ","))");
         const std::string brick = BlockRegistry::stockName(TYPE_BRICK), leaves = BlockRegistry::stockName(TYPE_LEAVES);
         const std::string at = std::to_string(x) + " " + std::to_string(Y) + " " + std::to_string(z);
         const std::string want = "log build " + at + " " + brick + "|paint " + at + " 7 " + brick + "|mine " + at + " " + brick +
-                                 "|build " + at + " " + leaves + "|burn " + at + " " + leaves;
+                                 "|build " + at + " " + leaves + "|use " + at + " " + leaves + " fire|burn " + at + " " + leaves;
         std::snprintf(d, sizeof(d), "got  %s\nwant %s", got.c_str(), want.c_str());
         check(got == want, "the player's build/paint/mine/burn reach the handlers once each, in order; script edits do not", d);
+
+        // K.6-1a: a fire tap fires `use` (how = "fire") on any non-air block; `burn` still only on a flammable one, after `use`
+        mod("probe", {"log"});
+        hud->blocktype = TYPE_STONE;
+        MpWorld::intentBuild(x, z, Y);
+        MpWorld::intentBurn(x, z, Y);
+        tick(2);
+        const std::string stoneLog = mod("probe", {"log"});
+        mod("probe", {"log"});
+        hud->blocktype = TYPE_WOOD;
+        MpWorld::intentBuild(x, z, Y);
+        MpWorld::intentBurn(x, z, Y);
+        hud->blocktype = keep;
+        tick(2);
+        const std::string woodLog = mod("probe", {"log"});
+        const std::string stone = BlockRegistry::stockName(TYPE_STONE), wood = BlockRegistry::stockName(TYPE_WOOD);
+        std::snprintf(d, sizeof(d), "stone: %s\nwood: %s", stoneLog.c_str(), woodLog.c_str());
+        check(stoneLog == "log build " + at + " " + stone + "|use " + at + " " + stone + " fire" &&
+                  woodLog == "log build " + at + " " + wood + "|use " + at + " " + wood + " fire|burn " + at + " " + wood,
+              "a fire tap fires `use` (how=\"fire\") on stone (no burn) and on wood (use, then burn), once each", d);
+        const std::string ver = lua("return eden.version");
+        check(ver == "2", "eden.version == 2 (K.6-6)", ver.c_str());
     }
 
     // ---- 5. eden.wait
@@ -352,6 +559,71 @@ return table.concat(r, ","))");
               "maxErrors errors stop that pack only (its commands go with it)", d);
     }
 
+    // ---- 14. K.8-2: 64 waiting handlers + a tick: the tick is skipped, not an error; it runs again once slots free
+    {
+        const std::string t0s = mod("captick");
+        int t0 = 0, t1 = 0;
+        std::sscanf(t0s.c_str(), "ticks %d", &t0);
+        for (int i = 0; i < ModScript::MAX_COROUTINES; ++i) mod("hold");
+        std::vector<ModScript::Info> iv = ModScript::info();
+        const ModScript::Info* c = infoOf(iv, "ai_cap");
+        const int live = c ? c->coroutines : -1;
+        tick(300);   // the holds wait 6 s = 360 frames
+        iv = ModScript::info();
+        c = infoOf(iv, "ai_cap");
+        const int skipped = c ? c->skipped : -1, errors = c ? c->errors : -1;
+        const bool stopped = c ? c->stopped : true;
+        tick(200);
+        const std::string t1s = mod("captick");
+        std::sscanf(t1s.c_str(), "ticks %d", &t1);
+        iv = ModScript::info();
+        c = infoOf(iv, "ai_cap");
+        std::snprintf(d, sizeof(d), "live %d; after 300 frames skipped %d errors %d stopped %d; ticks %d -> %d; why %s", live, skipped, errors,
+                      stopped, t0, t1, c ? c->why.c_str() : "?");
+        check(live == ModScript::MAX_COROUTINES && !stopped && errors == 0 && skipped > 100 && c && !c->stopped && t1 - t0 >= 100,
+              "reaching the 64-coroutine cap skips ticks (counted), never an error; the tick runs again once slots free", d);
+    }
+
+    // ---- 15. K.8-4: two packs register `go`: both files run to the end; `mod go` is the first's, `mod ak_two:go` the second's
+    {
+        const std::vector<ModScript::Info> iv = ModScript::info();
+        const ModScript::Info* a = infoOf(iv, "aj_one");
+        const ModScript::Info* b = infoOf(iv, "ak_two");
+        const std::string shortGo = mod("go"), second = mod("ak_two:go"), first = mod("aj_one:go"), endA = mod("aj_one:end_aj_one"), endB = mod("ak_two:end_ak_two");
+        const std::string nope = mod("ak_two:end_aj_one"), none = mod("zz_none:go");
+        std::snprintf(d, sizeof(d), "go -> %s; ak_two:go -> %s; aj_one:go -> %s; ends %s / %s; wrong pack %s, no pack %s; errors %d/%d; %s", shortGo.c_str(),
+                      second.c_str(), first.c_str(), endA.c_str(), endB.c_str(), nope.c_str(), none.c_str(), a ? a->errors : -1, b ? b->errors : -1, infoText().c_str());
+        check(a && b && !a->stopped && !b->stopped && a->errors == 0 && b->errors == 0 && shortGo == "go from aj_one" && second == "go from ak_two" &&
+                  first == "go from aj_one" && endA == "end aj_one" && endB == "end ak_two" && nope.find("no command") != std::string::npos &&
+                  none.find("no command") != std::string::npos,
+              "a short command name two packs register: both files run to the end; `mod go` runs the first's, `mod pack:go` always that pack's", d);
+    }
+
+    // ---- 16. K.8-5: three packs take 6 MiB each under a 12 MiB total: the third gets "not enough memory" and lives on
+    {
+        const size_t keepPer = lim.memBytes, keepAll = lim.allMemBytes, base = ModScript::totalMem();
+        lim.memBytes = 8u << 20;
+        lim.allMemBytes = base + (13u << 20);   // two 6 MiB strings fit, a third does not
+        const std::string r1 = mod("al_mem:grab"), r2 = mod("am_mem:grab"), r3 = mod("an_mem:grab");
+        const size_t held = ModScript::totalMem();
+        std::vector<ModScript::Info> iv = ModScript::info();
+        const ModScript::Info *a = infoOf(iv, "al_mem"), *b = infoOf(iv, "am_mem"), *c3 = infoOf(iv, "an_mem");
+        const bool shape = a && b && c3 && a->mem >= (6u << 20) && b->mem >= (6u << 20) && c3->mem < (3u << 20) && c3->memRefusals > 0 &&
+                           a->memRefusals == 0 && b->memRefusals == 0 && !a->stopped && !b->stopped && !c3->stopped;
+        const std::string still = mod("an_mem:still"), still1 = mod("al_mem:still");
+        mod("al_mem:drop");
+        const std::string again = mod("an_mem:grab");   // al_mem let go of 6 MiB: now the third fits
+        mod("am_mem:drop");
+        mod("an_mem:drop");
+        std::snprintf(d, sizeof(d), "%s | %s | %s; total %zu KiB of %zu KiB; shape %d; still %s / %s; after a drop: %s", r1.c_str(), r2.c_str(), r3.c_str(), held / 1024,
+                      lim.allMemBytes / 1024, shape, still.c_str(), still1.c_str(), again.c_str());
+        check(r1 == "grabbed al_mem" && r2 == "grabbed am_mem" && r3.find("not enough memory") != std::string::npos && shape &&
+                  held <= lim.allMemBytes && still == "still an_mem" && still1 == "still al_mem" && again == "grabbed an_mem",
+              "a total memory cap across all states: the third pack gets \"not enough memory\" and lives on, the others are untouched", d);
+        lim.memBytes = keepPer;
+        lim.allMemBytes = keepAll;
+    }
+
     // ---- 10. the pack hash covers the scripts
     {
         std::vector<std::string> lines;
@@ -416,6 +688,258 @@ return table.concat(r, ","))");
               "a script can't hang the game in C: no __gc, capped pattern steps, string.rep and table.move/insert/remove (< 2 s each)", d);
     }
 
+    // ---- 17. K.8-7: `scripts reload` reads the script files again: new behaviour, a syntax error stops that pack with its line,
+    // an oversized file is refused and the old sources are kept; the other packs restart
+    {
+        tick(30);   // the restart in leg 12 left the burner packs' top levels spread over a few frames
+        std::string hashBefore;
+        for (const ContentPack::ModPack& p : ContentPack::modReport().packs) if (p.id == "ao_rel") hashBefore = p.hash;
+        const std::string v0 = mod("ao_rel:ver");
+        writeFile(packs + "/ao_rel/a.lua", verPack("v2"));
+        writeFile(packs + "/ap_rel/a.lua", "eden.command(\"ver\", \"\", function() print(\"v2\")\n");   // no `end)`
+        writeFile(packs + "/aq_rel/a.lua", verPack("v2") + "-- " + std::string(300 * 1024, 'x') + "\n");
+        const std::string stale = mod("ao_rel:ver");   // not until the reload
+        Console::run("scripts reload");
+        tick(30);
+        const std::string v1 = mod("ao_rel:ver"), vq = mod("aq_rel:ver"), vp = mod("ap_rel:ver");
+        const std::vector<ModScript::Info> iv = ModScript::info();
+        const ModScript::Info* p = infoOf(iv, "ap_rel");
+        const std::string counts = mod("probe", {"counts"});
+        std::string hashAfter;
+        for (const ContentPack::ModPack& mp : ContentPack::modReport().packs) if (mp.id == "ao_rel") hashAfter = mp.hash;
+        std::snprintf(d, sizeof(d), "before %s, stale %s; after: ao_rel %s, aq_rel %s, ap_rel %s; ap_rel %s; probe %s; hash same %d", v0.c_str(), stale.c_str(), v1.c_str(), vq.c_str(),
+                      vp.c_str(), p ? (p->stopped ? ("stopped: " + p->why).c_str() : "running") : "?", counts.c_str(), hashBefore == hashAfter);
+        check(v0 == "v1" && stale == "v1" && v1 == "v2" && vq == "v1" && vp.find("no command") != std::string::npos && p && p->stopped &&
+                  p->why.find("does not compile") != std::string::npos && counts == "order lib,main loads 1" && !hashBefore.empty() && hashBefore == hashAfter,
+              "`scripts reload` re-reads the script files: new behaviour; a syntax error stops that pack; an oversized file is refused (old sources kept); the hash stays", d);
+    }
+
+    // ---- 19. K.6-3: eden.sign / eden.setsign / the `sign` event, through SignTool's own commit
+    {
+        World* w = World::getWorld;
+        WorldTrailer* tr = w->fm->trailer();
+        const int Y = (int)w->player->pos.y + 2;   // beside the player's own height: in the sign radius (shadows leg 3's Y)
+        const int ax = px + 8, az = pz - 8, bx = px + 10;   // A: set from Lua; B: typed by hand (same text, same paint)
+        const std::string A = n3(ax, Y, az), B = n3(bx, Y, az);
+        lua("eden.set(" + A + ", \"stone\"); eden.set(" + B + ", \"stone\")");
+        const size_t n0 = tr->signCount();
+        const float yaw = w->player->yaw;
+        const std::string s1 = lua("return eden.setsign(" + A + ", 3, \"Hello Lua\", 7)");
+        const std::string r1 = lua("return eden.sign(" + A + ")");
+        const std::string wall = lua("return eden.setsign(" + A + ", 1, \"wall\"), eden.sign(" + A + ", 1)");
+        const std::string first = lua("return eden.sign(" + A + ")");   // no face: the first record on the block
+        // refusals, each with a why, none changing anything
+        const std::string c95 = lua("return eden.setsign(" + A + ", 4, string.rep(\"x\", 95))");
+        const std::string r95 = lua("return #eden.sign(" + A + ", 4)");
+        const std::string c96 = lua("return eden.setsign(" + A + ", 4, string.rep(\"x\", 96))");
+        const std::string ctl = lua("return eden.setsign(" + A + ", 4, \"a\\1b\")");
+        const std::string nul = lua("return eden.setsign(" + A + ", 4, \"a\\0b\")");
+        const std::string hi = lua("return eden.setsign(" + A + ", 4, \"caf\\195\\169\")");
+        const std::string under = lua("return eden.setsign(" + A + ", 2, \"x\")");
+        const std::string badc = lua("return eden.setsign(" + A + ", 4, \"x\", 99)");
+        const std::string air = lua("return eden.setsign(" + n3(ax, Y + 5, az) + ", 3, \"floating\")");
+        const std::string airGet = lua("return eden.sign(" + n3(ax, Y + 5, az) + ")");
+        const std::string still = lua("return eden.sign(" + A + ", 4)");
+        // an empty text deletes (and deleting nothing is not an error)
+        const std::string del = lua("return eden.setsign(" + A + ", 4, \"\"), eden.sign(" + A + ", 4)");
+        const std::string del2 = lua("return eden.setsign(" + A + ", 5, \"\")");
+        const size_t nAfterDel = tr->signCount();
+        // the same sign typed by hand at B, with the same paint, yaw and text
+        mod("probe", {"log"});
+        Hud* hud = w->hud;
+        hud->block_paintcolor = 7;
+        SignTool::use(bx, az, Y, 0, 1, 0, yaw);
+        SignTool::answer(0, "Hello Lua");
+        if (GLDialog::active()) GLDialog::dismiss();
+        hud->block_paintcolor = 0;
+        SignTool::use(bx, az, Y, 0, 1, 0, yaw);
+        SignTool::answer(0, "Edited by hand");
+        if (GLDialog::active()) GLDialog::dismiss();
+        tick(2);
+        const std::string evLog = mod("probe", {"log"});
+        const int ia = tr->findSign(TrailerPos::fromTerrainArgs(ax, az, Y), 3), ib = tr->findSign(TrailerPos::fromTerrainArgs(bx, az, Y), 3);
+        std::snprintf(d, sizeof(d), "set %s; read %s; wall %s; first %s; 95: %s len %s; 96: %s; ctl: %s; nul: %s; high: %s; bottom: %s; colour: %s; no anchor: %s / get '%s'; refused kept %s; "
+                      "delete %s, again %s; signs %zu -> %zu; hand %s; log %s",
+                      s1.c_str(), r1.c_str(), wall.c_str(), first.c_str(), c95.c_str(), r95.c_str(), c96.c_str(), ctl.c_str(), nul.c_str(), hi.c_str(),
+                      under.c_str(), badc.c_str(), air.c_str(), airGet.c_str(), still.c_str(), del.c_str(), del2.c_str(), n0, nAfterDel,
+                      ib >= 0 ? "ok" : "none", evLog.c_str());
+        auto has = [](const std::string& hay, const char* n) { return hay.find(n) != std::string::npos; };
+        check(s1 == "true" && r1 == "Hello Lua\t7\t3" && has(wall, "true") && first == "Hello Lua\t7\t3" && wall.find("wall\t45\t1") != std::string::npos &&
+                  c95 == "true" && r95 == "95" && c96.compare(0, 5, "false") == 0 && has(c96, "95 bytes") &&
+                  ctl.compare(0, 5, "false") == 0 && has(ctl, "printable") && nul.compare(0, 5, "false") == 0 && hi.compare(0, 5, "false") == 0 &&
+                  under.compare(0, 5, "false") == 0 && badc.compare(0, 5, "false") == 0 && has(badc, "colour") &&
+                  air.compare(0, 5, "false") == 0 && has(air, "no block there") && airGet.empty() && still.compare(0, 3, "xxx") == 0 &&
+                  del == "true" && del2 == "true" && nAfterDel == n0 + 2 && ia >= 0 && ib >= 0 &&
+                  evLog == "log sign " + std::to_string(bx) + " " + std::to_string(Y) + " " + std::to_string(az) + " 3 Hello Lua|sign " +
+                      std::to_string(bx) + " " + std::to_string(Y) + " " + std::to_string(az) + " 3 Edited by hand",
+              "eden.sign/setsign: set and read, faces, 95 bytes ok, 96 / control / NUL / high bytes / bottom / bad colour / no anchor refused with a why, empty deletes; the player's place and edit fire `sign`, a script's own does not", d);
+        // Lua vs hand: the same record (text, face, paint, facing)
+        tr->setSignText((size_t)ib, "Hello Lua");
+        const TrailerSign &sa = tr->sign((size_t)ia), &sb = tr->sign((size_t)ib);
+        std::snprintf(d, sizeof(d), "Lua a=%d b=%d c=%d '%s'; hand a=%d b=%d c=%d '%s'", sa.a, sa.b, sa.c, sa.text, sb.a, sb.b, sb.c, sb.text);
+        check(sa.a == sb.a && sa.b == sb.b && sa.c == sb.c && !std::strcmp(sa.text, sb.text) && sb.b == 7,
+              "a sign set from Lua is the record the same sign typed by hand makes", d);
+
+        // The renderer: the new text is what it shows, and an edit drops the old text's texture
+        tick(6);
+        const bool shownOld = SignRenderer::cached("Hello Lua");
+        const int withText = SignRenderer::stats().withText;
+        lua("eden.setsign(" + A + ", 3, \"Second text\")");
+        lua("eden.setsign(" + B + ", 3, \"\")");   // B's "Hello Lua" goes too: nothing shows the old text now
+        const bool oldGone = !SignRenderer::cached("Hello Lua");   // before any frame: the edit itself dropped it
+        tick(6);
+        const bool newShown = SignRenderer::cached("Second text") && SignRenderer::stats().withText >= 1;
+        std::snprintf(d, sizeof(d), "old text cached before %d (withText %d), dropped by the edit %d, new text drawn %d", shownOld, withText, oldGone, newShown);
+        check(shownOld && oldGone && newShown, "SignRenderer shows a Lua-set sign's text; editing it drops the old text's cached texture (--lua-mutate=signnocache must FAIL)", d);
+
+        // save -> reopen -> read
+        lua("eden.setsign(" + A + ", 5, \"kept\", 12)");
+        save_world();
+        const bool quit = quit_to_menu();
+        tick(10);
+        const bool reopened = open_world(name, g_opt.height);
+        tick(g_opt.frames / 2);
+        const std::string back = lua("return eden.sign(" + A + ", 3)"), back5 = lua("return eden.sign(" + A + ", 5)"), gone = lua("return eden.sign(" + B + ")");
+        std::snprintf(d, sizeof(d), "quit %d reopened %d; top '%s'; +z '%s'; deleted '%s'", quit, reopened, back.c_str(), back5.c_str(), gone.c_str());
+        check(quit && reopened && back == "Second text\t7\t3" && back5 == "kept\t12\t5" && gone.empty(),
+              "set, save, reopen: the signs read back (text, colour, face); the deleted one stays gone", d);
+    }
+
+    // ---- 22. K.6-5: eden.store, saved in the world's MOD_DATA record (13)
+    {
+        World* w = World::getWorld;
+        const std::string path = w->fm->documents + "/" + w->terrain->world_name;
+        auto readRec = [&](std::vector<emod::ModDataEntry>* es) {   // the file's live MOD_DATA, parsed (world closed)
+            emod::EdenWorldStore st;
+            std::vector<uint8_t> rec;
+            es->clear();
+            return st.open(path.c_str(), false) && st.hasRecord(emod::T_MOD_DATA) &&
+                   st.readRecord(emod::T_MOD_DATA, rec) == emod::EdenWorldStore::READ_OK && emod::mod_data_parse(rec.data(), rec.size(), es, NULL);
+        };
+        auto entryOf = [](const std::vector<emod::ModDataEntry>& es, const char* id) -> const emod::ModDataEntry* {
+            for (const emod::ModDataEntry& e : es) if (e.id == id) return &e;
+            return NULL;
+        };
+        const std::string put = mod("sput"), want = mod("vdump"), now = mod("sget");
+        const std::string caps = mod("scaps");
+        const std::string afterCaps = mod("sget");
+        std::snprintf(d, sizeof(d), "sput '%s'; set then get %s (%zu chars); caps: %s; unchanged by the refusals %d", put.c_str(),
+                      now == want ? "same" : "DIFFERS", want.size(), caps.c_str(), afterCaps == want);
+        auto has = [](const std::string& hay, const std::string& n) { return hay.find(n) != std::string::npos; };
+        check(put == "sput ok" && now == want && afterCaps == want && has(want, "big=i9223372036854775807") && has(want, "odd=i9007199254740993") &&
+                  has(want, "whole=f0x1p+1") && has(want, "negz=f-0x0p+0") && has(want, "bin=s15:000102ff80808080808080808080") &&
+                  has(want, "nest={i-3=s3:6e6567,i1=i1,i2=f0x1.4p+1,i3=s5:7468726565,i4={s4:64656570={s6:646565706572={i1=s4:666f7572}}},i10=i10,s1:78=true}"),
+              "eden.store.set/get: every value type reads back exactly (integers stay integers, floats bit for bit, binary strings, nested tables 4 deep)", d);
+        check(caps.compare(0, 1, "f") == 0 &&
+                  has(caps, "false:can't store a function|false:can't store a number that is not finite|false:can't store a number that is not finite|"
+                            "false:can't store a string over 4096 bytes|false:can't store tables nested more than 4 deep|false:can't store tables nested more than 4 deep|"
+                            "false:can't store a table over 256 entries|false:a table key must be a string of 1 to 64 bytes or an integer|"
+                            "false:a table key must be a string of 1 to 64 bytes or an integer|false:can't store a thread|keyerr falsefalsefalsefalse|after nilnil|"
+                            "del 5 nil|copy true|fill ") &&
+                  has(caps, " this pack's store is full (64 KiB)|keys 15"),
+              "eden.store refusals: a function, a non-finite number, a 4097-byte string, 5-deep or cyclic tables, 257 entries, a bad table key, "
+              "a thread each return false, why; a bad store key raises; nil deletes; get returns a copy; the 64 KiB cap returns false, why", d);
+
+        // save -> reopen: the values are the world's
+        save_world();
+        const bool quit1 = quit_to_menu();
+        tick(10);
+        std::vector<emod::ModDataEntry> es;
+        const bool rec1 = readRec(&es);
+        const emod::ModDataEntry* ar = entryOf(es, "ar_store");
+        // a pack that is not installed (zz_gone) and a blob as_bad's runtime cannot decode (blob version 9)
+        std::vector<uint8_t> gone(300), garbage = {9, 9, 9};
+        for (size_t i = 0; i < gone.size(); ++i) gone[i] = (uint8_t)(i * 7 + 1);
+        bool injected = false;
+        {
+            std::vector<emod::ModDataEntry> next = es;
+            emod::ModDataEntry g, b;
+            g.id = "zz_gone"; g.data = gone; b.id = "as_bad"; b.data = garbage;
+            next.push_back(g);
+            next.push_back(b);
+            std::vector<uint8_t> out;
+            emod::mod_data_build(next, out);
+            emod::EdenWorldStore st;
+            if (st.open(path.c_str(), true)) {
+                st.beginBatch();
+                injected = st.putRecord(emod::T_MOD_DATA, out.data(), out.size()) && st.commitBatch();
+                st.close();
+            }
+        }
+        const bool re1 = open_world(name, g_opt.height);
+        tick(g_opt.frames / 2);
+        const std::string back = mod("sget"), badKeys = mod("bkeys");
+        std::snprintf(d, sizeof(d), "quit %d; record %d with ar_store %d (%zu B); injected %d; reopened %d; read back %s; as_bad '%s'", quit1, rec1,
+                      ar != NULL, ar ? ar->data.size() : (size_t)0, injected, re1, back == want ? "same" : back.substr(0, 200).c_str(), badKeys.c_str());
+        check(quit1 && rec1 && ar && injected && re1 && back == want && badKeys == "bkeys 0",
+              "save, reopen: every stored value is back exactly; a blob that does not decode starts empty (--lua-mutate=storenotdirty must FAIL)", d);
+
+        // two more saves (each rewrites the record): the absent pack's entry and the undecodable blob go out verbatim
+        const std::string s1 = mod("sone", {"step", "1"});
+        save_world();
+        const std::string s2 = mod("sone", {"step", "2"});
+        save_world();
+        const bool quit2 = quit_to_menu();
+        tick(10);
+        const bool rec2 = readRec(&es);
+        const emod::ModDataEntry *g2 = entryOf(es, "zz_gone"), *b2 = entryOf(es, "as_bad"), *a2 = entryOf(es, "ar_store");
+        std::snprintf(d, sizeof(d), "sets '%s' '%s'; quit %d; record %d: zz_gone %s, as_bad %s, ar_store %zu B", s1.c_str(), s2.c_str(), quit2, rec2,
+                      !g2 ? "missing" : g2->data == gone ? "same" : "DIFFERS", !b2 ? "missing" : b2->data == garbage ? "same" : "DIFFERS",
+                      a2 ? a2->data.size() : (size_t)0);
+        check(s1 == "true nil" && s2 == "true nil" && quit2 && rec2 && g2 && g2->data == gone && b2 && b2->data == garbage && a2 && ar &&
+                  a2->data.size() > ar->data.size(),
+              "two saves later: a pack that is not loaded keeps its bytes, an undecodable blob is kept until its pack stores something", d);
+
+        // as_bad stores something: its blob is replaced by a valid one
+        const bool re2 = open_world(name, g_opt.height);
+        tick(g_opt.frames / 2);
+        const std::string bset = mod("bset"), step = mod("sstep");
+        save_world();
+        const bool quit3 = quit_to_menu();
+        tick(10);
+        const bool rec3 = readRec(&es);
+        const emod::ModDataEntry* b3 = entryOf(es, "as_bad");
+        const bool re3 = open_world(name, g_opt.height);
+        tick(g_opt.frames / 2);
+        const std::string bkeys = mod("bkeys");
+        std::snprintf(d, sizeof(d), "reopened %d; bset '%s'; %s; quit %d record %d as_bad %s; reopened %d '%s'", re2, bset.c_str(), step.c_str(), quit3, rec3,
+                      !b3 ? "missing" : b3->data == garbage ? "still the old bytes" : "rewritten", re3, bkeys.c_str());
+        check(re2 && bset == "bset true" && step == "step 2" && quit3 && rec3 && b3 && b3->data != garbage && b3->data.size() > 0 && b3->data[0] == 1 &&
+                  re3 && bkeys == "bkeys 1",
+              "once the pack stores something its blob is rewritten; the last of several saves wins", d);
+
+        // the whole record's caps: 1 MiB (16 other packs, nearly full) and 64 packs (as a world from elsewhere could hold)
+        {
+            std::vector<emod::ModDataEntry> big;
+            for (int i = 0; i < 16; ++i) {   // 15 x 64 KiB + 60,000 B: 5,052 B left for ar_store's entry, far under its own 64 KiB
+                emod::ModDataEntry e;
+                e.id = "zz_" + std::to_string(10 + i);
+                e.data.assign(i < 15 ? emod::MOD_DATA_ENTRY_MAX : 60000u, 'm');
+                big.push_back(e);
+            }
+            std::vector<uint8_t> r;
+            emod::mod_data_build(big, r);
+            ModScript::storeLoad(r.data(), r.size());
+            const std::string fill = mod("sfill", {"g"});
+            std::vector<emod::ModDataEntry> many;
+            for (int i = 0; i < 64; ++i) { emod::ModDataEntry e; e.id = "p" + std::to_string(10 + i); many.push_back(e); }
+            emod::mod_data_build(many, r);
+            ModScript::storeLoad(r.data(), r.size());
+            const std::string one = mod("sone", {"x", "1"});
+            const bool clean = !ModScript::storeNeedsSave();
+            // a session world loads none
+            ModScript::worldEntered(true);
+            ModScript::storeLoad(r.data(), r.size());
+            const bool sessionNone = ModScript::storeEntries() == 0 && !ModScript::storeNeedsSave();
+            ModScript::worldEntered(false);
+            ModScript::storeLoad(NULL, 0);
+            tick(3);
+            std::snprintf(d, sizeof(d), "16 others filling 1 MiB: '%s'; 64 others: '%s'; nothing to save %d; session loads none %d", fill.c_str(), one.c_str(), clean, sessionNone);
+            check(fill == "fill 1 this world's mod data is full (1 MiB)" && one == "false too many packs store data in this world (64)" && clean && sessionNone,
+                  "the record's caps (1 MiB, 64 packs) return false, why and leave nothing to save; a session world loads no mod data", d);
+        }
+    }
+
     // ---- 11. session, close, reopen
     {
         ModScript::worldEntered(true);
@@ -438,7 +962,8 @@ return table.concat(r, ","))");
     g_app->setFixedEtime(0.0f);
     eden_fs_remove_tree(packs);   // the next selftest in the same Documents (the iOS simulator leg) loads no test pack
     ModScript::restoreLimits();
-    ModScript::testNoHook = ModScript::testNoSandbox = false;
+    ModScript::testNoHook = ModScript::testNoSandbox = ModScript::testLoadEarly = ModScript::testCapError = ModScript::testStoreNotDirty = false;
+    SignTool::testNoCache = false;
     std::printf("[eden-lua] %s (%d failure(s))\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
     return g_selftestFailures ? 1 : 0;
 }

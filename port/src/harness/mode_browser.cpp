@@ -552,6 +552,16 @@ int run_browser_selftest_body(bool live) {
         std::snprintf(detail, sizeof(detail), "\"%s\"", out.c_str());
         check(started && out.compare(0, 4, "ok: ") == 0 && same, "Share > Export writes the world as Exports/<name>.eden.gz", detail);
         if (!path.empty()) { std::remove(path.c_str()); SDL_RemovePath((docs + "/Exports").c_str()); }
+        {   // K.6-5b: Share > Export > World copy (.emod): the world file byte for byte (no record 13 here: no dialog)
+            std::vector<unsigned char> srcBytes, cpBytes;
+            const bool cp = node && WorldShare::startCopy(node, true);
+            std::string r = WorldShare::lastResult();
+            const size_t ca = r.find("Exports/");
+            const std::string cpPath = ca == std::string::npos ? std::string() : docs + "/" + r.substr(ca, r.find(" (", ca) == std::string::npos ? std::string::npos : r.find(" (", ca) - ca);
+            const bool eq = !cpPath.empty() && read_file(cpPath, &cpBytes) && read_file(srcFile, &srcBytes) && cpBytes == srcBytes;
+            check(cp && eq, "Share > Export > World copy writes Exports/<name>.emod, the world byte for byte", r.c_str());
+            if (!cpPath.empty()) { std::remove(cpPath.c_str()); SDL_RemovePath((docs + "/Exports").c_str()); }
+        }
 
         // Upload: refused with no preview, then the multipart POST to the fixture upload2.php.
         write_bytes(app2 + "/upload2.php", bytes_of("YES"));

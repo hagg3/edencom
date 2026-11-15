@@ -135,7 +135,7 @@ int run_light_selftest() {
 // runs, plus a re-mesh of every chunk, against the SAME window -- so any difference is the per-column
 // path, nothing else. At night (the lattice prep paints it), because by day the mesher never reads
 // the light and a stale mesh would hide. The cross-process form (fresh load at the end point, also
-// chunk state) is WORKING/b5b1/ring-light-gate.sh.
+// chunk state) is port/tools/ring-light-gate.sh.
 int run_ring_light_selftest() {
     g_selftestTag = "eden-ring-light";
     const char* name = g_opt.world.empty() ? "ring-light-selftest" : g_opt.world.c_str();

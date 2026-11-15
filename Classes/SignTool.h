@@ -31,6 +31,7 @@
 #define Eden_SignTool_h
 
 #include "WorldTrailer.h"
+#include <string>
 
 class SignTool {
 public:
@@ -48,9 +49,19 @@ public:
     // The facing quarter turn (WorldTrailer.h's c) a standing sign gets when placed at `yaw`:
     // its text faces the player.
     static int facingForYaw(float yaw);
+    // K.6-3: the non-UI entry point (eden.setsign). Terrain argument order (x, z, y); `face` is the
+    // record's a (0 -x, 1 +x, 3 top, 4 -y file = -z, 5 +y file = +z; the bottom, 2, is refused);
+    // `colour` 1..54 or 0 = keep (an edit) / charcoal (a new sign). Text: up to 95 bytes of printable
+    // ASCII, refused (never trimmed) otherwise; blank deletes the sign (true even when there was none).
+    // Runs the prompt's own commit: anchor rule, trailer dirty, the renderer's text cache, the server.
+    // Plays no sound and fires no `sign` event. False: refused, `*why` says why.
+    static bool set(int x, int z, int y, int face, const char* text, int colour, float yaw, std::string* why);
+    // The first sign on the block (or on `face`, 0..5; -1 = any) -> true and fills the out-params.
+    static bool get(int x, int z, int y, int face, std::string* text, int* colour, int* faceOut);
     // Mutation hooks for --signs-selftest (each must make its gate fail): the bottom face accepted,
-    // and the anchor rule skipped.
-    static bool testAllowBottom, testNoAnchorHook;
+    // and the anchor rule skipped. testNoCache (--lua-mutate=signnocache): an edit leaves the old
+    // text's texture in the renderer's cache.
+    static bool testAllowBottom, testNoAnchorHook, testNoCache;
 };
 
 class CmdTool {

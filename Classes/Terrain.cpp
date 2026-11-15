@@ -326,6 +326,9 @@ void Terrain::allocateMemory(){
     printf("allocated and zeroed chunks");
     chunksToUpdate=(bool*)malloc(sizeof(bool)*CHUNKS_PER_SIDE*CHUNKS_PER_SIDE*CHUNKS_PER_COLUMN);
     columnsToUpdate=(bool*)malloc(sizeof(bool)*CHUNKS_PER_SIDE*CHUNKS_PER_SIDE);
+    // REL.3: malloc'd flags were read before written (a reused heap block made stray chunks dirty).
+    memset(chunksToUpdate,0,sizeof(bool)*CHUNKS_PER_SIDE*CHUNKS_PER_SIDE*CHUNKS_PER_COLUMN);
+    memset(columnsToUpdate,0,sizeof(bool)*CHUNKS_PER_SIDE*CHUNKS_PER_SIDE);
     chunksToUpdateImmediatley=(bool*)malloc(sizeof(bool)*CHUNKS_PER_SIDE*CHUNKS_PER_SIDE*CHUNKS_PER_COLUMN);
     memset(chunksToUpdateImmediatley,0,sizeof(bool)*CHUNKS_PER_SIDE*CHUNKS_PER_SIDE*CHUNKS_PER_COLUMN);
     blockarray=(block8*)malloc(sizeof(block8)*(T_SIZE+1)*(T_SIZE+1)*(T_HEIGHT+1));

@@ -710,6 +710,7 @@ MOD_TILE_KEYS = ["png", "unpainted"]
 MOD_BLOCK_KEYS = ["id", "kind", "traits", "faces", "color", "sounds", "fallback", "fallback_paint", "picker"]
 STOCK_ONLY_BLOCK_KEYS = ["stock_id", "flags", "paint_art_sites", "bt", "tnt_map"]
 RESERVED_IDS = ["eden", "emod"]
+API_VERSION = 2  # ModScript::API_VERSION (Classes/ModScript.h): the virtual pack "emod"'s version (K.6-6)
 PNG_MAX_BYTES = 1 << 20
 TILE_PX = 32
 ATLAS1_FREE_FIRST, ATLAS2_FREE_FIRST = 66, 32
@@ -1110,7 +1111,10 @@ def resolve_requires(packs, lines):
             for rid, minv in pk.needs:
                 q = next((o for o in packs if o.state == "loaded" and o.id == rid), None)
                 why = ""
-                if q is None:
+                if rid == "emod":  # K.6-6: the virtual pack, always loaded; its version is ModScript::API_VERSION
+                    if minv and compare_versions(str(API_VERSION), minv) < 0:
+                        why = "needs Emod scripting %s or newer (this game has %d)" % (minv, API_VERSION)
+                elif q is None:
                     why = 'needs "%s" (%s)' % (rid, "not loaded" if any(o.id == rid for o in packs) else "not installed")
                 elif minv and compare_versions(q.version, minv) < 0:
                     why = 'needs "%s" %s or newer (found "%s")' % (rid, minv, q.version)

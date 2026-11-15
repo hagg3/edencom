@@ -72,7 +72,7 @@ cmake --build build -j8
 
 On macOS, `brew install sdl3` first. On Linux you also need the usual X11/Wayland, audio and GL
 dev packages, and SDL3 itself (Ubuntu only packages it from 25.04). Windows builds with MSYS2's
-CLANG64 toolchain (an experimental clang-cl/MSVC job also runs in CI). iOS needs Xcode and a static SDL3; the minimum is iOS 15.
+CLANG64 toolchain. iOS needs Xcode and a static SDL3; the minimum is iOS 15.
 
 Don't take the exact package lists from this README: [`.github/workflows/native.yml`](.github/workflows/native.yml)
 is the recipe that actually builds all four platforms on every push, and it's the one that's kept

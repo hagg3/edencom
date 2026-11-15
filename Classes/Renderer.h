@@ -130,6 +130,14 @@ struct TexDesc {
 Tex  texCreate(const TexDesc& d, const void* px);
 void texUpdate(Tex t, int x, int y, int w, int h, TexFormat f, const void* px);
 void texDestroy(Tex t);
+// X.32's texture ledger (diagnostics, always on): a texDestroy of a name that is not live (a double destroy,
+// or a name kept past its owner) is counted and logged as "[texledger] STALE ..." with the name's last owner.
+long texStaleDestroys();
+long texStaleUses();                       // draws (or the cloud-shadow unit) naming a texture that is not live
+long texOffThread();                       // texCreate/texDestroy calls off the main thread (rule 8)
+long texLiveCount();
+bool texLive(Tex t);
+const char* texOwner(Tex t);               // the creating TexDesc's label ("" if none), NULL if not live
 // Re-state a texture's sampling (filters, wrap, mip use) after creation; d.w/h/format are ignored. The
 // mip chain must already exist (texCreate with mipmaps) for a mipmapped filter to be complete.
 void texSampling(Tex t, const TexDesc& d);
@@ -259,6 +267,9 @@ long drawsIn(int categoryBit);             // counts().draws for one EDEN_RC_* b
 
 void pickViewport(int out[4]);
 bool readPixels(int x, int y, int w, int h, void* rgba);   // RGBA8, bottom-up; false headless (zeroed)
+// X.32: mip `level` (w x h) of texture t as RGBA8 through a scratch framebuffer; false headless or when the
+// level cannot be attached (a texture with no mip chain has no level 1).
+bool texReadLevel(Tex t, int level, int w, int h, void* rgba);
 void drawableSize(int& w, int& h);         // the window's drawable (the letterbox box) in pixels
 
 // ---- diagnostics -------------------------------------------------------------------------------

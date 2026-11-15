@@ -112,6 +112,14 @@
 //                        because they drive `eden.js` through node. It matters on the non-Apple
 //                        legs specifically: the shim Foundation runs outside Emscripten there for
 //                        the first time, and this runtime frees objects without .cxx_destruct.
+//   --rejoin-selftest[=N] X.32: N (default 8) enter/leave cycles of one world (weather + atmosphere on), then
+//                        at the menu each time: R::'s texture ledger saw no STALE texDestroy, and the UI icon
+//                        atlas's name is still live and owned by ui_icons.png. Headless (the null backend never
+//                        reuses a name, so any double destroy shows) or windowed (the real driver; adds the
+//                        atlas's level 0/1 readback each cycle and the bind-cache leg).
+//                        --rejoin-mutate=doubledestroy destroys a HUD texture behind its owner (must FAIL
+//                        cycle 1); =elide puts back the cache-elided upload bind (windowed: must FAIL the
+//                        bind-cache leg).
 //   --height=64|256      world height for a newly created world (default 64).
 //   --convert-prompt-selftest  Stage S / S.5e: Play a 64z `.eden` (--world=NAME, in --docs, with
 //                        --world-format=emod) and answer the "Convert world" prompt with
@@ -157,10 +165,22 @@
 //                        impostor and duplicate ids, a session loads none, the atlas re-upload. Headless.
 //   --mods-selftest      K.3: the mod manager's model in --docs/Packs: the enable list (mods.json) and its order,
 //                        requires/conflicts, the mod-list hash, worldMods, zip install/update and every refusal,
-//                        the Get Mods catalogue parser. Headless, no world.
+//                        the Get Mods catalogue parser, K.8-3 (a catalogue id the zip does not carry is refused;
+//                        an older version waits for confirmation; --mods-mutate=anyid must FAIL it). Headless, no world.
 //   --hotbar-selftest    UX.8-3: the hotbar's model and sidecar (Classes/Hotbar): the hotbar.json reader's refusals,
 //                        select/scroll, smart replace, picker target swap, the Hud's pick sites, save + re-enter,
 //                        hostile files, a mod slot with its pack on and off. Headless; plays worlds in --docs.
+//   --tutorial-selftest  UX.10-1: the bundled tutorial world (media/Tutorial.emod, port/tools/tutorial.py) planted in
+//                        --docs/Worlds lists under its name, opens as a seed-333333 64z world with the layout's signs
+//                        and command blocks (port/tools/tutorial/manifest.txt, --tutorial-manifest=PATH), every script
+//                        parses, every command block is steel, every sign hangs on a solid block, the player spawns
+//                        standing on solid ground in the layout's cell. Headless.
+//                        UX.10-2: and its install: once per install (prefs tutorial.installed, set only after the commit),
+//                        never again after a delete, Restore replaces or re-adds, a failed install leaves the key unset;
+//                        --tutorial-phase=install|verify with EDEN_TEST_STAGE_KILL_AFTER=n is port/tools/tutorial-crash-gate.sh's
+//                        kill-point loop; --tutorial-mutate=nomarker|keyfirst must FAIL it.
+//                        UX.10-3: and the in-world hints: every step completes in order in each input mode, no card without the marker or in a
+//                        session; --tutorial-mutate=hintsbyname (hints keyed on the world's name) must FAIL the no-marker leg.
 //   --lua-selftest       K.4: sandboxed Lua mod scripts (docs/scripting.md): four test packs in --docs/Packs; load
 //                        order, the sandbox, the API vs the block verbs, player-edit events, eden.wait, the shared
 //                        work budget, CPU preemption + stops, the memory cap, maxErrors, the pack hash, session/close.
@@ -248,7 +268,7 @@
 //                        own (gate 3); the autosave timer saves an edit and the fire keeps burning.
 //                        --evict-mutate=nosave|nodrop puts the bug back (gate 6: each must FAIL).
 //   --ring-light-selftest B.5b-1c: per-column light under ring streaming, in one process (the CI form
-//                        of WORKING/b5b1/ring-light-gate.sh). Lightbox lattice + night sky (as
+//                        of port/tools/ring-light-gate.sh). Lightbox lattice + night sky (as
 //                        --light-lattice), then a +x and a +z 160-block walk; the walked window's light
 //                        hash and mesh checksum must equal what a full re-sweep + re-mesh of the same
 //                        window gives, the walk must stream (no bulk reload) and rebuild per column.
@@ -327,6 +347,7 @@
 //                        emod.py byte comparison + the cross-target gate), --emod-work=DIR (scratch,
 //                        default ./emod-work), --emod-quick. With --emod-file=W.eden[.gz] [--emod-ref=R.emod]
 //                        it instead stream-converts one real world and compares it with emod.py's output.
+//                        --emod-mutate=dropunknown (compaction drops reserved types again, C-4) or =stripalways (K.6-5b: the Include copy strips record 13) must FAIL it.
 //   --export=SRC         Stage S / S.5(b): export a world (`.emod` or `.eden`) with --export-out=PATH,
 //                        --export-target=own|Legacy64z|NewDawn256z|NewFormat256z, --export-signs=keep|prune,
 //                        --export-gz, --export-dry (pre-flight only). Prints `export-report {json}`.
@@ -347,7 +368,7 @@
 //                        streaming's gate: its geometry/chunkstate must equal a plain --stage1 at
 //                        that end position, and `walked.geometry`'s bulk_reloads must not grow.
 //   --light-lattice=STEP B.5b-1c: --stage1 instead PREPARES a lightbox world for the ring-light gate
-//                        (WORKING/b5b1/ring-light-gate.sh): lightboxes every STEP blocks over --at
+//                        (port/tools/ring-light-gate.sh): lightboxes every STEP blocks over --at
 //                        +-320 (alternately high in the air and on the surface, varied paint),
 //                        placed from 9 teleport stops through buildBlock, then saves and quits.
 //   --light-mutate=nosync|nomark|wrap|nolbmark  B.5b-1c's bug-put-back legs (Lighting.h
@@ -548,6 +569,7 @@ static const char* const kModeHelp[][2] = {
     {"--gamepad-selftest", "a virtual gamepad drives the sticks and buttons"},
     {"--gl-selftest", "the renderer's GL backend"},
     {"--hotbar-selftest", "the hotbar model and its sidecar file"},
+    {"--tutorial-selftest", "the bundled tutorial world loads with its signs, scripts and spawn"},
     {"--input-selftest", "synthetic key and mouse events through the real input path"},
     {"--json-selftest", "the JSON reader and writer, and every refusal"},
     {"--keybind-selftest", "the keybind model and the rebind path"},
@@ -639,6 +661,10 @@ static int parse_one_arg(const char* a) {
         else if (!std::strcmp(a, "--packs-selftest")) { g_opt.mode = "packs-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--mods-selftest")) { g_opt.mode = "mods-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--hotbar-selftest")) { g_opt.mode = "hotbar-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--tutorial-selftest")) { g_opt.mode = "tutorial-selftest"; g_opt.headless = true; }
+        else if (starts_with(a, "--tutorial-manifest=")) g_opt.tutorialManifest = a + 20;
+        else if (starts_with(a, "--tutorial-mutate=")) g_opt.tutorialMutate = a + 18;
+        else if (starts_with(a, "--tutorial-phase=")) g_opt.tutorialPhase = a + 17;
         else if (!std::strcmp(a, "--lua-selftest")) { g_opt.mode = "lua-selftest"; g_opt.headless = true; }
         else if (starts_with(a, "--packs="))         g_opt.packs.push_back(a + 8);
         else if (starts_with(a, "--pack-selftest=")) { g_opt.mode = "pack-selftest"; g_opt.headless = true; g_opt.packFixtures = a + 16; }
@@ -706,6 +732,7 @@ static int parse_one_arg(const char* a) {
         else if (!std::strcmp(a, "--creature-selftest")) { g_opt.mode = "creature-selftest"; g_opt.headless = true; }
         else if (starts_with(a, "--emod-fixtures=")) g_opt.emodFixtures = a + 16;
         else if (starts_with(a, "--emod-work="))     g_opt.emodWork = a + 12;
+        else if (starts_with(a, "--emod-mutate="))   g_opt.emodMutate = a + 14;
         else if (starts_with(a, "--emod-file="))     g_opt.emodFile = a + 12;
         else if (starts_with(a, "--emod-ref="))      g_opt.emodRef = a + 11;
         else if (!std::strcmp(a, "--emod-quick"))    g_opt.emodQuick = true;
@@ -713,6 +740,7 @@ static int parse_one_arg(const char* a) {
         else if (!std::strcmp(a, "--evict-selftest")) { g_opt.mode = "evict-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--ring-light-selftest")) { g_opt.mode = "ring-light-selftest"; g_opt.headless = true; }
         else if (starts_with(a, "--weather-mutate=")) g_opt.weatherMutate = a + 17;
+        else if (starts_with(a, "--rejoin-mutate=")) g_opt.rejoinMutate = a + 16;
         else if (starts_with(a, "--evict-mutate="))  g_opt.evictMutate = a + 15;
         else if (starts_with(a, "--light-lattice=")) g_opt.lightLattice = atoi(a + 16);
         else if (!std::strcmp(a, "--shadow-selftest")) { g_opt.mode = "shadow-selftest"; g_opt.headless = true; }
@@ -723,6 +751,7 @@ static int parse_one_arg(const char* a) {
         else if (starts_with(a, "--ui-mutate=")) g_opt.uiMutate = a + 12;
         else if (starts_with(a, "--props-mutate=")) g_opt.propsMutate = a + 15;
         else if (starts_with(a, "--lua-mutate=")) g_opt.luaMutate = a + 13;
+        else if (starts_with(a, "--mods-mutate=")) g_opt.modsMutate = a + 14;
         else if (starts_with(a, "--props-world=")) g_opt.propsWorld = a + 14;
         else if (starts_with(a, "--classic="))        g_opt.classicNew = a + 10;
         else if (starts_with(a, "--shadows=")) {
@@ -820,6 +849,8 @@ static int parse_one_arg(const char* a) {
         else if (!std::strcmp(a, "--leak-probe"))     { g_opt.mode = "leak-probe"; g_opt.headless = true; }
         else if (starts_with(a, "--leak-probe="))     { g_opt.mode = "leak-probe"; g_opt.headless = true;
                                                         g_opt.cycles = atoi(a + 13); }
+        else if (!std::strcmp(a, "--rejoin-selftest")) g_opt.mode = "rejoin-selftest";
+        else if (starts_with(a, "--rejoin-selftest=")) { g_opt.mode = "rejoin-selftest"; g_opt.cycles = atoi(a + 18); }
         else if (starts_with(a, "--cycles="))         g_opt.cycles = atoi(a + 9);
         else if (starts_with(a, "--docs="))           g_opt.docs = a + 7;
         else if (starts_with(a, "--bundle="))         g_opt.bundle = a + 9;
@@ -897,6 +928,9 @@ static int eden_main_after_args(int argc, char** argv) {
         const bool plays = g_opt.mode && !std::strcmp(g_opt.mode, "mp-join");   // a real join keeps the profile
         if (selftest || !plays) eden_prefs_set_ephemeral(1);
     }
+    // UX.10-2: the once-per-install tutorial world (Menu::loadWorlds) belongs to the real game: a scripted mode's
+    // world list is its own (--tutorial-selftest switches it on for its legs).
+    if (g_opt.mode || !g_opt.liveCmds.empty()) TutorialInstall::autoInstall = false;
     // AT.1a P11: the reference-pinned modes run with atmosphere and weather off unless --atmo= / --weather= asks,
     // so clouds, particles and water tint (High on the Mac) never move --stage1 / --scene-shot / --sky-shot.
     if (g_opt.mode && (!std::strcmp(g_opt.mode, "stage1") || !std::strcmp(g_opt.mode, "scene-shot") ||
@@ -1144,6 +1178,7 @@ static int eden_main_after_args(int argc, char** argv) {
         else if (!std::strcmp(g_opt.mode, "packs-selftest")) rc = run_packs_selftest();
         else if (!std::strcmp(g_opt.mode, "mods-selftest")) rc = run_mods_selftest();
         else if (!std::strcmp(g_opt.mode, "hotbar-selftest")) rc = g_hotbar::run_hotbar_selftest();
+        else if (!std::strcmp(g_opt.mode, "tutorial-selftest")) rc = g_tutorial::run_tutorial_selftest();
         else if (!std::strcmp(g_opt.mode, "lua-selftest")) rc = run_lua_selftest();
         else if (!std::strcmp(g_opt.mode, "base-selftest")) rc = eden_base_selftest_run(g_opt.docs.c_str());
         else if (!std::strcmp(g_opt.mode, "net-selftest"))  rc = eden_net_selftest_run(g_opt.netServer.c_str());
@@ -1174,7 +1209,9 @@ static int eden_main_after_args(int argc, char** argv) {
         else if (!std::strcmp(g_opt.mode, "codec-bench"))   rc = eden_codec_bench(g_opt.codecFile.c_str(), g_opt.height, 500);
         else if (!std::strcmp(g_opt.mode, "creature-selftest")) rc = eden_creature_selftest_run(eden_platform_bundle_root());
         else if (!std::strcmp(g_opt.mode, "emod-selftest"))
-            rc = eden_emod_selftest_run(g_opt.emodFixtures.c_str(), g_opt.emodWork.c_str(), g_opt.emodQuick ? 1 : 0,
+            rc = !mutation_known("eden-emod", "--emod-mutate", g_opt.emodMutate, {"dropunknown", "stripalways"}) ? 2 :
+                 eden_emod_selftest_run(g_opt.emodFixtures.c_str(), g_opt.emodWork.c_str(),
+                                        (g_opt.emodQuick ? 1 : 0) | (g_opt.emodMutate == "dropunknown" ? 2 : 0) | (g_opt.emodMutate == "stripalways" ? 4 : 0),
                                         g_opt.emodFile.c_str(), g_opt.emodRef.c_str());
         else if (!std::strcmp(g_opt.mode, "recolor-selftest")) rc = run_recolor_selftest();
         else if (!std::strcmp(g_opt.mode, "display-selftest")) rc = run_display_selftest();
@@ -1189,6 +1226,7 @@ static int eden_main_after_args(int argc, char** argv) {
         else if (!std::strcmp(g_opt.mode, "preset-probe"))  rc = run_preset_probe();
         else if (!std::strcmp(g_opt.mode, "pass-probe"))    rc = run_pass_probe();
         else if (!std::strcmp(g_opt.mode, "leak-probe"))    rc = run_leak_probe();
+        else if (!std::strcmp(g_opt.mode, "rejoin-selftest")) rc = run_rejoin_selftest();
     } else {
         // Interactive. The frame-rate cap is the same setting the web build's frame gate reads
         // (Settings.cpp's eden_get_fps_cap), but it is applied as PACING — sleep until the next

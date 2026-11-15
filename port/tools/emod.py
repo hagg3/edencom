@@ -72,12 +72,18 @@ T_GENERATOR = 9                  # H.4: Classic generator settings (docs/emod-fi
 T_BLOCK_PALETTE = 10             # K.1-2: the world's block palette (docs/emod-file-format.md "BLOCK_PALETTE")
 T_SKY_CLOCK = 11                 # DN.2: the day/night clock (docs/emod-file-format.md "SKY_CLOCK")
 T_WEATHER = 12                   # AT.1b: the weather state (docs/emod-file-format.md "WEATHER")
+T_MOD_DATA = 13                  # K.6-5: per-pack saved script data, eden.store (docs/emod-file-format.md "MOD_DATA")
 TYPE_NAMES = {1: 'COLUMN', 2: 'WORLD_HEADER', 3: 'CREATURES', 4: 'SIGN_TRAILER', 5: 'PROVENANCE',
               6: 'SUMMARY', 7: 'COMMIT', 8: 'INDEX', 9: 'GENERATOR', 10: 'BLOCK_PALETTE', 11: 'SKY_CLOCK',
-              12: 'WEATHER'}
+              12: 'WEATHER', 13: 'MOD_DATA'}
 GENERATOR_LEN = 28
 SKY_CLOCK_LEN = 16
 WEATHER_LEN = 32
+MOD_DATA_VERSION = 1
+MOD_DATA_ID = 24
+MOD_DATA_MAX_PACKS = 64
+MOD_DATA_ENTRY_MAX = 64 << 10
+MOD_DATA_MAX = 1 << 20           # decoded, the whole record
 RAW_TYPES = (2, 9, 10, 11, 12)   # WORLD_HEADER, GENERATOR, BLOCK_PALETTE, SKY_CLOCK, WEATHER: codec 0 by spec
 # K.1-2: FileHeader.flags bit 0 -- type bytes 128-255 are defined by the live BLOCK_PALETTE. Any other bit
 # is still "written by a newer build".
@@ -100,7 +106,8 @@ SUMMARY_FMT = '<IIHHI'           # live_columns, next_ord, band_or, reserved, re
 # Classes/EdenWorldStore.h record_decoded_max() and docs/emod-file-format.md "Reading"; others MAX_PAYLOAD.
 DECODED_MAX = {T_COLUMN: 16 * BAND, T_WORLD_HEADER: EDEN_HEADER, T_CREATURES: MAX_SLOTS * ENT,
                T_SIGN_TRAILER: TRAILER_MAX, T_SUMMARY: 16, T_COMMIT: 24, T_GENERATOR: GENERATOR_LEN,
-               T_BLOCK_PALETTE: 8 + PALETTE_MAX * PALETTE_ENTRY, T_SKY_CLOCK: SKY_CLOCK_LEN, T_WEATHER: WEATHER_LEN}
+               T_BLOCK_PALETTE: 8 + PALETTE_MAX * PALETTE_ENTRY, T_SKY_CLOCK: SKY_CLOCK_LEN, T_WEATHER: WEATHER_LEN,
+               T_MOD_DATA: MOD_DATA_MAX}
 
 # PROVENANCE flags: each names one reason an export cannot be byte-identical to the source.
 PF_NONCANONICAL_LAYOUT = 1       # columns not packed from offset 192 at full stride, or dead bytes
@@ -395,6 +402,61 @@ def summary_payload(live_cols, next_ord, band_or):
 # docs/emod-file-format.md "BLOCK_PALETTE"; plan WORKING/block-registry-plan-2026-10-31.md §3 (D8, D13-D16).
 PALETTE_NAME_RE = re.compile(rb'[a-z0-9_]{1,24}:[a-z0-9_/]{1,48}')
 PALETTE_BAD_FALLBACKS = set(range(66, 71)) | set(range(75, 80)) | {80}   # door/portal halves, TYPE_CUSTOM
+
+
+MOD_DATA_ID_RE = re.compile(rb'[a-z0-9_]{1,24}')
+
+
+def mod_data_payload(entries):
+    """K.6-5: [(pack id, bytes)] in any order -> the MOD_DATA record's bytes, ascending id (Classes/EdenWorldStore.cpp
+    mod_data_build). The entries' bytes are opaque here (the scripting runtime's encoding)."""
+    es = sorted(entries, key=lambda e: e[0])
+    out = struct.pack('<II', MOD_DATA_VERSION, len(es))
+    for pid, data in es:
+        if isinstance(pid, str):
+            pid = pid.encode('ascii')
+        out += struct.pack('<24sI', pid, len(data)) + data
+    return out
+
+
+def parse_mod_data(p):
+    """K.6-5 (EdenWorldStore.cpp mod_data_parse): -> ([(id, bytes)], None), or (None, the first broken rule).
+    A reader ignores a record that breaks any rule, whole; the messages are the engine's, word for word."""
+    n = len(p)
+    if n > MOD_DATA_MAX:
+        return None, 'MOD_DATA is %d B, over %d' % (n, MOD_DATA_MAX)
+    if n < 8:
+        return None, 'MOD_DATA is %d B, shorter than its 8-byte head' % n
+    version, count = struct.unpack_from('<II', p, 0)
+    if version != MOD_DATA_VERSION:
+        return None, 'MOD_DATA version %d (this reader knows %d)' % (version, MOD_DATA_VERSION)
+    if count > MOD_DATA_MAX_PACKS:
+        return None, 'MOD_DATA count %d > %d' % (count, MOD_DATA_MAX_PACKS)
+    o, out, last = 8, [], None
+    for i in range(count):
+        if n - o < MOD_DATA_ID + 4:
+            return None, 'MOD_DATA entry %d: the record ends inside its head' % i
+        raw = bytes(p[o:o + MOD_DATA_ID])
+        pid = raw.split(b'\0', 1)[0]
+        if any(raw[len(pid):]):
+            return None, 'MOD_DATA entry %d: id not NUL-padded' % i
+        name = pid.decode('latin-1')
+        if MOD_DATA_ID_RE.fullmatch(pid) is None:
+            return None, "MOD_DATA entry %d: id '%s' breaks [a-z0-9_]{1,24}" % (i, name)
+        if last is not None and not last < pid:
+            return None, "MOD_DATA entry %d: id '%s' not after '%s' (ascending, distinct)" % (i, name, last.decode('latin-1'))
+        dl = struct.unpack_from('<I', p, o + MOD_DATA_ID)[0]
+        if dl > MOD_DATA_ENTRY_MAX:
+            return None, "MOD_DATA entry %d ('%s'): %d B > %d" % (i, name, dl, MOD_DATA_ENTRY_MAX)
+        o += MOD_DATA_ID + 4
+        if n - o < dl:
+            return None, "MOD_DATA entry %d ('%s'): %d B run past the record" % (i, name, dl)
+        out.append((name, bytes(p[o:o + dl])))
+        o += dl
+        last = pid
+    if o != n:
+        return None, 'MOD_DATA has %d trailing byte(s) after entry %d' % (n - o, count)
+    return out, None
 
 
 def palette_name_ok(name):
@@ -1143,6 +1205,14 @@ class Store:
             errs.append('WEATHER raw length %d is not %d' % (we.aux, WEATHER_LEN))
         if we and we.codec != C_NONE:
             errs.append('WEATHER must be codec 0')
+        md = self.live(T_MOD_DATA)
+        if md:                                        # K.6-5: the framing (the game ignores a record that breaks it)
+            try:
+                _, why = parse_mod_data(self.decode(md))
+                if why:
+                    errs.append(why + ' (the game ignores this MOD_DATA)')
+            except Exception:
+                pass                                  # reported by the decode loop below
         bp = self.live(T_BLOCK_PALETTE)
         flagged = bool(self.flags & FH_FLAG_BLOCK_PALETTE)
         palette = None
@@ -1166,7 +1236,8 @@ class Store:
                     continue
                 if lost:
                     errs.append('BLOCK_PALETTE @%d is not a superset of @%d: %s' % (b.off, a.off, ', '.join(lost)))
-        for t in (T_CREATURES, T_SIGN_TRAILER, T_PROVENANCE, T_SUMMARY, T_GENERATOR, T_BLOCK_PALETTE, T_SKY_CLOCK, T_WEATHER):
+        for t in (T_CREATURES, T_SIGN_TRAILER, T_PROVENANCE, T_SUMMARY, T_GENERATOR, T_BLOCK_PALETTE, T_SKY_CLOCK, T_WEATHER,
+                  T_MOD_DATA):
             r = self.live(t)
             if r:
                 if r.mask or r.x or r.z:
@@ -1487,6 +1558,11 @@ def dump(path, records=False):
     we = st.live(T_WEATHER)
     if we:
         print('weather: ' + weather_text(st.decode(we)))
+    md = st.live(T_MOD_DATA)
+    if md:
+        ents, why = parse_mod_data(st.decode(md))
+        print('mod data: ' + (why + ' (ignored by the game)' if why else
+                              ', '.join('%s %d B' % (pid, len(b)) for pid, b in ents) or 'no entries'))
     bp = st.live(T_BLOCK_PALETTE)
     if bp:
         pal, perrs = parse_palette(st.decode(bp))
@@ -1670,9 +1746,10 @@ def verify_cmd(path, check_crc=True):
 
 
 # ================================================================== append (used by the corrupt gate)
-def append_batch(path, columns=None, creatures=None, header=None, codec=C_ZSTD, palette=None):
+def append_batch(path, columns=None, creatures=None, header=None, codec=C_ZSTD, palette=None, extra=None):
     """Append one committed batch: truncate any torn tail, then COLUMN.../CREATURES/WORLD_HEADER/BLOCK_PALETTE,
-    SUMMARY, COMMIT. `palette` is the record's bytes, written as given (fixtures may break the rules on purpose)."""
+    `extra`, SUMMARY, COMMIT. `palette` is the record's bytes, written as given (fixtures may break the rules on
+    purpose). `extra` is a list of (type, codec, decoded bytes, mask, x, z): records of any type (K.6-5a)."""
     st = open_emod(path)
     if st.errors:
         die('append: %s' % '; '.join(st.errors))
@@ -1700,6 +1777,11 @@ def append_batch(path, columns=None, creatures=None, header=None, codec=C_ZSTD, 
             w.rec(T_WORLD_HEADER, header, compress=False)
         if palette is not None:
             w.rec(T_BLOCK_PALETTE, palette, compress=False)
+        for rtype, rcodec, data, mask, x, z in (extra or []):
+            enc = (data if rcodec == C_NONE else zlib.compress(data, 6) if rcodec == C_ZLIB else
+                   zstandard.ZstdCompressor(level=3, write_checksum=True, write_content_size=True,
+                                            write_dict_id=False).compress(data))
+            w.rec_encoded(rtype, rcodec, enc, mask, x, z, len(data))
         bo = 0
         for m in masks.values():
             bo |= m
@@ -1738,7 +1820,8 @@ def hostile(path, what):
 def compact(path, set_palette_flag=False, palette=None, quiet=False):
     """EdenWorldStore::compact(setPaletteFlag, palette): the live state as one batch (seq 1) in `path`.compact,
     fsync, rename over `path`. Order: WORLD_HEADER, CREATURES, a non-empty SIGN_TRAILER, PROVENANCE, GENERATOR,
-    SKY_CLOCK, WEATHER, COLUMNs by (ord, x, z), BLOCK_PALETTE, SUMMARY, COMMIT. zstd payloads are copied verbatim after they
+    SKY_CLOCK, WEATHER, MOD_DATA and the newest record of each reserved type 14-255 (ascending, verbatim: codec, header fields
+    and stored bytes, a malformed MOD_DATA included; K.6-5a/K.6-5), COLUMNs by (ord, x, z), BLOCK_PALETTE, SUMMARY, COMMIT. zstd payloads are copied verbatim after they
     decode; codec 0 is kept for the raw types and empty payloads; anything else is re-encoded at zstd-3.
     K.1-2 flag compaction (`set_palette_flag` on an unflagged file): FileHeader flags bit 0, and a BLOCK_PALETTE of
     `palette` (record bytes; None = no entries) plus an `emod:unknown_<id>` entry for every type byte >= 128 found in
@@ -1781,6 +1864,16 @@ def compact(path, set_palette_flag=False, palette=None, quiet=False):
             r = st.live(t)
             if r and not (t == T_SIGN_TRAILER and r.aux == 0):
                 copy(r)
+        # K.6-5a (C-4): the newest record of each reserved type (14-255, ascending), verbatim after it decodes; K.6-5's
+        # MOD_DATA (13) the same way, first
+        for t in range(T_WEATHER + 1, 256):
+            r = st.live(t)
+            if r:
+                try:
+                    st.decode(r)
+                except Exception as ex:
+                    die('compact: live record @%d does not decode (%s); nothing was replaced' % (r.off, ex))
+                w.rec_encoded(r.type, r.codec, bytes(st.buf[r.poff:r.poff + r.plen]), r.mask, r.x, r.z, r.aux)
         cols = sorted(st.columns().items(), key=lambda kv: (kv[1].aux, kv[0][0], kv[0][1]))
         for _, r in cols:
             data = copy(r)
@@ -2178,6 +2271,22 @@ def fixtures_pack(d):
         os.remove(m); os.remove(x)
     for f in ('f256-bpl1.eden.gz', 'f256-bpl1-latent.eden.gz', 'f64-bpl1-latent.eden.gz', 'f256-palette.2batch.emod'):
         export_line(f)
+    # K.6-5a (C-4): `compact F` = copy F, EdenWorldStore::compact(), and the result must be emod.py's `compact` byte
+    # for byte. F holds reserved types a newer build would write: 200 superseded once (zstd, then header fields
+    # set), 14 raw, 255 zlib; and K.6-5's MOD_DATA (13, zstd) for two packs; compaction keeps the newest of each, verbatim.
+    rv = os.path.join(d, 'f64-reserved.emod')
+    e = Eden(srcs['f64-basic.eden'])
+    convert(srcs['f64-basic.eden'], rv, epoch=0, quiet=True)
+    append_batch(rv, extra=[(200, C_ZSTD, b'mod data v1 ' * 40, 0, 0, 0), (14, C_NONE, bytes(range(24)), 0, 0, 0),
+                            (T_MOD_DATA, C_ZSTD, mod_data_payload([('wires', b'\x01\x02' * 300), ('a_pack', bytes(range(256)))]), 0, 0, 0)])
+    c0 = bytearray(e.column(e.cols[0])); c0[77] ^= 0x33
+    append_batch(rv, columns={(e.cols[0][0], e.cols[0][1]): bytes(c0)},
+                 extra=[(200, C_ZSTD, b'mod data v2 ' * 50, 5, -7, 9), (255, C_ZLIB, b'future ' * 30, 0, 0, 0)])
+    lines.append('read %s %s %s' % (os.path.basename(rv), sha256_file(rv), state_digest(rv)))
+    t = os.path.join(tmp, 'rc.emod')
+    shutil.copyfile(rv, t)
+    compact(t, quiet=True)
+    lines.append('compact %s %s %s' % (os.path.basename(rv), sha256_file(t), state_digest(t)))
     open(os.path.join(d, 'expected.txt'), 'w').write('\n'.join(lines) + '\n')
     shutil.rmtree(tmp)
     print('\n'.join(lines))
@@ -2440,6 +2549,84 @@ def palette_selftest(work):
     return ok
 
 
+def reserved_selftest(work):
+    """K.6-5a (C-4): compaction keeps the newest record of each reserved type, verbatim, after the singletons."""
+    import shutil
+    os.makedirs(work, exist_ok=True)
+    src = make_fixtures(os.path.join(work, 'fx'))[0][0]
+    p = os.path.join(work, 'r.emod')
+    convert(src, p, epoch=0, quiet=True)
+    append_batch(p, extra=[(200, C_ZSTD, b'old ' * 64, 0, 0, 0)])
+    append_batch(p, extra=[(200, C_ZLIB, b'new ' * 64, 3, -2, 4), (14, C_NONE, b'x' * 8, 0, 0, 0)])
+    before = open_emod(p)
+    want = {t: (r.codec, r.mask, r.x, r.z, r.aux, bytes(before.buf[r.poff:r.poff + r.plen]))
+            for t in (14, 200) for r in (before.live(t),)}
+    d0 = state_digest_store(before)
+    before.close()
+    compact(p, quiet=True)
+    after = open_emod(p)
+    got = {t: (r.codec, r.mask, r.x, r.z, r.aux, bytes(after.buf[r.poff:r.poff + r.plen])) if r else None
+           for t in (14, 200) for r in (after.live(t),)}
+    order = [r.type for r in after.recs]
+    ok = (got == want and len(after.history[('T', 200)]) == 1 and state_digest_store(after) == d0 and
+          order.index(T_WORLD_HEADER) < order.index(14) < order.index(200) < order.index(T_COLUMN))
+    after.close()
+    once = open(p, 'rb').read()
+    compact(p, quiet=True)
+    ok = ok and open(p, 'rb').read() == once
+    print('  the newest of each reserved type survives compaction verbatim, before the columns, idempotent: %s'
+          % ('ok' if ok else 'FAILED'))
+    shutil.rmtree(work)
+    return ok
+
+
+def moddata_selftest(work):
+    """K.6-5: MOD_DATA's framing rules (EdenWorldStore.cpp mod_data_parse, same messages); verify clean on a good
+    record, names the first broken rule of a bad one (65 entries, an entry over 64 KiB, a bad id, ids out of order,
+    trailing bytes); compaction keeps either verbatim."""
+    import shutil
+    os.makedirs(work, exist_ok=True)
+    src = make_fixtures(os.path.join(work, 'fx'))[0][0]
+    p = os.path.join(work, 'm.emod')
+    good = mod_data_payload([('wires', b'\x05' * 100), ('a_pack', b'')])
+    ents, why = parse_mod_data(good)
+    ok = why is None and ents == [('a_pack', b''), ('wires', b'\x05' * 100)]
+    bad = [
+        (mod_data_payload([('p%02d' % i, b'x') for i in range(65)]), 'MOD_DATA count 65 > 64'),
+        (mod_data_payload([('big', b'x' * (MOD_DATA_ENTRY_MAX + 1))]), "MOD_DATA entry 0 ('big'): 65537 B > 65536"),
+        (mod_data_payload([('Bad-Id', b'x')]), "MOD_DATA entry 0: id 'Bad-Id' breaks [a-z0-9_]{1,24}"),
+        (struct.pack('<II', 1, 2) + struct.pack('<24sI', b'b', 0) + struct.pack('<24sI', b'a', 0),
+         "MOD_DATA entry 1: id 'a' not after 'b' (ascending, distinct)"),
+        (good + b'\0', 'MOD_DATA has 1 trailing byte(s) after entry 2'),
+        (struct.pack('<II', 2, 0), 'MOD_DATA version 2 (this reader knows 1)'),
+    ]
+    for payload, want in bad:
+        convert(src, p, epoch=0, quiet=True)
+        append_batch(p, extra=[(T_MOD_DATA, C_ZSTD, payload, 0, 0, 0)])
+        v = open_emod(p).verify()
+        named = any(want in e and 'the game ignores this MOD_DATA' in e for e in v)
+        before = open_emod(p)
+        r0 = before.live(T_MOD_DATA)
+        b0 = (r0.codec, r0.aux, bytes(before.buf[r0.poff:r0.poff + r0.plen]))
+        before.close()
+        compact(p, quiet=True)
+        after = open_emod(p)
+        r1 = after.live(T_MOD_DATA)
+        kept = r1 is not None and (r1.codec, r1.aux, bytes(after.buf[r1.poff:r1.poff + r1.plen])) == b0
+        after.close()
+        if not (named and kept):
+            print('  MOD_DATA bad case %r: named %s, kept %s; verify said %s' % (want, named, kept, v))
+            ok = False
+    convert(src, p, epoch=0, quiet=True)
+    append_batch(p, extra=[(T_MOD_DATA, C_ZSTD, good, 0, 0, 0)])
+    v = open_emod(p).verify()
+    ok = ok and not v
+    print('  MOD_DATA: a good record verifies clean, each broken rule is named, compaction keeps it verbatim: %s'
+          % ('ok' if ok else 'FAILED %s' % v))
+    shutil.rmtree(work)
+    return ok
+
+
 def ceiling_selftest():
     """QA.4: a record declaring more decoded bytes than its type's DECODED_MAX does not decode (the
     native --emod-selftest "decode ceilings" section is the same rule)."""
@@ -2532,6 +2719,10 @@ def selftest(work):
             os.remove(m); os.remove(b)
     print('== block palette (K.1-2)')
     ok &= palette_selftest(os.path.join(work, 'palette'))
+    print('== reserved types survive compaction (K.6-5a)')
+    ok &= reserved_selftest(os.path.join(work, 'reserved'))
+    print('== MOD_DATA framing (K.6-5)')
+    ok &= moddata_selftest(os.path.join(work, 'moddata'))
     print('== decode ceilings (QA.4)')
     ok &= ceiling_selftest()
     print('== resync budget (QA.13)')

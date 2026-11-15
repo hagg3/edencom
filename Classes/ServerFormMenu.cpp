@@ -332,6 +332,11 @@ void ServerFormMenu::layout(){
     for(GLW::Button* b:lefts){ b->setRect(CGRectMake(x,fy,0,footH)); x+=b->fitWidth()+du(5); }
     m_join.setRect(CGRectMake(right-m_join.fitWidth(),fy,0,footH));
     m_join.setEnabled(m_valid);
+    {   // UX.2 (P5): say why the muted Join now is off, left of it
+        const char* why=m_valid?"":(m_pass.text().find(':')!=std::string::npos?"Password can't contain ':'":"Enter an address");
+        if(m_joinHintText!=why){ m_joinHintText=why; if(*why) m_joinHint.set(why,du(14),UITextAlignmentRight,du(220),FACE_BODY); }
+        m_joinHintRect=CGRectMake(right-m_join.fitWidth()-du(8)-du(220),fy,du(220),footH);
+    }
     const int cnt=eden_mp_servers_count();
     m_up.setEnabled(m_mode==MODE_EDIT&&m_row>0);
     m_down.setEnabled(m_mode==MODE_EDIT&&m_row>=0&&m_row<cnt-1);
@@ -511,6 +516,8 @@ void ServerFormMenu::render(){
     if(m_footShown){
         if(m_mode==MODE_EDIT){ m_del.render(); m_up.render(); m_down.render(); }
         m_join.render();
+        if(!m_valid&&m_mode!=MODE_PROFILE&&!m_joinHintText.empty())
+            m_joinHint.draw(m_joinHintRect.origin.x+m_joinHintRect.size.width-m_joinHint.width(),m_joinHintRect.origin.y+(m_joinHintRect.size.height+m_joinHint.height())*0.5f,kTextSecondary);
     }
 
     R::end2D();

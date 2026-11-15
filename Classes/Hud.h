@@ -149,6 +149,11 @@ public:
     bool hotbarAssignAt(int slot,int x,int y);        // 1-9 over a picker cell: that cell -> slot; false = no cell
     int hotbarCellAt(float x,float y);                // the slot under a point (point space, y up), -1 none
     Button hotbarButton(int idx);                     // hit rect: 0-8 slot cells, 9/10 chevrons; zero-size when absent
+    // UX.10-3 (Classes/Tutorial): the hint card sits where neither of these is. overlayBlocked: the HUD is hidden or
+    // something covers the world (menu, picker, photo mode, a respawn fade). touchChromeRects: the touch controls'
+    // hit rects (mode column, jump/crouch/fly, menu, console, the pad), point space y up; returns how many.
+    bool overlayBlocked();
+    int touchChromeRects(CGRect* out,int cap);
     // D.2p: the type in picker cell `i` of `page` (-1 = no cell there).
     static int pickerCell(int page,int i);
     // K.2-3: the stock pack's two pages (ContentPack::commitStock).

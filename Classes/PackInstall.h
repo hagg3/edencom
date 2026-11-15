@@ -36,12 +36,23 @@ struct Result {
     bool ok = false;
     std::string id, name, version, folder;   // folder: the Packs/ folder it is now in
     bool replaced = false;                   // an installed pack with this id was replaced
+    bool downgrade = false;                  // !ok: the installed pack is newer (`installedVersion`); nothing was changed.
+                                             //   The caller asks the player, then calls again with allowDowngrade
+    std::string installedVersion;            // the version being replaced ("" for a new pack)
     std::string error;                       // one sentence for the player when !ok
     std::vector<std::string> lines;          // the validator's lines (errors and warnings)
 };
 
 // `expectSha256`: 64 lowercase hex, or "" for no check (a file the player picked).
-Result installZip(const std::string& zipPath, const std::string& documents, const std::string& expectSha256);
+// `expectId`: the id the catalogue entry names, or "" for none (a file the player picked): a zip whose own id
+// differs is refused with Packs/ untouched (K.8-3: an install replaces only the pack it names).
+// `allowDowngrade`: false (the default) refuses to replace an installed pack with an older version
+// (Result::downgrade); the caller confirms with the player and calls again with true.
+Result installZip(const std::string& zipPath, const std::string& documents, const std::string& expectSha256,
+                  const std::string& expectId = "", bool allowDowngrade = false);
+
+// --mods-mutate=anyid (harness only): the expectId comparison is skipped. --mods-selftest must go red.
+extern bool testAnyId;
 
 // The catalogue a "Get Mods" source serves (docs/content-packs.md "Getting packs"):
 //   {"format": 1, "packs": [{"id": "stairs", "name": "Stairs and Trims", "version": "1.0.0",

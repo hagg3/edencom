@@ -171,6 +171,7 @@ public:
     // UX.8-4: raise the pill by `pts` (point space) for as long as something sits on the bottom edge (the
     // desktop hotbar strip). 0 = as before. Hud sets it every frame it draws.
     static void setLift(float pts);
+    static float lift();                      // UX.10-3: what setLift last said (the hint card stacks above the pill)
 
 private:
     Toast(const Toast&);

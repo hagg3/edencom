@@ -436,6 +436,7 @@ static float toastMaxTextWidth() { return safeRect().size.width - du(160); }
 
 static float g_toastLift = 0.0f;
 void Toast::setLift(float pts) { g_toastLift = pts; }
+float Toast::lift() { return g_toastLift; }
 
 Toast::Toast() : m_life(0), m_age(0), m_builtU(0) {}
 
@@ -1115,7 +1116,7 @@ RailFrame railFrame() {
     const float pad = du(9), gap = du(6);
     const float left = f.panel.origin.x + pad, right = f.panel.origin.x + W - pad;
     const float barH = du(29), barTop = f.panel.origin.y + H - du(7);
-    f.titlebar = CGRectMake(left, barTop - barH, right - left, barH);
+    f.titlebar = CGRectMake(left, barTop - barH, right - left - du(6), barH);   // UX.2 (B7): the right-hand action keeps a margin like Back's
     const float bodyTop = barTop - barH - pad, bodyBot = f.panel.origin.y + pad;
     f.rail = CGRectMake(left, bodyBot, IconRail::designW(), bodyTop - bodyBot);
     const float barW = du(18);
@@ -1838,3 +1839,10 @@ void drawVersionTag(float xOffset) {
 // UX.7: the host's entry points (port/src/seam/Input_native.cpp).
 extern "C" int  eden_ui_focus_key(int key)  { return GLW::Focus::key(key) ? 1 : 0; }
 extern "C" void eden_ui_focus_frame(void)   { GLW::Focus::frame(); }
+// X.32: the icon atlas's texture name and size (loading it on first call), for --rejoin-selftest's ledger check.
+extern "C" unsigned eden_ui_icon_atlas_name(int* w, int* h) {
+    Texture2D* t = GLW::iconAtlas();
+    if (w) *w = t ? (int)t->pixelsWide() : 0;
+    if (h) *h = t ? (int)t->pixelsHigh() : 0;
+    return t ? t->name : 0;
+}

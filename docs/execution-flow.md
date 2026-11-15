@@ -243,6 +243,7 @@ menu and the MP join window read) is atomic too.
 | Stock: NSURLConnection callbacks | Networking delegates (ShareUtil/FileDownload/FileUpload) on the main run loop — seam-excluded on the port |
 | Port: one detached `std::thread` per HTTP request | `eden_net_fetch`/`eden_net_post_file` (`Net_native.cpp`) run the backend (AppleNet/WinHTTP/libcurl) there; the main thread polls the job (`WorldBrowser`/`WorldShare`) |
 | Port: the multiplayer network thread (one `std::thread` per `MpSession`, `port/src/net/`, MP.2) | connects, reads/writes the socket, frames lines, inflates `SNAPZ` and classifies lines into plain data on mutex-guarded queues; never touches engine state. The main thread drains with `drainSide`/`drainWorld`. Started by the join flow (`port/src/seam/MpLink_native.cpp`, MP.3b; `MpWorld::tick` pumps it each frame), stopped (joined) when `MpWorld::endSession`/`dropLink` releases the link. `--mp-replay` feeds recorded lines with no thread |
+| Port: server-list probe workers (`port/src/net/ServerList`, ≤ 8) and matchmaker fetch threads (`MatchFetcher`, one per address, ≤ 8) | turn an `INFO` reply or a matchmaker `LIST` reply into plain results; never touch engine state. A cancelled multiplayer connect is detached, not joined, and finishes alone, touching only its own `MpSession` |
 | Port: SDL's audio device thread | mixes the `SDL_AudioStream`s that `eden_native_audio_tick()` feeds from the main thread; no engine code runs there |
 
 There is no meshing or column-decode worker: the dormant `MeshPool` was deleted in SM.8

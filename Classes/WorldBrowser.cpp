@@ -379,6 +379,7 @@ struct BrowserImpl {
     GLW::Button back, download, more, go;
     GLW::TabRail sources, modes;
     GLW::TextField search;
+    GLW::Toast toast;                    // UX.11: a failed download says so over the dialog too
     GLW::ListRow rows[WB_MAX_ROWS];
     std::string rowText[WB_MAX_ROWS];
     bool rowBuilt[WB_MAX_ROWS];
@@ -656,6 +657,7 @@ struct BrowserImpl {
     void failDownload(const std::string& why) {
         cancelDownload(NULL);
         dlStatus = "Download failed: " + why;
+        toast.show(dlStatus.c_str(), 5.0f);
     }
 
     void pollDownload() {
@@ -825,6 +827,7 @@ static void wb_layout(BrowserImpl* d) {
     }
     const float goW = d->official() ? du(100) : 0.0f;
     d->search.setRect(CGRectMake(fx, y, right - fx - (goW > 0 ? goW + gap : 0.0f), d->btnH));
+    d->search.setKeepVisible(CGRectMake(left, y - du(150), right - left, d->btnH + du(150)));   // UX.11 (U8): the field and the list's first rows stay above the keyboard
     if (d->fieldPt != du(17)) { d->fieldPt = du(17); d->search.setPointSize(d->fieldPt); }   // a raster
     d->go.setRect(CGRectMake(right - goW, y, goW, d->btnH));
 
@@ -910,6 +913,7 @@ void WorldBrowser::update(float etime) {
     d->clock += etime;
     for (int s = 0; s < SRC_COUNT; s++) d->pollList(s);
     d->pollDownload();
+    d->toast.update(etime);
     if (!d->open) return;                     // the download finished and handed back to the menu
     d->pollPreview(etime);
     wb_layout(d);
@@ -1129,7 +1133,8 @@ void WorldBrowser::render() {
         foot += du(18) + du(6);
     }
     if (!d->progressText.empty())
-        d->progressText.draw(d->detail.origin.x + dp, foot + d->progressText.height(), kText);
+        d->progressText.draw(d->detail.origin.x + dp, foot + d->progressText.height(),
+                             prog.compare(0, 15, "Download failed") == 0 ? kTextError : kText);   // UX.11: a failure reads red
 
     // The action bar and its status line.
     if (d->official()) d->more.render();
@@ -1155,6 +1160,7 @@ void WorldBrowser::render() {
         const CGRect a = d->download.rect();
         d->status.draw(sx, a.origin.y + (a.size.height + d->status.height()) * 0.5f, kTextSecondary);
     }
+    d->toast.render();
     Pen::color(1.0f, 1.0f, 1.0f, 1.0f);
 }
 

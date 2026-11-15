@@ -12,6 +12,9 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <string>
+#include <thread>
+#include <unordered_map>
 #if !defined(_WIN32)
 #include <dlfcn.h>   // --state-trace's call-site symbols (G.5b-0)
 #endif
@@ -325,15 +328,120 @@ static void countDraw(const Geometry& g) {   // QA.24: per pass category, whatev
     g_counts.verts[i] += g.count;
 }
 
+// ---- X.32 texture ledger ---------------------------------------------------------------------------
+// Every live texture name with the label and call site that created it, and the last owner of each
+// destroyed name until a create hands it out again. A texDestroy of a name that is not live is a STALE
+// destroy (a double destroy, or a name kept past its owner): on a driver that reuses freed names at once
+// (the Windows report X.32) it deletes whichever texture now holds that name. The null backend never
+// reuses a name, so a headless run catches every stale destroy whatever the driver would have done.
+// Always on (diagnostics are always compiled in): a map insert/erase per create/destroy, which are rare.
+namespace {
+struct TexRec { std::string label; void* createSite; void* destroySite; long serial; };
+std::unordered_map<uint32_t, TexRec>& texLiveMap() { static std::unordered_map<uint32_t, TexRec> m; return m; }
+std::unordered_map<uint32_t, TexRec>& texDeadMap() { static std::unordered_map<uint32_t, TexRec> m; return m; }
+long g_texSerial = 0, g_texStale = 0;
+void texSiteName(void* site, char* out, size_t n) {
+    std::snprintf(out, n, "%p", site);
+#if !defined(_WIN32)
+    Dl_info info;
+    if (site && dladdr(site, &info) && info.dli_sname)
+        std::snprintf(out, n, "%s+%ld", info.dli_sname, (long)((const char*)site - (const char*)info.dli_saddr));
+#endif
+}
+// Rule 8: all GL on the main thread. The first texture call is the boot's, on the main thread; a later one
+// from any other thread (the world-load pthread) is logged and counted. No lock: the counter is the signal.
+std::thread::id g_texThread;
+long g_texOffThread = 0;
+void ledgerThread(const char* what, void* site) {
+    const std::thread::id me = std::this_thread::get_id();
+    if (g_texThread == std::thread::id()) { g_texThread = me; return; }
+    if (me == g_texThread) return;
+    ++g_texOffThread;
+    char by[160];
+    texSiteName(site, by, sizeof by);
+    std::fprintf(stderr, "[texledger] OFF-THREAD %s from %s (all GL is the main thread's)\n", what, by);
+}
+void ledgerCreate(uint32_t t, const char* label, void* site) {
+    ledgerThread("texCreate", site);
+    if (!t) return;
+    auto& live = texLiveMap();
+    if (live.count(t)) {   // only possible if a name was freed outside R:: (nothing may do that)
+        ++g_texStale;
+        std::fprintf(stderr, "[texledger] STALE create: name %u handed out while still owned by '%s'\n", t,
+                     live[t].label.c_str());
+    }
+    texDeadMap().erase(t);
+    live[t] = TexRec{label ? label : "", site, nullptr, ++g_texSerial};
+}
+void ledgerDestroy(uint32_t t, void* site) {
+    if (!t) return;
+    ledgerThread("texDestroy", site);
+    auto& live = texLiveMap();
+    auto it = live.find(t);
+    if (it != live.end()) {
+        it->second.destroySite = site;
+        // The history only names a stale call's victim; detection needs just `live`. Bounded, because the null
+        // backend never reuses a name and text textures come and go all session (--leak-probe must stay flat).
+        if (texDeadMap().size() >= 4096) texDeadMap().clear();
+        texDeadMap()[t] = std::move(it->second);
+        live.erase(it);
+        return;
+    }
+    ++g_texStale;
+    char by[160], first[160];
+    texSiteName(site, by, sizeof by);
+    auto d = texDeadMap().find(t);
+    if (d != texDeadMap().end()) {
+        char made[160];
+        texSiteName(d->second.destroySite, first, sizeof first);
+        texSiteName(d->second.createSite, made, sizeof made);
+        std::fprintf(stderr, "[texledger] STALE destroy: name %u by %s; it was '%s' (#%ld, created by %s), "
+                     "already destroyed by %s\n", t, by, d->second.label.c_str(), d->second.serial, made, first);
+    } else {
+        std::fprintf(stderr, "[texledger] STALE destroy: name %u by %s; never created through R::\n", t, by);
+    }
+}
+// A draw (or the cloud-shadow unit) naming a texture that is not live. In a core-profile context the bind
+// fails (GL_INVALID_OPERATION) but the binding cache records it, so when a driver hands that name to the
+// next texCreate, the create's bind is elided and its upload lands in whatever is really bound (X.32).
+// Logged once per name; counted always.
+long g_texStaleUses = 0;
+uint32_t g_texStaleLastLogged = 0;
+void ledgerUse(uint32_t t, void* site) {
+    if (!t || texLiveMap().count(t)) return;
+    ++g_texStaleUses;
+    if (t == g_texStaleLastLogged) return;
+    g_texStaleLastLogged = t;
+    char by[160];
+    texSiteName(site, by, sizeof by);
+    auto d = texDeadMap().find(t);
+    std::fprintf(stderr, "[texledger] STALE use: a draw from %s names texture %u, %s%s%s\n", by, t,
+                 d != texDeadMap().end() ? "destroyed, was '" : "never created through R::",
+                 d != texDeadMap().end() ? d->second.label.c_str() : "", d != texDeadMap().end() ? "'" : "");
+}
+}  // namespace
+long texStaleDestroys() { return g_texStale; }
+long texStaleUses() { return g_texStaleUses; }
+long texOffThread() { return g_texOffThread; }
+long texLiveCount() { return (long)texLiveMap().size(); }
+bool texLive(Tex t) { return t && texLiveMap().count(t) != 0; }
+const char* texOwner(Tex t) {
+    auto it = texLiveMap().find(t);
+    return it == texLiveMap().end() ? nullptr : it->second.label.c_str();
+}
+
 Tex texCreate(const TexDesc& d, const void* px) {
     ++g_counts.texCreates;
-    return eden_gl_have_context() ? rgl::texCreate(d, px) : rnull::texCreate(d);
+    const Tex t = eden_gl_have_context() ? rgl::texCreate(d, px) : rnull::texCreate(d);
+    ledgerCreate(t, d.label, __builtin_return_address(0));
+    return t;
 }
 void texUpdate(Tex t, int x, int y, int w, int h, TexFormat f, const void* px) {
     ++g_counts.texUpdates;
     if (eden_gl_have_context()) rgl::texUpdate(t, x, y, w, h, f, px);
 }
 void texDestroy(Tex t) {
+    ledgerDestroy(t, __builtin_return_address(0));
     if (eden_gl_have_context()) rgl::texDestroy(t); else rnull::texDestroy(t);
 }
 void texSampling(Tex t, const TexDesc& d) {
@@ -357,6 +465,8 @@ void bufDestroy(Buf b) {
 
 // One --state-trace line per renderer draw: the fields of the shim's line a ported call site must state.
 static void traceDraw(void* site, const char* prog, const Geometry& g, Tex t, const Rgba& tint, float alphaRef) {
+    ledgerUse(t, site);                         // X.32: every draw passes here, whatever the backend
+    if (ds().csOn) ledgerUse(ds().csTex, site);
     if (!g_trace) return;
     static const char* const kPrim[] = {"tri", "strip", "fan", "lines", "lstrip", "points"};
     static const char* const kBlend[] = {"off", "SA,1-SA", "SA,1", "1,1"};
@@ -464,6 +574,9 @@ void pickViewport(int out[4]) {
     for (int i = 0; i < 4; ++i) out[i] = g_pick_viewport[i];
 }
 
+bool texReadLevel(Tex t, int level, int w, int h, void* rgba) {
+    return eden_gl_have_context() && rgl::texReadLevel(t, level, w, h, rgba);
+}
 bool readPixels(int x, int y, int w, int h, void* rgba) {
     if (eden_gl_have_context()) return rgl::readPixels(x, y, w, h, rgba);
     if (rgba && w > 0 && h > 0) std::memset(rgba, 0, (size_t)w * (size_t)h * 4u);

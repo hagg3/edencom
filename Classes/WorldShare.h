@@ -6,6 +6,8 @@
 //                          the signs question when pruning would drop any, then the pre-flight's loss
 //                          report as a confirm, then a time-sliced export to Documents/Exports/
 //                          <name>.eden.gz (the default export everywhere, plan §4).
+//                          "World copy (.emod)" writes Exports/<name>.emod; a world holding saved mod data (record 13)
+//                          first asks Include / Leave out / Cancel (U1). Upload is .eden only and never carries it.
 //  Share > Upload          Current server (same format picker) or Legacy server (Legacy64z, forced);
 //                          the same confirm; the multipart body is built a slice at a time into a temp
 //                          beside the world, POSTed through eden_net_post_file, and deleted.
@@ -32,6 +34,8 @@ namespace WorldShare {
     const char* lastResult();
     // --ui-selftest: skip the dialogs (target, signs) and start an export or an upload directly.
     bool startExport(WorldNode* node, int target, int signs);
+    // K.6-5b: the .emod world copy without its dialogs (Include = byte for byte, else record 13 left out).
+    bool startCopy(WorldNode* node, bool includeModData);
     bool startUpload(WorldNode* node, int server, int target, int signs);
 }
 

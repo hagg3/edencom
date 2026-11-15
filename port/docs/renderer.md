@@ -155,6 +155,26 @@ buffer) at `P_R_SIGNS` begin and end. Since G.5b-7 the signs contract only count
   as in ES 1.1); skinned (since G.5b-5, the shim's program being gone) and lit against ES 1.1 on the CPU
   (±1/255; skinned also checks that a two-bone blend lands the quad where both bones put it); R8; R3 (the state cache: a repeated draw issues no state, a deleted texture is forgotten).
   `--gl-selftest` (W.2) is an alias since G.5b-7: its no-context check is the null-backend one here.
+- **The texture ledger** (X.32, `render_core.cpp`, always on): every live `R::Tex` with the label and call site
+  that created it, and the last owner of each destroyed name. A `texDestroy` of a name that is not live (a double
+  destroy, or a name kept past its owner), a draw or the cloud-shadow unit naming one, and a `texCreate`/`texDestroy`
+  off the main thread print `[texledger] STALE …` / `OFF-THREAD …` lines on stderr (`EDEN_LOG=` puts them in a file)
+  and count (`R::texStaleDestroys()`, `texStaleUses()`, `texOffThread()`; `texLive`/`texOwner` query a name). The
+  null backend never reuses a name, so a headless run catches every stale destroy on any driver. Why it matters:
+  macOS and Windows drivers hand a freed name to the next `glGenTextures` at once, and in a core context a bind of
+  a deleted name is refused while `gl_state`'s cache records it; until X.32 the next `texCreate`'s elided bind then
+  sent its image, filters and mip chain into whatever was really bound (a tester's UI icons turned black squares
+  with block-atlas pixels). Uploads (`texCreate`/`texUpdate`/`texSampling`, the white texture, the scene FBO's
+  colour) now bind for real (`bindTextureForUpload`), so a stale draw costs one wrong draw, never a texture.
+  `R::texReadLevel(t, level, w, h, rgba)` reads a mip level back through a scratch FBO (false headless or for a
+  level that does not exist).
+- **`--rejoin-selftest[=N]`** (X.32; headless in CI, windowed by hand): N enter/leave cycles of one world with
+  weather + atmosphere on and the example pack in for every other entry (so the block atlases are re-created each
+  time); after each, the ledger saw no stale destroy or use and the UI icon atlas (`eden_ui_icon_atlas_name`) is
+  still live under `ui_icons.png`. Windowed it also hashes the atlas's level 0 and 1 each cycle and runs the
+  **bind-cache leg** (stage the stale bind + name reuse on purpose; the new texture's upload must not reach the
+  atlas). Mutants: `--rejoin-mutate=doubledestroy` (gate row), `=elide` (puts the elided upload bind back; windowed,
+  must fail the leg and every later cycle's pixel check).
 - **`port/tools/shot-diff.py A B [--out DIR] [--tol N] [--mask X,Y,W,H]`**: BMP files or directories,
   stdlib only; exit 0 identical / 1 differ / 2 error.
 

@@ -22,6 +22,7 @@
 #include "FileArchive.h"
 #include "Alert.h"
 #include "WorldShare.h"
+#include "TutorialInstall.h"   // UX.10-2
 
 #include <algorithm>
 #include <cmath>
@@ -722,6 +723,7 @@ void Menu::deactivate(){
 void Menu::loadWorlds(){
 	World::getWorld->fm->cleanConversionTemps();   // a killed conversion's .spill/.converting
 	World::getWorld->fm->adoptLooseWorlds();       // K.0w-2: loose .emod -> Worlds/<id>/ (plan §4)
+	// The tutorial world is no longer installed automatically: Settings > Experiments > Generate tutorial world.
 	world_list=NULL;
 	selected_world=NULL;
 	world_list_end=world_list;

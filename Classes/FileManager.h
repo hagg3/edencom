@@ -216,6 +216,8 @@ public:
     static std::string commitStaging(const std::string& documents,const std::string& id);
     static void discardStaging(const std::string& documents,const std::string& id);
     static void stageStep(const char* what);
+    // UX.10-2: a conversion, download or import is live (the gate adoptLooseWorlds and the tutorial install share).
+    static bool worldJobBusy();
     static bool isFolderWorld(const std::string& key);             // "Worlds/<valid id>/world.emod"
     static std::string worldDirOf(const std::string& key);         // "Worlds/<id>" or "" for a loose key
     static std::string photoPathOf(const std::string& key);        // folder: <dir>/photo.png; loose: key+".png"

@@ -436,6 +436,7 @@ constexpr float kTriggerThreshold = 0.5f;
 double g_padLastLookMs = 0.0;
 // Edge tracking. Indexed by SDL_GamepadButton, so it is dense and needs no map.
 bool g_padPrev[SDL_GAMEPAD_BUTTON_COUNT] = {false};
+bool g_padLast = false;                  // UX.10-3: the last input came from the pad (key, mouse or finger clears it)
 int  g_padHeldTrigger = -1;              // SDL_GAMEPAD_AXIS_LEFT/RIGHT_TRIGGER, or -1
 
 bool gamepad_on() { return g_pad != nullptr && eden_gamepad_enabled != 0.0f; }
@@ -545,6 +546,16 @@ void gamepad_button_edges() {
 
 void gamepad_tick() {
     if (!gamepad_on()) return;
+
+    // UX.10-3: which device the player is using, for the tutorial's per-device hint copy. Any button down or
+    // a stick/trigger past the deadzone claims it; the first key, mouse or finger event gives it back.
+    {
+        bool any = false;
+        for (int b = 0; b < SDL_GAMEPAD_BUTTON_COUNT && !any; ++b) any = SDL_GetGamepadButton(g_pad, (SDL_GamepadButton)b);
+        const SDL_GamepadAxis ax[] = {SDL_GAMEPAD_AXIS_LEFTX, SDL_GAMEPAD_AXIS_LEFTY, SDL_GAMEPAD_AXIS_RIGHTX, SDL_GAMEPAD_AXIS_RIGHTY};
+        for (SDL_GamepadAxis a : ax) any = any || std::fabs(axis01(a)) > 0.5f;
+        if (any || trigger_pressed(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) || trigger_pressed(SDL_GAMEPAD_AXIS_LEFT_TRIGGER)) g_padLast = true;
+    }
 
     // The engine's own menus own input while they are up — the native counterpart of
     // eden-gamepad.js's `bridge.isBlocked()`, which asks the same question about DOM panels.
@@ -919,7 +930,14 @@ void eden_native_input_init(SDL_Window* window) {
     }
 }
 
+// UX.10-3: 1 when the pad was the last device used (Classes/Tutorial picks its hint copy by it). The test hook sets it.
+extern "C" int eden_input_pad_is_last(void) { return g_padLast ? 1 : 0; }
+extern "C" void eden_input_test_set_pad_last(int on) { g_padLast = on != 0; }
+
 void eden_native_input_handle_event(const SDL_Event& e) {
+    if (e.type == SDL_EVENT_KEY_DOWN || e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_FINGER_DOWN ||
+        (e.type == SDL_EVENT_MOUSE_MOTION && (e.motion.xrel != 0 || e.motion.yrel != 0)))
+        g_padLast = false;
     switch (e.type) {
         case SDL_EVENT_TEXT_INPUT: {
             // C.3: the key that opened the Console can deliver its own character after the field took

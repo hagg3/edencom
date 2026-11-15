@@ -773,6 +773,50 @@ bool export_world_file(const std::string& srcPath, const std::string& outPath, c
     return true;
 }
 
+// K.6-5b (U1): the packs whose saved data a world holds. A record that breaks MOD_DATA's framing is ignored by
+// the game, so it names no pack (false: nothing to ask about).
+bool world_mod_data_packs(const std::string& srcPath, std::vector<std::string>* ids) {
+    if (ids) ids->clear();
+    EdenWorldStore st;
+    if (!st.open(srcPath.c_str(), false, true, true) || !st.hasRecord(T_MOD_DATA)) return false;
+    std::vector<uint8_t> rec;
+    std::vector<ModDataEntry> es;
+    if (st.readRecord(T_MOD_DATA, rec) != EdenWorldStore::READ_OK || !mod_data_parse(rec.data(), rec.size(), &es, nullptr)) return false;
+    if (ids) for (const ModDataEntry& e : es) ids->push_back(e.id);
+    return !es.empty();
+}
+
+// A copy of the `.emod` at `srcPath`: `outPath`.exporting, fsync, atomic rename. Include: byte for byte. Leave out:
+// the same file compacted without record 13, so the copy verifies clean and the source is never written.
+bool test_strip_always = false;
+
+bool copy_emod_world(const std::string& srcPath, const std::string& outPath, bool includeModData, std::string* err) {
+    if (test_strip_always) includeModData = false;
+    auto bad = [&](const std::string& e) { if (err) *err = e; return false; };
+    const std::string tmp = outPath + ".exporting";
+    FILE* in = io::fopen_utf8(srcPath.c_str(), "rb");
+    if (!in) return bad("cannot read the world");
+    FILE* out = io::fopen_utf8(tmp.c_str(), "wb");
+    if (!out) { std::fclose(in); return bad("cannot write the export"); }
+    std::vector<uint8_t> buf(1 << 20);
+    bool ok = true;
+    size_t n;
+    while (ok && (n = std::fread(buf.data(), 1, buf.size(), in)) > 0) ok = std::fwrite(buf.data(), 1, n, out) == n;
+    ok = ok && !std::ferror(in) && io::sync_file(out);
+    std::fclose(in);
+    ok = (std::fclose(out) == 0) && ok;
+    if (!ok) { io::remove_file(tmp); return bad("copy failed (disk full?)"); }
+    if (!includeModData) {
+        EdenWorldStore st;
+        const bool done = st.open(tmp.c_str(), true) && st.compactWithoutModData();
+        const std::string why = st.error();
+        st.close();
+        if (!done) { io::remove_file(tmp); io::remove_file(tmp + ".compact"); return bad("cannot leave out the mod data: " + why); }
+    }
+    if (!io::replace_file(tmp, outPath)) { io::remove_file(tmp); return bad("cannot rename the export into place"); }
+    return true;
+}
+
 // =============================================================================================
 // S.5c upload body
 // =============================================================================================

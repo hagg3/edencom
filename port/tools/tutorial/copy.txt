@@ -1,0 +1,67 @@
+# Tutorial world copy (UX.10). The owner edits this file; `python3 port/tools/tutorial.py` rebuilds
+# media/Tutorial.emod from it, and CI's `tutorial.py --check` fails until the rebuilt file is committed.
+#
+# One `key: text` per line. Blank lines and lines starting with # are ignored.
+#   sign.*  the text of a sign in the world: printable ASCII, at most 95 characters (the engine's limit).
+#   say.*   a line a command block shows on screen (`say`); printable ASCII, no `;`.
+#   hint.*  in-world hint cards (UX.10-3; not in the world file). {action} is filled with the live key binding.
+#           Suffix .kbm / .touch / .pad is the input mode. A `?` text means "not written yet".
+
+# ---- signs, along the path from the start pad
+sign.start: Welcome to Eden. Follow the path - each sign shows one thing.
+sign.walk: Climb the steps and jump the gap.
+sign.build: Break through the wall, then build a bridge over the gap.
+sign.blocks: Pick any block or colour. Paint changes a block without replacing it.
+sign.hotbar: The hotbar keeps nine favourites close.
+sign.signs: Signs like this one can be placed on any block. Try one on the post.
+sign.cmd_intro: Command blocks run small scripts. Step on the steel plate.
+sign.cmd_touch: Touch this block.
+sign.cmd_read: Open the block beside this sign to read its script.
+sign.doors: Doors open with a tap. Portals link two places.
+sign.liquids: Water flows, lava burns, fire spreads. Careful.
+sign.fire: Touch the steel block to light the campfire.
+sign.fly: Turn on Allow fly in Settings > Gameplay to fly.
+sign.finish: This land is yours. Build anything.
+
+# ---- what the command blocks say
+say.lookout_up: A command block moved you. Step on the steel plate to go back down.
+say.lookout_down: Back on the path.
+say.near: Command blocks can talk too. Open me to read my script.
+
+# ---- hint cards (UX.10-3: Classes/TutorialData.h is generated from these; the order of the steps is in Classes/Tutorial.cpp)
+# {action} is a keybind action id (Settings > Keys): the card shows the key bound to it right now. Keep each
+# line short (80 characters at most): the card is one line above the hotbar, two on a phone.
+# Bindings checked against the code: mouse left breaks, right places (Input_native.cpp); on a pad A jumps, the right
+# trigger breaks, the left trigger places, X opens the block picker, d-pad down the colour picker, the shoulder
+# buttons and d-pad left/right switch slots, Start opens the menu. The touch mode column is on the right edge.
+hint.look.kbm: Move the mouse to look around.
+hint.look.touch: Drag on the right to look around.
+hint.look.pad: Right stick to look.
+hint.move.kbm: {moveForward}{moveLeft}{moveBack}{moveRight} to walk.
+hint.move.touch: Use the left pad to walk.
+hint.move.pad: Left stick to walk.
+hint.jump.kbm: {jump} to jump.
+hint.jump.touch: Tap the jump button.
+hint.jump.pad: Press A (the bottom button) to jump.
+hint.break.kbm: Left click breaks a block.
+hint.break.touch: Tap the pickaxe button, then tap a block to break it.
+hint.break.pad: Hold the right trigger to break a block.
+hint.place.kbm: Right click places the block in your hand.
+hint.place.touch: Tap the block button, pick a block, then tap to place it.
+hint.place.pad: Hold the left trigger to place a block.
+hint.picker.kbm: {blockPicker} opens the blocks.
+hint.picker.touch: Tap the block button to choose blocks.
+hint.picker.pad: X opens the blocks.
+hint.paint.kbm: {colorPicker} opens colours. Pick one, then click a block.
+hint.paint.touch: Tap the colour button, pick one, then tap a block.
+hint.paint.pad: D-pad down opens colours. Pick one, then use the trigger.
+hint.hotbar.kbm: {hotbar1}-{hotbar9} switch slots.
+hint.hotbar.touch: Tap a slot to switch.
+hint.hotbar.pad: The shoulder buttons switch slots.
+hint.menu.kbm: {menu} opens the menu.
+hint.menu.touch: Tap the menu button to save and leave.
+hint.menu.pad: Start opens the menu.
+
+# ---- Settings (UX.10-2)
+settings.restore: Restore tutorial world
+settings.restore_help: Adds the tutorial world back to My Worlds.

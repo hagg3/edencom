@@ -12,6 +12,7 @@
 #include "Globals.h"
 #include "Hud.h"
 #include "Json.h"
+#include "ModScript.h"
 #include "Shadow.h"
 #include "Resources.h"
 #include "EdenWorldStore.h"
@@ -569,6 +570,28 @@ bool loadStock(const std::string& bundleRoot, std::vector<std::string>* errors) 
 
 namespace {
 
+// One script file, read whole under the loader's caps. False + `why` (the text after `script "x": `) for what
+// compileMod refuses a pack for. Shared by compileMod and rereadScripts (K.8-7).
+bool readScriptFile(const std::string& dir, const std::string& p, std::string* bytes, std::string* why) {
+    bytes->clear();
+    FILE* f = fopen((dir + "/" + p).c_str(), "rb");
+    bool readOk = f != NULL;
+    if (f) {
+        char buf[65536];
+        size_t n;
+        while ((n = fread(buf, 1, sizeof buf, f)) > 0) {
+            bytes->append(buf, n);
+            if (bytes->size() > SCRIPT_MAX_BYTES) break;
+        }
+        readOk = !ferror(f);
+        fclose(f);
+    }
+    if (!readOk) { *why = "cannot read it"; return false; }
+    if (bytes->size() > SCRIPT_MAX_BYTES) { *why = "larger than 256 KiB"; return false; }
+    if (!bytes->empty() && (*bytes)[0] == 0x1b) { *why = "precompiled Lua (only source scripts load)"; return false; }
+    return true;
+}
+
 const char* const kModTopKeys[] = {"format", "id", "name", "version", "requires", "conflicts", "tiles", "blocks", "scripts"};
 const char* const kModTileKeys[] = {"png", "unpainted"};
 const char* const kModBlockKeys[] = {"id", "kind", "traits", "faces", "color", "sounds", "fallback", "fallback_paint", "picker"};
@@ -704,22 +727,8 @@ bool compileMod(const char* data, size_t len, const std::string& dir, const std:
             bool twice = false;
             for (const ModScriptSrc& o : pk->scripts) twice |= o.path == p;
             if (twice) { err(e.offset, "script \"%s\": listed twice", p.c_str()); top = false; continue; }
-            std::string bytes;
-            FILE* f = fopen((dir + "/" + p).c_str(), "rb");
-            bool readOk = f != NULL;
-            if (f) {
-                char buf[65536];
-                size_t n;
-                while ((n = fread(buf, 1, sizeof buf, f)) > 0) {
-                    bytes.append(buf, n);
-                    if (bytes.size() > SCRIPT_MAX_BYTES) break;
-                }
-                readOk = !ferror(f);
-                fclose(f);
-            }
-            if (!readOk) { err(e.offset, "script \"%s\": cannot read it", p.c_str()); top = false; continue; }
-            if (bytes.size() > SCRIPT_MAX_BYTES) { err(e.offset, "script \"%s\": larger than 256 KiB", p.c_str()); top = false; continue; }
-            if (!bytes.empty() && bytes[0] == 0x1b) { err(e.offset, "script \"%s\": precompiled Lua (only source scripts load)", p.c_str()); top = false; continue; }
+            std::string bytes, why;
+            if (!readScriptFile(dir, p, &bytes, &why)) { err(e.offset, "script \"%s\": %s", p.c_str(), why.c_str()); top = false; continue; }
             total += bytes.size();
             pk->scripts.push_back(ModScriptSrc{p, bytes});
         }
@@ -988,7 +997,10 @@ void resolveRequires(std::vector<ModPack>& v, std::vector<std::string>* lines) {
             for (const ModRequire& r : pk.needs) {
                 const int q = findLoaded(v, r.id);
                 std::string why;
-                if (q < 0) {
+                if (r.id == "emod") {   // K.6-6: the virtual pack, always loaded, whose version is the scripting API's
+                    if (!r.minVersion.empty() && compareVersions(std::to_string((int)ModScript::API_VERSION), r.minVersion) < 0)
+                        why = "needs Emod scripting " + r.minVersion + " or newer (this game has " + std::to_string((int)ModScript::API_VERSION) + ")";
+                } else if (q < 0) {
                     bool there = false;
                     for (const ModPack& o : v) there |= o.id == r.id;
                     why = "needs \"" + r.id + "\" (" + (there ? "not loaded" : "not installed") + ")";
@@ -1174,6 +1186,27 @@ bool removePackFolder(const std::string& documents, const std::string& folder) {
 
 void setExtraPackDirs(const std::vector<std::string>& dirs) { g_extraDirs = dirs; }
 const ModReport& modReport() { return g_report; }
+
+// K.8-7: `scripts reload`. The loaded pack's listed script files, read again under compileMod's caps and refusals;
+// pack.json, tiles and blocks are not touched (the hash stays the world-entry one).
+bool rereadScripts(const std::string& id, std::vector<std::string>* lines) {
+    for (ModPack& pk : g_report.packs) {
+        if (pk.state != PACK_LOADED || pk.id != id) continue;
+        std::vector<ModScriptSrc> fresh;
+        size_t total = 0;
+        bool ok = true;
+        for (const ModScriptSrc& s : pk.scripts) {
+            std::string bytes, why;
+            if (!readScriptFile(pk.dir, s.path, &bytes, &why)) { lines->push_back("script \"" + s.path + "\": " + why); ok = false; continue; }
+            total += bytes.size();
+            fresh.push_back(ModScriptSrc{s.path, bytes});
+        }
+        if (ok && total > SCRIPTS_MAX_BYTES) { lines->push_back("\"scripts\" add up to more than 1 MiB"); ok = false; }
+        if (ok) pk.scripts.swap(fresh);   // else: the sources read at world entry stay
+        return ok;
+    }
+    return true;
+}
 
 std::string modsHash() {
     std::string text;

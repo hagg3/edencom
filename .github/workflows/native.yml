@@ -354,12 +354,11 @@ jobs:
   # Windows — the point of the stage. MSYS2's CLANG64 environment IS an LLVM-mingw toolchain
   # (target x86_64-w64-windows-gnu), which was the plan's measured choice while the port compiled
   # ObjC off Apple: `cl.exe` has no Objective-C at all, and the MSVC ABI segfaulted clang on
-  # `@finally` in ObjC++. Since G.3 there is no ObjC here; windows-msvc below tries the MSVC ABI. MSYS2 rather than the bare llvm-mingw tarball because zlib
+  # `@finally` in ObjC++. Since G.3 there is no ObjC here. MSYS2 rather than the bare llvm-mingw tarball because zlib
   # is a hard requirement here (Classes/zpipe.c) and MSYS2 packages it.
   # =============================================================================================
   windows:
     runs-on: windows-latest
-    needs: linux
     defaults:
       run:
         shell: msys2 {0}
@@ -432,32 +431,6 @@ jobs:
         working-directory: native
         continue-on-error: true
         run: ./build/eden_native --net-live-selftest --docs="$PWD/live-docs"
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: world-linux
-          path: native/from-linux
-
-      - name: Gate — read the world Linux wrote
-        working-directory: native
-        # CRITERION 4, AND UNTIL NOW IT WAS NOT CHECKED. Dropping the foreign save in and running
-        # --stage1 with no --world created a NEW world called "stage1" beside it and checksummed
-        # that; `grep -q checksum` then passed on a run that never opened Linux's file. Now it asks
-        # for the world by its display name AND requires the geometry to equal what Linux got from
-        # the same bytes — the one comparison that can only pass if the file really was read.
-        run: |
-          set -e
-          . ../.github/scripts/run-gate.sh
-          export PATH="/c/sdl3-prefix/bin:$PATH"
-          rm -rf ci-docs && mkdir -p ci-docs
-          cp from-linux/world-linux.emod ci-docs/
-          run_gate "crossload" ./build/eden_native.exe --headless --stage1 --world=ci \
-            --docs="$PWD/ci-docs"
-          want=$(cat from-linux/world-linux.geom)
-          got=$(sed -n 's/.*"geom":"\([0-9a-f]*\)".*/\1/p' gate-crossload.log | head -1)
-          echo "linux wrote it as $want; windows read it as $got"
-          [ -n "$got" ] && [ "$want" = "$got" ] || {
-            echo "::error::windows read Linux's world as '$got', linux reads it as '$want'"; exit 1; }
 
       - name: Gate — save round-trip, and publish this platform's world
         working-directory: native
@@ -554,77 +527,6 @@ jobs:
           if-no-files-found: error
 
   # =============================================================================================
-  # Windows, MSVC ABI (G.3) — EXPERIMENTAL and non-blocking (continue-on-error). With no ObjC left
-  # off Apple, the reasons the windows job above is MSYS2 CLANG64 are gone. This leg builds the same
-  # tree with clang-cl (the MSVC ABI and the UCRT; plain cl.exe cannot read the engine's 400 C++
-  # `#import`s) and vcpkg's static zlib/pthreads4w/dirent, then runs the core gates and prints the
-  # numbers the user's Stage G condition asks for (WORKING/graphics-api-modernisation-report-
-  # 2026-10-23.md §5 Q3): binary size within 5 % of the MSYS2 build, --stage1/--emod-selftest
-  # identical, selftests green, --bench within noise, the ARM64 VM boot, no extra runtime DLLs.
-  # The MSYS2 build stays the shipped one until every gate passes and the user approves a switch.
-  # =============================================================================================
-  windows-msvc:
-    runs-on: windows-latest
-    needs: linux
-    continue-on-error: true
-    defaults:
-      run:
-        shell: bash
-    env:
-      VCPKG_DEFAULT_TRIPLET: x64-windows-static
-    steps:
-      - name: Check out with LF endings (fixtures are byte-compared to expect.txt / pinned hashes)
-        shell: pwsh
-        run: |
-          git config --global core.autocrlf false
-          git config --global core.eol lf
-      - uses: actions/checkout@v4
-      - uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
-
-      - name: vcpkg packages (static, /MT)
-        run: |
-          "$VCPKG_INSTALLATION_ROOT/vcpkg" install zlib pthreads dirent --triplet x64-windows-static
-
-      - name: Cache SDL3
-        id: sdl-cache
-        uses: actions/cache@v4
-        with:
-          path: C:\sdl3-msvc
-          key: sdl3-${{ env.SDL_VERSION }}-windows-clang-cl-mt
-
-      - name: Build SDL3 from source (clang-cl, /MT)
-        if: steps.sdl-cache.outputs.cache-hit != 'true'
-        run: |
-          git clone --depth 1 --branch "release-${SDL_VERSION}" https://github.com/libsdl-org/SDL.git /tmp/SDL
-          cmake -S /tmp/SDL -B /tmp/SDL/build -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl \
-            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX='C:\sdl3-msvc' \
-            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DCMAKE_POLICY_DEFAULT_CMP0091=NEW \
-            -DSDL_STATIC=OFF -DSDL_TEST_LIBRARY=OFF
-          cmake --build /tmp/SDL/build --parallel
-          cmake --install /tmp/SDL/build
-
-      - name: Configure and build (-k 0 lists every error)
-        working-directory: native
-        run: |
-          cmake -B build -G Ninja $EDEN_CMAKE_FLAGS -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl \
-            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DCMAKE_POLICY_DEFAULT_CMP0091=NEW \
-            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
-            -DVCPKG_TARGET_TRIPLET=x64-windows-static -DCMAKE_PREFIX_PATH='C:\sdl3-msvc'
-          cmake --build build --parallel -- -k 0
-
-      - name: Gates (the table, .github/scripts/gates.sh)
-        working-directory: native
-        run: |
-          set -e
-          export PATH="/c/sdl3-msvc/bin:$PATH"
-          B=./build/eden_native.exe
-          echo "binary size: $(stat -c %s $B) bytes (compare with the windows job's eden_native.exe)"
-          echo "imports:"; dumpbin //dependents $B | grep -i '\.dll' || true
-          bash ../.github/scripts/gates.sh msvc
-
-  # =============================================================================================
   # macOS — NOT a new platform, and that is the job's purpose. It reproduces the checksums this
   # repository already records from the development machine, which is what proves the WORKFLOW
   # rather than only the two new legs. If macOS goes red here and green locally, the harness is
@@ -632,7 +534,6 @@ jobs:
   # =============================================================================================
   macos:
     runs-on: macos-latest
-    needs: linux
     steps:
       - uses: actions/checkout@v4
 
@@ -662,29 +563,6 @@ jobs:
         working-directory: native
         continue-on-error: true
         run: ./build/eden_native --net-live-selftest --docs="$PWD/live-docs"
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: world-linux
-          path: native/from-linux
-
-      - name: Gate — read the world Linux wrote
-        working-directory: native
-        # See the Windows job's copy of this note: without --world=ci this created a second world
-        # and checksummed that, and without comparing the geom the gate could not tell.
-        run: |
-          set -e
-          . ../.github/scripts/run-gate.sh
-          rm -rf ci-docs && mkdir -p ci-docs
-          cp from-linux/world-linux.emod ci-docs/
-          run_gate "crossload" ./build/eden_native --headless --stage1 --world=ci \
-            --docs="$PWD/ci-docs"
-          want=$(cat from-linux/world-linux.geom)
-          got=$(sed -n 's/.*"geom":"\([0-9a-f]*\)".*/\1/p' gate-crossload.log | head -1)
-          echo "linux wrote it as $want; macos read it as $got"
-          [ -n "$got" ] && [ "$want" = "$got" ] || {
-            echo "::error::macos read Linux's world as '$got', linux reads it as '$want'"; exit 1; }
-
 
       - name: Gate — save round-trip, and publish this platform's world
         working-directory: native
@@ -767,7 +645,6 @@ jobs:
   # =============================================================================================
   ios:
     runs-on: macos-latest
-    needs: linux
     # A SIMULATOR LAUNCH CAN HANG, and the default job timeout is six hours. `simctl launch`
     # waits for the app to exit, and an app that neither exits nor prints looks exactly like a
     # slow one — cap the whole job rather than guess per step. A green run was ~12 minutes (Oct);
@@ -923,6 +800,14 @@ jobs:
             -DCMAKE_OSX_DEPLOYMENT_TARGET="$EDEN_IOS_MIN" \
             -DSDL3_DIR="$HOME/sdl3-ios/iphonesimulator/lib/cmake/SDL3"
           cmake --build build-ios-sim --parallel "$(sysctl -n hw.ncpu)"
+          tar -C build-ios-sim -czf Emod-ios-sim.tgz Emod.app   # tarred: an artifact zip drops the exec bit
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eden-ios-sim-app
+          retention-days: 1
+          path: native/Emod-ios-sim.tgz
+          if-no-files-found: error
 
       - name: Boot a simulator and install
         id: sim
@@ -1122,20 +1007,93 @@ jobs:
           grep -q 'eden-background. ALL PASS' background.log || {
             echo "::error::--background-selftest did not pass in the simulator"; exit 1; }
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: world-linux
-          path: native/from-linux
+          name: eden-ios-device-app
+          retention-days: 7
+          path: native/build-ios-device/Emod.app
+          if-no-files-found: error
 
+  # =============================================================================================
+  # crossload-* — the three "read the world Linux wrote" gates. They ran inside windows/macos/ios,
+  # which therefore had to wait for `linux`; a Linux failure now no longer hides the other
+  # platforms' own results. Each leg needs only the Linux world (world-linux.emod + its geometry
+  # checksum, .geom) and the artifact its own job already uploads (the portable zip, the portable
+  # tar.gz, the simulator .app), and requires the platform to reproduce Linux's OWN geometry
+  # checksum from Linux's bytes: the one comparison that can only pass if the file really was read.
+  # Without --world=ci a run creates a second world called "stage1" and checksums that.
+  # =============================================================================================
+  crossload-windows:
+    runs-on: windows-latest
+    needs: [linux, windows]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: world-linux, path: from-linux }
+      - uses: actions/download-artifact@v4
+        with: { name: eden-windows-x64-portable, path: pkg }
       - name: Gate — read the world Linux wrote
-        # The fifth target on the same bytes. See the Windows job's copy of this note for why the
-        # comparison is against Linux's OWN checksum for the file rather than a grep for the word.
         run: |
           set -e
-          UDID=${{ steps.sim.outputs.udid }}
+          . .github/scripts/run-gate.sh
+          rm -rf ci-docs && mkdir -p ci-docs
+          cp from-linux/world-linux.emod ci-docs/
+          run_gate "crossload" ./pkg/eden.exe --headless --stage1 --world=ci --docs="$PWD/ci-docs"
+          want=$(cat from-linux/world-linux.geom)
+          got=$(sed -n 's/.*"geom":"\([0-9a-f]*\)".*/\1/p' gate-crossload.log | head -1)
+          echo "linux wrote it as $want; windows read it as $got"
+          [ -n "$got" ] && [ "$want" = "$got" ] || {
+            echo "::error::windows read Linux's world as '$got', linux reads it as '$want'"; exit 1; }
+
+  crossload-macos:
+    runs-on: macos-latest
+    needs: [linux, macos]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: world-linux, path: from-linux }
+      - uses: actions/download-artifact@v4
+        with: { name: eden-macos-arm64-portable, path: pkg }
+      - name: Gate — read the world Linux wrote
+        run: |
+          set -e
+          . .github/scripts/run-gate.sh
+          tar -C pkg -xzf pkg/Emod-macos-arm64.tar.gz
+          rm -rf ci-docs && mkdir -p ci-docs
+          cp from-linux/world-linux.emod ci-docs/
+          run_gate "crossload" ./pkg/Emod/emod --headless --stage1 --world=ci --docs="$PWD/ci-docs"
+          want=$(cat from-linux/world-linux.geom)
+          got=$(sed -n 's/.*"geom":"\([0-9a-f]*\)".*/\1/p' gate-crossload.log | head -1)
+          echo "linux wrote it as $want; macos read it as $got"
+          [ -n "$got" ] && [ "$want" = "$got" ] || {
+            echo "::error::macos read Linux's world as '$got', linux reads it as '$want'"; exit 1; }
+
+  crossload-ios:
+    runs-on: macos-latest
+    needs: [linux, ios]
+    timeout-minutes: 30
+    env:
+      EDEN_BUNDLE_ID: "io.github.hagg3.emod"   # Emod, not Eden — port/src/eden_app_identity.h
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: world-linux, path: from-linux }
+      - uses: actions/download-artifact@v4
+        with: { name: eden-ios-sim-app, path: pkg }
+      - name: Gate — read the world Linux wrote (in the simulator)
+        run: |
+          set -e
+          tar -C pkg -xzf pkg/Emod-ios-sim.tgz
+          UDID=$(python3 .github/scripts/pick-simulator.py)
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" pkg/Emod.app
           DATA=$(xcrun simctl get_app_container "$UDID" "$EDEN_BUNDLE_ID" data)
           mkdir -p "$DATA/Documents"
-          cp native/from-linux/world-linux.emod "$DATA/Documents/"
+          cp from-linux/world-linux.emod "$DATA/Documents/"
           SIMCTL_CHILD_EDEN_ARGS="--headless --stage1 --world=ci" \
           SIMCTL_CHILD_EDEN_LOG="$DATA/crossload.log" \
           SIMCTL_CHILD_SDL_VIDEO_DRIVER=dummy SIMCTL_CHILD_SDL_AUDIO_DRIVER=dummy \
@@ -1143,18 +1101,11 @@ jobs:
             xcrun simctl launch --console-pty --terminate-running-process \
             "$UDID" "$EDEN_BUNDLE_ID" || true
           cp "$DATA/crossload.log" crossload.log 2>/dev/null || true
-          want=$(cat native/from-linux/world-linux.geom)
+          want=$(cat from-linux/world-linux.geom)
           got=$(sed -n 's/.*"geom":"\([0-9a-f]*\)".*/\1/p' crossload.log | head -1)
           echo "linux wrote it as $want; ios read it as $got"
           [ -n "$got" ] && [ "$want" = "$got" ] || {
             echo "::error::ios read Linux's world as '$got', linux reads it as '$want'"; exit 1; }
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: eden-ios-device-app
-          retention-days: 7
-          path: native/build-ios-device/Emod.app
-          if-no-files-found: error
 
   # =============================================================================================
   # Byte comparison, on top of the three cross-loads above. Kept separate and non-fatal-by-design
@@ -1201,7 +1152,7 @@ jobs:
   # =============================================================================================
   release:
     if: github.event_name == 'workflow_dispatch' && inputs.release
-    needs: [linux, sanitize, tsan, windows, macos, ios, interchange]
+    needs: [linux, sanitize, tsan, windows, macos, ios, interchange, crossload-windows, crossload-macos, crossload-ios]
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstring>                       // std::strchr (libstdc++ does not pull it in via <string>)
 #include <random>
+#include <vector>
 #include <string>
 #include <sys/stat.h>
 #if defined(_WIN32)
@@ -33,6 +34,7 @@ struct ShareState {
 ShareState& st() { static ShareState s; return s; }
 
 const char* const kTargets[] = {"Automatic", "Legacy64z", "NewDawn256z", "NewFormat256z", "Cancel"};
+const char* const kExportTargets[] = {"Automatic", "Legacy64z", "NewDawn256z", "NewFormat256z", "World copy (.emod)", "Cancel"};
 
 void status(const std::string& s, float secs) {
     if (World::getWorld && World::getWorld->menu)
@@ -111,6 +113,41 @@ bool start() {
     return true;
 }
 
+// ---- K.6-5b (U1): the world copy (.emod) and the mod-data question --------------------------------
+// Synchronous: a copy is one sequential read and write, and "Leave out" one compaction of the scratch copy.
+bool do_copy(bool includeModData) {
+    ShareState& s = st();
+    const std::string dir = docs() + "/Exports";
+    make_dir(dir);
+    const std::string stem = safe_name(s.display);
+    std::string out;
+    for (int k = 1; k < 1000; k++) {
+        out = dir + "/" + stem + (k == 1 ? std::string() : "-" + std::to_string(k)) + ".emod";
+        if (!exists(out)) break;
+    }
+    std::string err;
+    if (!emod::copy_emod_world(s.src, out, includeModData, &err)) { finish("Export: " + err, false); return false; }
+    finish("Exported to Exports/" + out.substr(out.find_last_of('/') + 1) + (includeModData ? "" : " (mod data left out)"), true);
+    return true;
+}
+
+void modata_cb(int chosen) {
+    if (chosen == 0 || chosen == 1) do_copy(chosen == 0);
+}
+
+void copy_start() {
+    ShareState& s = st();
+    if (s.src.size() < 5 || s.src.compare(s.src.size() - 5, 5, ".emod") != 0) { finish("Export: this world is not an .emod", false); return; }
+    std::vector<std::string> ids;
+    if (!emod::world_mod_data_packs(s.src, &ids)) { do_copy(true); return; }
+    static std::string body;
+    body = "This world holds data saved by mods: ";
+    for (size_t i = 0; i < ids.size(); i++) body += (i ? ", " : "") + ids[i];
+    body += ". Include it?";
+    static const char* const kM[] = {"Include", "Leave out", "Cancel"};
+    GLDialog::show("Mod data", body.c_str(), kM, 3, modata_cb);
+}
+
 // ---- the dialog chain -------------------------------------------------------------------------
 void confirm_cb(int chosen) { if (chosen == 0) start(); }
 
@@ -167,6 +204,7 @@ void signs() {
 }
 
 void target_cb(int chosen) {
+    if (!st().upload && chosen == 4) { copy_start(); return; }   // K.6-5b
     if (chosen < 0 || chosen > 3) return;
     st().target = chosen;
     signs();
@@ -174,8 +212,8 @@ void target_cb(int chosen) {
 
 void pick_target() {
     GLDialog::show(st().upload ? "Upload format" : "Export format",
-                   st().upload ? "Automatic keeps the world's own format (the default)." : "Saved as a .eden.gz in the Exports folder.",
-                   kTargets, 5, target_cb);
+                   st().upload ? "Automatic keeps the world's own format (the default)." : "Saved as a .eden.gz in the Exports folder; World copy keeps the .emod.",
+                   st().upload ? kTargets : kExportTargets, st().upload ? 5 : 6, target_cb);
 }
 
 void server_cb(int chosen) {
@@ -253,6 +291,14 @@ bool startExport(WorldNode* node, int target, int signs) {
     ShareState& s = st();
     s.upload = false; s.target = target; s.signs = signs;
     return start();
+}
+
+bool startCopy(WorldNode* node, bool includeModData) {
+    if (!offered(node)) return false;
+    prime(node);
+    ShareState& s = st();
+    s.upload = false;
+    return do_copy(includeModData);
 }
 
 bool startUpload(WorldNode* node, int server, int target, int signs) {

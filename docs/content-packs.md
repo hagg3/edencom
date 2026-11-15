@@ -243,6 +243,10 @@ world mods) and `Classes/PackInstall` (zip install, catalogue). Gate: `eden_nati
   needs "x" (not loaded)` / `(not installed)` / `needs "x" 1.2 or newer (found "1.0")` / `conflicts with "x"`,
   each ending `(skipped)`. A requirement does not change the order. `pack.py` resolves `--packs=` folders the same
   way (`port/tools/fixtures/content/mods-resolve/`, parity in CI).
+  `emod` is a virtual pack that is always loaded and whose version is the scripting API version
+  (`ModScript::API_VERSION`, `eden.version`): `"requires": ["emod>=2"]` loads here, and `emod>=99` skips the pack
+  with `needs Emod scripting 99 or newer (this game has 2)` (a build before version 2 says `needs "emod" (not
+  installed)`). Gate: `--mods-selftest` leg 10.
 - **The enable list** `Packs/mods.json`: `{"format": 1, "packs": [{"id": "stairs", "enabled": true}, ...]}`.
   Order = load order (tile slots, picker order, which of two conflicting packs wins). An installed pack that is
   not listed loads after the listed ones, enabled; a listed pack that is not installed keeps its entry; a broken
@@ -262,7 +266,11 @@ world mods) and `Classes/PackInstall` (zip install, catalogue). Gate: `eden_nati
   mismatch (catalogue downloads), a pack the validator refuses (its lines are returned), or a folder of the pack's
   id that holds another pack. It unpacks into `Packs/.install.partial/` and commits by renames: an installed pack
   with the same id is replaced in its own folder (folder name and list place kept); otherwise the folder is
-  `Packs/<id>/`.
+  `Packs/<id>/`. K.8-3: a catalogue install passes the entry's id (`expectId`): a zip whose own id differs is refused ("The
+  download holds the pack b, not a") with `Packs/` untouched, so an install replaces only the pack it names. A zip older than the
+  installed pack (`compareVersions`) returns `Result::downgrade` and is **not installed**; `ModsMenu` asks through a `GLDialog`
+  ("Install older version" / "Keep the installed one", the safe choice last) and calls again with `allowDowngrade`. An equal or newer
+  version replaces as before. Gates: `--mods-selftest` (`--mods-mutate=anyid` must FAIL it), `--ui-selftest` `mods_ui_checks`.
 - **The catalogue** a Get Mods source serves: `{"format": 1, "packs": [{"id", "name", "version", "description",
   "author", "url", "sha256", "size", "requires"}]}`. An entry without a valid id, an `http(s)://` url or a 64-hex
   sha256, a duplicate id, or `eden`/`emod` is dropped (`PackInstall::parseCatalogue`). No catalogue is hosted yet.

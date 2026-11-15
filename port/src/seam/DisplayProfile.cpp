@@ -25,6 +25,7 @@
 #include "../../../Classes/Input.h"
 #include "../../../Classes/TouchLook.h"   // Stage L: TOUCH_PT_SCALE, TOUCH_LOOK_DEG_PER_PT
 #include "../shim/foundation/platform_shims.h"   // (Phase N Stage 1)
+#include <SDL3/SDL_cpuinfo.h>
 #include <cstdio>
 #include <cmath>
 
@@ -162,6 +163,15 @@ extern "C" const EdenProfile* eden_profile_get(int id) {
 }
 
 extern "C" int eden_low_memory(void) { return g_low_memory ? 1 : 0; }
+
+// K.8-5: the device class the mod scripts' total memory cap reads (ModScript::Limits::allMemBytes): the overlay
+// flag above, or a device that reports 3 GB of RAM or less (the 2 GB iPad Air 2). A stand-in for N.6-2b's
+// eden_device_class(); native never sets the overlay (see main.cpp), so the RAM is what decides here.
+// eden_low_memory() itself is unchanged: World.cpp's 256z refusal and Settings.cpp's radius pin still read only the overlay.
+extern "C" int eden_script_low_memory(void) {
+    const int ram_mib = SDL_GetSystemRAM();   // 0 when SDL can't tell: not low
+    return g_low_memory || (ram_mib > 0 && ram_mib <= 3072) ? 1 : 0;
+}
 
 extern "C" const EdenProfile* eden_profile_active(void) {
     return eden_profile_get(eden_active_profile());

@@ -224,7 +224,7 @@ bool eden_fs_sync_file(FILE* f) {
 #if defined(_WIN32)
     return _commit(_fileno(f)) == 0;
 #else
-    return fsync(fileno(f)) == 0;   // A2-06: Apple's F_BARRIERFSYNC is a Stage T leg (measure on the Air 2 first)
+    return fsync(fileno(f)) == 0;   // A2-06: plain fsync kept on Apple (F_BARRIERFSYNC decision: docs/save-load.md)
 #endif
 }
 bool eden_fs_replace_atomic(const std::string& from, const std::string& to) {

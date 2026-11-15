@@ -10,10 +10,13 @@
 //   5. compareVersions
 //   6. worldMods: the palette's namespaces as loaded / disabled / missing
 //   7. installZip: top-folder and root zips, deflate + stored, update in place (folder name kept), and every
-//      refusal (unsafe name, no pack.json, refused pack, checksum, CRC, folder clash) leaves Packs/ untouched
+//      refusal (unsafe name, no pack.json, refused pack, checksum, CRC, folder clash) leaves Packs/ untouched;
+//      K.8-3: a zip whose id differs from the catalogue's is refused, an older version waits for confirmation
+//      (--mods-mutate=anyid must FAIL it)
 //   8. parseCatalogue
 //   9. QA.7: the world-entry "mods that are off or missing" notice names the world's disabled pack (needs a world:
 //      plays two small 64z worlds in --docs)
+//  10. K.6-6: the virtual pack `emod`: `requires: ["emod>=2"]` loads, `["emod>=99"]` is skipped with its own line
 #include <algorithm>
 #include <zlib.h>
 #include "harness.h"
@@ -132,6 +135,8 @@ std::string ui_pack_zip(const std::string& id, const std::string& version) {
 
 int run_mods_selftest() {
     g_selftestTag = "eden-mods";
+    if (!mutation_known("eden-mods", "--mods-mutate", g_opt.modsMutate, {"anyid"})) return 2;
+    PackInstall::testAnyId = g_opt.modsMutate == "anyid";
     char d[2048];
     const std::string docs = eden_platform_documents_root();
     const std::string packs = docs + "/Packs";
@@ -255,9 +260,9 @@ int run_mods_selftest() {
                    "\", \"tiles\": {\"oak\": {\"png\": \"textures/oak.png\"}}, \"blocks\": [{\"id\": \"plank\", \"faces\": "
                    "{\"all\": \"oak\"}, \"color\": [255, 255, 255], \"fallback\": \"eden:wood\"}]}\n";
         };
-        auto install = [&](const std::string& name, const std::string& zip, const std::string& sha = "") {
+        auto install = [&](const std::string& name, const std::string& zip, const std::string& sha = "", const std::string& expectId = "") {
             writeFile(zdir + "/" + name, zip);
-            return PackInstall::installZip(zdir + "/" + name, docs, sha);
+            return PackInstall::installZip(zdir + "/" + name, docs, sha, expectId);
         };
         const std::string before = packsListing(docs);
         PackInstall::Result r1 = install("d1.zip", zipOf({{"delta-1.0/pack.json", deltaJson("1.0"), true},
@@ -310,6 +315,26 @@ int run_mods_selftest() {
         check(allOk && !refused.lines.empty() && listing2 != listing,
               "installZip refusals (unsafe name, absolute, no pack.json, two tops, refused pack, CRC, folder clash, junk) leave Packs/ untouched", d);
         ContentPack::removePackFolder(docs, "zeta");
+
+        // K.8-3 (C-3): the catalogue names `a`; a zip that holds `b` is refused and b's folder is byte-identical.
+        // Then an older version: not installed until allowDowngrade (what the player's confirmation passes).
+        mkPack(packs + "/bee", packJson("bee", "2.0", ""));
+        const std::string beeBefore = readFile(packs + "/bee/pack.json"), list3 = packsListing(docs);
+        PackInstall::Result wrong = install("wrong.zip", zipOf({{"pack.json", packJson("bee", "9.0", ""), false}}), "", "aye");
+        const bool wrongOk = !wrong.ok && !wrong.downgrade && wrong.error.find("not \"aye\"") != std::string::npos &&
+                             readFile(packs + "/bee/pack.json") == beeBefore && !eden_fs_exists(packs + "/aye") && packsListing(docs) == list3;
+        PackInstall::Result named = install("named.zip", zipOf({{"pack.json", packJson("bee", "2.5", ""), false}}), "", "bee");
+        PackInstall::Result older = install("older.zip", zipOf({{"pack.json", packJson("bee", "1.0", ""), false}}), "", "bee");
+        const bool heldBack = !older.ok && older.downgrade && older.installedVersion == "2.5" && readFile(packs + "/bee/pack.json") == packJson("bee", "2.5", "") &&
+                              packsListing(docs) == list3;
+        PackInstall::Result sameV = PackInstall::installZip(zdir + "/named.zip", docs, "", "bee");
+        PackInstall::Result confirmed = PackInstall::installZip(zdir + "/older.zip", docs, "", "bee", true);
+        std::snprintf(d, sizeof d, "wrong %d (%s) kept %d | named %d | older ok %d dg %d iv %s | same %d | confirmed %d rep %d | bee %s", wrong.ok, wrong.error.c_str(),
+                      wrongOk, named.ok, older.ok, older.downgrade, older.installedVersion.c_str(), sameV.ok, confirmed.ok, confirmed.replaced,
+                      readFile(packs + "/bee/pack.json").c_str());
+        check(wrongOk && named.ok && heldBack && sameV.ok && confirmed.ok && confirmed.replaced && readFile(packs + "/bee/pack.json") == packJson("bee", "1.0", ""),
+              "installZip K.8-3: a zip whose id is not the catalogue's is refused (the other pack's folder byte-identical); an older version waits for confirmation", d);
+        ContentPack::removePackFolder(docs, "bee");
         eden_fs_remove_tree(zdir);
     }
 
@@ -374,6 +399,22 @@ int run_mods_selftest() {
         check(opened && id >= 128 && got.find("mods that are off or missing") != std::string::npos && got.find("alpha") != std::string::npos &&
                   plain0.find("mods that") == std::string::npos && plain1.find("mods that") == std::string::npos,
               "entering a world whose palette names a disabled pack says so; a world without mods says nothing", d);
+    }
+    // ---- 10. K.6-6: the virtual pack `emod` (its version is the scripting API's, ModScript::API_VERSION)
+    {
+        mkPack(packs + "/m_new", packJson("newapi", "1", ", \"requires\": [\"emod>=2\"]"));
+        mkPack(packs + "/n_toonew", packJson("toonew", "1", ", \"requires\": [\"emod>=99\"]"));
+        std::string l10;
+        v = scan(docs, &l10);
+        const ContentPack::ModPack* nw = byId(v, "toonew");
+        std::snprintf(d, sizeof d, "order %s why %s lines %s", order(v).c_str(), nw ? nw->why.c_str() : "-", l10.c_str());
+        check(order(v).find("m_new ") != std::string::npos && order(v).find("n_toonew(needs)") != std::string::npos && nw &&
+                  nw->why == "needs Emod scripting 99 or newer (this game has 2)" &&
+                  l10.find("n_toonew: needs Emod scripting 99 or newer (this game has 2) (skipped)") != std::string::npos &&
+                  l10.find("not installed") == std::string::npos,
+              "requires emod>=2 loads; emod>=99 skips the pack with the scripting-version line, not \"not installed\"", d);
+        ContentPack::removePackFolder(docs, "m_new");
+        ContentPack::removePackFolder(docs, "n_toonew");
     }
     eden_fs_remove_tree(packs);
     ContentPack::loadMods(docs, false);

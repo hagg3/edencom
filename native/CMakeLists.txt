@@ -206,7 +206,7 @@ set(EDEN_SHARED_OTHER
 # ---------------------------------------------------------------------------------------------
 # G.4: the --*-selftest harness, one file per mode group (port/src/harness/harness.h)
 set(EDEN_HARNESS_SOURCES main core mode_boot mode_shots mode_world mode_props mode_cmds mode_light mode_mp
-  mode_look power mode_display mode_input mode_ui mode_browser mode_session mode_render mode_folders mode_registry mode_content mode_packs mode_mods mode_hotbar mode_lua mode_weather)
+  mode_look power mode_display mode_input mode_ui mode_browser mode_session mode_render mode_folders mode_registry mode_content mode_packs mode_mods mode_hotbar mode_tutorial mode_lua mode_weather)
 list(TRANSFORM EDEN_HARNESS_SOURCES PREPEND "${EDEN_PORT_DIR}/src/harness/")
 list(TRANSFORM EDEN_HARNESS_SOURCES APPEND ".cpp")
 set(EDEN_NATIVE_SOURCES
@@ -652,17 +652,6 @@ target_link_libraries(eden_native PRIVATE ZLIB::ZLIB)
 
 find_package(Threads REQUIRED)
 target_link_libraries(eden_native PRIVATE Threads::Threads)
-if(MSVC)
-  # G.3's experimental MSVC-ABI leg (clang-cl + vcpkg, CI job `windows-msvc`; adopted only if it passes
-  # the Stage G gates, else MSYS2 CLANG64 stays the Windows build). The UCRT has no pthreads, <dirent.h>,
-  # <unistd.h> or <strings.h>: vcpkg's pthreads4w and dirent, and two tiny headers in src/compat/msvc.
-  find_package(PThreads4W REQUIRED)
-  target_link_libraries(eden_native PRIVATE PThreads4W::PThreads4W)
-  find_path(EDEN_DIRENT_DIR dirent.h REQUIRED)
-  target_include_directories(eden_native PRIVATE ${EDEN_PORT_DIR}/src/compat/msvc "${EDEN_DIRENT_DIR}")
-  target_compile_definitions(eden_native PRIVATE _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS
-                             NOMINMAX _USE_MATH_DEFINES PTW32_STATIC_LIB)
-endif()
 if(WIN32)
   target_link_libraries(eden_native PRIVATE ws2_32)   # port/src/net/NetSock.cpp (Winsock)
 endif()
@@ -718,6 +707,9 @@ list(APPEND EDEN_ASSET_GLOBS "${EDEN_PARENT_DIR}/media/fonts/Rubik-Regular.ttf")
 # iOS no longer gzips it (Stage 4.4's Eden.eden.gz, 8.4 MB) nor inflates a 52.5 MiB Documents cache
 # from it; a desktop bundle links it like every other asset.
 list(APPEND EDEN_ASSET_GLOBS "${EDEN_PARENT_DIR}/Eden.emod")
+# UX.10-1: the tutorial world (6 KB; only the columns it changes, the rest streams from Eden.emod), built by
+# port/tools/tutorial.py and checked byte for byte against a rebuild in CI.
+list(APPEND EDEN_ASSET_GLOBS "${EDEN_PARENT_DIR}/media/Tutorial.emod")
 list(REMOVE_DUPLICATES EDEN_ASSET_GLOBS)
 list(LENGTH EDEN_ASSET_GLOBS EDEN_ASSET_COUNT)
 

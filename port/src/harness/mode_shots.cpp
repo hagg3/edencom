@@ -5,6 +5,9 @@
 #include "../../../Classes/BlockRegistry.h"
 #include "../../../Classes/Graphics.h"
 #include "../../../Classes/DebugMenu.h"
+#include "../../../Classes/Tutorial.h"
+extern "C" int eden_profile_touch_chrome(void);
+#include "../../../Classes/TutorialInstall.h"
 extern "C" { int eden_settings_count(void); const char* eden_settings_key(int i); void eden_settings_set_text(int, const char*); }   // K.3-6
 
 using namespace harness;
@@ -599,6 +602,48 @@ int run_shot() {
     eden_console_teleport(g_opt.at[0], g_opt.at[1], g_opt.at[2]);
     tick(g_opt.frames);
     capture("hud");
+    {   // UX.10-3: the tutorial hint card (a -hud-tutorial page); in the fit gate it also clears the hotbar strip and the touch chrome
+        const std::string key = World::getWorld->terrain->world_name;
+        const std::string rel = FileManager::worldDirOf(key);
+        std::string dir = rel.empty() ? std::string() : std::string(eden_platform_documents_root()) + "/" + rel;
+        TutorialInstall::Marker mk;
+        const bool marked = !dir.empty() && TutorialInstall::writeMarker(dir, mk);
+        check(marked, "the fit world takes a tutorial marker", dir.c_str());
+        if (marked) {
+            Tutorial::worldLoaded(dir, key);
+            for (int i = 0; i < 90 && !Tutorial::cardShown(); ++i) tick(1);
+            CGRect card, close;
+            char d[300];
+            const bool shown = Tutorial::cardRect(&card, &close);
+            check(shown, "the hint card is up", Tutorial::cardText().c_str());
+            if (shown) {
+                Hud* h = World::getWorld->hud;
+                std::vector<CGRect> others;
+                for (int i = 0; i < 11; ++i) {
+                    const Button b = h->hotbarButton(i);
+                    if (b.size.width > 0) others.push_back(CGRectMake(b.origin.x, b.origin.y, b.size.width, b.size.height));
+                }
+                CGRect chrome[16];
+                const int n = h->touchChromeRects(chrome, 16);
+                const bool touchChrome = eden_profile_touch_chrome() != 0;
+                for (int i = 0; touchChrome && i < n; ++i) others.push_back(chrome[i]);
+                int hit = 0;
+                for (const CGRect& o : others)
+                    if (card.origin.x < o.origin.x + o.size.width && o.origin.x < card.origin.x + card.size.width &&
+                        card.origin.y < o.origin.y + o.size.height && o.origin.y < card.origin.y + card.size.height) ++hit;
+                float sx = 0, sy = 0, sw = 0, sh = 0;
+                eden_safe_rect(&sx, &sy, &sw, &sh);
+                const bool inside = card.origin.x >= sx && card.origin.y >= sy && card.origin.x + card.size.width <= sx + sw &&
+                                    card.origin.y + card.size.height <= sy + sh;
+                std::snprintf(d, sizeof d, "card %.0f,%.0f %.0fx%.0f vs %d rects (%d overlap), safe %.0f,%.0f %.0fx%.0f, %s",
+                              card.origin.x, card.origin.y, card.size.width, card.size.height, (int)others.size(), hit, sx, sy, sw, sh,
+                              touchChrome ? "touch" : "desktop");
+                check(hit == 0 && inside, "the hint card overlaps no hotbar cell, touch control or fly button, and sits in the safe rect", d);
+                capture("hud-tutorial");
+            }
+            Tutorial::worldLoaded("", key);   // the rest of the tour is a plain world again
+        }
+    }
     shoot_icon_pages();   // UX.8-2: in a world, where the HUD's flat icons (flower, door, portal, golden cube) are loaded
 
     // The HUD's status line (statusbar.mm, the full-width box). It printed two and a bit copies

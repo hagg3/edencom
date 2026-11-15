@@ -1,8 +1,8 @@
 // Wonder Blocks: Emod's example mod pack. Everything it adds works from the block picker, no console needed.
 // README.md (beside this file) is the player's guide and the mod maker's tour of this folder.
 //
-// Emod copies this folder into every player's Packs folder on first start (ContentPack::seedBundledPacks), so
-// it is in the Mods list out of the box. To reinstall it, copy it into Packs (macOS ~/Library/Application
+// Install it from Get Mods (Emod no longer copies it into Packs on first start; a player who had it keeps it).
+// To install it by hand, copy this folder into Packs (macOS ~/Library/Application
 // Support/Emod/Packs/, iOS Files > Emod > Packs), then open a world. The blocks are on the Mods page of
 // the block picker (after the two stock pages). Place the blue "i" Guide Stone for a tour.
 //

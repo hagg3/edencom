@@ -425,6 +425,64 @@ int eden_detect_bands_raw(const uint8_t header[EDEN_HEADER], const uint8_t* dir,
 }
 
 // =============================================================================================
+// MOD_DATA (K.6-5; emod.py parse_mod_data / mod_data_payload). The format checks the framing only:
+// each entry's bytes are the scripting runtime's (Classes/ModScript.cpp, eden.store).
+// =============================================================================================
+bool mod_data_id_ok(const std::string& id) {
+    if (id.empty() || id.size() > MOD_DATA_ID) return false;
+    for (char c : id)
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) return false;
+    return true;
+}
+
+bool mod_data_parse(const uint8_t* p, size_t n, std::vector<ModDataEntry>* out, std::string* why) {
+    if (out) out->clear();
+    auto bad = [&](const std::string& w) { if (why) *why = w; if (out) out->clear(); return false; };
+    if (n > MOD_DATA_MAX) return bad(fmt("MOD_DATA is %zu B, over %u", n, (unsigned)MOD_DATA_MAX));
+    if (n < MOD_DATA_HEAD) return bad(fmt("MOD_DATA is %zu B, shorter than its 8-byte head", n));
+    if (rd32(p) != MOD_DATA_VERSION) return bad(fmt("MOD_DATA version %u (this reader knows %u)", rd32(p), (unsigned)MOD_DATA_VERSION));
+    const uint32_t count = rd32(p + 4);
+    if (count > MOD_DATA_MAX_PACKS) return bad(fmt("MOD_DATA count %u > %u", count, (unsigned)MOD_DATA_MAX_PACKS));
+    size_t o = MOD_DATA_HEAD;
+    std::string last;
+    for (uint32_t i = 0; i < count; i++) {
+        if (n - o < MOD_DATA_ENTRY_HEAD) return bad(fmt("MOD_DATA entry %u: the record ends inside its head", i));
+        const char* id = (const char*)p + o;
+        size_t len = 0;
+        while (len < MOD_DATA_ID && id[len]) len++;
+        ModDataEntry e;
+        e.id.assign(id, len);
+        if (!all_zero(p + o + len, MOD_DATA_ID - len)) return bad(fmt("MOD_DATA entry %u: id not NUL-padded", i));
+        if (!mod_data_id_ok(e.id)) return bad(fmt("MOD_DATA entry %u: id '%s' breaks [a-z0-9_]{1,24}", i, e.id.c_str()));
+        if (i && !(last < e.id)) return bad(fmt("MOD_DATA entry %u: id '%s' not after '%s' (ascending, distinct)", i, e.id.c_str(), last.c_str()));
+        const uint32_t dl = rd32(p + o + MOD_DATA_ID);
+        if (dl > MOD_DATA_ENTRY_MAX) return bad(fmt("MOD_DATA entry %u ('%s'): %u B > %u", i, e.id.c_str(), dl, (unsigned)MOD_DATA_ENTRY_MAX));
+        o += MOD_DATA_ENTRY_HEAD;
+        if (n - o < dl) return bad(fmt("MOD_DATA entry %u ('%s'): %u B run past the record", i, e.id.c_str(), dl));
+        if (out) e.data.assign(p + o, p + o + dl);
+        o += dl;
+        last = e.id;
+        if (out) out->push_back(std::move(e));
+    }
+    if (o != n) return bad(fmt("MOD_DATA has %zu trailing byte(s) after entry %u", n - o, count));
+    return true;
+}
+
+void mod_data_build(std::vector<ModDataEntry> entries, std::vector<uint8_t>& out) {
+    std::sort(entries.begin(), entries.end(), [](const ModDataEntry& a, const ModDataEntry& b) { return a.id < b.id; });
+    out.clear();
+    put32(out, MOD_DATA_VERSION);
+    put32(out, (uint32_t)entries.size());
+    for (const ModDataEntry& e : entries) {
+        uint8_t id[MOD_DATA_ID] = {0};
+        std::memcpy(id, e.id.data(), std::min<size_t>(e.id.size(), MOD_DATA_ID));
+        out.insert(out.end(), id, id + MOD_DATA_ID);
+        put32(out, (uint32_t)e.data.size());
+        out.insert(out.end(), e.data.begin(), e.data.end());
+    }
+}
+
+// =============================================================================================
 // BLOCK_PALETTE (K.1-2; emod.py parse_palette / palette_payload / palette_superset_errors)
 // =============================================================================================
 bool palette_name_ok(const std::string& n) {
@@ -636,6 +694,7 @@ void mark_high_types(const std::vector<uint8_t>& payload, bool seen[256]) {
 // byte >= 128, so a flagged world is safe to open. The --emod-selftest D3 case turns it off to stand in
 // for a pre-K.1 build.
 bool EdenWorldStore::acceptPaletteFlag = true;
+bool EdenWorldStore::testDropUnknown = false;
 
 EdenWorldStore::EdenWorldStore()
     : testCrashAfter((size_t)-1), testCrashZeroFill(false), testUncheckedPut(false), testCompactCrashAfter((size_t)-1),
@@ -1107,6 +1166,10 @@ bool EdenWorldStore::putRecord(int type, const void* data, size_t len) {
         if (type == T_GENERATOR && len != GENERATOR_LEN) return fail("GENERATOR must be 28 bytes");
         if (type == T_SKY_CLOCK && len != SKY_CLOCK_LEN) return fail("SKY_CLOCK must be 16 bytes");
         if (type == T_WEATHER && len != WEATHER_LEN) return fail("WEATHER must be 32 bytes");
+        if (type == T_MOD_DATA) {
+            std::string why;
+            if (!mod_data_parse((const uint8_t*)data, len, nullptr, &why)) return fail(why);
+        }
         if (type == T_BLOCK_PALETTE) {
             // D14: the flag compaction comes first, so no byte >= 128 ever means something in an unflagged file
             if (!paletteFlag()) return fail("BLOCK_PALETTE needs a flagged file: compact(true) first");
@@ -1297,6 +1360,25 @@ bool EdenWorldStore::compact(bool setPaletteFlag, const std::vector<uint8_t>* pa
         if (t == T_SIGN_TRAILER && entries_[i].aux == 0) continue;    // an empty trailer = none
         ok = copy(entries_[i], t == T_WORLD_HEADER || t == T_GENERATOR || t == T_SKY_CLOCK || t == T_WEATHER);
     }
+    // K.6-5a (C-4): the newest record of each type this build does not know, verbatim (codec, header
+    // fields, stored bytes), after it decodes: a world a newer build saved keeps that build's records
+    // (a future singleton) through this one's compaction. Up to 0.5 they were dropped. K.6-5: MOD_DATA (13)
+    // takes the first of these slots and the same verbatim copy (a malformed one included: the game ignores
+    // it and never rewrites it), so compaction output is what K.6-5a's reserved pass wrote for type 13.
+    for (int t = T_MOD_DATA; ok && t < 256 && !testDropUnknown; t++) {
+        if (latestT_[t] < 0 || (t == T_MOD_DATA && dropModData_)) continue;
+        const Entry& e = entries_[latestT_[t]];
+        if (!decodeEntry(e, data)) {
+            damage_.push_back(fmt("compaction: live record @%llu does not decode", (unsigned long long)e.off));
+            ok = false;
+            break;
+        }
+        enc.resize(e.plen);
+        ok = readAt(e.off + REC_HEADER, enc.data(), e.plen);
+        if (!ok) break;
+        crcs.push_back(append_record(out, e.type, e.codec, e.mask, e.x, e.z, e.aux, 1, enc.data(), enc.size()));
+        flush(false);
+    }
     // K.1-2: BLOCK_PALETTE goes after the COLUMNs, so the flag compaction learns the latent bytes
     // while it copies them (one decode pass). An unflagged file's stray palette (no writer makes one)
     // is dropped.
@@ -1412,6 +1494,12 @@ std::vector<std::string> EdenWorldStore::verify() {
     if (we >= 0 && entries_[we].aux != WEATHER_LEN)
         errs.push_back(fmt("WEATHER raw length %u is not %u", entries_[we].aux, (unsigned)WEATHER_LEN));
     if (we >= 0 && entries_[we].codec != C_NONE) errs.push_back("WEATHER must be codec 0");
+    // K.6-5: MOD_DATA's framing (the game ignores a record that breaks it, whole)
+    int32_t md = latestT_[T_MOD_DATA];
+    if (md >= 0 && decodeEntry(entries_[md], d)) {
+        std::string why;
+        if (!mod_data_parse(d.data(), d.size(), nullptr, &why)) errs.push_back(why + " (the game ignores this MOD_DATA)");
+    }
     // K.1-2: the flag <=> a live BLOCK_PALETTE; the record's rules; every version a superset of the last
     int32_t bp = latestT_[T_BLOCK_PALETTE];
     bool havePalette = false;
@@ -1439,7 +1527,7 @@ std::vector<std::string> EdenWorldStore::verify() {
         }
     }
     bool high[256] = {false};
-    static const int single[] = {T_CREATURES, T_SIGN_TRAILER, T_PROVENANCE, T_SUMMARY, T_GENERATOR, T_BLOCK_PALETTE, T_SKY_CLOCK, T_WEATHER};
+    static const int single[] = {T_CREATURES, T_SIGN_TRAILER, T_PROVENANCE, T_SUMMARY, T_GENERATOR, T_BLOCK_PALETTE, T_SKY_CLOCK, T_WEATHER, T_MOD_DATA};
     for (int t : single) {
         int32_t i = latestT_[t];
         if (i < 0) continue;

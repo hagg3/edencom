@@ -28,7 +28,7 @@ enum { CF_DIAG = 1,      // diagnostics builds only (absent, not refused, otherw
        CF_EDITS = 8 };   // changes the world (a future multiplayer client refuses these in one place)
 
 // More argument kinds than the block verbs have (CmdScript::ARG_* are 1..6).
-enum { ARG_CVAR = 10, ARG_VALUE, ARG_KEY, ARG_VERB };
+enum { ARG_CVAR = 10, ARG_VALUE, ARG_KEY, ARG_VERB, ARG_MODCMD };
 
 struct Ctx {                                  // what a command sees
     int ax, ay, az;                           // the anchor, engine order
@@ -43,7 +43,7 @@ typedef void (*CommandFn)(Ctx&);
 void addCommand(const char* name, const char* usage, const char* help, int flags,
                 std::initializer_list<int> argKinds, CommandFn fn);
 
-enum { KIND_TOGGLE = 0, KIND_RANGE = 1, KIND_ENUM = 2, KIND_TEXT = 4 };   // the first three are Settings'
+enum { KIND_TOGGLE = 0, KIND_RANGE = 1, KIND_ENUM = 2, KIND_TEXT = 4, KIND_ACTION = 8 };   // the first three are Settings'; KIND_ACTION (UX.10-2) is a Settings button row, never a cvar
 enum { APPLY_LIVE = 0, APPLY_NEXT_WORLD, APPLY_NEXT_CONVERT, APPLY_READONLY };
 struct Cvar {
     const char* name;        // "group.key": lower case, exactly one '.'-separated group

@@ -461,5 +461,9 @@ int run_packs_selftest() {
     return g_selftestFailures ? 1 : 0;
 }
 
+// X.32: --rejoin-selftest toggles the example pack between world entries.
+bool copy_tree(const std::string& from, const std::string& to) { return copyTree(from, to); }
+std::string fixture_pack(const char* id) { return fixturePack(id); }
+
 }  // namespace g_packs
 }  // namespace harness

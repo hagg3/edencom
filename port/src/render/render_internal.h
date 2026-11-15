@@ -70,6 +70,7 @@ void   drawLit(const R::Geometry& g, R::Tex t, const R::Rgba& tint);
 void   drawPrecip(const R::Geometry& g, const R::PrecipParams& p);   // AT.2b: program P_PRECIP
 void   drawClouds(const R::Geometry& g, const R::CloudParams& p);    // AT.6: program P_CLOUDS
 bool   readPixels(int x, int y, int w, int h, void* rgba);
+bool   texReadLevel(R::Tex t, int level, int w, int h, void* rgba);   // X.32
 void   texSampling(R::Tex t, const R::TexDesc& d);
 void   clear(bool color, bool depth, const R::Rgba& c);
 unsigned takeError();

@@ -82,6 +82,10 @@ std::string packTitle(const ContentPack::ModPack& p) {
 struct ModsImpl;
 static ModsImpl* s_removeOwner = NULL;
 static std::string s_removeFolder, s_removeName;
+// K.8-3: an install that would replace a pack with an older version waits here for the player's answer.
+static ModsImpl* s_downOwner = NULL;
+static std::string s_downPath, s_downSha, s_downId, s_downLabel;
+static bool s_downTemp = false;   // s_downPath is a copy the menu owns (the download); removed when answered
 
 struct ModsImpl {
     bool open;
@@ -269,11 +273,12 @@ struct ModsImpl {
         }
         eden_net_release(dlJob);
         dlJob = 0;
-        finishInstall(partialPath(), dlEntry.sha256, dlEntry.name.empty() ? dlEntry.id : dlEntry.name);
+        finishInstall(partialPath(), dlEntry.sha256, dlEntry.name.empty() ? dlEntry.id : dlEntry.name, dlEntry.id);
         eden_fs_remove(partialPath());
     }
-    void finishInstall(const std::string& path, const std::string& sha, const std::string& label) {
-        PackInstall::Result r = PackInstall::installZip(path, docs(), sha);
+    void finishInstall(const std::string& path, const std::string& sha, const std::string& label, const std::string& expectId = "",
+                       bool allowDowngrade = false) {
+        PackInstall::Result r = PackInstall::installZip(path, docs(), sha, expectId, allowDowngrade);
         installLines = r.lines;
         if (r.ok) {
             std::string nm = r.name.empty() ? r.id : r.name;
@@ -281,10 +286,48 @@ struct ModsImpl {
             installLines.clear();
             rescan();
             for (size_t i = 0; i < packs.size(); i++) if (packs[i].folder == r.folder) sel[0] = (int)i;
+        } else if (r.downgrade) {
+            askDowngrade(path, sha, label, expectId, r);
         } else {
             status = (label.empty() ? std::string() : label + ": ") + r.error;
         }
         gen++;
+    }
+    // The zip is older than the installed pack: nothing changed yet. Keep the file (a download is moved out of
+    // the partial slot, which pollDownload clears) and ask; Install anyway runs installZip again with allowDowngrade.
+    void askDowngrade(const std::string& path, const std::string& sha, const std::string& label, const std::string& expectId,
+                      const PackInstall::Result& r) {
+        clearDowngrade();
+        s_downTemp = path == partialPath();
+        s_downPath = s_downTemp ? docs() + "/Packs/.download.downgrade" : path;
+        if (s_downTemp) {
+            eden_fs_remove(s_downPath);
+            if (!eden_fs_move_new(path, s_downPath)) { status = (label.empty() ? std::string() : label + ": ") + "Cannot keep the download to ask"; return; }
+        }
+        s_downOwner = this;
+        s_downSha = sha;
+        s_downId = expectId;
+        s_downLabel = label;
+        const std::string nm = r.name.empty() ? r.id : r.name;
+        const std::string body = "Packs/ holds " + nm + " " + r.installedVersion + "; this file is the older " + r.version +
+                                 ". Installing it replaces the newer one.";
+        static const char* const kBtn[] = { "Install older version", "Keep the installed one" };
+        GLDialog::show(("Install older " + nm + "?").c_str(), body.c_str(), kBtn, 2, downgradeCb);
+        status = "Not installed: " + nm + " " + r.version + " is older than " + r.installedVersion;
+    }
+    static void clearDowngrade() {
+        if (s_downTemp && !s_downPath.empty()) eden_fs_remove(s_downPath);
+        s_downOwner = NULL;
+        s_downPath.clear();
+        s_downTemp = false;
+    }
+    static void downgradeCb(int chosen) {
+        ModsImpl* d = s_downOwner;
+        const std::string path = s_downPath, sha = s_downSha, id = s_downId, label = s_downLabel;
+        if (!d) { clearDowngrade(); return; }
+        if (chosen == 0) d->finishInstall(path, sha, label, id, true);
+        else d->status = "Kept the installed version";
+        clearDowngrade();
     }
 
     // --- actions ----------------------------------------------------------------------------
@@ -331,6 +374,7 @@ ModsMenu::~ModsMenu() {
     if (d->catJob) eden_net_release(d->catJob);
     d->cancelDownload(NULL);
     if (s_removeOwner == d) s_removeOwner = NULL;
+    if (s_downOwner == d) { if (GLDialog::active()) GLDialog::dismiss(); ModsImpl::clearDowngrade(); }
     delete d;
 }
 
@@ -350,7 +394,8 @@ void ModsMenu::open() {
 
 void ModsMenu::close() {
     if (d->dlJob) d->cancelDownload(NULL);
-    if (GLDialog::active() && s_removeOwner == d) GLDialog::dismiss();
+    if (GLDialog::active() && (s_removeOwner == d || s_downOwner == d)) GLDialog::dismiss();
+    if (s_downOwner == d) ModsImpl::clearDowngrade();
     s_removeOwner = NULL;
     d->open = false;
 }
@@ -713,7 +758,15 @@ void ModsMenu::render() {
     else { d->refresh.render(); d->install.render(); }
 
     // Footer: the outcome of the last action, else the standing note.
-    const std::string st = d->status.empty() ? std::string(kFooter) : d->status;
+    // UX.11 (U9): a refused mod's reason on the footer too (phones have no room for the detail pane).
+    std::string st = d->status.empty() ? std::string(kFooter) : d->status;
+    bool refusedWhy = false;
+    if (d->status.empty() && d->tab == TAB_INSTALLED) {
+        const int si = d->sel[d->tab];
+        if (si >= 0 && si < (int)d->packs.size() && d->packs[(size_t)si].state == ContentPack::PACK_REFUSED && !d->packs[(size_t)si].why.empty()) {
+            st = d->packs[(size_t)si].why; refusedWhy = true;
+        }
+    }
     const float fx = d->file.rect().size.width > 0 ? d->file.rect().origin.x + d->file.rect().size.width + du(12) : d->file.rect().origin.x;
     const float fw = d->panel.origin.x + d->panel.size.width - du(12) - fx;
     if (st != d->shownStatus) {
@@ -721,7 +774,7 @@ void ModsMenu::render() {
         d->statusL.set(st.c_str(), du(14), UITextAlignmentLeft, std::max(du(40), fw), FACE_BODY);
     }
     const CGRect fr = d->file.rect();
-    d->statusL.draw(fx, fr.origin.y + (fr.size.height + d->statusL.height()) * 0.5f, d->status.empty() ? kTextSecondary : kText);
+    d->statusL.draw(fx, fr.origin.y + (fr.size.height + d->statusL.height()) * 0.5f, refusedWhy ? kTextError : (d->status.empty() ? kTextSecondary : kText));
     Pen::color(1.0f, 1.0f, 1.0f, 1.0f);
 }
 

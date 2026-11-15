@@ -695,6 +695,23 @@ int mods_ui_checks(Menu* m) {
     mm->installFile((docs + "/no-such.zip").c_str());
     tick(2);
     check(mm->entryCount() > 0 && indexOf("mz") >= 0 && !std::strstr(mm->statusText(), "Installed"), "a bad zip is reported and installs nothing", mm->statusText());
+    // K.8-3: an older zip than the installed pack is not installed until the player confirms.
+    put(zp, g_mods::ui_pack_zip("mz", "1.0"));
+    mm->installFile(zp.c_str());
+    tick(3);
+    const bool asked = GLDialog::active();
+    check(asked && !std::strcmp(mm->installedVersion("mz"), "2.0"), "an older version asks before replacing the installed one (nothing changed yet)", mm->statusText());
+    if (GLDialog::buttonRect(1, &br)) ui_tap_rect(br);
+    tick(3);
+    check(!GLDialog::active() && !std::strcmp(mm->installedVersion("mz"), "2.0"), "Keep the installed one: still 2.0", mm->statusText());
+    mm->installFile(zp.c_str());
+    tick(3);
+    if (GLDialog::buttonRect(0, &br)) ui_tap_rect(br);
+    tick(3);
+    check(!GLDialog::active() && !std::strcmp(mm->installedVersion("mz"), "1.0") && std::strstr(mm->statusText(), "Updated"), "Install older version: now 1.0", mm->statusText());
+    put(zp, g_mods::ui_pack_zip("mz", "2.0"));
+    mm->installFile(zp.c_str());   // back to 2.0 for what follows
+    tick(2);
     eden_fs_remove(zp);
 
     // Get Mods: hidden without the catalogue setting, the tab appears when it is set.

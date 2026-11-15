@@ -32,16 +32,19 @@
 #define Eden_ModScript_h
 
 #include "CmdScript.h"
+#include <cstdint>
 #include <string>
 #include <vector>
 
 namespace ModScript {
 
 enum { HOOK_EVERY = 1000, MAX_COROUTINES = 64, MAX_EVENTS = 256, MAX_HANDLERS = 32, MAX_PRINTS = 50,
-       PATTERN_MAX = 64 * 1024, API_VERSION = 1 };
+       PATTERN_MAX = 64 * 1024, API_VERSION = 2 };
 
+size_t defaultAllMemBytes();              // K.8-5: 24 MiB when eden_script_low_memory(), else 64 MiB
 struct Limits {
     size_t memBytes = 8u << 20;          // per pack state
+    size_t allMemBytes = defaultAllMemBytes();   // every state together (the console's too): 24 MiB on a low-memory device, else 64
     long packPerFrame = 100000;          // instructions per pack per frame
     long allPerFrame = 250000;           // instructions per frame, every pack together
     long hardPerResume = 5000000;        // code that can't yield: an error past this in one resume
@@ -58,11 +61,14 @@ void update(float etime);                 // World::update, after CmdScript::upd
 void reset();                             // the world closed (Terrain::unloadTerrain(true))
 
 // ---- events from the local player's edits (MpWorld::intent*, terrain order x, z, y like the call they wrap)
-enum Event { EV_LOAD = 0, EV_TICK, EV_BUILD, EV_MINE, EV_PAINT, EV_BURN, EV_WEATHER, EV_COUNT };
+enum Event { EV_LOAD = 0, EV_TICK, EV_BUILD, EV_MINE, EV_PAINT, EV_BURN, EV_WEATHER, EV_USE, EV_SIGN, EV_COUNT };
 // `before` = the cell's type before the edit. Queues the event when it changed something.
 void noteEdit(int ev, int x, int z, int y, int before);
 // AT.1c: Weather::update calls this when the spell's kind changed (Weather::Kind values); queues the `weather` event.
 void noteWeather(int kind, int previous);
+// K.6-3: SignTool::answer calls this when the player placed or edited a sign (engine order x, z, y; `face` the
+// record's a); queues the `sign` event.
+void noteSign(int x, int z, int y, int face, const char* text);
 
 // ---- the console (Classes/Console.cpp: `lua`, `scripts`, `mod`)
 // Runs a chunk in the console's own state (created on first use, closed with the world): an expression's
@@ -74,20 +80,37 @@ struct Info {
     long instrLastFrame;
     long long instrTotal;
     int handlers, coroutines, errors, preempts, memRefusals;
+    int skipped;                          // ticks skipped / events dropped at the 64-coroutine cap (not errors)
     bool stopped;
     std::string why;                      // stopped: the reason; else the last error ("" none)
 };
 std::vector<Info> info();
+size_t totalMem();                        // bytes held by every state together (Limits::allMemBytes caps it)
 void restart();                           // `scripts reload`: every pack state again (same sources)
-// `mod` (no name): the commands; `mod NAME ARGS...`: runs one. False: no such command.
-std::vector<std::string> commands();      // "name - help (pack)"
+// `mod` (no name): the commands; `mod NAME ARGS...`: runs one; `mod PACK:NAME` always runs that pack's, the short NAME
+// the first pack that registered it (K.8-4). False: no such command.
+std::vector<std::string> commands();      // "name - help (pack)"; a name another pack holds first reads "pack:name"
+std::vector<std::string> commandNames();  // every `name` and `pack:name` (the console's completion)
 bool runCommand(const std::string& name, const std::vector<std::string>& args, CmdScript::Sink* sink);
 
+// ---- K.6-5: eden.store, the world's per-pack saved data (`.emod` record 13 MOD_DATA; docs/scripting.md "Saved data").
+// Held here, not in a Lua state, so it outlives `scripts reload` and a warp; reset() drops it with the world.
+void storeLoad(const uint8_t* rec, size_t n); // FileManager::finishLoadOnMain: the world's record (NULL: none); a record
+                                              // that breaks the format's rules is ignored whole (one console line)
+bool storeNeedsSave();                        // a pack stored something since the load / last save (never in a session)
+void storeEncode(std::vector<uint8_t>& out);  // the record: a pack that is not loaded, or only read, goes out verbatim
+void storeSaved();                            // the batch holding storeEncode's bytes committed
+size_t storeEntries();                        // packs with an entry (tests)
+
 // ---- tests
-struct Stats { int started, finished, errors, preempted, stopped, events, eventsDropped, edits; };
+struct Stats { int started, finished, errors, preempted, stopped, events, eventsDropped, edits, skipped; };
 Stats stats();
 const char* describe();                   // one JSON line
 extern bool testNoHook;                   // mutation: the count hook never pauses or stops anything
+extern bool testLoadEarly;                // mutation: `load` is dispatched at start, before the top levels finish (K.8-1)
+extern bool testUseFilter;               // mutation: `use` keeps `burn`'s flammable test (K.6-1a)
+extern bool testStoreNotDirty;            // mutation: eden.store.set never marks the store dirty (K.6-5)
+extern bool testCapError;                 // mutation: the coroutine cap is an error that counts toward maxErrors (K.8-2)
 extern bool testNoSandbox;                // mutation: io/os-like globals are left in (the escape checks must fail)
 
 }  // namespace ModScript

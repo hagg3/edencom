@@ -16,6 +16,8 @@
 
 namespace PackInstall {
 
+bool testAnyId = false;
+
 namespace {
 
 std::string hex(const uint8_t* p, size_t n) {
@@ -161,7 +163,8 @@ std::string fileSha256(const std::string& path) {
     return hex(d, 32);
 }
 
-Result installZip(const std::string& zipPath, const std::string& documents, const std::string& expectSha256) {
+Result installZip(const std::string& zipPath, const std::string& documents, const std::string& expectSha256,
+                  const std::string& expectId, bool allowDowngrade) {
     Result r;
     const std::string packs = documents + "/Packs", stage = packs + "/.install.partial", old = packs + "/.install.old";
     std::string z;
@@ -234,9 +237,11 @@ Result installZip(const std::string& zipPath, const std::string& documents, cons
     r.name = pk.name;
     r.version = pk.version;
     if (pk.refused) return fail("The pack has errors and was not installed");
+    if (!expectId.empty() && pk.id != expectId && !testAnyId)
+        return fail("The download holds the pack \"" + pk.id + "\", not \"" + expectId + "\"; nothing was installed");
 
     // Commit: replace the folder that holds this id, or make Packs/<id>.
-    std::string target;
+    std::string target, oldVersion;
     for (const std::string& n : eden_fs_list(packs)) {
         if (n.empty() || n[0] == '.' || !eden_fs_is_dir(packs + "/" + n)) continue;
         std::string t;
@@ -245,6 +250,8 @@ Result installZip(const std::string& zipPath, const std::string& documents, cons
         if (ContentPack::readPackFile(packs + "/" + n + "/pack.json", &t) && Json::parse(t.data(), t.size(), &v, &je) &&
             v.isObject() && v.get("id") && v.get("id")->isString() && v.get("id")->str == pk.id) {
             target = n;
+            const Json::Value* ov = v.get("version");
+            if (ov && ov->isString()) oldVersion = ov->str;
             break;
         }
     }
@@ -253,6 +260,13 @@ Result installZip(const std::string& zipPath, const std::string& documents, cons
         if (eden_fs_exists(packs + "/" + target))
             return fail("A folder named " + target + " is already in Packs (it holds another pack)");
     } else {
+        r.installedVersion = oldVersion;
+        if (!allowDowngrade && ContentPack::compareVersions(oldVersion, pk.version) > 0) {
+            r.downgrade = true;
+            r.error = "The installed " + (pk.name.empty() ? pk.id : pk.name) + " is " + oldVersion + ", newer than " + pk.version;
+            eden_fs_remove_tree(stage);
+            return r;
+        }
         if (!eden_fs_move_new(packs + "/" + target, old)) return fail("Cannot replace the installed pack");
         r.replaced = true;
     }

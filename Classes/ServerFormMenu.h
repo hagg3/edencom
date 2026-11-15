@@ -80,6 +80,9 @@ private:
     std::string m_snap;          // snapshot() at open: dirty() compares against it
 
     GLW::Label      m_title;
+    GLW::Label      m_joinHint;     // UX.2 (P5): why Join now is disabled
+    std::string     m_joinHintText;
+    CGRect          m_joinHintRect;
     GLW::Button     m_back, m_save, m_del, m_up, m_down, m_join;
     GLW::TwoLineRow m_rowUi[4];
     GLW::TextField  m_label, m_addr, m_pass, m_name;

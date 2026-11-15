@@ -15,6 +15,7 @@
 #include "../seam/Input_native.h"
 #include "../seam/SimpleAudioEngine_native.h"
 #include "../../../Classes/FileManager.h"
+#include "../../../Classes/TutorialInstall.h"   // UX.10-2
 #include "../../../Classes/EdenWorldStore.h" // --background-selftest's `.emod` leg
 #include "../../../Classes/SimpleAudioEngine.h"
 #include "../../../Classes/Resources.h"
@@ -253,7 +254,7 @@ struct Options {
     float at[3] = {0.0f, 40.0f, 0.0f};
     bool haveAt = false;
     int  frames = 600;
-    int  cycles = 8;                     // --leak-probe: load/quit cycles in one process
+    int  cycles = 8;                     // --leak-probe / --rejoin-selftest: load/quit cycles in one process
     int  winW = 0, winH = 0;             // --window=WxH: 0 means the built-in default (16:9)
     bool touchProfile = false;           // --touch-profile: pretend to be a touchscreen
     float safeL = 0, safeT = 0, safeR = 0, safeB = 0;   // --safe-area=L,T,R,B (window points); I.0 overlay
@@ -270,6 +271,7 @@ struct Options {
     int mpUnfocusSecs = 0;               // --mp-unfocus=SECS: QA.8, the session survives an unfocused window
     std::string codecFile;               // --codec-file=PATH: the raw .eden --codec-bench samples
     std::string emodFixtures, emodWork, emodFile, emodRef;   // --emod-selftest's inputs
+    std::string emodMutate;              // --emod-mutate=dropunknown: --emod-selftest's mutation leg (K.6-5a, C-4)
     std::string bundledEden, bundledEmod;                    // --bundled-map-selftest's inputs
     std::string packFixtures;                                // K.2-3: --pack-selftest=DIR
     std::vector<std::string> packs;                          // K.2-4: --packs=DIR (repeatable)
@@ -279,6 +281,7 @@ struct Options {
     bool trailerNoDirty = false;         // --trailer-no-dirty-mark: the mutation (live leg only)
     bool trailerKeep = false;            // --trailer-keep: stop after the reload (leave the edited world for emod.py --diff)
     std::vector<std::string> trailerFiles;   // --trailer-file=W.eden|W.emod (repeatable): --trailer-selftest's byte gate
+    std::string rejoinMutate;            // --rejoin-mutate=doubledestroy|elide: --rejoin-selftest's legs (X.32)
     std::string weatherMutate;           // --weather-mutate=lowatmo: --weather-selftest's `off` leg (QA.24)
     std::string evictMutate;             // --evict-mutate=nosave|nodrop: --evict-selftest's mutation legs
     std::string signsMutate;             // --signs-mutate=bottom|nohook: --signs-selftest's mutation legs
@@ -288,6 +291,9 @@ struct Options {
     std::string settingsCapture;                                           // --settings-capture=<dir> (QA.19)
     std::string settingsFixtures = EDEN_SRC "/port/tools/fixtures/settings";      // --settings-fixtures=
     bool settingsDump = false;                                             // --settings-dump
+    std::string tutorialMutate;          // --tutorial-mutate=nomarker|keyfirst|hintsbyname: --tutorial-selftest's mutation legs (UX.10-2)
+    std::string tutorialPhase;           // --tutorial-phase=install|verify: the kill-point loop's two halves (UX.10-2); "" = the full run
+    std::string tutorialManifest = EDEN_SRC "/port/tools/tutorial/manifest.txt";  // --tutorial-manifest= (UX.10-1)
     std::string consoleRef = EDEN_SRC "/docs/console-reference.md";                // --console-reference=
     bool cmdsTrace = false;              // --cmds-trace: print every command-block statement
     float look[2] = {0.0f, 0.0f};        // --look=YAW,PITCH (degrees): --sign-shot's view
@@ -312,7 +318,8 @@ struct Options {
     std::string uiMutate;                // --ui-mutate=menuback: --ui-selftest's mutation leg (QA.22: leaves one screen out of Menu::back()'s table)
     std::string propsMutate;             // --props-mutate=nogen: --props-selftest's mutation leg (H.15)
     std::string saveFailMutate;          // --save-fail-mutate=exit|stream: --save-fail-selftest's mutation legs (QA.5)
-    std::string luaMutate;               // --lua-mutate=hook|sandbox: --lua-selftest's mutation legs (K.4)
+    std::string modsMutate;              // --mods-mutate=anyid: --mods-selftest's mutation leg (K.8-3)
+    std::string luaMutate;               // --lua-mutate=hook|sandbox|loadearly|caperror|usefilter|signnocache: --lua-selftest's mutation legs (K.4)
     std::string propsWorld;              // --props-world=FILE: --props-selftest times reading this world (gate 4)
     std::string classicNew;              // --classic=SEED[,SCALE4]: a world open_world() CREATES is Classic (ring-walk gate)
     std::string skyTimes;                // --sky-times=T,T,...: --sky-shot's clock times (DN.3)
@@ -387,11 +394,13 @@ namespace g_folders { int run_folders_selftest(); }
 using g_folders::run_folders_selftest;
 namespace g_registry { int run_registry_selftest(); }
 using g_registry::run_registry_selftest;
-namespace g_packs { int run_packs_selftest(); }
+namespace g_packs { int run_packs_selftest(); bool copy_tree(const std::string& from, const std::string& to);
+                    std::string fixture_pack(const char* id); }
 namespace g_lua { int run_lua_selftest(); }   // K.4
 using g_lua::run_lua_selftest;
 using g_packs::run_packs_selftest;
 namespace g_hotbar { int run_hotbar_selftest(); }   // UX.8-3
+namespace g_tutorial { int run_tutorial_selftest(); }   // UX.10-1
 namespace g_mods { int run_mods_selftest(); std::string ui_pack_zip(const std::string& id, const std::string& version); }
 using g_mods::run_mods_selftest;
 namespace g_content { int run_content_dump(); int run_json_selftest(); int run_pack_selftest(const std::string& dir); }   // K.2-1, K.2-3
@@ -420,12 +429,13 @@ using g_mp::run_mp_join;
 namespace g_look { int run_look_selftest(); int run_touch_selftest(); }
 using g_look::run_look_selftest;
 using g_look::run_touch_selftest;
-namespace g_display { int run_recolor_selftest(); int run_display_selftest(); int run_convert64_selftest(); int run_audio_selftest(); int run_leak_probe(); }
+namespace g_display { int run_recolor_selftest(); int run_display_selftest(); int run_convert64_selftest(); int run_audio_selftest(); int run_leak_probe(); int run_rejoin_selftest(); }
 using g_display::run_recolor_selftest;
 using g_display::run_display_selftest;
 using g_display::run_convert64_selftest;
 using g_display::run_audio_selftest;
 using g_display::run_leak_probe;
+using g_display::run_rejoin_selftest;
 namespace g_input { int run_fly_selftest(); int run_gamepad_selftest(); int run_srclike_selftest(); }
 using g_input::run_fly_selftest;
 using g_input::run_gamepad_selftest;

@@ -442,7 +442,7 @@ item 3, because the bulk path still runs it for teleports. Plan and gates:
    (docs/lighting-liquids-effects.md). It replaced 1a's stopgap of a full window sweep after any
    lit slot was overwritten. A straight walk needs < 0.4 columns a frame (18 per
    crossing), a diagonal ~0.8; T.B15 tunes the budget on the device. Measured on the Mac
-   (`--stage1 --walk`, `WORKING/b5b1/ring-walk-gate.sh`): a 160-block walk lands 180 columns with 0 bulk
+   (`--stage1 --walk`, `port/tools/ring-walk-gate.sh`): a 160-block walk lands 180 columns with 0 bulk
    reloads and ends identical (geometry + chunk-state hashes) to a fresh load at the end point, at
    64z and 256z, for ±x, ±z, diagonal, there-and-back and a square. Known costs: pacing across a
    chunk **centre** line shifts the window back and forth and re-reads 18 columns per shift (no

@@ -358,7 +358,7 @@ The port's second world container: an append-only log of per-column zstd records
   byte for byte; prefs keep the new value in memory and print one `emod: could not write …` line per 50.
   The old code renamed an unchecked scratch file over prefs (a full disk lost every setting) and, on
   Windows, removed the old file first. Gate: `--base-selftest`'s `test_prefs_full_disk` (RLIMIT_FSIZE at
-  half the file, SIGXFSZ ignored; SKIP on Windows). A new whole-file writer (K.P's `Packs/.bundled`) uses it too.
+  half the file, SIGXFSZ ignored; SKIP on Windows). A new whole-file writer (the mod manager's `Packs/mods.json`) uses it too.
 - **Save** (`saveEmodWorld`, from `saveWorld` after `endDynamics`, or from `saveWorldKeepDynamics`
   without it — B.5b-1b's evict-save and autosave; a commit zeroes `g_seconds_since_save`): every resident column with a
   `modified` chunk, plus `CREATURES` and `WORLD_HEADER`, in **one** committed batch (the store adds
@@ -376,6 +376,13 @@ The port's second world container: an append-only log of per-column zstd records
   **AT.1b:** `WEATHER` (record 12) follows the same rules through `Weather::needsSave()` / `saved()` /
   `load()` / `reset()`, with coarse steps (kind or flags, ≥ 30 s left, ≥ 0.1 intensity) so a running storm
   adds nothing between real saves; it never marks the world dirty, and a `--weather=KIND` run never stages it.
+  **K.6-5:** `MOD_DATA` (record 13, `eden.store`) rides in the batch when `ModScript::storeNeedsSave()` (a pack
+  stored something since the load or the last commit); `ModScript::storeSaved()` after the commit, so a failed
+  save keeps it dirty. Never staged in a session (a session never reaches `saveEmodWorld`, and the store is
+  empty there). The load is not `loadEmodWorld`'s (that runs on the load thread) but `finishLoadOnMain`'s, on the
+  main thread after the join, so nothing the main thread owns is written from the load thread;
+  `ModScript::worldEntered` (before the load) and `ModScript::reset` (after the exit save) drop the last world's.
+  A record that breaks its framing rules is ignored and never overwritten until a pack stores something.
 
 **K.1-3 (block palette):** `loadWorld` calls `BlockRegistry::resetWorld()` before any branch; `loadEmodWorld`
 reads a flagged file's `BLOCK_PALETTE` and resolves rows 128–255 before the first column read (an unreadable
@@ -408,6 +415,15 @@ from. **Sidecars:** the 2026 game keeps a local world's records in `signs_<world
 that magic adopts them (dirty), and the save that writes them in renames them `*.adopted`, so deleting
 every sign later cannot resurrect them. Refused edits (over 1 MiB, an opaque trailer) toast through
 `fm->reportTrailerRefusal()`. Gate: `eden_native --trailer-selftest` (native/README.md).
+- **Durability level (`F_BARRIERFSYNC` decision).** Every commit uses plain `fsync`
+  (`eden_fs_sync_file`, `EdenWorldStore::fsyncFile`). On Apple platforms that reaches the drive but not
+  its write cache, so a power cut (not an app crash or OS panic) can in theory lose the last commit; the
+  `.emod` stays consistent either way, because a reader ignores an uncommitted or torn tail. Measured on
+  an iPad Air 2 (`--save-bench=1,10,50,144`, plain fsync): 4 to 9 ms per save at 1 to 144 dirty columns,
+  flat in the dirty count, so the fsync itself is the floor. Decision: **keep plain `fsync`**. The
+  barrier variant was never measured on the device, so no data supports paying for it; if it is ever
+  added it goes behind `__APPLE__` in `eden_fs_sync_file` and `sync_file`, and is measured with the same
+  bench first.
 - **Rename / image hash / share-name** (`renameWorld`, `setImageHash`, `setName`): a new
   `WORLD_HEADER` record in its own batch. **World Properties** (H.15, `applyWorldProperties`, below) is the
   same idea with a `GENERATOR` beside it. **Delete** closes the store first (Windows) and removes the
@@ -469,6 +485,13 @@ every sign later cannot resurrect them. Refused edits (over 1 MiB, an opaque tra
   time-sliced `ExportFileJob` (`.exporting` temp, fsync, rename; free space checked up front and every
   64 MB). (The retired web build streamed 1 MB chunks into a Blob.) Test CLI: `eden_native --export=… [--export-target= --export-gz
   --export-dry]`, `--import=…` (native/README.md).
+- **Export's `.emod` copy and saved mod data (K.6-5b, U1).** Share › Export's last format, *World copy (.emod)*, writes
+  `Exports/<name>.emod` (`emod::copy_emod_world`: `.exporting`, fsync, atomic rename; synchronous). When the world
+  holds a usable `MOD_DATA` record (`emod::world_mod_data_packs`; one that breaks its framing names no pack) a dialog
+  first says "This world holds data saved by mods: a, b. Include it?" (Include / Leave out / Cancel). *Include* is the
+  source byte for byte; *Leave out* is the copy compacted without record 13 (`EdenWorldStore::compactWithoutModData`),
+  which verifies clean; the source is only read. No record, no dialog. `.eden` export and upload have no slot for the
+  record and never carry it. `--emod-selftest` (moddata section) pins it; `--emod-mutate=stripalways` must fail it.
 - Measured (S.4, on the retired web build): a 100-column world is 61 KB as `.emod` vs 3.29 MB as
   `.eden`; a one-column save appends 1,104 B vs 91,584 B written in place; a no-edit save 664 B vs
   26,024 B.
@@ -682,6 +705,27 @@ folder worlds and loose `.emod` by `world.emod` mtime, newest first, ties by key
 `original_bytes` (a folder world reads its `original.*`). Skips: `Eden.eden.archive`, PNGs, `error~` names. Behaviour
 change: Storage now lists archives too (the menu always did). Delete, photo, share and trailer paths were already on
 `worldDirOf`/`photoPathOf`/`sidecarPathOf` (K.0w-1…3).
+
+## The tutorial world and its marker `Worlds/<id>/tutorial.json` (UX.10-2)
+The bundled `Tutorial.emod` (`media/`, built by `port/tools/tutorial.py`) is installed as an ordinary folder world by
+`Classes/TutorialInstall`. What makes a world "the tutorial" is the sidecar `tutorial.json`, `{"v":1,"done":[...],"hidden":true}`:
+`done` is the ids of the hint steps completed so far, in order (`Tutorial` appends each one as it completes); `hidden` is
+set only when the player picks *Hide* in the close prompt, and then no card shows in that world. Like `hotbar.json` it is not part
+of the save format, a rename keeps it, and export, upload and a Get Worlds copy move only `world.emod` and `photo.png`,
+so no other world ever carries it. A file that does not parse or has `"v"` above 1 is not a marker.
+- **Install** = read the bundle, write `Worlds/.<id>.partial/world.emod` and `tutorial.json` (both `eden_fs_write_atomic`),
+  then `FileManager::commitStaging` (the K.0w-3 no-replace rename; a fresh id on a clash). The staging steps are
+  `stageStep` kill points (`EDEN_TEST_STAGE_KILL_AFTER`). A failure removes the staging dir and lists nothing.
+- **Not automatic:** `Menu::loadWorlds` no longer calls `TutorialInstall::installOnce`; the world appears only through
+  Settings > Experiments > *Generate tutorial world*. The `installOnce` rules below still hold for the function itself. If prefs
+  has no `tutorial.installed`, no conversion/download is live (`FileManager::worldJobBusy`, the `adoptLooseWorlds` gate)
+  and the harness has not switched it off, it installs and sets the key **only after the commit rename**; a failure is
+  logged and retried at the next launch. A kill between the rename and the key leaves a marked world, and the next
+  launch only sets the key. Deleting the world is the normal My Worlds delete; the key stays, so it never returns by itself.
+- **Generate** (Settings > Experiments, `TutorialInstall::restore`) installs a fresh copy, then deletes every marked world
+  it replaces, so a failed install leaves the old one and the new marker starts with nothing done or hidden.
+- Gates: `--tutorial-selftest` (install, second scan, delete, restore, replace, failed install),
+  `port/tools/tutorial-crash-gate.sh` (the kill loop), mutation legs `nomarker` and `keyfirst`.
 
 ## The hotbar sidecar `Worlds/<id>/hotbar.json` (UX.8-3)
 Not part of the save format: a small JSON file beside `world.emod`, owned by `Classes/Hotbar` (model in `docs/ui.md`

@@ -33,7 +33,9 @@
 #include "SkyCycle.h"                                 // DN.2: the SKY_CLOCK record
 #include "Weather.h"                                  // AT.1b: the WEATHER record
 #include "Hotbar.h"                                   // UX.8-3: the hotbar.json sidecar
+#include "Tutorial.h"                                 // UX.10-3: tutorial.json, the in-world hints
 #include "BlockRegistry.h"                            // K.1-3: the BLOCK_PALETTE record
+#include "ModScript.h"                                // K.6-5: the MOD_DATA record (eden.store)
 
 // See FileManager.h. Both NULL on web — its Foundation shim already answers both questions the
 // way this port wants — and both installed by the native entry point.
@@ -2047,6 +2049,13 @@ void FileManager::loadWorld(const std::string& nameIn,bool fromArchive){
 // (touches, effects, HUD, audio), so it always runs there: straight from loadWorld on an inline load,
 // from World::loadWorld's doneLoading==2 branch (thread joined, load not failed) on a threaded one.
 void FileManager::finishLoadOnMain(){
+    {   // K.6-5: the world's mod data (record 13) for eden.store. Here, on the main thread, after the load thread's join;
+        // ModScript::worldEntered (before the load) dropped the last world's. A session world has none.
+        std::vector<uint8_t> mraw;
+        const bool have=!sessionWorld&&emodStore&&emodStore->hasRecord(emod::T_MOD_DATA)&&
+            emodStore->readRecord(emod::T_MOD_DATA,mraw)<=emod::EdenWorldStore::READ_FALLBACK;
+        ModScript::storeLoad(have&&!mraw.empty()?&mraw[0]:NULL,have?mraw.size():0);
+    }
     if(firstSaveOwed){   // a new world's first save: creates the `.emod`
         firstSaveOwed=false;
         this->saveWorld();
@@ -2057,6 +2066,7 @@ void FileManager::finishLoadOnMain(){
     {   // UX.8-3: the world's hotbar (its folder's hotbar.json; a loose key or a session keeps prefs' hotbar.last)
         const std::string dir=sessionWorld?std::string():worldDirOf(World::getWorld->terrain->world_name);
         Hotbar::get().load(dir.empty()?dir:documents+"/"+dir);
+        Tutorial::worldLoaded(dir.empty()?dir:documents+"/"+dir,World::getWorld->terrain->world_name);   // UX.10-3: the marker decides
     }
     fm_generatorToast();   // H.4: a GENERATOR record from a newer Emod
     fm_damageNotice();     // QA.17: after the generator toast, so the damage line is the one left showing
@@ -2803,6 +2813,19 @@ bool FileManager::saveEmodWorld(Vector warp){
             return saveFailed(why);
         }
     }
+    // K.6-5: eden.store's record, when a pack stored something since the load or the last commit. Like the
+    // weather it rides a batch that commits anyway (exit, warp, autosave, background save); never in a session
+    // (a session never reaches this function). Entries of packs that are not loaded go out verbatim.
+    bool modDataSaving=ModScript::storeNeedsSave()&&!sessionWorld;
+    if(modDataSaving){
+        std::vector<uint8_t> md;
+        ModScript::storeEncode(md);
+        if(!emodStore->putRecord(emod::T_MOD_DATA,&md[0],md.size())){
+            std::string why="could not stage the mod data: "+emodStore->error();
+            emodStore->abortBatch();
+            return saveFailed(why);
+        }
+    }
     bool trailerSaving=worldTrailer.dirty();
     if(trailerSaving){
         std::vector<uint8_t> t=worldTrailer.encode();
@@ -2822,6 +2845,7 @@ bool FileManager::saveEmodWorld(Vector warp){
     if(generatorSaving)fm_generatorPending=false;
     if(clockSaving)SkyCycle::saved();
     if(weatherSaving)Weather::saved();
+    if(modDataSaving)ModScript::storeSaved();
     g_seconds_since_save=0;
     for(size_t i=0;i<saved.size();i++){
         for(int cy=0;cy<CHUNKS_PER_COLUMN;cy++)
@@ -3113,6 +3137,8 @@ static bool fm_adoptBusy(){
     if((single&&single->conversionActive()))return true;
     return WorldBrowser::anyBusy();   // not via World::getWorld->menu: Menu's constructor scans before it is set
 }
+
+bool FileManager::worldJobBusy(){return fm_adoptBusy();}
 
 int FileManager::adoptLooseWorlds(std::vector<std::pair<std::string,std::string> >* moved){
     if(fm_adoptBusy())return 0;

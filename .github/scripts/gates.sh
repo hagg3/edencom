@@ -6,14 +6,14 @@
 #   gates.sh --list <job>   print what <job> would run, in order (diff it in a PR)
 #   gates.sh --jobs         the job names
 #
-# Jobs: linux windows macos msvc sanitize tsan.   Environment:
+# Jobs: linux windows macos sanitize tsan.   Environment:
 #   B           the binary (default ./build/eden_native[.exe])
-#   PY          python (default python3; windows/msvc: python)
+#   PY          python (default python3; windows: python)
 #   GATE_JOBS   how many `pgate`/`pmutant` rows run at once (default 1 = serial; CI sets 3)
 #   GATE_FAILFAST=1   stop at the first red gate (default: run them all, list the red ones at the end)
 #
-# ROW FORMS (platform spec = comma list of job names; `all` = linux,windows,macos, `win` = windows,msvc,
-# `every` = all + msvc + sanitize; a `-name` removes one):
+# ROW FORMS (platform spec = comma list of job names; `all` = linux,windows,macos,
+# `every` = all + sanitize; a `-name` removes one):
 #   gate    <name> <platforms> <cmd…>             run through run_gate (log gate-<name>.log, backtrace on a crash)
 #   pgate   <name> <platforms> <cmd…>             same, but may run in parallel with its neighbours
 #   mutant  <name> <platforms> <regex> <cmd…>     run_mutant: must exit 1, print `mutation: <suffix>` and a FAIL line matching <regex>
@@ -33,18 +33,18 @@ SELF="$HERE/$(basename "${BASH_SOURCE[0]}")"
 
 JOB=""; LIST=0; QUEUED=""
 case "${1:-}" in
-  --jobs)   echo "linux windows macos msvc sanitize tsan"; exit 0 ;;
+  --jobs)   echo "linux windows macos sanitize tsan"; exit 0 ;;
   --list)   LIST=1; JOB="${2:-}" ;;
   --run-queued) QUEUED="$2"; JOB="${3:-}" ;;
   -*)       echo "usage: gates.sh [--list] <job> | --jobs" >&2; exit 2 ;;
   *)        JOB="${1:-}" ;;
 esac
 case "$JOB" in
-  linux|windows|macos|msvc|sanitize|tsan) ;;
+  linux|windows|macos|sanitize|tsan) ;;
   *) echo "gates.sh: job must be one of: $(bash "$SELF" --jobs)" >&2; exit 2 ;;
 esac
-case "$JOB" in windows|msvc) : "${PY:=python}" ;; *) : "${PY:=python3}" ;; esac
-case "$JOB" in windows|msvc) : "${B:=./build/eden_native.exe}" ;; *) : "${B:=./build/eden_native}" ;; esac
+case "$JOB" in windows) : "${PY:=python}" ;; *) : "${PY:=python3}" ;; esac
+case "$JOB" in windows) : "${B:=./build/eden_native.exe}" ;; *) : "${B:=./build/eden_native}" ;; esac
 : "${GATE_JOBS:=1}"
 export B PY JOB GATE_JOBS
 
@@ -53,8 +53,7 @@ on() {   # on <spec>: does the current job match?
   for t in $(printf '%s' "$1" | tr ',' ' '); do
     case "$t" in
       all)   case "$JOB" in linux|windows|macos) hit=0 ;; esac ;;
-      win)   case "$JOB" in windows|msvc) hit=0 ;; esac ;;
-      every) case "$JOB" in linux|windows|macos|msvc|sanitize) hit=0 ;; esac ;;
+      every) case "$JOB" in linux|windows|macos|sanitize) hit=0 ;; esac ;;
       -*)    [ "${t#-}" = "$JOB" ] && hit=1 ;;
       *)     [ "$t" = "$JOB" ] && hit=0 ;;
     esac
@@ -143,7 +142,7 @@ pmutant() { local n="$1" p="$2"; shift 2; row 1 mutant "$n" "$p" "$@"; }
 # MANUAL / EXTERNAL modes (parsed by check-gate-coverage.py; the reason is the text after the dash).
 #   A MANUAL mode must NOT be a row; an EXTERNAL one is run by a native.yml step the table cannot express.
 # MANUAL: --cmds-selftest — needs the gitignored 3-bit adder world (--world= --at); run on the Mac, see native/README.md
-# MANUAL: --convert-prompt-selftest — needs a 64z .eden fixture and --convert-answer=upgrade|keep|cancel; waits on QA.23 (columnsToUpdate never zeroed)
+# MANUAL: --convert-prompt-selftest — needs a 64z .eden fixture and --convert-answer=upgrade|keep|cancel; columnsToUpdate is zeroed since REL.3, so it could become a row
 # MANUAL: --signs-selftest — needs a world with signs (--world= --at); run on the Mac
 # MANUAL: --render-selftest-gl — needs a window (the GL leg of --render-selftest); run on the Mac
 # MANUAL: --gl-selftest — alias of --render-selftest since G.5b-7
@@ -178,7 +177,7 @@ gate "console reference"  linux   $PY ../port/tools/console-reference.py $B --ch
 gate "eden-convert test"  linux   node ../port/tools/eden-convert-test.js
 
 # ---- boot and geometry -------------------------------------------------------------------------
-gate "boot (--p1-gate)"   all,msvc  $B --p1-gate
+gate "boot (--p1-gate)"   all  $B --p1-gate
 # A FRESH --docs PER RUN: --stage1 creates-or-LOADS a world by name, so a 64z save left by the previous
 # command is silently reused by the 256z one. H.2: --shadows=off pins the pair to Off whatever the
 # setting's default becomes; the shadows leg asserts geom is unchanged and a pinned `full`.
@@ -196,16 +195,30 @@ pgate "pack selftest"     every   $B --pack-selftest=../port/tools/fixtures/cont
 pgate "packs selftest"    every   $B --packs-selftest --docs=@DOCS@
 pgate "mods selftest"     every   $B --mods-selftest --docs=@DOCS@
 pgate "hotbar selftest"   every   $B --hotbar-selftest --docs=@DOCS@
+# UX.10-1: the bundled tutorial world loads with the layout's signs and command blocks, every script parses, the
+# spawn stands on solid ground (reads port/tools/tutorial/manifest.txt).
+pgate "tutorial selftest" every   $B --tutorial-selftest --docs=@DOCS@
+# UX.10-2: the install (once per install, delete, Restore) in-process; the kill-point loop through the install
+# (never a half world, never the key without the world); a mutation leg for each (no sidecar; key before the commit).
+gate "tutorial crash loop" all    bash ../port/tools/tutorial-crash-gate.sh $B @DOCS@
+pmutant "tutorial-nomarker" all  'the first scan installs one world with the marker' $B --tutorial-selftest --tutorial-mutate=nomarker --docs=@DOCS@
+# UX.10-3: the in-world hints (each step completes in order in all three input modes; no card without the marker or in
+# a session) and its mutation leg (hints keyed on the world's name must trip the no-marker leg).
+pmutant "tutorial-hintsbyname" all 'a world without the marker shows no card' $B --tutorial-selftest --tutorial-mutate=hintsbyname --docs=@DOCS@
+mutant "tutorial-keyfirst" all   'the key is never set without the world' bash ../port/tools/tutorial-crash-gate.sh $B @DOCS@ --tutorial-mutate=keyfirst
 pgate "lua selftest"      every   $B --lua-selftest --docs=@DOCS@
 pgate "folders selftest"  every   $B --headless --folders-selftest --docs=@DOCS@
 pgate "emod selftest"     every   $B --emod-selftest --emod-fixtures=../port/tools/fixtures/emod --emod-work=@DOCS@
-pgate "classic selftest"  all,msvc $B --classic-selftest --docs=@DOCS@
+# K.6-5a (C-4): compaction dropping reserved record types again must FAIL the reserved section.
+pmutant "emod-dropunknown" all 'the newest record of each reserved type survives compaction' $B --emod-selftest --emod-quick --emod-mutate=dropunknown --emod-fixtures=../port/tools/fixtures/emod --emod-work=@DOCS@
+pmutant "emod-stripalways" all 'the Include copy of an export keeps record 13' $B --emod-selftest --emod-quick --emod-mutate=stripalways --emod-fixtures=../port/tools/fixtures/emod --emod-work=@DOCS@
+pgate "classic selftest"  all $B --classic-selftest --docs=@DOCS@
 pgate "look selftest"     all     $B --look-selftest --docs=@DOCS@
 pgate "fly selftest"      all     $B --fly-selftest --docs=@DOCS@
 pgate "srclike selftest"  all     $B --srclike-selftest --docs=@DOCS@   # move reads ../port/tools/fixtures/srclike-pm/vectors.txt
 pgate "recolor selftest"  all     $B --recolor-selftest --docs=@DOCS@
 pgate "display selftest"  all     $B --display-selftest --docs=@DOCS@
-pgate "ui selftest"       all,msvc $B --ui-selftest --docs=@DOCS@
+pgate "ui selftest"       all $B --ui-selftest --docs=@DOCS@
 pgate "convert64 selftest" all    $B --convert64-selftest --docs=@DOCS@
 pgate "props selftest"    all     $B --props-selftest --docs=@DOCS@
 pgate "camera selftest"   all     $B --camera-selftest --docs=@DOCS@
@@ -237,6 +250,12 @@ pmutant "look-clearlatch" all  'step 8b: the look keeps turning'                
 pmutant "fly-move"        all  'noclip passes a wall Fly stops at'                $B --fly-selftest --fly-mutate=move --docs=@DOCS@
 pmutant "lua-hook"        all  'a 300k-iteration loop is paused'                  $B --lua-selftest --lua-mutate=hook --docs=@DOCS@
 pmutant "lua-sandbox"     all  'the sandbox: no io/os'                            $B --lua-selftest --lua-mutate=sandbox --docs=@DOCS@
+pmutant "lua-loadearly"   all  '`load` fires exactly once'                         $B --lua-selftest --lua-mutate=loadearly --docs=@DOCS@
+pmutant "lua-caperror"    all  'reaching the 64-coroutine cap'                    $B --lua-selftest --lua-mutate=caperror --docs=@DOCS@
+pmutant "lua-usefilter"   all  '`use` on stone, none of `burn`'                   $B --lua-selftest --lua-mutate=usefilter --docs=@DOCS@
+pmutant "lua-signnocache" all  'SignRenderer shows a Lua-set sign'            $B --lua-selftest --lua-mutate=signnocache --docs=@DOCS@
+pmutant "lua-storenotdirty" all 'save, reopen: every stored value is back exactly' $B --lua-selftest --lua-mutate=storenotdirty --docs=@DOCS@
+pmutant "mods-anyid"      all  'K\.8-3: a zip whose id is not'                     $B --mods-selftest --mods-mutate=anyid --docs=@DOCS@
 pmutant "classic-tables"  all  '1\.x columns regenerate byte for byte'            $B --classic-selftest --classic-mutate=tables --docs=@DOCS@
 pmutant "classic-trunc"   all  '1\.x columns regenerate byte for byte'            $B --classic-selftest --classic-mutate=trunc --docs=@DOCS@
 pmutant "classic-noborder" all 'profile hash matches its pin'                     $B --classic-selftest --classic-mutate=noborder --docs=@DOCS@
@@ -281,7 +300,7 @@ mutant "save-fail-exit"   linux,macos 'Save & Quit on a failed save stays in the
 mutant "save-fail-stream" linux,macos 'a walk does not stream over the unsaved column' $B --save-fail-selftest --save-fail-mutate=stream --docs=@DOCS@
 # ROADMAP 5.9: Get Worlds end to end over OFFLINE fixtures it writes itself.
 gate "browser selftest"   all     $B --browser-selftest --docs=@DOCS@
-gate "folders crash loop" all,msvc bash ../port/tools/folders-crash-gate.sh $B @DOCS@
+gate "folders crash loop" all bash ../port/tools/folders-crash-gate.sh $B @DOCS@
 gate "net selftest"       all     $B --net-selftest
 gate "mp selftest"        all     $B --mp-selftest
 gate "bundled map"        all,sanitize $B --bundled-map-selftest --bundled-eden=../Eden.eden --bundled-emod=../Eden.emod
@@ -305,8 +324,17 @@ gate "live-cmds gate"     all     ../port/tools/live-cmds-gate.sh $B @DOCS@
 # QA.2: worlds whose header spawn/home/yaw or a creature hold NaN/1e30/inf must load (the sanitize job
 # creates ./hostile-venv first: emod.py needs zstandard).
 gate "hostile worlds"     sanitize sh ../port/tools/hostile-world-gate.sh "$PWD/$B" @DOCS@ "$PWD/hostile-venv/bin/python3"
+# UX.10-1: media/Tutorial.emod and its manifest are byte-identical to a rebuild from layout.py + copy.txt + Eden.emod,
+# and every refusal fires on a planted bad input (a copy edit without a rebuild fails here). Same venv: zstandard.
+gate "tutorial world"     sanitize "$PWD/hostile-venv/bin/python3" -I ../port/tools/tutorial.py --check
 # The stage's leak obligation (Windows reports process commit charge in the live-bytes slot).
 gate "leak probe (torture, same 64z)" all $B --leak-probe --docs=@DOCS@
+# X.32: enter/leave cycles (weather on, the example pack toggled so the block atlases re-upload): R::'s texture
+# ledger sees no stale destroy or use and the UI icon atlas keeps its name. Headless here; windowed (a Mac or a
+# Windows desktop) it also reads the atlas back and runs the bind-cache leg, whose mutant is
+# `--rejoin-mutate=elide` (needs a window, so not a row).
+gate "rejoin selftest"    every   $B --headless --rejoin-selftest=4 --docs=@DOCS@
+mutant "rejoin-doubledestroy" all 'cycle 1/2: no stale texture destroy or use'   $B --headless --rejoin-selftest=2 --rejoin-mutate=doubledestroy --docs=@DOCS@
 gate "save round-trip"    every   $B --headless --save-roundtrip --world=ci --docs=@DOCS@
 
 # ---- TSan (halt_on_error=1; the job exports TSAN_OPTIONS) --------------------------------------

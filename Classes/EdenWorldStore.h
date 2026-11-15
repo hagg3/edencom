@@ -57,6 +57,15 @@ enum : uint32_t {
     PALETTE_MAX = 128,
     PALETTE_PAINT_MAX = 54,
     PALETTE_UNKNOWN_FALLBACK = 2,   // TYPE_STONE: the fallback of an `emod:unknown_<id>` reservation (D13)
+    // K.6-5: MOD_DATA (docs/emod-file-format.md "MOD_DATA"): u32 version, u32 count, then per pack char id[24]
+    // (NUL padded), u32 len, len opaque bytes (the scripting runtime's encoding; the format checks the framing only).
+    MOD_DATA_VERSION = 1,
+    MOD_DATA_HEAD = 8,
+    MOD_DATA_ID = 24,
+    MOD_DATA_ENTRY_HEAD = 28,    // id + len
+    MOD_DATA_MAX_PACKS = 64,
+    MOD_DATA_ENTRY_MAX = 64u << 10,
+    MOD_DATA_MAX = 1u << 20,     // decoded, the whole record
 };
 enum RecordType : uint8_t {
     T_COLUMN = 1, T_WORLD_HEADER = 2, T_CREATURES = 3, T_SIGN_TRAILER = 4,
@@ -65,9 +74,10 @@ enum RecordType : uint8_t {
     T_BLOCK_PALETTE = 10,        // K.1-2: the world's palette for type bytes 128-255, codec 0 (needs flags bit 0)
     T_SKY_CLOCK = 11,            // DN.2: the day/night clock, 16 B, codec 0 (Classes/SkyCycle.h)
     T_WEATHER = 12,              // AT.1b: the weather state, 32 B, codec 0 (Classes/Weather.h)
+    T_MOD_DATA = 13,             // K.6-5: per-pack saved script data (eden.store), any codec, <= 1 MiB decoded
 };
 // A type this build reads (the rest of 1..255 is reserved: a member of its batch, otherwise ignored).
-inline bool known_record_type(int t) { return t >= 1 && t <= T_WEATHER; }
+inline bool known_record_type(int t) { return t >= 1 && t <= T_MOD_DATA; }
 enum Codec : uint8_t { C_NONE = 0, C_ZSTD = 1, C_ZLIB = 2 };
 // QA.4 (A3-03): the most a record of `type` may declare it decodes to (RecordHeader `aux`; a COLUMN's
 // is popcount(mask) x BAND <= 128 KiB). A reader refuses a larger one as "does not decode" (damage)
@@ -85,6 +95,7 @@ inline uint32_t record_decoded_max(int type) {
     case T_BLOCK_PALETTE: return PALETTE_HEAD + PALETTE_MAX * PALETTE_ENTRY;
     case T_SKY_CLOCK: return SKY_CLOCK_LEN;
     case T_WEATHER: return WEATHER_LEN;
+    case T_MOD_DATA: return MOD_DATA_MAX;
     default: return MAX_PAYLOAD;   // PROVENANCE (its lists grow with the source's directory), INDEX, reserved
     }
 }
@@ -134,6 +145,20 @@ bool palette_parse(const uint8_t* p, size_t n, std::vector<PaletteEntry>* out, s
 void palette_build(std::vector<PaletteEntry> entries, std::vector<uint8_t>& out);
 // D8/D16: the ids `newer` dropped or changed relative to `older` (empty == a valid successor).
 std::vector<int> palette_lost_ids(const std::vector<uint8_t>& older, const std::vector<uint8_t>& newer);
+
+// ---- MOD_DATA (K.6-5; docs/emod-file-format.md "MOD_DATA"; emod.py parse_mod_data) ----------------------------
+struct ModDataEntry {
+    std::string id;              // a pack id, `[a-z0-9_]{1,24}`, without the NUL padding
+    std::vector<uint8_t> data;   // <= 64 KiB, opaque here
+};
+// `[a-z0-9_]{1,24}` (the pack id rule, ContentPack).
+bool mod_data_id_ok(const std::string& id);
+// Checks every rule of one record (version 1, count <= 64, each id NUL padded and valid, strictly ascending,
+// each len <= 64 KiB, the payload ending exactly after the last entry, <= 1 MiB). False: the first broken rule in
+// `why` (may be null) and `out` cleared. A reader ignores a record that breaks any rule, whole.
+bool mod_data_parse(const uint8_t* p, size_t n, std::vector<ModDataEntry>* out, std::string* why);
+// The record's bytes for `entries` (sorted by id here; not checked: mod_data_parse the result).
+void mod_data_build(std::vector<ModDataEntry> entries, std::vector<uint8_t>& out);
 
 // ---- the `.eden` trailer section BPL1 (K.1-4; docs/eden-file-format.md "BPL1"; emod.py trailer_find_palette) ----
 // A section like SGN1/CMB1: `BPL1 | u32 inner_len | u32 w3`, then `BPL1` + a BLOCK_PALETTE record's bytes
@@ -289,7 +314,8 @@ public:
     // takes SUMMARY.next_ord. Singletons: WORLD_HEADER, GENERATOR, SKY_CLOCK, WEATHER, BLOCK_PALETTE and
     // SUMMARY are stored raw, the rest compressed with the store's codec. Nothing reaches the file
     // until commitBatch(). A BLOCK_PALETTE is refused unless the file is flagged (compact(true)
-    // first: D14), it obeys palette_parse, and it keeps every entry of the live one (D8).
+    // first: D14), it obeys palette_parse, and it keeps every entry of the live one (D8). A MOD_DATA
+    // must obey mod_data_parse.
     void beginBatch();
     bool putColumn(int32_t x, int32_t z, const uint8_t* column);
     bool putRecord(int type, const void* data, size_t len);
@@ -306,9 +332,12 @@ public:
     // reopens. Refused when damaged() (the bad bytes must never be the only copy destroyed),
     // when read-only, or mid-batch. zstd payloads are copied verbatim after a successful decode;
     // other codecs are re-encoded with the store's codec. Order: WORLD_HEADER, CREATURES,
-    // SIGN_TRAILER (if non-empty), PROVENANCE, GENERATOR, SKY_CLOCK, WEATHER, COLUMNs by ord,
-    // BLOCK_PALETTE, SUMMARY, COMMIT — conversion's order, so compacting a fresh conversion
-    // reproduces it byte for byte. emod.py `compact` is the reference, byte for byte.
+    // SIGN_TRAILER (if non-empty), PROVENANCE, GENERATOR, SKY_CLOCK, WEATHER, then MOD_DATA and the newest
+    // record of each reserved type (14-255, ascending; K.6-5a), COLUMNs by ord, BLOCK_PALETTE, SUMMARY,
+    // COMMIT — conversion's order, so compacting a fresh conversion reproduces it byte for byte.
+    // MOD_DATA and a reserved-type record are copied verbatim (codec, band_mask, x, z, aux and the stored
+    // bytes) after they decode (a MOD_DATA that breaks its framing rules too: the game ignores it, never rewrites it): a world a newer build saved keeps that build's records through this one's
+    // compaction. emod.py `compact` is the reference, byte for byte.
     //
     // K.1-2, the flag compaction (`setPaletteFlag` on an unflagged file; plan D13/D14): the new file
     // has FileHeader flags bit 0 and a BLOCK_PALETTE holding `palette` (record bytes; null = no
@@ -319,6 +348,9 @@ public:
     // There is no instant at which the path holds a flagged file without its record: the rename is
     // the commit point.
     bool compact(bool setPaletteFlag = false, const std::vector<uint8_t>* palette = nullptr);
+    // K.6-5b (U1 "Leave out"): compact() with the MOD_DATA record left out of the new file; everything else is
+    // copied as compact() does. For a scratch copy only: never call it on a player's world.
+    bool compactWithoutModData() { dropModData_ = true; const bool ok = compact(); dropModData_ = false; return ok; }
     // The type bytes >= 128 the last flag compaction found in live columns (ascending).
     const std::vector<uint8_t>& latentIds() const { return latent_; }
 
@@ -343,8 +375,12 @@ public:
     // compact() writes only the first `n` bytes of `path`.compact, closes the store and returns
     // false: the process died mid-compaction (the rename never happened). SIZE_MAX disables.
     size_t testCompactCrashAfter;
+    // K.6-5a: `--emod-mutate=dropunknown` puts C-4 back: compact() drops the reserved types again,
+    // as builds up to 0.5 did. Process-wide; the self-test's old-build leg must FAIL with it.
+    static bool testDropUnknown;
 
 private:
+    bool dropModData_ = false;   // K.6-5b: compactWithoutModData's switch
     struct Rec {               // a framed record
         uint64_t off, end;
         uint32_t aux, plen, seq, crc;

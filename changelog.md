@@ -1,26 +1,46 @@
-# Beta 0.5
-This beta is mostly about polish and robustness: a keyboard-friendly interface, a hotbar, desktop window handling, and a lot of hardening so a bad save, a full disk or a hostile mod can't take your world down. Everything below is new since Beta 0.4. Bug reports and suggestions are welcome on the [Discord server](https://discord.gg/SgEQfurMmj).
+# Beta 0.6
+Insert summary here. Headings below with bullets for features/changes.
 
 ## Interface
-- **Hotbar:** a nine-slot strip along the bottom of the desktop HUD. Keys 1-9 and the mouse wheel pick a slot, the current one is raised, and each slot shows the block's icon. Each world remembers its own hotbar. On touch devices it is a Gameplay setting (off by default) and the slots are tappable. Mods can fill slots.
-- **Keyboard and mouse navigation in every menu:** Tab and Shift-Tab, arrow keys, Return and Space work on all screens, with a visible focus ring and a hover highlight. Return presses the screen's main button (Play, Join, Save, Download, Resume). None of this appears on touch devices.
-- **Leaving a form with unsaved changes asks first** (World Properties, add/edit server): *Discard changes?*
-- **Phone layout fixes:** overlapping controls in New World, clipped values in World Properties, Get Worlds detail text sitting under Download, icons over labels in the pause menu, the titlebar button touching the panel edge, and the console strip covering the gear.
-- **Cleaner text:** sentence case everywhere, red *danger* styling on Delete and Change terrain, and clearer hint text. The version tag moved next to the gear on the HUD. The jump button is hidden when there is no touch chrome. The mode buttons on the right take clicks when the pointer is free.
-- The server list shows *Profile: <name>* and disables Join with a hint until you have set a name.
+- **Tutorial world:** a Tutorial world is added to My Worlds once for every player. Its stations teach moving, building, blocks and paint, the hotbar, signs, command blocks, doors and portals, liquids and fire, and flying. In-world hints for touch, keyboard + mouse and gamepad close when you do the thing, and can be hidden with the card's close box. Settings › Gameplay › *Restore tutorial world* adds it back.
+
+## Modding
+- **Scripting API version 2** (still beta): `eden.version` is 2, and a pack can require it with `"requires": ["emod>=2"]`. The scripting docs say which version added each call and event.
+- **New `use` event:** fires when the player uses a block (for now: a fire tap, on any block, before anything burns).
+- **Signs for scripts:** `eden.sign` reads a sign, `eden.setsign` writes one, and a `sign` event fires when the player places or edits a sign.
+- **Saved data for scripts:** `eden.store.get`, `eden.store.set` and `eden.store.keys` keep a pack's values (numbers, strings, booleans and tables) in the world, saved with its blocks. Up to 64 KiB per pack. A pack you remove keeps its saved data in the world for when you add it back.
+- **Sharing a world with mod data:** Share › Export has a *World copy (.emod)* format. If the world holds data saved by mods, it asks whether to include it, leave it out, or cancel.
+- **`mod <pack>:<name>`** runs a command from a specific pack when two packs use the same name; a name clash now only warns.
+- **`scripts reload`** re-reads the script files from disk, so edits show up without restarting.
+
+## Fixes
+- **A script's `load` event now fires after all of its files have run**, even when a long start-up is spread over several frames.
+- **Scripts that start many coroutines no longer error at the limit:** extra ticks wait for a free slot instead.
+- **Installing from Get Mods only ever replaces the pack you picked**, and installing an older version asks first.
+- **Mod scripts share a total memory limit** (64 MiB, 24 MiB on devices with 3 GB of RAM or less), so one greedy pack can't run the game out of memory.
+- **Compacting a world keeps data this version doesn't know about**, such as records a newer Emod saved, instead of deleting it. Builds up to Beta 0.5 still drop it.
+- **Menu icons no longer turn into black squares** after a texture was drawn after being freed: the next texture loaded could overwrite the icon images (reported on Windows after several world rejoins).
+
+# Beta 0.5
+This beta is mostly about polish and robustness: a keyboard-friendly interface, a hotbar, desktop window handling, and data safety improvements.
+
+## Interface
+- **Hotbar:** Each world remembers its own hotbar. On touch devices it is a Gameplay setting (off by default).
+- **Keyboard and mouse navigation in every menu:** 
+- **Leaving a form with unsaved changes asks first**
+- **Phone layout fixes:** 
+- **Cleaner text labels**
 
 ## Desktop
-- **Fullscreen** (Settings › Video, or F11). Window size, position and fullscreen state are remembered between launches, and the window has a minimum size.
+- **Proper fullscreen mode** (Settings › Video, or F11).
 - **Quit button** on the home screen (desktop only).
-- **An unfocused window now sleeps** instead of using a full CPU core (about 1 % idle on a Mac, down from about 90 %). Multiplayer sessions stay connected.
+- **An unfocused window now sleeps** but multiplayer sessions stay connected.
 
 ## Saving and worlds
-- **A failed save is now visible and loses nothing.** If the disk is full or the write fails you get a message, *Save & Quit* is blocked until it works, and saves back off and retry.
+- **A failed save is now visible.**
 - **A bad world file no longer blocks the next load**, and the reason is shown on the status bar.
-- **Corrupt or hostile worlds are handled:** NaN or huge spawn, home or creature positions, oversized records and images, and damaged `.emod` tails are clamped or refused instead of crashing. This fixes a rare crash when loading some worlds (a creature spawn index could wrap negative).
-- **Safer small files:** settings, server list, mod list and hotbar are written atomically, so a crash or full disk mid-write can't leave them half-written.
-- **Low-memory warnings** (iOS and Android) now save your world and free audio before the system steps in.
-- **Downloads have size limits** (worlds 4 GB, mods 32 MB) and need some free disk space.
+- **Safer small files:** settings, server list, mod list and hotbar are written atomically.
+- **Low-memory warnings** (lower-end devices) now save your world and free audio before the system steps in.
 - Switching the day/night cycle on or off streams in over a few frames instead of stalling.
 
 ## Mods
@@ -33,10 +53,6 @@ This beta is mostly about polish and robustness: a keyboard-friendly interface, 
 - Several threading races between loading a world and the main loop are fixed. Input is ignored while a world loads.
 - Mod commands now declare whether they are multiplayer-safe, and unknown ones are refused.
 - The weather and atmosphere code now agrees on exactly what *Off* renders (the same frame as before the feature existed).
-
-## Under the hood
-- One list of tests for every CI platform; compiler warnings are on and the uninitialised reads they found are fixed; a new thread-sanitiser CI job; settings are applied from a data table; menu Back routing moved into the engine; leftover web-port code was deleted.
-- Mod-pack fixtures moved to `port/tools/fixtures/packs/`.
 
 # Beta 0.4
 This is a fairly feature-heavy beta. It includes experimental modding support; lots of new features to enhance the in-game atmosphere; and an overhaul to settings.

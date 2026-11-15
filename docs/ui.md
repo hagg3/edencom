@@ -62,7 +62,9 @@ pieces the settings / New World rebuild (U.3, U.5) is laid out from, all drawn o
 `--shot`: `GLW::icon(id, rect, colour)` (one cell of the Lucide atlas `media/ui/ui_icons.png`, ids in
 generated `Classes/UIIcons.h`, white art tinted at draw time; loaded on first use **with mips** — since
 P.15 a non-mip load builds no chain, and its `LINEAR_MIPMAP_LINEAR` filter then sampled an incomplete
-texture: every icon a black square until U.5 caught it — LINEAR + clamped unlike the engine's NEAREST art), `GLW::IconRail` (the vertical `.eden-tabrail`: 64u RAISED icon
+texture: every icon a black square until U.5 caught it — LINEAR + clamped unlike the engine's NEAREST art; X.32 found a
+second way to the same black squares, another texture's upload landing in the atlas, and `--rejoin-selftest` checks
+the atlas through `eden_ui_icon_atlas_name()`), `GLW::IconRail` (the vertical `.eden-tabrail`: 64u RAISED icon
 tiles in a 72u rail, selected/held PRESSED, disabled tiles muted and inert, no count cap — it scrolls
 by whole tiles of its own when they overflow; I.6: a dark fade + chevron over the clipped end says so), the toggle restyled to the
 reference (heavy 2u gray-800 keyline, gray-500 off half, `Toggle::designW()/designH()` = 104×34u) with
@@ -171,6 +173,7 @@ fit, a row taller than the view still shows; `rowOffset()`; content drags walk t
   keyboard; desktops ignore it so the IME candidate window stays anchored on the field.
   FT.6: on iOS the area is clamped by `eden_text_input_clamp_keep` to the field plus ~38 % of the screen height (rows below the field first), because SDL slides the view until the area's bottom meets the keyboard and a taller panel pushed the field off the top.
   FT.5: a strip layout must reset `titlebarHit()` boxes left by the full layout (Back/Menu).
+  `railFrame().titlebar` stops 6u short of the panel's right pad so a right-hand action (Save, Play, Defaults) keeps a margin like Back's; the Console's keyboard-aware frame does the same. The server form shows why Join now is off ("Enter an address") left of it. Get Worlds' search field keeps itself and the list head above the keyboard (`setKeepVisible`), a failed download raises a toast and draws its status red, and the Mods footer shows a refused pack's reason in red.
   **C.4 (2026-10-16)** added three calls for a screen that lays itself out instead:
   `eden_text_input_keyboard_top()` (the keyboard's top in point space; iOS only, from a
   `UIKeyboardWillChangeFrameNotification` observer in `port/src/seam/IOSKeyboard_native.mm`),
@@ -317,7 +320,7 @@ Responsibilities:
   docs/eden-file-format.md "Command-block scripts".
   **Multi-line prompts (D.4b):** `GLDialog::prompt(..., lines)` / `GLW::TextField::setLines(n)`
   wrap the field to its width (`Label::set`'s `keepLastLines`, which also cuts a word longer than a
-  line) and keep the caret's last n lines in view; Return still commits. Signs use 3, scripts 6. **The SIGN tool** (`Classes/SignTool.{h,mm}`): the face is the
+  line) and keep the caret's last n lines in view; Return still commits. Signs use 3, scripts 6. **The SIGN tool** (`Classes/SignTool.{h,mm}`; K.6-3: the prompt's answer and `eden.setsign` (`SignTool::set`, no prompt, no sound, text refused rather than trimmed) share one commit, `commitSign`: trailer edit, the renderer's `forget` of the old text's texture, the server; only the prompt fires the `sign` script event): the face is the
   `FC_PLACE` − `FC_DESTROY` cell delta; the bottom is refused with the toast "Can't place a sign
   under the block"; otherwise `GLDialog::prompt` (95 bytes, printable ASCII kept) — a new sign,
   or, on a face that already has one, an edit prefilled with its text, where an empty answer
@@ -467,6 +470,34 @@ Nine slots per world; nothing draws them yet (the strip is UX.8-4, touch/pointer
 - Test hooks: `eden_tap_hud_button_begin/end` ids 11-19 (cells), 20/21 (chevrons); `eden_debug_hotbar_rect/overlaps`;
   `--touch-selftest` (tap, re-tap, pick, long-press, safe rect, overlaps) at `--device=iphone16`, `iphonese` and
   `--window=1024x768 --touch-profile`; `--hotbar-selftest` (assign/clear/activate).
+
+### Tutorial hint card (`Classes/Tutorial.{h,cpp}`, UX.10-3)
+- **When**: only in a world whose folder has `tutorial.json` (`TutorialInstall::readMarker`, read in `FileManager::finishLoadOnMain`)
+  and never in a multiplayer session (a session passes no folder). No marker = no card; the old path stays silent.
+- **Steps** (`kSteps[]`): look, move, jump, break, place, picker, paint, hotbar, menu, each with a mode filter, an optional
+  station (a sign of the world: jump at "walk", break/place at "build", picker/paint at "blocks", hotbar, menu at "finish";
+  it shows when the player is within 6 blocks and holds to 9) and a predicate that reads existing state: yaw turned 45
+  degrees, 3 blocks moved, `Player::jumping` rising, `Tutorial::note` from `MpWorld::intentMine/Build/Paint` (the player's
+  edits) and `Hotbar::select`, `Hud::mode == MODE_PICK_BLOCK`, `Hud::inmenu`. The first undone step whose station is near is
+  current; done steps are written to the marker (`done`, in order). There is no input path of its own.
+- **Copy**: `Classes/TutorialData.h` is generated from `port/tools/tutorial/copy.txt` (`hint.<step>.<kbm|touch|pad>`,
+  `tutorial.py --check` fails when it is stale, a hint is `?`, over 80 characters, or names a `{action}` that is not in
+  `kKeybinds[]`). `{action}` is filled with the label of the key bound to it now (`eden_keybind_code_label`).
+- **Mode**: the pad when it was the last device used (`eden_input_pad_is_last`, set by a pad button or stick, cleared by the
+  next key, mouse or finger event), else touch or keyboard + mouse by `eden_effective_input_is_touch`. A change re-renders.
+- **Card**: styled like `GLW::Toast`, stacked above its lane (`Toast::lift()` + one pill) so it never covers the hotbar
+  strip (bottom on desktop, top on touch), and on touch it sits between the mode column, jump/crouch/fly buttons, the menu
+  button and the pad (`Hud::touchChromeRects`); text wraps to the band. Done: a lime "Done" flash (0.8 s), then the next step.
+  Hidden, not queued, while `Hud::overlayBlocked()` (HUD hidden, menu, picker, photo mode, respawn fade), a dialog, the
+  console or Settings is up.
+- **Opt-out**: an X box on the card's right edge. A touch on it is claimed (`usage_tut` in `Hud::update`); the first closes
+  that hint for the session, a later one asks "Hide all tutorial hints?" (Hide / Keep): Hide writes `"hidden":true`. Restore
+  clears it. **Known limitation:** the close box is pointer/touch only. With a captured mouse there is no pointer, so a
+  keyboard + mouse player in play, and a pad player, cannot dismiss the card; it closes only when its step is done (or
+  when the world is left), and "Hide all" is unreachable for them until they use a pointer.
+- Gates: `--tutorial-selftest` (every step in order in all three modes, per-mode copy, marker `done`, no card without the
+  marker or in a session; `--tutorial-mutate=hintsbyname` must fail the no-marker leg), `--fit-selftest` (the card clears
+  the hotbar, the touch chrome and the status toast at every profile).
 
 ## Menu system (`Classes/Menu.cpp` + satellites)
 
@@ -662,7 +693,12 @@ Nine slots per world; nothing draws them yet (the strip is UX.8-4, touch/pointer
   titlebar **Defaults** action (as on Keys). A row lands on a page by the trailing `Setting::page` field, which is
   **display placement only**: the console name stays `lower(group).key`, so moving a row never renames its cvar.
   `page` may also name another tab's group. `KIND_HEADING` (kind 6) is a label-only, muted, control-less row for
-  sections. Neither kind holds a value, persists or becomes a cvar (`bridgeSettings` skips kind >= 4). Views are
+  sections. Neither kind holds a value, persists or becomes a cvar (`bridgeSettings` skips kind >= 4). **`KIND_ACTION`
+  (kind 8, UX.10-2)** is a button row that runs a function instead of holding a value: the same control slot as a
+  `KIND_TEXT` button, runs by row key in `SettingsMenu::editText`, skipped by the console like the other kinds >= 4.
+  The one use is Experiments > *Generate tutorial world* (help "Adds the tutorial world to My Worlds. Still polishing."): muted and
+  inert while a world is open, a danger-tone *Replace your tutorial world?* confirm when a marked world exists, then
+  a toast "Tutorial world added to My Worlds." (`SettingsMenu` owns a `GLW::Toast`). Views are
   indexed tabs first, then pages: `tabCount()` = 7 + pages, `railTabCount()` = 7, `currentTab()`, and a page's
   `tabName()` is `<tab>-<page>` (`--shot` writes `settings-experiments-srclike`, `-experiments-online`, `-video-atmosphere`, `-world-weather`).
   **SX.4 layout** (audit `WORKING/settings-ux-audit-2026-11-06.md` §3): rail = Gameplay, Audio, Controls, Keys, Video,
@@ -787,14 +823,15 @@ Settings and opens the screen; in a world it only explains that mods change from
   else folder; right-hand word On / Off / Refused / Skipped). Row 1 buttons act on the selection: *Turn off/on* (`setPackEnabled`), *Up*/*Down*
   (`movePack`; `--packs=` rows are fixed and the detail pane says so), *Remove* (`removePackFolder` behind a `GLDialog` naming `Packs/<folder>`);
   a Refused pack has Remove only. Row 2: *Install from file...* (desktop only: `eden_pick_zip_*`, SDL's open-file dialog in `Input_native.cpp`;
-  iOS/Android report it unavailable and the button is not drawn; the result goes to `PackInstall::installZip(path, docs, "")`) and the footer,
+  iOS/Android report it unavailable and the button is not drawn; the result goes to `PackInstall::installZip(path, docs, "")`; a zip older than the installed pack asks first, below) and the footer,
   "Changes apply when a world opens" until an action replaces it with its outcome. The detail pane: id/version, folder, state + block count,
   the loader's `why` (amber), requires/conflicts, then the validator lines (errors red, `warning:` grey).
 - **Get Mods** (K.3-6): the tab rail exists only while the setting `mods_catalogue_url` (Settings > Experiments > *Get Mods catalogue*, a
   `KIND_TEXT` row; http/https only) is non-empty (K.3-8: it defaults to `https://hagg3.github.io/emod-packs/index.json`). The catalogue is `eden_net_fetch(url, NULL)` on first show / *Refresh*, parsed by
   `PackInstall::parseCatalogue`; rows say "Installed" by id and the detail pane "installed vX". *Install* downloads to
-  `Packs/.download.partial` (progress bar, polled per frame, *Cancel* in place), then `installZip(partial, docs, entry.sha256)`; the partial is
-  always deleted and a failure shows `error` plus the validator lines. No catalogue host exists yet.
+  `Packs/.download.partial` (progress bar, polled per frame, *Cancel* in place), then `installZip(partial, docs, entry.sha256, entry.id)` (a zip holding another pack's id is refused); the partial is
+  always deleted and a failure shows `error` plus the validator lines. An install that would replace a newer pack (`Result::downgrade`) changes nothing and opens a
+  `GLDialog` ("Install older <name>?": *Install older version* / *Keep the installed one*); a download is kept as `Packs/.download.downgrade` until answered. No catalogue host exists yet.
 - **World entry notice**: `World::modsNoticePending` (set where `loadMods` runs, never in a session) is consumed on the first non-wait frame;
   any `ContentPack::worldMods` entry that is not loaded makes one status toast "This world uses mods that are off or missing: a, b".
 - **Multiplayer**: `EdenMpServerRow::usesMods` (INFO `mods=` present; `modsCompatible(info, "")` false) makes the server row read "Uses mods"

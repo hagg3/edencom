@@ -70,6 +70,7 @@ const EdenProfile* eden_profile_get(int id);
 const EdenProfile* eden_profile_active(void);
 
 int  eden_low_memory(void);
+int  eden_script_low_memory(void);   // K.8-5: the overlay, or <= 3 GB of RAM: the scripts' 24 MiB total cap
 
 // The page's real canvas/viewport box, in CSS pixels. Only the RATIO is used (the pixel buffer is
 // sized separately by eden_set_drawable_size). Re-derives the metrics and re-lays-out the UI.

@@ -1,5 +1,7 @@
 // G.4: split out of the old eden_main_native.cpp (see harness.h). Mode group "display".
 #include "harness.h"
+#include "../../../Classes/Renderer.h"   // X.32: the texture ledger
+#include "eden_fs.h"                    // X.32: the pack toggle
 
 using namespace harness;
 
@@ -683,6 +685,150 @@ int run_leak_probe() {
 
     std::printf("[eden-leak] %s (%d failure(s))\n",
                 g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
+    return g_selftestFailures ? 1 : 0;
+}
+
+// ---------------------------------------------------------------------------------------------
+// --rejoin-selftest[=N] (X.32) — N enter/leave cycles of one world in one process, with weather and
+// atmosphere on so the per-world textures (game textures, skins, clouds, precipitation, glow) are
+// created and freed each time, and the example mod pack in for every other entry so the block atlases
+// are re-uploaded each time (replaceFromImage). After every cycle, back at the menu: R::'s texture ledger has seen no
+// STALE destroy (a texDestroy of a name not live: on a driver that reuses names at once it deletes
+// whatever now holds the name, which is how a Windows tester's menu icons turned black), and the
+// UI icon atlas's name is still live and still owned by ui_icons.png. Headless, the null backend never
+// reuses a name, so a double destroy is caught on every platform. Windowed it runs on the real driver and
+// also reads the atlas's level 0 and 1 back each cycle: they must hash as they did before the first world.
+// ---------------------------------------------------------------------------------------------
+extern "C" unsigned eden_ui_icon_atlas_name(int* w, int* h);   // Classes/GLWidgets.cpp (X.32)
+
+// FNV-1a of mip `level` of the atlas, or 0 when it cannot be read (headless, or no such level).
+static uint64_t atlas_level_hash(unsigned tex, int level, int w, int h) {
+    w >>= level; h >>= level;
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+    std::vector<unsigned char> px((size_t)w * h * 4);
+    if (!R::texReadLevel(tex, level, w, h, px.data())) return 0;
+    uint64_t x = 1469598103934665603ull;
+    for (unsigned char b : px) { x ^= b; x *= 1099511628211ull; }
+    return x ? x : 1;
+}
+
+extern "C" void eden_gl_debug_bind_texture(unsigned t);        // gl_state.cpp (X.32)
+extern "C" void eden_gl_set_upload_trusts_cache(int on);
+
+// Windowed only: the mechanism that turned the icons black, staged on purpose. The atlas is bound (as
+// the menu's icon draw leaves it), a draw then names a texture that was just destroyed (core GL refuses
+// that bind; the cache records it), and the next texCreate gets that same name back from the driver.
+// Its upload must land in its own texture, not in the atlas. Inconclusive (and said so) on a driver that
+// does not hand the freed name straight back.
+static void bind_cache_leg(unsigned atlas, int aw, int ah, uint64_t lv0, uint64_t lv1) {
+    static const unsigned char red[4 * 4 * 4] = {
+        255,0,0,255, 255,0,0,255, 255,0,0,255, 255,0,0,255, 255,0,0,255, 255,0,0,255, 255,0,0,255, 255,0,0,255,
+        255,0,0,255, 255,0,0,255, 255,0,0,255, 255,0,0,255, 255,0,0,255, 255,0,0,255, 255,0,0,255, 255,0,0,255};
+    R::TexDesc td = {};
+    td.w = 4; td.h = 4; td.format = R::TF_RGBA8; td.label = "x32-scratch";
+    const R::Tex gone = R::texCreate(td, red);
+    R::texDestroy(gone);
+    eden_gl_debug_bind_texture(atlas);   // what the icon draw left bound
+    eden_gl_debug_bind_texture(gone);    // a draw naming a destroyed texture: refused by GL, kept by the cache
+    const R::Tex fresh = R::texCreate(td, red);
+    R::takeError();                      // the refused bind's GL_INVALID_OPERATION
+    const uint64_t n0 = atlas_level_hash(atlas, 0, aw, ah), n1 = atlas_level_hash(atlas, 1, aw, ah);
+    unsigned char px[4 * 4 * 4] = {};
+    const bool got = R::texReadLevel(fresh, 0, 4, 4, px);
+    R::texDestroy(fresh);
+    char d[200];
+    std::snprintf(d, sizeof d, "destroyed %u, next create %u%s, atlas level 0 %s, level 1 %s, new texture %s", gone, fresh,
+                  fresh == gone ? " (name reused)" : " (not reused: inconclusive)", n0 == lv0 ? "intact" : "CHANGED",
+                  n1 == lv1 ? "intact" : "CHANGED", got && px[0] == 255 && px[1] == 0 ? "red" : "NOT red");
+    check(n0 == lv0 && n1 == lv1 && got && px[0] == 255 && px[1] == 0,
+          "bind-cache leg: an upload after a refused stale bind lands in its own texture", d);
+}
+
+int run_rejoin_selftest() {
+    g_selftestTag = "eden-rejoin";
+    if (!mutation_known("eden-rejoin", "--rejoin-mutate", g_opt.rejoinMutate, {"doubledestroy", "elide"})) return 2;
+    if (g_opt.rejoinMutate == "elide") eden_gl_set_upload_trusts_cache(1);
+    const char* name = g_opt.world.empty() ? "rejoin" : g_opt.world.c_str();
+    const int cycles = g_opt.cycles < 2 ? 2 : g_opt.cycles;
+    for (int i = 0; i < eden_settings_count(); ++i) {
+        if (!std::strcmp(eden_settings_key(i), "weather")) eden_settings_set(i, 1.0f);
+        if (!std::strcmp(eden_settings_key(i), "atmosphere")) eden_settings_set(i, 2.0f);
+    }
+    tick(g_opt.frames / 4);
+    int aw = 0, ah = 0;
+    const unsigned atlas = eden_ui_icon_atlas_name(&aw, &ah);
+    // Windowed: the atlas's level 0 and level 1 as the driver holds them now, before any world. A later
+    // upload landing in the atlas (a stale binding) changes level 0; a lost mip chain loses level 1.
+    const char* glVersion = R::driverString(R::DS_VERSION);   // "" with no context (headless, or none could be made)
+    const bool gl = glVersion && *glVersion;
+    std::printf("[eden-rejoin] %s\n", gl ? glVersion : "no GL context: ledger checks only");
+    const uint64_t lv0 = gl ? atlas_level_hash(atlas, 0, aw, ah) : 0, lv1 = gl ? atlas_level_hash(atlas, 1, aw, ah) : 0;
+    if (gl) check(lv0 && lv1, "windowed: the icon atlas's level 0 and level 1 read back", "");
+    if (gl) bind_cache_leg(atlas, aw, ah, lv0, lv1);
+    {
+        char d[160];
+        std::snprintf(d, sizeof d, "name %u, owner '%s'", atlas, R::texOwner(atlas) ? R::texOwner(atlas) : "(not live)");
+        check(atlas && R::texLive(atlas) && std::strstr(R::texOwner(atlas), "ui_icons.png"),
+              "the icon atlas is live and owned by ui_icons.png before any world", d);
+    }
+    const long stale0 = R::texStaleDestroys(), uses0 = R::texStaleUses();
+    std::printf("[eden-rejoin] %d enter/leave cycles of '%s' (%dz), icon atlas = texture %u\n",
+                cycles, name, g_opt.height, atlas);
+    std::fflush(stdout);
+    // The example pack goes in for odd cycles and out for even ones, so every world entry changes the mod
+    // tiles and re-uploads the block atlases (Resources::setModTiles -> Texture2D::replaceFromImage).
+    const std::string docs = eden_platform_documents_root();
+    const std::string packIn = docs + "/Packs/emod_example", packOut = docs + "/Packs-off/emod_example";
+    eden_fs_remove_tree(packIn);
+    eden_fs_remove_tree(packOut);
+    eden_fs_make_dirs(docs + "/Packs");
+    eden_fs_make_dirs(docs + "/Packs-off");
+    // A packaged build has no repo beside it: copy port/tools/fixtures/packs/emod_example to <docs>/pack-fixtures/
+    // for this leg. Without it the run says so and skips the toggle (CI always has the tree).
+    const std::string fixture = g_packs::fixture_pack("emod_example");
+    const bool fixtureThere = eden_fs_exists(fixture + "/pack.json");
+    const bool havePack = fixtureThere && g_packs::copy_tree(fixture, packOut);
+    if (fixtureThere) check(havePack, "the example pack copies in (mod tiles change at every world entry)", fixture.c_str());
+    else std::printf("[eden-rejoin] SKIP the atlas re-upload toggle: no example pack at %s (copy it to <docs>/pack-fixtures/)\n",
+                     fixture.c_str());
+    const char* const kWeather[3] = {"weather storm", "weather snow", "weather rain"};
+    for (int c = 0; c < cycles; ++c) {
+        if (havePack) {
+            if (c % 2 == 0) eden_fs_move(packOut, packIn); else eden_fs_move(packIn, packOut);
+        }
+        if (!open_world(name, g_opt.height)) return 1;
+        eden_console_teleport(g_opt.at[0] + 40.0f * c, g_opt.at[1], g_opt.at[2]);
+        tick(g_opt.frames / 4);
+        Console::run(kWeather[c % 3]);
+        tick(g_opt.frames / 4);
+        // The bug put back: a game texture's name destroyed behind its owner's back. The HUD draws it (a
+        // stale use) and the owner destroys it again at world exit (a stale destroy).
+        if (c == 0 && g_opt.rejoinMutate == "doubledestroy") {
+            R::texDestroy(Resources::getResources->getTex(ICO_BUILD)->name);
+            tick(4);
+        }
+        if (!quit_to_menu()) return 1;
+        tick(g_opt.frames / 8);
+        // The menu draws its icons again here; the atlas must not have been touched by the world's teardown.
+        const long stale = R::texStaleDestroys() - stale0, uses = R::texStaleUses() - uses0;
+        const char* owner = R::texOwner(atlas);
+        char d[200];
+        std::snprintf(d, sizeof d, "stale destroys %ld, stale uses %ld, atlas %u owner '%s', block atlas %u, live textures %ld",
+                      stale, uses, atlas, owner ? owner : "(not live)", Resources::getResources->atlas->name, R::texLiveCount());
+        char what[96];
+        std::snprintf(what, sizeof what, "cycle %d/%d: no stale texture destroy or use, icon atlas intact", c + 1, cycles);
+        check(stale == 0 && uses == 0 && owner && std::strstr(owner, "ui_icons.png") && eden_ui_icon_atlas_name(nullptr, nullptr) == atlas,
+              what, d);
+        if (gl) {
+            const uint64_t n0 = atlas_level_hash(atlas, 0, aw, ah), n1 = atlas_level_hash(atlas, 1, aw, ah);
+            std::snprintf(d, sizeof d, "level 0 %016llx (was %016llx), level 1 %016llx (was %016llx)",
+                          (unsigned long long)n0, (unsigned long long)lv0, (unsigned long long)n1, (unsigned long long)lv1);
+            std::snprintf(what, sizeof what, "cycle %d/%d: the atlas's pixels and mip chain are unchanged", c + 1, cycles);
+            check(n0 == lv0 && n1 == lv1, what, d);
+        }
+    }
+    std::printf("[eden-rejoin] %s (%d failure(s))\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
     return g_selftestFailures ? 1 : 0;
 }
 

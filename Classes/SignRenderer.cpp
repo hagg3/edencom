@@ -346,6 +346,23 @@ void SignRenderer::releaseTextures() {
     g_cacheBytes = 0;
 }
 
+void SignRenderer::forget(const char* text) {
+    if (!text) return;
+    for (int kind = 0; kind < 3; ++kind) {
+        auto it = g_cache.find(cacheKey(kind, text));
+        if (it == g_cache.end()) continue;
+        R::texDestroy(it->second.name);
+        g_cacheBytes -= it->second.bytes;
+        g_cache.erase(it);
+    }
+}
+
+bool SignRenderer::cached(const char* text) {
+    for (int kind = 0; kind < 3; ++kind)
+        if (g_cache.count(cacheKey(kind, text))) return true;
+    return false;
+}
+
 void SignRenderer::render() {
     World* world = World::getWorld;
     memset(&g_stats, 0, sizeof(g_stats));

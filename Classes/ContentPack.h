@@ -117,6 +117,10 @@ void setExtraPackDirs(const std::vector<std::string>& dirs);
 // nothing (D6/K.1 D7) and puts the stock atlases back.
 void loadMods(const std::string& documents, bool session);
 const ModReport& modReport();
+// K.8-7 (`scripts reload`): re-reads the script files of the loaded pack `id` from disk with compileMod's caps and
+// refusals (unreadable, over 256 KiB, over 1 MiB together, precompiled). False + `lines`: refused, the sources
+// read at world entry stay. Not pack.json, tiles or blocks, and not the pack's hash (stale until the next world).
+bool rereadScripts(const std::string& id, std::vector<std::string>* lines);
 
 // ---- K.3: the manager's model (WORKING/mod-manager-plan-2026-11-01.md)
 //

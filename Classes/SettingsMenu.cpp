@@ -43,6 +43,7 @@
 #include "GLDialog.h"
 #include "Menu.h"   // K.3-5: Settings > Mods opens the manager
 #include "Console.h"   // SX.6: KIND_CVAR rows read and write a console variable
+#include "TutorialInstall.h"   // UX.10-2: Restore tutorial world
 #include "Terrain.h"   // SX.6: world-scoped rows need a world in play
 #include <string>
 #include "eden_prefs.h"   // G.2b-1: one flat prefs file on every target (de-ObjC plan D7)
@@ -55,7 +56,7 @@
 // The shared settings table, as scalars (Settings.cpp).
 #include "eden_settings.h"   // QA.19: one header for the accessors (port/src/seam/Settings.cpp)
 
-enum { SM_KIND_TOGGLE = 0, SM_KIND_RANGE = 1, SM_KIND_ENUM = 2, SM_KIND_TEXT = 4, SM_KIND_PAGE = 5, SM_KIND_HEADING = 6, SM_KIND_CVAR = 7 };
+enum { SM_KIND_TOGGLE = 0, SM_KIND_RANGE = 1, SM_KIND_ENUM = 2, SM_KIND_TEXT = 4, SM_KIND_PAGE = 5, SM_KIND_HEADING = 6, SM_KIND_CVAR = 7, SM_KIND_ACTION = 8 };
 enum { SM_SCOPE_ALWAYS = 0, SM_SCOPE_WORLD = 1, SM_SCOPE_NO_WORLD = 2 };
 
 // ---------------------------------------------------------------------------------------------
@@ -312,6 +313,7 @@ void SettingsMenu::controlSize(int si,float* w,float* h) const{
     case SM_KIND_TOGGLE: *w=Toggle::designW(); *h=Toggle::designH(); break;
     case SM_KIND_ENUM:   *w=du(29)*2.0f+du(110); *h=du(29); break;
     case SM_KIND_TEXT:
+    case SM_KIND_ACTION:
     case SM_KIND_PAGE:   *w=du(190); *h=du(29); break;
     case SM_KIND_HEADING: *w=0.0f; *h=0.0f; break;
     default:             *w=du(200)+du(48); *h=du(29); break;
@@ -319,6 +321,7 @@ void SettingsMenu::controlSize(int si,float* w,float* h) const{
 }
 
 bool SettingsMenu::rowMuted(int k) const{
+    if(sm_kind(m_si[k])==SM_KIND_ACTION&&sm_world_open()) return true;   // UX.10-2: Restore tutorial world needs the title screen
     const int p=eden_settings_parent(m_si[k]);
     return p>=0&&sm_get(p)==0.0f;
 }
@@ -345,6 +348,9 @@ void SettingsMenu::refreshValue(int k){
     }
     case SM_KIND_PAGE:    // SX.1: opens a sub-page
         m_textBtn[k].setLabel("Open", GLW::du(18));
+        break;
+    case SM_KIND_ACTION:  // UX.10-2: a button row; its label is its verb
+        m_textBtn[k].setLabel("Restore", GLW::du(18));
         break;
     case SM_KIND_HEADING:
         break;
@@ -494,6 +500,7 @@ void SettingsMenu::layout(){
             m_stepper[k].setHitRect(CGRectMake(cr.origin.x,rr.origin.y,cr.size.width,rr.size.height));
             break;
         case SM_KIND_TEXT:
+        case SM_KIND_ACTION:
         case SM_KIND_PAGE:
             m_textBtn[k].setRect(cr);
             m_textBtn[k].setHitRect(touch?CGRectMake(cr.origin.x,rr.origin.y,cr.size.width,rr.size.height):CGRectMake(0,0,0,0));
@@ -545,6 +552,10 @@ void SettingsMenu::editText(int k){
         if(v>=0) selectTab(v);
         return;
     }
+    if(sm_kind(m_si[k])==SM_KIND_ACTION){   // UX.10-2: the only action row so far
+        if(!std::strcmp(key,"tutorial_restore")) restoreTutorial();
+        return;
+    }
     if(!GLDialog::textEntryAvailable()) return;
     s_textOwner=this;
     s_textRow=k;
@@ -556,6 +567,43 @@ void SettingsMenu::editText(int k){
     }
     GLDialog::prompt("Matchmakers","Addresses of matchmakers, separated by commas (host or host:port, default port 27020). Empty turns it off.",
                      eden_settings_text(m_si[k]),512,kBtn,2,textPromptCb);
+}
+
+// UX.10-2: Settings > Gameplay > Restore tutorial world (docs/save-load.md "The tutorial world"). Needs the title
+// screen (the row is muted and does nothing while a world is open). A marked world already in My Worlds is
+// replaced after a danger-tone confirm; otherwise the install runs at once. The Menu rescans its list when it
+// is next shown (Menu::activate), so nothing else is refreshed here.
+static std::string sm_docs(){
+    World* w=World::getWorld;
+    return (w&&w->fm)?w->fm->documents:std::string();
+}
+static void sm_doRestore(SettingsMenu* s){
+    const std::string docs=sm_docs();
+    if(docs.empty()) return;
+    const std::string key=TutorialInstall::restore(docs);
+    static const char* const kOk[]={"OK"};
+    if(key.empty()){
+        GLDialog::show("Could not restore the tutorial world","The world could not be written. Try again.",kOk,1,sm_noop);
+        return;
+    }
+    s->showToast("Tutorial world added to My Worlds.");
+}
+static SettingsMenu* s_restoreOwner=NULL;
+static void sm_restoreCb(int chosen){
+    SettingsMenu* s=s_restoreOwner;
+    s_restoreOwner=NULL;
+    if(s&&chosen==0&&!sm_world_open()) sm_doRestore(s);
+}
+void SettingsMenu::showToast(const char* text){ m_toast.show(text,3.0f); }
+void SettingsMenu::restoreTutorial(){
+    if(sm_world_open()) return;
+    const std::string docs=sm_docs();
+    if(docs.empty()) return;
+    if(TutorialInstall::markedWorlds(docs).empty()){ sm_doRestore(this); return; }
+    s_restoreOwner=this;
+    static const char* const kBtn[]={"Replace","Cancel"};
+    GLDialog::show("Replace your tutorial world?","Changes you made there are lost.",kBtn,2,sm_restoreCb);
+    GLDialog::setDanger(0);
 }
 
 void SettingsMenu::textPromptCb(int chosen,const char* text){
@@ -587,7 +635,7 @@ void SettingsMenu::textPromptCb(int chosen,const char* text){
 static const int usage_id=3;
 
 void SettingsMenu::update(float etime){
-    (void)etime;
+    m_toast.update(etime);
     build();
     layout();
     const bool keysTab=m_tab==SM_TAB_KEYS&&m_keys;
@@ -642,7 +690,7 @@ void SettingsMenu::update(float etime){
                     if(m_slider[k].beginDrag(mx)) commitSlider(k);
                 }else if(kind==SM_KIND_ENUM){
                     m_stepper[k].setPressed(m_stepper[k].hitDec(mx,my),m_stepper[k].hitInc(mx,my));
-                }else if(kind==SM_KIND_TEXT||kind==SM_KIND_PAGE){
+                }else if(kind==SM_KIND_TEXT||kind==SM_KIND_PAGE||kind==SM_KIND_ACTION){
                     m_textBtn[k].setPressed(m_textBtn[k].hit(mx,my));
                 }
             }
@@ -732,7 +780,7 @@ void SettingsMenu::update(float etime){
                 }else if(kind==SM_KIND_ENUM){
                     if(m_stepper[k].hitDec(mx,my))      { stepRow(k,-1); break; }
                     else if(m_stepper[k].hitInc(mx,my)) { stepRow(k,+1); break; }
-                }else if(kind==SM_KIND_TEXT||kind==SM_KIND_PAGE){
+                }else if(kind==SM_KIND_TEXT||kind==SM_KIND_PAGE||kind==SM_KIND_ACTION){
                     if(m_textBtn[k].hit(mx,my)){ editText(k); break; }
                 }
             }
@@ -838,6 +886,7 @@ bool SettingsMenu::showRow(const char* key,CGRect* control){
                 case SM_KIND_TOGGLE: *control=m_toggle[k].rect(); break;
                 case SM_KIND_ENUM:   *control=m_stepper[k].rect(); break;
                 case SM_KIND_TEXT:
+                case SM_KIND_ACTION:
                 case SM_KIND_PAGE:   *control=m_textBtn[k].rect(); break;
                 case SM_KIND_HEADING: *control=m_row[k].rect(); break;
                 default:             *control=m_slider[k].rect(); break;
@@ -902,6 +951,7 @@ void SettingsMenu::render(){
             break;
         case SM_KIND_ENUM: m_stepper[k].setMuted(muted); m_stepper[k].render(); break;
         case SM_KIND_TEXT:
+        case SM_KIND_ACTION:
         case SM_KIND_PAGE: m_textBtn[k].setMuted(muted); m_textBtn[k].render(); break;
         case SM_KIND_HEADING: break;
         default:{
@@ -915,6 +965,7 @@ void SettingsMenu::render(){
         }
     }
     if(m_tab!=SM_TAB_KEYS) m_scroll.render();
+    m_toast.render();   // UX.10-2: "Tutorial world added to My Worlds."
 
     GLW::end2D();
 }

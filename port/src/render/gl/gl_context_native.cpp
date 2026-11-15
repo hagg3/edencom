@@ -492,7 +492,7 @@ void eden_scene_pass_begin(void) {
         glGenTextures(1, &g_scene_color);
         glGenRenderbuffers(1, &g_scene_depth);
         glBindFramebuffer(GL_FRAMEBUFFER, g_scene_fbo);
-        rgl::bindTextureNow(g_scene_color);   // through the cache, so the next draw rebinds its own
+        rgl::bindTextureForUpload(g_scene_color);   // a real bind, then the cache, so the next draw rebinds its own
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);

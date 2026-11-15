@@ -118,7 +118,8 @@ the version S.2 vendors. Offline artefacts (the bundled map) may use level 19.
 | 10 | `BLOCK_PALETTE` | singleton | 8 + count × 68 bytes (below) | **0** | K.1-2 (2026-10-31): what type bytes 128–255 mean. Only in a file with `flags` bit 0. A pre-K.1-2 reader never sees one (it refuses flagged files). |
 | 11 | `SKY_CLOCK` | singleton | 16 bytes (below) | **0** | DN.2 (2026-10-31): the day/night cycle's time of day and lock. Taken from the reserved range, so a reader that predates it ignores it. |
 | 12 | `WEATHER` | singleton | 32 bytes (below) | **0** | AT.1b (2026-11-05): the weather's state, schedule RNG and lock. Taken from the reserved range, so a reader that predates it ignores it. |
-| 13–255 | reserved | — | — | — | a reader treats one as a member of its batch and otherwise ignores it; `verify` reports it |
+| 13 | `MOD_DATA` | singleton | ≤ 1 MiB (below) | any | K.6-5 (2026-11-15): what mod scripts saved with `eden.store`, per pack. Taken from the reserved range, so a reader that predates it ignores it. |
+| 14–255 | reserved | — | — | — | a reader treats one as a member of its batch and otherwise ignores it; `verify` reports it. Compaction keeps the newest record of each reserved type verbatim (K.6-5a, below); **builds up to 0.5 drop them when they compact**, so a world a newer build saved loses that build's records if one of those builds compacts it. |
 
 ### BLOCK_PALETTE (K.1-2)
 
@@ -281,7 +282,7 @@ the engine fill unsaved columns with **void** and say so in a toast, never guess
 stay intact, and a newer build fills the rest correctly later. Compaction copies `GENERATOR` raw,
 last of the singletons (after `PROVENANCE`), so a fresh conversion — which never has one — still
 compacts to itself byte for byte. *Caveat:* a pre-H.4 engine compacting a Classic world drops the
-record (reserved types are dropped), and the world then loads as the legacy profile.
+record (builds up to 0.5 drop reserved types when they compact), and the world then loads as the legacy profile.
 `emod.py dump` prints it decoded; `verify` checks its length and decodes it. Export writes it into
 the `.eden` header's `reserved[]` as the `EMG1` mirror ([eden-file-format.md](eden-file-format.md)).
 
@@ -334,6 +335,33 @@ first spell clear. `verify` reports a wrong length or codec; `dump` decodes it. 
 `SKY_CLOCK`. Not in the state digest, not exported to `.eden`. A pre-AT build keeps it live through its own
 saves but drops it if it compacts (the weather then starts clear again).
 
+### MOD_DATA (≤ 1 MiB, K.6-5)
+
+Per-pack data that mod scripts saved with `eden.store` (`docs/scripting.md` "Saved data"). The format checks
+the framing only; each entry's bytes are the scripting runtime's encoding and are opaque here. Written by the
+engine's save only when a pack stored something since the load or the last commit, into a batch that commits
+anyway (exit, warp, autosave, an edit's save). Never written by conversion or in a multiplayer session (no pack
+loads there). Stored with the store's codec (zstd), `band_mask`/`x`/`z` 0, `aux` the decoded length.
+
+| offset | type | field |
+|---|---|---|
+| 0 | u32 | version, 1 |
+| 4 | u32 | count, ≤ 64 |
+| 8 | per entry | `char id[24]` (a pack id, `[a-z0-9_]{1,24}`, NUL padded), `u32 len` (≤ 65,536), `len` bytes |
+
+Entries are in strictly ascending id order (byte compare), so ids are distinct, and the payload ends exactly
+after the last entry. A record that breaks **any** rule (version, count, an id, the order, a length, trailing
+bytes, over 1 MiB) is **ignored whole**: the world loads with no mod data and one console line, the record stays
+in the file, and the next save in which a pack stores something supersedes it with a valid one. `verify` names
+the first broken rule (`… (the game ignores this MOD_DATA)`); `putRecord` refuses such a record; `dump` lists the
+entries. **The game never rewrites an entry it does not use:** the entry of a pack that is not loaded, or that
+only read its data, goes out byte for byte on every save, and so does an entry whose bytes the runtime cannot
+decode, until that pack stores something. A zero-length entry is valid (an empty store; the engine never
+writes one: a pack whose store becomes empty is left out). Compaction copies it verbatim (below), malformed or
+not. Not in the state digest. **Not exported to `.eden`** (lossy, like the palette's names). A build up to 0.5
+keeps it live through its own saves but drops it if it compacts; a build with K.6-5a but not K.6-5 keeps it
+through compaction too.
+
 ## Batches and commits — writing
 
 A **batch** is one save: records that share one `seq`, followed by a `COMMIT` carrying that `seq`.
@@ -357,8 +385,18 @@ batch (seq 1) of the live records, then `fsync`s and renames over the old one. O
 they are, so they may be sparse.
 - `EdenWorldStore` writes them in conversion's order (`WORLD_HEADER`, `CREATURES`, a non-empty
   `SIGN_TRAILER`, `PROVENANCE`, then H.4's `GENERATOR`, DN.2's `SKY_CLOCK`, AT.1b's `WEATHER`, `COLUMN`s by (ord, x, z),
-  K.1-2's `BLOCK_PALETTE`, `SUMMARY`, `COMMIT`); reserved types are dropped, and so is a stray
-  `BLOCK_PALETTE` in an unflagged file. The palette comes after the columns so the flag compaction
+  K.1-2's `BLOCK_PALETTE`, `SUMMARY`, `COMMIT`). A stray `BLOCK_PALETTE` in an unflagged file is dropped.
+- **`MOD_DATA` and the reserved types are kept** (K.6-5a, K.6-5): right after `WEATHER` and before the
+  `COLUMN`s, the newest `MOD_DATA` (type 13) and then the newest record of each type 14–255, in ascending
+  type order, **verbatim**: its codec, `band_mask`, `x`, `z`,
+  `aux` and stored payload bytes are copied as they are (after the payload decodes; one that does not is
+  damage, as for any live record), and only `seq` and the CRC are new. So a world a newer build saved
+  (a type this build does not know, such as a mod's saved data) keeps that build's newest records through
+  this build's compaction. Older versions of such a record are dropped, as for every singleton. Builds up
+  to 0.5 dropped all reserved types (and `emod.py` before K.6-5a did too); the fixture pack's `compact`
+  line (`f64-reserved.emod`: type 200 superseded once with header fields set, 14 raw, 255 zlib, and a two-pack
+  zstd `MOD_DATA`) proves the
+  engine and `emod.py compact` agree byte for byte. The palette comes after the columns so the flag compaction
   learns the latent bytes ≥ 128 in the same decode pass. The file header keeps `flags`, or sets bit 0
   for the flag compaction (above). `emod.py compact` is the byte-for-byte reference (K.1-2's
   `flagcompact` lines in the fixture pack).
@@ -429,7 +467,7 @@ error inside the payload. It also fails, **before any buffer is sized**, when th
 record declares (a COLUMN's popcount(band_mask) × 8,192, else `aux`) is over its type's ceiling
 (QA.4, 2026-11-11): COLUMN 131,072; WORLD_HEADER 192; CREATURES 24,000 (400 × 60); SIGN_TRAILER 1 MiB;
 SUMMARY 16; COMMIT 24; GENERATOR 28; BLOCK_PALETTE 8,712 (8 + 128 × 68); SKY_CLOCK 16; WEATHER 32;
-PROVENANCE, INDEX and every reserved type 16 MiB. These are the writer's own limits, so no conforming
+MOD_DATA 1 MiB; PROVENANCE, INDEX and every reserved type 16 MiB. These are the writer's own limits, so no conforming
 file is affected; without them a 36 KB file could make a reader allocate 1 GiB. (A new record type
 adds its row here, in `record_decoded_max()` (`Classes/EdenWorldStore.h`) and in `emod.py`'s `DECODED_MAX`.) When it does, the reader uses the newest **earlier applied** version of
 the same key, which is still in the file until compaction. For a column with no earlier version, it
@@ -701,3 +739,22 @@ trailer, newblocks, folders, display unchanged.
 
 ### Q.1a notes (2026-10-21)
 - **F12 (X.12 note):** header-only opens now also cover the world-name read, the height probe and the provenance pairing check; only `loadEmodWorld` full-CRCs.
+
+## Verified (K.6-5a, 2026-11-15) — compaction keeps reserved types
+Mac (`TESTERS/k65a/`): `emod.py selftest` PASSED (new reserved section: the newest type 200 (zlib, header
+fields set) and 13 survive compaction verbatim, after the singletons and before the columns, the older 200 is
+dropped, state unchanged, idempotent). The regenerated pack's 24 old lines and 16 old files are byte-identical;
+it gained `f64-reserved.emod` (`read` + `compact`). `--emod-selftest` 344/344: the engine's compaction of it is
+`emod.py compact`'s byte for byte, and the new reserved section compares frames raw (type, codec, band_mask,
+x, z, aux, payload) before and after. `--emod-mutate=dropunknown` (C-4 put back) fails 5 checks, the gate's
+regex among them.
+
+## Verified (K.6-5, 2026-11-15) — MOD_DATA
+Mac (`TESTERS/k65/`): `emod.py selftest` PASSED (new MOD_DATA section: a good record verifies clean; 65 entries,
+a 65,537-byte entry, id `Bad-Id`, ids out of order, a trailing byte and version 2 are each named by `verify` in
+the engine's words and kept verbatim by `compact`). The pack's `f64-reserved.emod` now carries 14 raw (was 13)
+and a two-pack `MOD_DATA`; its two lines changed, every other line and file is byte-identical.
+`--emod-selftest` 364/364 (new moddata section: the same six records refused by `putRecord`, opened undamaged,
+named by `verify`, compacted verbatim; a good one round trips, is compressed, is not in the digest and
+compacts after `WEATHER`, before type 14 and the columns). `--emod-mutate=dropunknown` still fails, MOD_DATA's
+compaction legs among them.

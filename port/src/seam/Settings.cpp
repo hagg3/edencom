@@ -56,13 +56,13 @@
 // g_value[], persists as an NSString, and has no float meaning (min/max/step/def are unused).
 // SX.1 (WORKING/settings-ux-audit-2026-11-06.md §4.1): KIND_PAGE (5) is an "Open" row that opens the
 // sub-page named in its `options` (SettingsMenu's kPages[]); KIND_HEADING (6) is a label-only section
-// heading. Neither has a value: never persisted, never a cvar (the console skips kind >= KIND_TEXT).
+// heading. Neither has a value: never persisted, never a cvar (the console skips kind >= KIND_TEXT). KIND_ACTION (8, UX.10-2) is a button row: the same.
 // SX.6 (audit §4.2): KIND_CVAR (7) is a row that SHOWS a console variable owned elsewhere (`options` = its
 // name, e.g. "world.time"): the GL screen draws it as the cvar's own kind with the cvar's range, and reads and
 // writes through the cvar's get/set. No value here: never persisted (the owner saves it: world ones in the
 // .emod at the next commit), never re-bridged as a cvar. A value that persists in eden_prefs is an ordinary
 // row instead, and its cvar is derived from it (eden_settings_cvar): one table either way.
-enum { KIND_TOGGLE = 0, KIND_RANGE = 1, KIND_ENUM = 2, KIND_KEY = 3, KIND_TEXT = 4, KIND_PAGE = 5, KIND_HEADING = 6, KIND_CVAR = 7 };
+enum { KIND_TOGGLE = 0, KIND_RANGE = 1, KIND_ENUM = 2, KIND_KEY = 3, KIND_TEXT = 4, KIND_PAGE = 5, KIND_HEADING = 6, KIND_CVAR = 7, KIND_ACTION = 8 };
 // SX.6: when the GL screen shows a row. SCOPE_WORLD rows need a world in play (in a multiplayer session they
 // stay, badged "temporary": U3); SCOPE_NO_WORLD rows stand in for them on the title screen's Settings.
 enum { SCOPE_ALWAYS = 0, SCOPE_WORLD = 1, SCOPE_NO_WORLD = 2 };
@@ -93,6 +93,8 @@ static const Setting kSettings[] = {
   { "creatures",         "Creatures",         "Gameplay",  KIND_TOGGLE, 0,   1,   1,   1,  NULL,                       NULL },
   { "crouch",            "Crouch mode",       "Experiments", KIND_TOGGLE, 0,   1,   1,   0,  "Adds a crouch key for 1-block gaps.", NULL, NULL, "Gameplay" },
   { "hotbar",            "Hotbar",            "Gameplay",  KIND_TOGGLE, 0,   1,   1,   1,  "Nine quick slots for blocks and colours.", NULL },
+  // UX.10-2: a button row (KIND_ACTION): holds no value, never persisted, never a cvar. SettingsMenu runs it by key.
+  { "tutorial_restore",  "Generate tutorial world", "Experiments", KIND_ACTION, 0, 0, 0, 0, "Adds the tutorial world to My Worlds. Still polishing.", NULL },
   // Fly mode lives in Gameplay (was Experiments). The four sliders default to the original feel
   // (accel 10x walk, drag .995/frame, rise/fall JUMP_SPEED*3, no speed cap); see FLY_* in Classes/Player.mm.
   { "fly",               "Allow fly",         "Gameplay",  KIND_TOGGLE, 0,   1,   1,   0,  NULL,                   NULL },

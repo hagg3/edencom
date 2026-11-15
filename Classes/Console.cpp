@@ -806,18 +806,20 @@ void cmdLua(Ctx& c) {
 void cmdScripts(Ctx& c) {
     if (!c.args.empty() && lower(c.args[0]) == "reload") {
         ModScript::restart();
-        c.print("Mod scripts restart on the next frame (the sources read when the world opened)");
+        c.print("Mod scripts restart on the next frame (their script files are read again from disk)");
         return;
     }
     const std::vector<ModScript::Info> v = ModScript::info();
     if (v.empty()) { c.print("No mod scripts are running (a pack lists them in pack.json \"scripts\")"); return; }
     for (const ModScript::Info& i : v) {
-        const std::string line = strf("%s: %d handler(s), %d waiting, %zu KiB (peak %zu), %ld instr last frame, %d error(s)%s%s",
+        const std::string line = strf("%s: %d handler(s), %d waiting, %zu KiB (peak %zu), %ld instr last frame, %d error(s)%s%s%s",
                                       i.pack.c_str(), i.handlers, i.coroutines, i.mem / 1024, i.memPeak / 1024, i.instrLastFrame,
-                                      i.errors, i.why.empty() ? "" : (i.stopped ? "; STOPPED: " : "; last: "), i.why.c_str());
+                                      i.errors, i.skipped ? strf(", %d skipped (64 waiting)", i.skipped).c_str() : "",
+                                      i.why.empty() ? "" : (i.stopped ? "; STOPPED: " : "; last: "), i.why.c_str());
         if (i.stopped || i.errors) c.error("%s", line.c_str());
         else c.print("%s", line.c_str());
     }
+    c.print("All scripts together: %zu KiB of %zu KiB", ModScript::totalMem() / 1024, ModScript::limits().allMemBytes / 1024);
 }
 void cmdMod(Ctx& c) {
     if (c.args.empty()) {
@@ -827,7 +829,7 @@ void cmdMod(Ctx& c) {
         return;
     }
     const std::vector<std::string> rest(c.args.begin() + 1, c.args.end());
-    if (!ModScript::runCommand(lower(c.args[0]), rest, c.sink)) c.error("No mod command called %s (mod lists them)", lower(c.args[0]).c_str());
+    if (!ModScript::runCommand(lower(c.args[0]), rest, c.sink)) c.error("No mod command called %s (mod lists them; PACK:NAME names one pack's)", lower(c.args[0]).c_str());
 }
 
 void cmdGetblock(Ctx& c) {   // diagnostics: the raw type:colour of a cell
@@ -944,8 +946,8 @@ void init() {
     addCommand("save", "", "Saves the world (the pause menu's Save).", CF_WORLD, {}, cmdSave);
     addCommand("packs", "[PACK | on PACK | off PACK]", "The mod packs this world loaded, with every problem; or the blocks of one PACK; on/off switches a pack for the next world load.", 0, {CmdScript::ARG_TEXT}, cmdPacks);
     addCommand("lua", "CODE", "Runs Lua in the console's own sandboxed state (an expression prints its value). One line, no ';'.", CF_WORLD, {CmdScript::ARG_TEXT}, cmdLua);
-    addCommand("scripts", "[reload]", "The mod packs' Lua scripts: memory, CPU, errors; reload restarts them.", 0, {CmdScript::ARG_TEXT}, cmdScripts);
-    addCommand("mod", "[NAME ARGS...]", "Lists the commands mod scripts added, or runs one.", CF_WORLD, {CmdScript::ARG_TEXT}, cmdMod);
+    addCommand("scripts", "[reload]", "The mod packs' Lua scripts: memory, CPU, errors; reload re-reads their script files and restarts them.", 0, {CmdScript::ARG_TEXT}, cmdScripts);
+    addCommand("mod", "[NAME | PACK:NAME] [ARGS...]", "Lists the commands mod scripts added, or runs one (PACK:NAME when two packs share a name).", CF_WORLD, {ARG_MODCMD}, cmdMod);
     addCommand("getblock", "X Y Z", "The raw type:colour of a cell.", CF_DIAG | CF_WORLD, {CmdScript::ARG_COORD, CmdScript::ARG_COORD, CmdScript::ARG_COORD}, cmdGetblock);
     addCommand("cmdtrace", "[0|1]", "Prints every statement a script runs.", CF_DIAG, {CmdScript::ARG_NUMBER}, cmdCmdtrace);
     addCommand("stats", "", "The command interpreter's counters.", CF_DIAG, {}, cmdStats);
@@ -1144,6 +1146,7 @@ Completion complete(const std::string& line) {
         case CmdScript::ARG_CREATURE: for (const std::string& s : CmdScript::creatureNames()) cand.push_back(s); break;
         case ARG_CVAR: for (const CvarRec& c : g_cvars) cand.push_back(c.name); break;
         case ARG_VERB: addVerbs(false); break;
+        case ARG_MODCMD: for (const std::string& s : ModScript::commandNames()) cand.push_back(s); break;
         case ARG_KEY:
             for (int code = 1; code < 512; ++code) { const char* l = eden_keybind_code_label(code); if (l && *l) cand.push_back(l); }
             break;

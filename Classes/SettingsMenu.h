@@ -66,6 +66,7 @@ public:
     // SX.6: the hint a shown row draws (the This world heading's is the multiplayer badge in a session);
     // NULL if the row is not on any view in the current scope (world rows on the title screen).
     const char* rowHint(const char* key);
+    void showToast(const char* text);   // UX.10-2: the bottom pill (a finished action row)
 
 	CGRect rect_settings;
 
@@ -86,7 +87,8 @@ private:
     void controlSize(int si, float* w, float* h) const;
     void refreshValue(int k);          // row k's value text / widget value from the model
     void stepRow(int k, int dir);
-    void editText(int k);              // MP.8: the Matchmakers prompt
+    void editText(int k);              // MP.8: the Matchmakers prompt; UX.10-2: also runs a KIND_ACTION row
+    void restoreTutorial();            // UX.10-2: Restore tutorial world (confirm if one exists, install, toast)
     static void textPromptCb(int chosen, const char* text);      // KIND_ENUM stepper, one step
     void commitSlider(int k);
     bool rowMuted(int k) const;        // its parent toggle is off
@@ -113,6 +115,7 @@ private:
     GLW::Toggle  m_toggle[SM_MAX_ROWS];
     GLW::Slider  m_slider[SM_MAX_ROWS];
     GLW::Stepper m_stepper[SM_MAX_ROWS];
+    GLW::Toast   m_toast;
     GLW::Button  m_textBtn[SM_MAX_ROWS];      // MP.8: a KIND_TEXT row's "None, Add" / "2 addresses, Edit"
     CGRect m_panel, m_content;
     float  m_titleY;

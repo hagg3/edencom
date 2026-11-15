@@ -197,6 +197,15 @@ bool export_world_file(const std::string& srcPath, const std::string& outPath, c
                        ExportReport* report, std::string* err);
 
 
+// ---- K.6-5b (U1): Share > Export's `.emod` copy and the mod-data question --------------------------------
+// The packs (ascending ids) whose saved data record 13 holds; false when there is no usable record (no question).
+bool world_mod_data_packs(const std::string& srcPath, std::vector<std::string>* ids);
+// Copies the `.emod` to `outPath` (atomic). includeModData false: the copy has no record 13 (the source is only read).
+// --emod-mutate=stripalways: the Include copy strips record 13 anyway (the self-test must go red).
+extern bool test_strip_always;
+bool copy_emod_world(const std::string& srcPath, const std::string& outPath, bool includeModData, std::string* err);
+
+
 // ---- S.5c: upload to the Current / Legacy servers --------------------------------------------
 // The contract, pinned 2026-10-10 from stock 2.1.1's Classes/FileUpload.mm + zpipe.c (what the Legacy
 // server's client sends) and the sibling editor's capture of the 2026 client (what the Current server

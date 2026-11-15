@@ -74,6 +74,11 @@ void noteBufferCreates(unsigned n);
 
 // ---- ACTUAL: what GL holds ----------------------------------------------------------------------------
 void bindTextureNow(GLuint t);       // a backend upload binds its own texture (ACTUAL follows)
+// X.32: an upload (texCreate/texUpdate/texSampling) binds for real, never elided by the cache. A draw that
+// names a deleted texture makes core GL refuse the bind (GL_INVALID_OPERATION) while the cache records the
+// name; when the driver hands that name to the next texCreate, an elided bind sent the new texture's
+// image, filters and mip chain into whatever was really bound (the UI icon atlas, on a tester's Windows).
+void bindTextureForUpload(GLuint t);
 void depthWriteNow(bool on);         // before glClear: a depth clear honours the depth mask
 void applyRenderer(const R::State& s, GLuint tex);   // a draw: its own state, as deltas
 void forgetTexture(GLuint name);     // glDeleteTextures: GL reverts a deleted binding to 0

@@ -62,6 +62,8 @@ uint32_t						name=0;   // QA.7 (TSan job): a failed decode left it unset, and ~
 // K.2-4: re-uploads this texture from `image` (the old GL texture is destroyed; `name` changes), with the
 // same rules as the constructors (the block atlases when a mod pack's tiles change; Resources::setModTiles).
 void replaceFromImage(const EdenImage* image, bool sizeToFit, Texture2DPixelFormat pixelFormat, bool genMips);
+size_t pixelsWide() const { return _width; }    // X.32: the stock @property, as an accessor (the GL texture's size)
+size_t pixelsHigh() const { return _height; }
 Texture2D(const void* data ,Texture2DPixelFormat pixelFormat, int width, int height, CGSize size);
 ~Texture2D();
 Texture2D(const void* data ,Texture2DPixelFormat pixelFormat, int width, int height, CGSize size,bool genMips);
