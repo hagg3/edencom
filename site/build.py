@@ -19,11 +19,14 @@ import mdlite
 HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parent
 SRC, TPL, STATIC, OUT = HERE / "src", HERE / "templates", HERE / "static", HERE / "_out"
+ROOT_FILES = HERE / "root"  # copied verbatim to the site root (e.g. the Search Console verification file)
 
 # One place for the host: a custom domain later is a change here (plan D1).
 BASE_URL = "https://hagg3.github.io/edencom/"
 GITHUB = "https://github.com/hagg3/edencom"
 DISCORD = "https://discord.gg/SgEQfurMmj"
+# Google Search Console "HTML tag" verification token (the content="..." value); empty = no tag.
+GOOGLE_SITE_VERIFICATION = ""
 
 TABS = [("home", "Home", "index.html"), ("download", "Download", "download.html"),
         ("shots", "Screenshots", "screenshots.html"), ("help", "Help", "help.html"),
@@ -129,6 +132,8 @@ def seo_head(meta, rel):
               "description": meta["description"], "url": url, "codeRepository": GITHUB,
               "programmingLanguage": ["C++", "Objective-C++", "Lua"],
               "license": "https://www.gnu.org/licenses/gpl-3.0.html"}
+    if GOOGLE_SITE_VERIFICATION and rel == "index.html":
+        out.append('<meta name="google-site-verification" content="%s">' % html.escape(GOOGLE_SITE_VERIFICATION, quote=True))
     if ld:
         out.append('<script type="application/ld+json">%s</script>' % json.dumps(ld, separators=(",", ":")).replace("</", "<\\/"))
     return "\n".join(out)
@@ -136,8 +141,8 @@ def seo_head(meta, rel):
 
 def sitemap_xml(pages):
     urls = [p for p in pages if p != "404.html"]
-    day = datetime.date.today().isoformat()
-    body = "".join("<url><loc>%s</loc><lastmod>%s</lastmod></url>\n" % (BASE_URL + ("" if p == "index.html" else p), day)
+    # no <lastmod>: stamping every page with the build day makes Google distrust the field
+    body = "".join("<url><loc>%s</loc></url>\n" % (BASE_URL + ("" if p == "index.html" else p))
                    for p in sorted(urls, key=lambda p: (p != "index.html", p)))
     return ('<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
             + body + "</urlset>\n")
@@ -203,6 +208,8 @@ def build(out):
         shutil.rmtree(out)
     out.mkdir(parents=True)
     shutil.copytree(STATIC, out / "static")
+    for f in sorted(ROOT_FILES.glob("*")) if ROOT_FILES.is_dir() else ():
+        shutil.copy2(f, out / f.name)
     layout = (TPL / "layout.html").read_text(encoding="utf-8")
     version = (REPO / "VERSION.txt").read_text().strip()
     updated = datetime.date.today().strftime("%-d %b %Y")
