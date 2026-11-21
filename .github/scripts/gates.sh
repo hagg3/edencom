@@ -211,7 +211,7 @@ pgate "folders selftest"  every   $B --headless --folders-selftest --docs=@DOCS@
 pgate "emod selftest"     every   $B --emod-selftest --emod-fixtures=../port/tools/fixtures/emod --emod-work=@DOCS@
 # K.6-5a (C-4): compaction dropping reserved record types again must FAIL the reserved section.
 pmutant "emod-dropunknown" all 'the newest record of each reserved type survives compaction' $B --emod-selftest --emod-quick --emod-mutate=dropunknown --emod-fixtures=../port/tools/fixtures/emod --emod-work=@DOCS@
-pmutant "emod-stripalways" all 'the Include copy of an export keeps record 13' $B --emod-selftest --emod-quick --emod-mutate=stripalways --emod-fixtures=../port/tools/fixtures/emod --emod-work=@DOCS@
+pmutant "emod-stripalways" all 'Include is the source byte for byte' $B --emod-selftest --emod-quick --emod-mutate=stripalways --emod-fixtures=../port/tools/fixtures/emod --emod-work=@DOCS@
 pgate "classic selftest"  all $B --classic-selftest --docs=@DOCS@
 pgate "look selftest"     all     $B --look-selftest --docs=@DOCS@
 pgate "fly selftest"      all     $B --fly-selftest --docs=@DOCS@
@@ -254,14 +254,14 @@ pmutant "lua-hook"        all  'a 300k-iteration loop is paused'                
 pmutant "lua-sandbox"     all  'the sandbox: no io/os'                            $B --lua-selftest --lua-mutate=sandbox --docs=@DOCS@
 pmutant "lua-loadearly"   all  '`load` fires exactly once'                         $B --lua-selftest --lua-mutate=loadearly --docs=@DOCS@
 pmutant "lua-caperror"    all  'reaching the 64-coroutine cap'                    $B --lua-selftest --lua-mutate=caperror --docs=@DOCS@
-pmutant "lua-usefilter"   all  '`use` on stone, none of `burn`'                   $B --lua-selftest --lua-mutate=usefilter --docs=@DOCS@
+pmutant "lua-usefilter"   all  '`use` .how=.fire.. on stone .no burn.'           $B --lua-selftest --lua-mutate=usefilter --docs=@DOCS@
 pmutant "lua-signnocache" all  'SignRenderer shows a Lua-set sign'            $B --lua-selftest --lua-mutate=signnocache --docs=@DOCS@
 pmutant "lua-storenotdirty" all 'save, reopen: every stored value is back exactly' $B --lua-selftest --lua-mutate=storenotdirty --docs=@DOCS@
 pmutant "lua-dialognoqueue" all 'two packs asking in one frame' $B --lua-selftest --lua-mutate=dialognoqueue --docs=@DOCS@
 pmutant "lua-dialognoclamp" all 'a 6000-byte dialog body' $B --lua-selftest --lua-mutate=dialognoclamp --docs=@DOCS@
 pmutant "lua-nogen"       all  'a stale handle to a reused slot'                  $B --lua-selftest --lua-mutate=nogen --docs=@DOCS@
 pmutant "lua-nonfinite"  all  'h:setvel raises for a NaN'                        $B --lua-selftest --lua-mutate=nonfinite --docs=@DOCS@
-pmutant "lua-toastflood" all 'eden.toast: the HUD status line' $B --lua-selftest --lua-mutate=toastflood --docs=@DOCS@
+pmutant "lua-toastflood" all 'a second toast within 1 s returns false' $B --lua-selftest --lua-mutate=toastflood --docs=@DOCS@
 pmutant "lua-leaveaftersave" all 'a `leave` handler.s block and eden.store key are in the exit save' $B --lua-selftest --lua-mutate=leaveaftersave --docs=@DOCS@
 pmutant "ui-settingsinpack" all 'reinstalling the pack.s zip keeps its settings file' $B --ui-selftest --ui-mutate=settingsinpack --docs=@DOCS@
 pmutant "mods-anyid"      all  'K\.8-3: a zip whose id is not'                     $B --mods-selftest --mods-mutate=anyid --docs=@DOCS@

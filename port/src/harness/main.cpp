@@ -977,7 +977,8 @@ static int eden_main_after_args(int argc, char** argv) {
     }
     // LM.1: the lamp light profile for this run (no world is loaded yet, so this only sets it). r18 is
     // New Dawn at radius 18, one past the cap; --lamp-radius= sets New Dawn's radius (clamped to 17).
-    if (g_light_test_mutation == 5) { light_setNewDawnRadius(LIGHT_RADIUS_MAX + 1); light_setProfile(LIGHT_MODE_NEWDAWN); }
+    // Forced, not set: a world load's light_setWorldProfile (LM.3) would otherwise put Legacy back and the leg would pass.
+    if (g_light_test_mutation == 5) { light_setNewDawnRadius(LIGHT_RADIUS_MAX + 1); light_forceProfile(LIGHT_MODE_NEWDAWN); }
     else {
         if (g_opt.lampRadius > 0) light_setNewDawnRadius(g_opt.lampRadius);
         if (g_opt.lampMode >= 0) light_forceProfile(g_opt.lampMode);
