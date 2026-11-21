@@ -230,6 +230,8 @@ pgate "mp replay"         all     $B --mp-replay=../port/tools/fixtures/mp/repla
 pgate "load-fail selftest" all    $B --load-fail-selftest --docs=@DOCS@
 pgate "keybind selftest"  all     $B --keybind-selftest --docs=@DOCS@
 pgate "fit selftest"      all     $B --fit-selftest --docs=@DOCS@
+pgate "fit selftest iphone16" all $B --fit-selftest --device=iphone16 --docs=@DOCS@   # UX.10-5: the tutorial card at a notched phone
+pgate "fit selftest ipadair2" all  $B --fit-selftest --device=ipadair2 --docs=@DOCS@
 pgate "newblocks selftest" all    $B --newblocks-selftest --docs=@DOCS@
 pgate "empty-bit selftest" all    $B --empty-bit-selftest --docs=@DOCS@
 pgate "photo selftest"    all     $B --photo-selftest --docs=@DOCS@
@@ -255,11 +257,19 @@ pmutant "lua-caperror"    all  'reaching the 64-coroutine cap'                  
 pmutant "lua-usefilter"   all  '`use` on stone, none of `burn`'                   $B --lua-selftest --lua-mutate=usefilter --docs=@DOCS@
 pmutant "lua-signnocache" all  'SignRenderer shows a Lua-set sign'            $B --lua-selftest --lua-mutate=signnocache --docs=@DOCS@
 pmutant "lua-storenotdirty" all 'save, reopen: every stored value is back exactly' $B --lua-selftest --lua-mutate=storenotdirty --docs=@DOCS@
+pmutant "lua-dialognoqueue" all 'two packs asking in one frame' $B --lua-selftest --lua-mutate=dialognoqueue --docs=@DOCS@
+pmutant "lua-dialognoclamp" all 'a 6000-byte dialog body' $B --lua-selftest --lua-mutate=dialognoclamp --docs=@DOCS@
+pmutant "lua-nogen"       all  'a stale handle to a reused slot'                  $B --lua-selftest --lua-mutate=nogen --docs=@DOCS@
+pmutant "lua-nonfinite"  all  'h:setvel raises for a NaN'                        $B --lua-selftest --lua-mutate=nonfinite --docs=@DOCS@
+pmutant "lua-toastflood" all 'eden.toast: the HUD status line' $B --lua-selftest --lua-mutate=toastflood --docs=@DOCS@
+pmutant "lua-leaveaftersave" all 'a `leave` handler.s block and eden.store key are in the exit save' $B --lua-selftest --lua-mutate=leaveaftersave --docs=@DOCS@
+pmutant "ui-settingsinpack" all 'reinstalling the pack.s zip keeps its settings file' $B --ui-selftest --ui-mutate=settingsinpack --docs=@DOCS@
 pmutant "mods-anyid"      all  'K\.8-3: a zip whose id is not'                     $B --mods-selftest --mods-mutate=anyid --docs=@DOCS@
 pmutant "classic-tables"  all  '1\.x columns regenerate byte for byte'            $B --classic-selftest --classic-mutate=tables --docs=@DOCS@
 pmutant "classic-trunc"   all  '1\.x columns regenerate byte for byte'            $B --classic-selftest --classic-mutate=trunc --docs=@DOCS@
 pmutant "classic-noborder" all 'profile hash matches its pin'                     $B --classic-selftest --classic-mutate=noborder --docs=@DOCS@
 pmutant "props-nogen"     all  'Change terrain appends a newer GENERATOR'         $B --props-selftest --props-mutate=nogen --docs=@DOCS@
+pmutant "props-nolamp"    all  'picking New Dawn writes record 14'                $B --props-selftest --props-mutate=nolamp --docs=@DOCS@
 pmutant "weather-lowatmo" all  'all Off: 600 frames draw only the stock'            $B --weather-selftest=off --weather-mutate=lowatmo --docs=@DOCS@
 pmutant "evict-noceiling" all  'ceiling layer: blocks at y = H-1'                  $B --evict-selftest --evict-mutate=noceiling --docs=@DOCS@
 pmutant "mp-noevictcommit" all 'leg 2: walking out and back'                      $B --mp-replay=../port/tools/fixtures/mp/replay-1.lines --mp-mutate=noevictcommit --docs=@DOCS@
@@ -279,6 +289,10 @@ gate "content dump wonders" all   $B --content-dump --packs=../port/tools/fixtur
 gate "pack.py wonders"    linux   $PY ../port/tools/pack.py compile ../port/tools/fixtures/packs/wonders --check gate-content-dump-wonders.log
 gate "content dump resolve" all   $B --content-dump --packs=../port/tools/fixtures/content/mods-resolve
 gate "pack.py resolve"    linux   $PY ../port/tools/pack.py compile ../port/tools/fixtures/content/mods-resolve --check gate-content-dump-resolve.log
+gate "content dump usable" all   $B --content-dump --packs=../port/tools/fixtures/content/mod-usable
+gate "pack.py usable"     linux   $PY ../port/tools/pack.py compile ../port/tools/fixtures/content/mod-usable --check gate-content-dump-usable.log
+gate "lua api stubs"      linux   $PY ../port/tools/check-lua-stubs.py $B ../docs/eden-api.lua
+gate "check-pack"         linux   $PY ../port/tools/check-pack-gate.py $B ../port/tools/fixtures
 # K.2-3: a broken or missing stock pack is fatal (exit 1), never a half-filled table.
 gate "broken stock pack"  linux,macos broken_stock_pack
 # K.1-4: a 256-high run adds Convert to 64z (the palette and flag survive the cut).
@@ -309,8 +323,16 @@ gate "ring light selftest" all    $B --ring-light-selftest --docs=@DOCS@
 gate "light selftest"     all     $B --light-selftest --light-selfcheck --docs=@DOCS@
 gate "evict selftest r16" all     $B --evict-selftest --radius=16 --docs=@DOCS@
 gate "ring light selftest r16" all $B --ring-light-selftest --radius=16 --docs=@DOCS@
+# LM.1: lamp light profiles. Bytes per profile, a live switch each way == a fresh load; the ring walk at New
+# Dawn and at the cap (17); R=18 must break the 3x3/5x5 neighbourhood rebuild (Lighting.h LIGHT_RADIUS_MAX).
+pgate "light modes selftest" all  $B --light-selftest=modes --docs=@DOCS@
+pgate "ring light newdawn" all    $B --ring-light-selftest --lamp-light=newdawn --docs=@DOCS@
+pgate "ring light r17"    all     $B --ring-light-selftest --lamp-light=newdawn --lamp-radius=17 --docs=@DOCS@
+pmutant "light-r18" all 'the walked light equals a full sweep of the same window' $B --ring-light-selftest --light-mutate=r18 --docs=@DOCS@
 gate "shadow selftest"    all     $B --shadow-selftest --docs=@DOCS@
 gate "shadow selftest r16" all    $B --shadow-selftest --radius=16 --docs=@DOCS@
+# SH.3: the sun-shadow map's life cycle (null backend): off = absent, dirty rules, night/storm, the Shadows replace.
+pgate "sunshadow selftest" all   $B --sunshadow-selftest --docs=@DOCS@
 # C.1/C.2/QA.9: the command-block language as a console line, the Settings bridge, the day/night flip.
 gate "console selftest"   every   $B --console-selftest --docs=@DOCS@
 gate "weather selftest"   every   $B --weather-selftest --docs=@DOCS@

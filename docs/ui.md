@@ -60,7 +60,7 @@ system's "pressed == selected"; the design system's `.eden-tabrail` is the verti
 12% fill; a negative fraction draws an indeterminate block). **Stage U.1 (2026-10-12) added** the
 pieces the settings / New World rebuild (U.3, U.5) is laid out from, all drawn on the `kit` page of
 `--shot`: `GLW::icon(id, rect, colour)` (one cell of the Lucide atlas `media/ui/ui_icons.png`, ids in
-generated `Classes/UIIcons.h`, white art tinted at draw time; loaded on first use **with mips** — since
+generated `Classes/UIIcons.h`, white art tinted at draw time; ids from `UIICON_PACK_BASE` (64) are cells of the world's pack-icon atlas, a 512×256 RGBA texture `GLW::setPackIcons` is handed at world entry by `ContentPack::loadMods` and builds on first draw, K.7-3c; loaded on first use **with mips** — since
 P.15 a non-mip load builds no chain, and its `LINEAR_MIPMAP_LINEAR` filter then sampled an incomplete
 texture: every icon a black square until U.5 caught it — LINEAR + clamped unlike the engine's NEAREST art; X.32 found a
 second way to the same black squares, another texture's upload landing in the atlas, and `--rejoin-selftest` checks
@@ -137,6 +137,14 @@ fit, a row taller than the view still shows; `rowOffset()`; content drags walk t
   focused on show: Return picks button 0, Escape the LAST one, and the callback gets the text.
   Callers check `GLDialog::textEntryAvailable()` first (true on every native target). `GLDialog::dismiss()` closes
   without a callback — the harness's way out of a modal.
+  **Mod dialogs (K.7-1b).** `GLDialog::setOwner(token, footer, link, onEnd)`, called right after `show()`/`prompt()`, marks a
+  dialog as a mod's: a muted footer line (`Mod: <pack>`) and, when `link` is given, a footer link that is **not** a grid
+  button (so Escape still picks the script's own last button; `footerLinkRect()` for a harness). A dialog that ends without
+  one of its buttons tells its owner through `onEnd(token, why)` — `END_REPLACED` when a `show()`/`prompt()` opens over it or
+  `dismiss()` closes it, `END_LINK` when the link was tapped (the callback must not run script code). **The body is clamped
+  (finding C-8):** `layout()` cuts it with `...` to the safe height left after the title, field, buttons and footer, so mod
+  text can no longer push the buttons off screen (a single unbroken word longer than the panel still overflows sideways).
+  Gate: `--lua-selftest` leg 25 (`--lua-mutate=dialognoclamp` must fail).
 - `KeybindsMenu` (`Classes/KeybindsMenu.{h,mm}`) — **added Phase N Stage 5.3; since U.4 (2026-10-12)
   the CONTENT of `SettingsMenu`'s Keys tab, not a screen.** Every rebindable action against its current key,
   grouped Movement/Actions/Interface/Hotbar: a small grey heading per group, then a `GLW::TwoLineRow` per action
@@ -492,9 +500,7 @@ Nine slots per world; nothing draws them yet (the strip is UX.8-4, touch/pointer
   console or Settings is up.
 - **Opt-out**: an X box on the card's right edge. A touch on it is claimed (`usage_tut` in `Hud::update`); the first closes
   that hint for the session, a later one asks "Hide all tutorial hints?" (Hide / Keep): Hide writes `"hidden":true`. Restore
-  clears it. **Known limitation:** the close box is pointer/touch only. With a captured mouse there is no pointer, so a
-  keyboard + mouse player in play, and a pad player, cannot dismiss the card; it closes only when its step is done (or
-  when the world is left), and "Hide all" is unreachable for them until they use a pointer.
+  clears it. The close box is pointer/touch only, so every input mode also has a pause-menu row, *Hide tutorial hints* (shown only while `Tutorial::active()`), which opens the same Hide / Keep confirm (`Tutorial::askHideAll`).
 - Gates: `--tutorial-selftest` (every step in order in all three modes, per-mode copy, marker `done`, no card without the
   marker or in a session; `--tutorial-mutate=hintsbyname` must fail the no-marker leg), `--fit-selftest` (the card clears
   the hotbar, the touch chrome and the status toast at every profile).
@@ -675,7 +681,7 @@ Nine slots per world; nothing draws them yet (the strip is UX.8-4, touch/pointer
   Keys · Video · Experiments · Saves; `kTabs[]` in the .mm, a tab with no native rows is a disabled tile); the
   tab's rows as `GLW::TwoLineRow`s (title + hint) on one CONTENT surface in a variable-height, row-snapped
   `GLW::ScrollView` (wheel, content drag, scrollbar); a row with a `parent` is indented 14u and **muted while that
-  toggle is off** — display-only, it still works (SX.2: toggle, slider readout, stepper and text/page button all grey their label or value via `setMuted`; `Button::setMuted`/`Stepper::setMuted` leave chrome and hit-testing alone). Slider readouts print 2 decimals when the step is < 1 or the default is fractional. Control column: the 104×34u toggle, a 200u slider + readout, a
+  toggle is off** — display-only, it still works (SX.2: toggle, slider readout, stepper and text/page button all grey their label or value via `setMuted`; `Button::setMuted`/`Stepper::setMuted` leave chrome and hit-testing alone). A row another setting overrides is muted the same way and its hint replaced by `eden_settings_inactive_hint(i)` (SH.3: *Shadows* reads "Off while Sun shadows is on."); `layout()` re-runs after a toggle and a stepper change so the hint follows. Slider readouts print 2 decimals when the step is < 1 or the default is fractional. Control column: the 104×34u toggle, a 200u slider + readout, a
   168u `<` value `>` stepper; on the touch profile a toggle's hit box is the whole row. Labels are built on a tab
   switch or a `u()` change, never per frame. **Keys has no settings rows**: its content is the embedded
   `KeybindsMenu` (U.4, above) and its titlebar gains Defaults. The pages, the pager, `fit()`'s pointer/touch pitch split and the group headings are
@@ -825,7 +831,11 @@ Settings and opens the screen; in a world it only explains that mods change from
   a Refused pack has Remove only. Row 2: *Install from file...* (desktop only: `eden_pick_zip_*`, SDL's open-file dialog in `Input_native.cpp`;
   iOS/Android report it unavailable and the button is not drawn; the result goes to `PackInstall::installZip(path, docs, "")`; a zip older than the installed pack asks first, below) and the footer,
   "Changes apply when a world opens" until an action replaces it with its outcome. The detail pane: id/version, folder, state + block count,
-  the loader's `why` (amber), requires/conflicts, then the validator lines (errors red, `warning:` grey).
+  the loader's `why` (amber), requires/conflicts, then the validator lines (errors red, `warning:` grey). K.8-6: a pack with scripts also gets
+  "Runs scripts (N files)" (the row says "..., Scripts"; a Get Mods entry says "Runs scripts" when the catalogue entry has `"scripts": true`) and, from
+  `ModScript::lastReport()`, "Scripts stopped: <reason>" or "N script errors. Last: file:line: message". The report is kept when a world closes
+  (`closeAll()` snapshots it), so the main-menu screen shows what the last world's scripts did; it is empty before any world has run scripts.
+- **Settings page** (K.7-2b): row 2's *Settings* button (next to *Install from file...*, enabled for an installed pack whose `pack.json` declares `"settings"`) swaps the list and detail pane for a page: Back, "<pack> settings", a `GLW::RowList`, and a footer line ("Saved as you change them..." or a save failure). Every change is saved at once (`ContentPack::saveSetting`, `Packs/.settings/<id>.json`; [content-packs.md](content-packs.md) "Setting values"); a text row opens `GLDialog::prompt` (Save/Cancel) with the current text. Back or Escape returns to the list (`ModsMenu::back` closes the page before the screen). `GLW::RowList` (`GLWidgets.h`) is the kit's data-driven row list: `Row`s of kind HEADING / TOGGLE / SLIDER (+ readout) / CHOICE (a `<` value `>` Stepper that wraps) / TEXT (a button), laid out as `TwoLineRow`s in a variable-height `ScrollView` with SettingsMenu's control sizes and touch-floor hit boxes; the owner feeds its touch loop through `touchDown/touchHeld/touchUp` and drains `takeChange()`. SettingsMenu keeps its own table-keyed copy of that arithmetic (its rows are bound to the settings table and fixed arrays), so K.7-3a's script menus reuse `RowList`, not SettingsMenu.
 - **Get Mods** (K.3-6): the tab rail exists only while the setting `mods_catalogue_url` (Settings > Experiments > *Get Mods catalogue*, a
   `KIND_TEXT` row; http/https only) is non-empty (K.3-8: it defaults to `https://hagg3.github.io/emod-packs/index.json`). The catalogue is `eden_net_fetch(url, NULL)` on first show / *Refresh*, parsed by
   `PackInstall::parseCatalogue`; rows say "Installed" by id and the detail pane "installed vX". *Install* downloads to
@@ -837,8 +847,43 @@ Settings and opens the screen; in a world it only explains that mods change from
 - **Multiplayer**: `EdenMpServerRow::usesMods` (INFO `mods=` present; `modsCompatible(info, "")` false) makes the server row read "Uses mods"
   and `ServerListMenu::join` refuse with the toast "This server uses mods (not supported yet)" before any connection.
 - Gates: `--ui-selftest` (`mods_ui_checks` in `mode_ui.cpp`: open, select, toggle, move, remove with confirm, install from file, tab hidden /
-  shown, catalogue bytes via `ModsMenu::feedCatalogue`, failed download leaves no partial); `--shot` pages `mods`, `mods-skipped`,
+  shown, catalogue bytes via `ModsMenu::feedCatalogue`, failed download leaves no partial; the settings page: toggle, slider, choice and text rows write the file, Back, a hand-broken value reads as the default, reinstalling the zip keeps the file; `--ui-mutate=settingsinpack` stores the file in the pack folder and must FAIL it); `--shot` pages `mods`, `mods-settings`, `mods-skipped`,
   `mods-refused`, `mods-get` (`TESTERS/k3/`: desktop 1280x800, iPad `--window=1024x768 --touch-profile`, phone `--window=844x390 --touch-profile`).
+
+### Pause-menu Mods page (K.7-3b)
+
+The pause menu's *Mods* button (`PM_MODS`, between Settings and Quit; `Hud::rmods`) is laid out only while
+`ModScript::modsPageAvailable()`: a world is open (not a multiplayer session) and a loaded pack declares settings in
+`pack.json` or has an `eden.on("menu")` handler. Tapping it closes the pause menu and opens `ModMenuScreen` with serial
+`ModScript::MODS_PAGE` (-1) and an engine-built spec: title *Mods*, no `Mod: <pack>` footer, one tab per such pack (at most 8,
+the pack's name; TabRail), each tab an *Open* button row (only with a `menu` handler) then the pack's settings (toggle, slider,
+choice as themselves; text as a button showing the value, edited through `GLDialog::prompt`). Back / Escape return to play.
+`drainChanges` hands the page's changes to `ModScript::modsPageInput` instead of `menuInput`. A change is saved at once
+(`ContentPack::saveSetting`) and queues the pack's `setting` event; a drag inside one step saves and fires nothing. Gate:
+`--lua-selftest` leg 28.
+
+### Script menus (K.7-3a)
+
+`Classes/ModMenuScreen` draws a script's `eden.menu` ([scripting.md](scripting.md) "Menus"): the Console's shape (a
+`railFrame()` panel over the running world, scrim, Back at the titlebar's left, the title centred, a `Mod: <pack>` footer at
+its right) with a `GLW::RowList` for the rows. Two or more tabs that all have an icon are an `IconRail`; otherwise two or
+more are a `TabRail` across the top of the content (the content then takes the rail's width), and one tab has neither.
+Updated and drawn in the Console's slot of `World::update` / `render` (after the Console; a `GLDialog` draws over it), touch
+claim id 23, every touch claimed while it is open. One at a time across all packs; opening it closes the Console, and the
+Console key and chat refuse while it is open (`eden_console_menu_toggle`, `eden_chat_open`). `eden_ui_captures_keys()` and
+`eden_ui_wants_cursor()` answer 1 while it is open, so no key walks the player. Escape is the first row of `Menu::back()` in
+play (`ModMenuScreen::back`: closes, then `ModScript::menuClosed`). Focus: `Focus::screen(owner, NULL, true)`, Back and every
+enabled row is a Tab stop in row order (an ITEM row is its own `FI_BUTTON` stop with a ring; RowList's other kinds register
+their controls), Return taps the focused one; nothing on touch.
+
+`RowList` grew for it (K.7-3a): kinds `PARAGRAPH` (a hint-only `TwoLineRow`), `ITEM` (a tappable line: optional 22u icon,
+title and hint, a right-aligned `detail` label up to 200u; a hover tint and a focus ring) and `BUTTON` (a 160x29u `Button`,
+`danger` = the DANGER tone); every row takes `enabled` (muted, no hit); `setRow(i, row)` changes one row in place (the
+script's `m:set`); `EV_ACTIVATE` reports an ITEM or BUTTON tap. `GLW_MAX_TABS` is 8.
+
+- Gates: `--lua-selftest` leg 27 (open, the clock runs, a tap's edit lands that frame, `m:set`, values, busy, caps with paths, Tab
+  order + Return on a pointer profile, no ring or tint on touch, Back / Escape / `m:close` with `on_close` once, the world's close);
+  `--shot` / `--fit-selftest` pages `mod-menu` (every row type), `mod-menu-rail`, `mod-menu-tabs` (opened directly with a C++ spec).
 
 ## Keyboard focus and hover (UX.7)
 
@@ -991,7 +1036,7 @@ High leaves cloud shadows off (opt-in). `--stage1`, `--scene-shot` and `--sky-sh
 (`day_length`, 10/20/40/60 min, default 20; `Settings.cpp`). While on, the sky brush shows a status-bar toast
 (*"The day/night cycle is on: it sets the sky…"*, `Player.cpp`) and paints nothing. World Properties › World has
 *Lock time of day* (Emod worlds; `WorldProps.skyLocked`/`skyT`, written as `SKY_CLOCK` in the Save batch; the live
-clock if that world is open). AT.1c adds *Lock weather* the same way (`WorldProps.weatherLocked`, `WEATHER` flag bit 0, `WP_WROTE_WEATHER`). Look and clock: `docs/lighting-liquids-effects.md`.
+clock if that world is open). AT.1c adds *Lock weather* the same way (`WorldProps.weatherLocked`, `WEATHER` flag bit 0, `WP_WROTE_WEATHER`). LM.2 adds *Lamp light* (Legacy / New Dawn; `WorldProps.lampMode`, `LIGHTING` record 14, `WP_WROTE_LIGHTING`): a pick writes origin 1 in the Save batch and, if that world is open, switches the profile at once (`light_setWorldProfile`). LM.3's Settings › World › *Auto-detect lamp light* (default on; read at the next world open) decides what a world with no pick opens in. Look and clock: `docs/lighting-liquids-effects.md`.
 
 **Camera view (H.12).** Experiments › *Camera view* (`camera_view`, enum First person / Third person /
 Third person (front), default first) and a native-only `kKeybinds[]` row **F5** `cameraView` (Interface)

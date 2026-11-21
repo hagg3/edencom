@@ -48,6 +48,7 @@
 #include "../../../Classes/Constants.h"
 #include "../../../Classes/Hotbar.h"   // UX.8-3
 #include "../../../Classes/GLDialog.h"
+#include "../../../Classes/ModMenuScreen.h"   // K.7-3a
 #include "../../../Classes/TouchLook.h"
 #include "../../../Classes/SrclikeMove.h"   // SRC.2   // --look-trace reads what the new touch look consumed
 #include "../shim/foundation/platform_shims.h"   // (Phase N Stage 1)
@@ -682,6 +683,7 @@ int eden_ui_wants_cursor(void) {
     // opens and its buttons become unclickable. Permanently false on web (DOM overlays instead).
     if (GLDialog::active()) return 1;
     if (eden_console_menu_active()) return 1;   // C.3: the Console is pointed at and typed into
+    if (ModMenuScreen::isOpen()) return 1;      // K.7-3a: a mod's menu is pointed at
     if (!World::getWorld) return 1;
     if (World::getWorld->game_mode == 0) return 1;  // menu
     if (!World::getWorld->hud) return 1;

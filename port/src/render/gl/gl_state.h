@@ -55,6 +55,8 @@ void activeTexture0();
 // AT.6: the one second-unit binding (the cloud map for EDEN_CLOUD_SHADOW): binds on unit 1, then unit 0 is
 // active again, so every other bind stays a unit-0 bind.
 void bindTexture1(GLuint t);
+// SH.2: the same for any extra unit (1 the cloud map, 2 the sun-shadow map).
+void bindTextureUnit(int unit, GLuint t);
 
 // ---- buffer bindings ---------------------------------------------------------------------------------
 // The binding every draw hands back (restoreBindings). Until G.5b-7 these mirrored the engine's own

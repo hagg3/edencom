@@ -96,6 +96,8 @@ public:
     // Settings on targets where the GL settings screen is live); the kit state lives behind a
     // pointer so this header stays includable without GLWidgets.h.
     Button rresume,rsettings,rconsole;   // C.3: rconsole opens the Console (ConsoleMenu)
+    Button rmods;   // K.7-3b: the Mods page (only when a loaded pack has settings or a menu)
+    Button rhints;   // UX.10-5: Hide tutorial hints (only in a tutorial-marked world)
     Button rdebug;   // the Debug menu (Classes/DebugMenu.h): only with Settings > Experiments > Debug menu on
     struct HudPauseKit* pauseKit;
     

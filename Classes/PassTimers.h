@@ -21,6 +21,7 @@ enum EdenPass {
     P_U_MESH,        //   terrain->prepareAndLoadGeometry: meshing
     P_U_UPLOAD,      //   terrain->updateAllImportantChunks: VBO uploads
     P_RENDER,        // World::renderFrame's play branch, whole (not the menu)
+    P_R_SHADOW,      //   SH.3: the sun-shadow depth pass (only on a frame that re-renders the map)
     P_R_SETUP,       //   scene-pass begin + prepareScene + cam->render
     P_R_OPAQUE,      //   Terrain::render, whole
     P_R_CULL,        //     renderTree (both passes) + the transparent back-to-front qsort
@@ -64,7 +65,7 @@ static inline bool pexp(int bit) { return eden_power_exp(bit) != 0; }
 
 static const char* const kEdenPassNames[P_COUNT] = {
     "update", "u_terrain", "u_hud", "u_creatures", "u_player", "u_effects", "u_mesh", "u_upload",
-    "render", "r_setup", "r_opaque", "r_cull", "r_chunks", "r_objects", "r_sky", "r_models",
+    "render", "r_shadow", "r_setup", "r_opaque", "r_cull", "r_chunks", "r_objects", "r_sky", "r_models",
     "r_signs", "r_transparent", "r_tchunks", "r_effects", "r_upscale", "r_hud", "present",
 };
 

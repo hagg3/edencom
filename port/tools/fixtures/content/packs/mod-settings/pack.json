@@ -1,0 +1,12 @@
+{
+  "format": 1, "id": "growth", "name": "Growth", "version": "1.0",
+  "blocks": [],
+  "settings": [
+    {"type": "heading", "label": "Growth"},
+    {"id": "speed", "type": "slider", "label": "Grow speed", "hint": "Higher is faster.", "min": 0.5, "max": 4, "step": 0.5, "default": 1},
+    {"id": "glow",  "type": "toggle", "label": "Glow at night", "default": true},
+    {"id": "mode",  "type": "choice", "label": "Mode", "options": ["Simple", "Full"], "default": "Simple"},
+    {"id": "sign",  "type": "text",   "label": "Greeting", "max": 32, "default": "Hello"},
+    {"type": "future_dial", "id": "x", "label": "Later"}
+  ]
+}

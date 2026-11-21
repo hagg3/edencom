@@ -15,6 +15,7 @@
 #include "SkyCycle.h"
 #include "Weather.h"     // AT.2a: overcast greys the stock fog colour
 #include "Clouds.h"      // AT.6: cloud shadows on the terrain passes
+#include "SunShadow.h"   // SH.3: sun shadows on them too
 #include "Ambient.h"     // AT.11: the water sparkle clock
 #include "World.h"       // AT.8: the camera in a liquid (Hud::underLiquid)
 #include "Hud.h"
@@ -462,6 +463,7 @@ void Graphics::beginTerrain(){
     applyWorldFog();
     applyHeightFog();   // AT.5: before the x0.25 below (the plane is the camera's view)
     Clouds::applyShadow();   // AT.6: likewise (R::setCloudShadow maps eye space through the camera's view)
+    SunShadow::apply();      // SH.3: likewise (R::setSunShadow maps eye space through the camera's view)
 	R::mv().push();
 	R::mv().scale(.25f,.25f,.25f);
     //glDisable(GL_DEPTH_TEST); 
@@ -478,6 +480,7 @@ void Graphics::endTerrain(){
     R::fogOff();
     R::heightFogOff();   // AT.5
     R::cloudShadowOff(); // AT.6
+    R::sunShadowOff();   // SH.3
     R::waterTintOff();   // AT.8
     Pen::blend(false);
 	

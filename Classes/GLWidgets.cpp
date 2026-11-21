@@ -287,16 +287,62 @@ static Texture2D* iconAtlas() {
     return s_icons;
 }
 
+// K.7-3c: the world's pack-icon atlas: 512 x 256 (8 x 4 cells), RGBA, built from `s_packPx` on first draw.
+static std::vector<uint8_t> s_packPx;      // 64*64*4 per icon, cell order
+static Texture2D*           s_packAtlas = NULL;
+static const int            kPackAtlasW = UIICON_PACK_GRID_W * UIICON_CELL_PX, kPackAtlasH = 4 * UIICON_CELL_PX;
+
+void setPackIcons(const std::vector<const uint8_t*>& rgba64) {
+    delete s_packAtlas;   // ~Texture2D destroys the GL texture through R::
+    s_packAtlas = NULL;
+    s_packPx.clear();
+    const size_t cell = (size_t)UIICON_CELL_PX * UIICON_CELL_PX * 4;
+    const size_t n = std::min(rgba64.size(), (size_t)(UIICON_PACK_GRID_W * 4));
+    for (size_t i = 0; i < n; ++i) s_packPx.insert(s_packPx.end(), rgba64[i], rgba64[i] + cell);
+}
+const uint8_t* packIconPixels(int i) {
+    return i >= 0 && i < packIconCount() ? &s_packPx[(size_t)i * UIICON_CELL_PX * UIICON_CELL_PX * 4] : NULL;
+}
+int packIconCount() { return (int)(s_packPx.size() / ((size_t)UIICON_CELL_PX * UIICON_CELL_PX * 4)); }
+
+static Texture2D* packAtlas() {
+    if (!s_packAtlas && !s_packPx.empty()) {
+        std::vector<uint8_t> img((size_t)kPackAtlasW * kPackAtlasH * 4, 0);
+        const int n = packIconCount();
+        for (int i = 0; i < n; ++i) {
+            const int cx = (i % UIICON_PACK_GRID_W) * UIICON_CELL_PX, cy = (i / UIICON_PACK_GRID_W) * UIICON_CELL_PX;
+            for (int y = 0; y < UIICON_CELL_PX; ++y)
+                memcpy(&img[((size_t)(cy + y) * kPackAtlasW + cx) * 4], &s_packPx[((size_t)i * UIICON_CELL_PX + y) * UIICON_CELL_PX * 4],
+                       (size_t)UIICON_CELL_PX * 4);
+        }
+        s_packAtlas = new Texture2D(img.data(), kTexture2DPixelFormat_RGBA8888, kPackAtlasW, kPackAtlasH,
+                                    CGSizeMake(kPackAtlasW, kPackAtlasH), true);
+        Pen::texture(s_packAtlas->name);
+        R::TexDesc d = {};   // as the built-in atlas: LINEAR_MIPMAP_LINEAR / LINEAR, CLAMP_TO_EDGE
+        d.mipmaps = true; d.linear = true; d.clampS = true; d.clampT = true;
+        R::texSampling(s_packAtlas->name, d);
+    }
+    return s_packAtlas;
+}
+
 void icon(int id, CGRect r, Color c) {
     if (r.size.width <= 0.0f || r.size.height <= 0.0f) return;
-    if (id < 0 || id >= UIICON_COUNT) id = UIICON_FALLBACK;
-    Texture2D* t = iconAtlas();
+    int cols = UIICON_GRID, rows = UIICON_GRID, col, row;
+    Texture2D* t;
+    if (id >= UIICON_PACK_BASE && id - UIICON_PACK_BASE < packIconCount()) {
+        const int i = id - UIICON_PACK_BASE;
+        cols = UIICON_PACK_GRID_W; rows = 4; col = i % cols; row = i / cols;
+        t = packAtlas();
+    } else {
+        if (id < 0 || id >= UIICON_COUNT) id = UIICON_FALLBACK;
+        col = UIIconCol(id); row = UIIconRow(id);
+        t = iconAtlas();
+    }
     if (!t || !t->name) return;
     // t = 0 is the PNG's TOP row (Texture2D::drawInRect's convention), and y is up here, so the
     // quad's top edge takes the cell's t0.
-    const float cell = 1.0f / UIICON_GRID;
-    const float s0 = UIIconCol(id) * cell, s1 = s0 + cell;
-    const float t0 = UIIconRow(id) * cell, t1 = t0 + cell;
+    const float s0 = col / (float)cols, s1 = (col + 1) / (float)cols;
+    const float t0 = row / (float)rows, t1 = (row + 1) / (float)rows;
     const float k = uiScale();
     const float x0 = r.origin.x * k, y0 = r.origin.y * k;
     const float x1 = (r.origin.x + r.size.width) * k, y1 = (r.origin.y + r.size.height) * k;
@@ -1303,6 +1349,316 @@ void TwoLineRow::render() const {
     if (!m_hint.empty()) m_hint.draw(x, y - du(kRowHintGap), m_muted ? kTextMuted : m_hintColor);
 }
 
+// --- RowList (K.7-2b) ----------------------------------------------------------------------
+struct RowList::Item {
+    Row row;
+    TwoLineRow line;
+    Toggle tog;
+    Slider sl;
+    Stepper st;
+    Button btn;
+    Label readout;
+    Label detail;                           // ITEM (K.7-3a)
+    std::string shownReadout, shownChoice, shownText, shownDetail;
+    Item() {}
+private:
+    Item(const Item&);
+    Item& operator=(const Item&);
+};
+
+RowList::RowList() : m_builtU(0), m_builtW(-1), m_dragSlot(-1), m_dragTouch(-1), m_scrollTouch(-1), m_barDrag(false) {
+    m_content = CGRectMake(0, 0, 0, 0);
+}
+RowList::~RowList() { for (size_t i = 0; i < m_items.size(); ++i) delete m_items[i]; }
+
+void RowList::setRows(const std::vector<Row>& rows) {
+    for (size_t i = 0; i < m_items.size(); ++i) delete m_items[i];
+    m_items.clear();
+    m_changes.clear();
+    m_dragSlot = m_dragTouch = m_scrollTouch = -1;
+    m_barDrag = false;
+    m_builtU = 0;
+    m_builtW = -1;
+    for (size_t i = 0; i < rows.size(); ++i) {
+        Item* it = new Item();
+        it->row = rows[i];
+        if (it->row.kind == CHOICE) it->st.setGlyphs("<", ">");
+        applyState(it);
+        m_items.push_back(it);
+    }
+    m_scroll.setFirst(0);
+}
+
+// The widgets' state from it->row (setRows, setRow).
+void RowList::applyState(Item* it) {
+    Row& r = it->row;
+    if (r.kind == SLIDER) { it->sl.setRange(r.min, r.max, r.step); it->sl.setValue(r.value); r.value = it->sl.value(); }
+    if (r.kind == TOGGLE) { it->tog.setOn(r.on); it->tog.setMuted(!r.enabled); }
+    if (r.kind == CHOICE) it->st.setMuted(!r.enabled);
+    if (r.kind == TEXT || r.kind == BUTTON) {
+        it->btn.setEnabled(r.enabled);
+        it->btn.setTone(r.kind == BUTTON && r.danger ? Button::TONE_DANGER : Button::TONE_DEFAULT);
+    }
+}
+
+void RowList::setRow(int i, const Row& r) {
+    if (i < 0 || i >= (int)m_items.size()) return;
+    Item* it = m_items[(size_t)i];
+    const Kind k = it->row.kind;
+    const std::string readout = it->row.readout;
+    it->row = r;
+    it->row.kind = k;
+    it->row.readout = readout;
+    applyState(it);
+    if (k == TEXT || k == BUTTON) setTextLabel(i, it->row.text);
+}
+
+int RowList::count() const { return (int)m_items.size(); }
+const RowList::Row& RowList::row(int i) const { return m_items[(size_t)i]->row; }
+
+void RowList::setSliderReadout(int i, const std::string& s) {
+    Item* it = m_items[(size_t)i];
+    it->row.readout = s;
+    if (it->shownReadout != s || it->shownReadout.empty()) { it->shownReadout = s; it->readout.set(s.c_str(), du(20), UITextAlignmentLeft); }
+}
+void RowList::setTextLabel(int i, const std::string& s) {
+    Item* it = m_items[(size_t)i];
+    it->row.text = s;
+    if (it->shownText != s || it->shownText.empty()) { it->shownText = s; it->btn.setLabel(s.c_str(), du(18)); }
+}
+
+bool RowList::shown(int k) const { return k >= m_scroll.first() && k < m_scroll.first() + m_scroll.visible() && k < (int)m_items.size(); }
+
+static const float kItemIcon = 22.0f, kItemIconGap = 8.0f, kItemDetailW = 200.0f;
+
+static void rowControlSize(RowList::Kind k, const Label& detail, float* w, float* h) {
+    switch (k) {
+    case RowList::TOGGLE:  *w = Toggle::designW(); *h = Toggle::designH(); break;
+    case RowList::CHOICE:  *w = du(29) * 2.0f + du(110); *h = du(29); break;
+    case RowList::TEXT:    *w = du(190); *h = du(29); break;
+    case RowList::BUTTON:  *w = du(160); *h = du(29); break;
+    case RowList::ITEM:    *w = detail.empty() ? 0.0f : std::min(detail.width(), du(kItemDetailW)); *h = detail.empty() ? 0.0f : detail.height(); break;
+    case RowList::HEADING: case RowList::PARAGRAPH: *w = 0; *h = 0; break;
+    default:               *w = du(200) + du(48); *h = du(29); break;
+    }
+}
+
+void RowList::layout(CGRect C, CGRect bar) {
+    m_content = C;
+    m_scroll.setBarRect(bar);
+    const int n = (int)m_items.size();
+    // Sliders and choices keep their readout rasters; they are rebuilt when the scale changes.
+    if (m_builtU != u()) {
+        m_builtU = u();
+        for (int k = 0; k < n; ++k) {
+            Item* it = m_items[(size_t)k];
+            it->shownReadout.clear(); it->shownChoice.clear(); it->shownText.clear(); it->shownDetail.clear();
+            if (it->row.kind == SLIDER) setSliderReadout(k, it->row.readout);
+            if (it->row.kind == TEXT || it->row.kind == BUTTON) setTextLabel(k, it->row.text);
+        }
+    }
+    std::vector<float> heights((size_t)n > 0 ? (size_t)n : 1);
+    for (int k = 0; k < n; ++k) {
+        Item* it = m_items[(size_t)k];
+        if (it->row.kind == ITEM && (it->shownDetail != it->row.detail || (it->detail.empty() && !it->row.detail.empty()))) {
+            it->shownDetail = it->row.detail;
+            if (it->row.detail.empty()) it->detail.clear();
+            else it->detail.set(it->row.detail.c_str(), du(15), UITextAlignmentRight, du(kItemDetailW), FACE_BODY);
+        }
+        float cw, ch;
+        rowControlSize(it->row.kind, it->detail, &cw, &ch);
+        const bool para = it->row.kind == PARAGRAPH;
+        const float indent = it->row.kind == ITEM && it->row.icon >= 0 ? du(kItemIcon + kItemIconGap) : 0.0f;
+        it->line.build(para ? "" : it->row.title.c_str(), para ? it->row.title.c_str() : it->row.hint.c_str(), C.size.width, cw, ch, indent);
+        it->line.setLast(k == n - 1);
+        it->line.setMuted(it->row.kind == HEADING || !it->row.enabled);
+        heights[(size_t)k] = it->line.height();
+    }
+    m_scroll.setRowHeights(n ? &heights[0] : NULL, n, C.size.height);
+    const bool touch = touchFloor() > 0.0f;
+    for (int k = 0; k < n; ++k) {
+        if (!shown(k)) continue;
+        Item* it = m_items[(size_t)k];
+        it->line.setOrigin(C.origin.x, C.origin.y + C.size.height - m_scroll.rowOffset(k));
+        const CGRect rr = it->line.rect();
+        float cw, ch;
+        rowControlSize(it->row.kind, it->detail, &cw, &ch);
+        const CGRect cr = it->line.controlRect(cw, ch);
+        switch (it->row.kind) {
+        case TOGGLE:
+            it->tog.setRect(cr);
+            it->tog.setHitRect(touch ? rr : CGRectMake(0, 0, 0, 0));
+            break;
+        case CHOICE: {
+            it->st.setRect(cr);
+            it->st.setHitRect(CGRectMake(cr.origin.x, rr.origin.y, cr.size.width, rr.size.height));
+            const std::string opt = it->row.choice >= 0 && it->row.choice < (int)it->row.options.size() ? it->row.options[(size_t)it->row.choice] : std::string();
+            if (opt != it->shownChoice) { it->shownChoice = opt; it->st.setValueText(opt.c_str(), du(20)); }
+            break;
+        }
+        case TEXT: case BUTTON:
+            it->btn.setRect(cr);
+            it->btn.setHitRect(touch ? CGRectMake(cr.origin.x, rr.origin.y, cr.size.width, rr.size.height) : CGRectMake(0, 0, 0, 0));
+            break;
+        case SLIDER: {
+            const CGRect sr = CGRectMake(cr.origin.x, cr.origin.y, du(200), cr.size.height);
+            it->sl.setRect(sr);
+            it->sl.setHitRect(CGRectMake(sr.origin.x - du(8), rr.origin.y, sr.size.width + du(16), rr.size.height));
+            break;
+        }
+        default: break;
+        }
+    }
+}
+
+void RowList::render() {
+    bevel(m_content, BEVEL_CONTENT);
+    for (int k = 0; k < (int)m_items.size(); ++k) {
+        if (!shown(k)) continue;
+        Item* it = m_items[(size_t)k];
+        const CGRect rr = it->line.rect();
+        if (it->row.kind == ITEM && it->row.enabled && hoverAt(rr, rr)) fill(rr, C(0xc6f175, 0.22f));   // as Focus::row
+        it->line.render();
+        switch (it->row.kind) {
+        case ITEM: {   // K.7-3a: the whole row is the control (a Tab stop of its own: a button, not a list row)
+            const Color ink = it->row.enabled ? kText : kTextMuted;
+            if (it->row.icon >= 0) {
+                const float s = du(kItemIcon);
+                icon(it->row.icon, CGRectMake(rr.origin.x + du(kRowPadX), rr.origin.y + (rr.size.height - s) * 0.5f, s, s), ink);
+            }
+            if (!it->detail.empty()) {
+                const float w = std::min(it->detail.width(), du(kItemDetailW));
+                const CGRect dr = it->line.controlRect(w, it->detail.height());
+                it->detail.draw(dr.origin.x + dr.size.width - du(kItemDetailW), dr.origin.y + dr.size.height, it->row.enabled ? kTextSecondary : kTextMuted);
+            }
+            if (it->row.enabled) { focusAdd(it, 0, FI_BUTTON, rr); focusRing(it, 0, rr, true); }
+            break;
+        }
+        case TOGGLE: it->tog.render(); break;
+        case CHOICE: it->st.render(); break;
+        case TEXT: case BUTTON: it->btn.render(); break;
+        case SLIDER: {
+            it->sl.render();
+            const CGRect sr = it->sl.rect();
+            const float cy = sr.origin.y + sr.size.height * 0.5f;
+            it->readout.draw(sr.origin.x + sr.size.width + du(8), cy + it->readout.lineHeight() * 0.5f, kText);
+            break;
+        }
+        default: break;
+        }
+    }
+    m_scroll.render();
+}
+
+void RowList::cancelPress() {
+    for (size_t i = 0; i < m_items.size(); ++i) { m_items[i]->st.setPressed(false, false); m_items[i]->btn.setPressed(false); }
+}
+
+bool RowList::touchDown(int touch, float x, float y) {
+    if (m_scroll.hitBar(x, y) && m_scrollTouch < 0) {
+        m_scrollTouch = touch; m_barDrag = true;
+        m_scroll.barBegin(y);
+        return true;
+    }
+    const bool inContent = x >= m_content.origin.x && x <= m_content.origin.x + m_content.size.width &&
+                           y >= m_content.origin.y && y <= m_content.origin.y + m_content.size.height;
+    if (!inContent) return false;
+    bool grabbed = false;
+    for (int k = 0; k < (int)m_items.size() && !grabbed; ++k) {
+        if (!shown(k)) continue;
+        Item* it = m_items[(size_t)k];
+        if (!it->row.enabled) continue;
+        if (it->row.kind == SLIDER && m_dragSlot < 0 && it->sl.hit(x, y)) {
+            m_dragSlot = k; m_dragTouch = touch; grabbed = true;
+            if (it->sl.beginDrag(x)) { it->row.value = it->sl.value(); m_changes.push_back(std::make_pair(k, (int)EV_SLIDER)); }
+        } else if (it->row.kind == CHOICE) it->st.setPressed(it->st.hitDec(x, y), it->st.hitInc(x, y));
+        else if (it->row.kind == TEXT || it->row.kind == BUTTON) it->btn.setPressed(it->btn.hit(x, y));
+    }
+    if (!grabbed && m_scrollTouch < 0) { m_scrollTouch = touch; m_barDrag = false; m_scroll.beginContentDrag(y); }
+    return true;
+}
+
+void RowList::touchHeld(int touch, float x, float y) {
+    if (touch == m_dragTouch && m_dragSlot >= 0) {
+        Item* it = m_items[(size_t)m_dragSlot];
+        if (it->sl.dragTo(x)) { it->row.value = it->sl.value(); m_changes.push_back(std::make_pair(m_dragSlot, (int)EV_SLIDER)); }
+    }
+    if (touch == m_scrollTouch) {
+        if (m_barDrag) m_scroll.barDragTo(y);
+        else if (m_scroll.contentDragTo(y)) cancelPress();
+    }
+}
+
+void RowList::step(int k, int dir) {
+    Item* it = m_items[(size_t)k];
+    const int n = (int)it->row.options.size();
+    if (n < 1) return;
+    it->row.choice = (it->row.choice + dir + n) % n;
+    m_changes.push_back(std::make_pair(k, (int)EV_CHOICE));
+}
+
+void RowList::touchUp(int touch, float x, float y) {
+    cancelPress();
+    if (touch == m_dragTouch) {
+        if (m_dragSlot >= 0) {
+            Item* it = m_items[(size_t)m_dragSlot];
+            if (it->sl.dragTo(x)) { it->row.value = it->sl.value(); m_changes.push_back(std::make_pair(m_dragSlot, (int)EV_SLIDER)); }
+            it->sl.endDrag();
+        }
+        m_dragSlot = m_dragTouch = -1;
+        return;   // a drag that ends over a button does not press it
+    }
+    if (touch != m_scrollTouch) return;
+    const bool scrolled = m_barDrag || m_scroll.scrolling();
+    m_scroll.endDrag();
+    m_scrollTouch = -1;
+    m_barDrag = false;
+    if (scrolled) return;
+    for (int k = 0; k < (int)m_items.size(); ++k) {
+        if (!shown(k)) continue;
+        Item* it = m_items[(size_t)k];
+        if (!it->row.enabled) continue;
+        if (it->row.kind == TOGGLE) {
+            if (it->tog.hit(x, y)) { it->row.on = !it->row.on; it->tog.setOn(it->row.on); m_changes.push_back(std::make_pair(k, (int)EV_TOGGLE)); return; }
+        } else if (it->row.kind == CHOICE) {
+            if (it->st.hitDec(x, y)) { step(k, -1); return; }
+            if (it->st.hitInc(x, y)) { step(k, +1); return; }
+        } else if (it->row.kind == TEXT) {
+            if (it->btn.hit(x, y)) { m_changes.push_back(std::make_pair(k, (int)EV_TEXT)); return; }
+        } else if (it->row.kind == BUTTON) {
+            if (it->btn.hit(x, y)) { m_changes.push_back(std::make_pair(k, (int)EV_ACTIVATE)); return; }
+        } else if (it->row.kind == ITEM) {
+            if (it->line.hit(x, y)) { m_changes.push_back(std::make_pair(k, (int)EV_ACTIVATE)); return; }
+        }
+    }
+}
+
+bool RowList::takeChange(int* row, Event* ev) {
+    if (m_changes.empty()) return false;
+    *row = m_changes.front().first;
+    *ev = (Event)m_changes.front().second;
+    m_changes.erase(m_changes.begin());
+    return true;
+}
+
+bool RowList::rowRect(int i, CGRect* r) const {
+    if (i < 0 || i >= (int)m_items.size() || !shown(i)) return false;
+    *r = m_items[(size_t)i]->line.rect();
+    return true;
+}
+bool RowList::controlRect(int i, CGRect* r) const {
+    if (!rowRect(i, r)) return false;
+    const Item* it = m_items[(size_t)i];
+    switch (it->row.kind) {
+    case TOGGLE: *r = it->tog.rect(); break;
+    case CHOICE: *r = it->st.rect(); break;
+    case TEXT: case BUTTON: *r = it->btn.rect(); break;
+    case SLIDER: *r = it->sl.rect(); break;
+    default: break;   // a heading, paragraph or ITEM: the row
+    }
+    return true;
+}
+
 void progressBar(CGRect r, float frac, float phase) {
     fill(r, kTrack);
     const float U = u();
@@ -1845,4 +2201,15 @@ extern "C" unsigned eden_ui_icon_atlas_name(int* w, int* h) {
     if (w) *w = t ? (int)t->pixelsWide() : 0;
     if (h) *h = t ? (int)t->pixelsHigh() : 0;
     return t ? t->name : 0;
+}
+// K.7-3c: the pack-icon atlas's texture name and size (0 = not built: no icons, or not drawn yet), for --rejoin-selftest's ledger check.
+extern "C" unsigned eden_ui_pack_icon_atlas_name(int* w, int* h) {
+    Texture2D* t = GLW::packAtlas();
+    if (w) *w = t ? (int)t->pixelsWide() : 0;
+    if (h) *h = t ? (int)t->pixelsHigh() : 0;
+    return t ? t->name : 0;
+}
+// K.7-3c: cell `i` of the world's pack icons as 64x64 RGBA (NULL past the list), for --packs-selftest's pixel check.
+extern "C" const unsigned char* eden_ui_pack_icon_pixels(int i) {
+    return GLW::packIconPixels(i);
 }

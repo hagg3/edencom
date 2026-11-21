@@ -36,14 +36,17 @@ class Menu;
 #define JUST_TERRAIN_GEN 0
 class World{
 public:
-	Terrain* terrain;
-	Camera* cam;
-	Resources* res;
-	Player* player;
-	Hud* hud;
-	Menu* menu;
-	FileManager* fm;
-	SpecialEffects* effects;
+	// X.34: null until World::World() builds each one. The constructor's own callees read them first
+	// (Graphics::initGraphics -> underwaterFog reads hud with Atmosphere on; Hud::Hud reads fm), and a C++
+	// new doesn't zero: the iPad Air 2 died at boot on the garbage pointer under --atmo=low|high.
+	Terrain* terrain=nullptr;
+	Camera* cam=nullptr;
+	Resources* res=nullptr;
+	Player* player=nullptr;
+	Hud* hud=nullptr;
+	Menu* menu=nullptr;
+	FileManager* fm=nullptr;
+	SpecialEffects* effects=nullptr;
     int target_game_mode;
 	int game_mode;
 	//BOOL FLIPPED;
@@ -68,6 +71,10 @@ public:
     void render();
     void renderFrame(bool draw);
     void exitToMenu();
+    // K.6-2: the one way to leave a world with its save (Save & Quit, the save-failed dialog's Try again): the
+    // mods' `leave` handlers, then the save, then exitToMenu. False: the save failed and the world stays open
+    // (QA.5; lastSaveError says why), so a retry fires `leave` again.
+    bool requestExit();
     
     
 };

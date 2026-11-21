@@ -16,7 +16,7 @@ exactly that until R.3 and now imports `"../Lighting.h"`.
   per voxel of the resident window, toroidally indexed like `blockarray`, but it is no longer stored
   densely. Stock kept `Vector8* lightarray` for every voxel (288·288·`T_HEIGHT`·3 bytes: **15.9 MB at
   64z, 63.7 MB at 256z**) and memset all of it on every load, warp and bulk reload, although only
-  voxels within `LIGHT_RADIUS` of a lightbox are ever non-zero. It is now `Vector8** lightbricks`:
+  voxels within the lamp radius of a lightbox are ever non-zero. It is now `Vector8** lightbricks`:
   one pointer per toroidal chunk slot (1296 / 5184), each NULL or a 12 KB brick of
   `CHUNK_SIZE`³ triples laid out `CC(x,z,y)`. A brick is allocated the first time `addlight` writes a
   non-zero value into its slot; no brick means no light. Accessors in `Lighting.h`
@@ -40,11 +40,40 @@ exactly that until R.3 and now imports `"../Lighting.h"`.
     The lit store on those worlds is 8 bricks (6 lightboxes): 119 KB at 64z, 181 KB at 256z including
     the tables. The per-warp memset (16 / 64 MB; 1.2 / 4.2 ms on the A8X, F.3) is now 8 × 12 KB.
 - `addlight(x,z,y, brightness, color)` (`Lighting.cpp`, body `light_splat`) — adds (or with
-  brightness=−1, subtracts) a spherical falloff light of radius `LIGHT_RADIUS 5`:
-  `contribution = 64·(1−dist/5)·brightness·color`, clamped 0..255 per channel.
+  brightness=−1, subtracts) a spherical falloff light of radius R (`light_radius()`; stock's
+  `LIGHT_RADIUS 5`): `contribution = 64·(1−dist/R)·brightness·color`, clamped 0..255 per channel.
   Called when lightboxes are placed/destroyed/repainted.
+  **Lamp light profiles (LM.1, 2026-11-17).** Two profiles, `light_setProfile(mode)` in `Lighting.h`:
+  **Legacy** (R = 5, stock) and **New Dawn** (the same formula, bytes and clamp at a wider radius,
+  `LIGHT_RADIUS_NEWDAWN` 16; `light_setNewDawnRadius` tunes it). New Dawn's radius is a fit to
+  screenshots of the 2010s game after its New Dawn update (a straight falloff to ambient at about 16.5
+  blocks; confidence: medium, not measured against its code). Every former `LIGHT_RADIUS` use reads the profile:
+  the splat, and `refreshChunksInRadius` through `light_refreshRadius()` (Legacy: 5, as stock; else
+  `ceil(R)` capped at `CHUNK_SIZE`, because its 27 probe points sit at ±r per axis and an r of 17
+  from a lamp at local 15 lands two chunks over, skipping the neighbour it lit). The mesher samples only a block's own voxel, so a
+  chunk's mesh depends only on light inside that chunk.
+  - **The cap, R ≤ 17 (`LIGHT_RADIUS_MAX`).** The last non-zero voxel is `ceil(R)−1` blocks out, so a
+    lamp at local x 0 of column C reaches local 0 of C−1 at R = 17 (offset −16) and local 15 of C−2 at
+    R = 18. The per-column rebuild below clears the 3×3 of slots and re-lights it from the 5×5, which
+    is exact only while every lamp that can light the 3×3 sits in the 5×5: `ceil(R)−1 ≤ CHUNK_SIZE`.
+    `light_setNewDawnRadius` clamps to it; `--light-mutate=r18` lifts it by one and must fail
+    `--ring-light-selftest` (it does: the walked light and meshes differ from a re-sweep).
+  - **A switch** with a world open is a fresh sweep (`updateLightingBegin`) plus a re-mesh of the whole
+    window (`terrain_requestWindowRemesh`), not a `refreshChunksInRadius` per lamp: going New Dawn →
+    Legacy, chunks 5–16 blocks from a lamp would keep meshes baked from light that no longer exists.
+    `--light-selftest=modes` checks a switch each way equals a fresh load (light hash and night meshes).
+  - **Stored per world (LM.2).** `.emod` record 14 `LIGHTING` (`docs/emod-file-format.md`), read at load and written by World Properties › World › *Lamp light* (origin 1). No record = the detector (LM.3): `light_detectMode` gives New Dawn when Settings › World › *Auto-detect lamp light* (`auto_lamp_light`, default on; `EDEN_AUTO_LAMP_LIGHT=0|1` overrides) is on and the world has 16 bands, a `PROVENANCE` record and `PROVENANCE` flag 256 (promoted from 64z) clear, which is what a converted 256z `.eden` (Get Worlds, import, convert-on-play) looks like; everything else (64z, promoted, a world made in Emod, the bundled worlds) is Legacy. A usable record always wins, so the toggle never overrides a player's pick. The first open applies it, shows *"Lamp light: New Dawn, as this world was built. Change it in World Properties."* once, and the next save stores it (origin 0, detector revision 1); toggle off stores nothing. A multiplayer session has no store: toggle on + a 256z session = New Dawn, nothing saved, no toast.
+  - **The sphere is precomputed** per radius (`light_buildOffsets`: each (x,z) of the disc in stock's loop
+    order with its run of (y, intensity)), the intensity being stock's expression evaluated once, so the
+    bytes are stock's. Legacy's `.light` hashes (`--stage1` on a lattice world at 64z and 256z,
+    `--light-selftest`, `--ring-light-selftest`) are unchanged from before LM.1.
+  - **Cost (Mac M-series, 2026-11-17, F3 build).** New Dawn writes 17,077 voxels per lamp to Legacy's
+    515. Lamps every 23 blocks, 160+160+32-block walk: per landed column 0.31 → 2.2 ms average (max
+    1.5 → ~10). Lamps every 4 blocks (5,184 in the window, an extreme): rebuild 2.3 → 8.3 ms average
+    (max 4–5 → 10–15) and the sliced load sweep 22 → 310 ms in all, spread over ~160 frames. Light store
+    16–20 MB at New Dawn (5–6 MB Legacy) on the 23-block lattice. The A8X is about 3× slower.
   **No toroidal wrap (modified from stock, B.5b-1c, 2026-10-12).** Stock wrote every voxel of the
-  sphere through `(x+g_offcx)%T_SIZE`, so a lightbox within 5 blocks of the window edge also lit the
+  sphere through `(x+g_offcx)%T_SIZE`, so a lightbox within R blocks of the window edge also lit the
   *opposite* edge's column. A voxel whose column is not resident (`isColumnResident`, one `pbounds`
   compare per (x,z) of the sphere) now gets nothing. Every writer — edits, both sweeps, the per-column
   rebuild below — goes through `light_splat`, so a load and a walk agree on what the edge gets.
@@ -224,6 +253,59 @@ terms. Plan and gates: `WORKING/feature-archaeology-2026-10-13/shadows-plan.md`.
   nolanding|nodiag` must each FAIL), and CI's "geometry 64z shadows" leg (`geom` unchanged, `full`
   pinned in `check-stage1.py`). Probes: `eden_debug_shadow_state` (`stale` must be 0),
   `eden_debug_top_shade`, `eden_debug_chunk_mesh_hash`.
+
+### Sun shadows (`Classes/SunShadow.{h,cpp}`) — *new (SH.3, 2026-11-16)*
+A GPU shadow map cast along the sun's angle by terrain near the player: crisp 1/8-block texels, no soft
+edges. The renderer half (depth target, `P_DEPTH`/`P_DEPTH_ALPHA`, the `EDEN_SUN_SHADOW` program twin) is
+`Classes/Renderer.h` and `port/docs/renderer.md`.
+- **Setting:** Experiments › *Sun shadows* (`sun_shadows`, `video.sun_shadows`; the console name keeps the Video
+  group). An Experiment, default **off** on every platform; on the Air 2 class the row is hidden and the value
+  reads as off (`eden_sun_shadows_offered()`). The graphics presets set it off too (the High preset no longer
+  turns it on). Native `--sunshadows=off|on` is a non-persisting override; **every scripted harness mode forces it off** unless
+  the flag is given, so no selftest, shot or `--stage1` pin moves.
+- **Replaces the baked shadows:** while sun shadows are on, the mesher runs with H.2 Off
+  (`shadow_setSunReplace`, which beats both the *Shadows* setting and `--shadows=`). Switching costs one
+  whole-window re-mesh each way, counted by `g_shadow_remeshes`. The *Shadows* row stays and shows "Off while
+  Sun shadows is on." (`eden_settings_inactive_hint`).
+- **The map:** one orthographic depth map looking down the sun, 2048 texels a side on desktop and 1024 on iOS
+  (`TF_DEPTH16`: 8 / 2 MiB; 256 / 128 blocks across). The light basis is right-handed: right = normalize(+z ×
+  −sun), up = sun × right. The centre is the eye's `shadow.snap` cell, then nudged across the sun to whole
+  texels, so a world point keeps its texel from one re-render to the next. Shaded distance = min(half-width
+  − 1.75 snaps, `shadow.distance`, render radius × 16), fading out over its last 8 blocks.
+- **Sun:** `SkyCycle::shadowSun(dir, day, quantDeg)` is shared with the cloud shadows (`Clouds::applyShadow`
+  calls it with a step of 0, so their pixels are unchanged). The map's sun is quantised to `shadow.sun_step`
+  degrees of arc (0.5°: shadows tick, never swim); `day` is not. Strength = `shadow.strength` × day × (1 −
+  `Clouds::weatherShare()`): at night and under an overcast sky it is 0, so there is no pass and no lookup, and
+  the map is kept for the morning.
+- **Re-rendered only when dirty** (`SunShadow::renderMap`, from `World::renderFrame` before `R::beginScene`,
+  pass `P_R_SHADOW`): the map was created; a `shadow.*` tunable changed; the eye is **more than a snap from
+  the map's centre on any axis** (hysteresis: standing or jumping across a cell edge costs nothing, a walk
+  re-renders about once a snap); the quantised sun moved; a re-uploaded or dropped chunk overlaps the map's
+  light-space box (`noteChunk` from `prepareVBO`/`dropGeometry`; a column landing far away does not count); or
+  the window changed (`reset` from `allocateMemory`/`deallocateMemory`/`clearBlocks`). `EDEN_SUNSHADOW_TRACE=1`
+  logs why each re-render happened.
+- **Casters:** a walk over `chunkTablec` (not the camera's render list: chunks behind the camera cast), each
+  chunk's box tested against the map's in light space. Per chunk: the opaque stream's sun-facing face buckets
+  plus the angled bucket 6, and the same buckets of stream 2 alpha-tested on atlas2 (leaves and glass cast
+  their texture's shape; water vertices collapse, so water casts nothing). **Bucket directions are 0 −z, 1 +z,
+  2 −x, 3 +x, 4 −y, 5 +y** (the mesher's `dz2`/`dx2`/`dy2` tables). Pass state: polygon offset 2 / 4, no cull.
+  Creatures, the player, doors, golden cubes, portals and flowers neither cast nor (creatures) receive.
+- **Lookup:** `apply()` (in `Graphics::beginTerrain` and `Terrain::render2`, before the blocks' ×0.25) states
+  `R::setSunShadow` with ssMat = bias × light ortho × light view × inverse(camera view); `endTerrain` and the
+  sky pass call `R::sunShadowOff()`. The shader shades a fragment whose gap behind the map's first surface is
+  more than 1/16 block, fully up to `shadow.reach_full` (24) blocks along the ray and fading to none at
+  `shadow.reach_end` (48), so deep caves keep their own light. Where a cloud shadow already falls, the sun
+  shadow is not stacked on it.
+- **Off = absent:** setting off, the Air 2 class, a refused depth framebuffer (logged once; behaves off for the
+  rest of the run) or a scripted mode: no texture, no framebuffer, no depth program, no caster walk, no
+  uniforms. Turning it off frees the map at the next frame.
+- **Tunables (console, not stored):** `shadow.distance`, `shadow.strength`, `shadow.reach_full`,
+  `shadow.reach_end`, `shadow.sun_step`, `shadow.snap` (`Console.cpp` `bridgeShadow`; see
+  `console-reference.md`).
+- **Gate:** `--sunshadow-selftest` (headless, null backend, a 512-texel map): off = absent; idle 600 frames =
+  no re-render; 1 block walked = none, past a snap = one; a sun step = one; an edit inside the box = one, far
+  outside = none; a chunk behind the camera casts; night and a storm = no pass and no lookup; the *Shadows*
+  replace (one re-mesh each way); the Air 2 class. Pixels (the sign of ssMat, acne, the look) need a window.
 
 ## Liquids (`Classes/Liquids.cpp`)
 

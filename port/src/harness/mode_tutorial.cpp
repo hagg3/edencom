@@ -97,7 +97,12 @@ int listedWorlds() {
 // The prefs live in a file beside the worlds, so a key set here is read back by the next process (the kill loop).
 void usePrefsFile() { eden_prefs_reset_for_test((docsRoot() + "/tutorial-prefs").c_str()); }
 int keySet() { return eden_prefs_get_int(TutorialInstall::prefsKey(), 0); }
-void scan() { World::getWorld->menu->loadWorlds(); }   // the install hook sits at the top of every scan
+// Menu::loadWorlds no longer installs the tutorial (it is the Settings button's job), so a scan here is the once-per-install
+// hook as the old loadWorlds ran it (install, then read the list).
+void scan() {
+    TutorialInstall::installOnce(docsRoot());
+    World::getWorld->menu->loadWorlds();
+}
 
 // The first half of a kill-point run: a fresh Documents, one scan (the hook installs), maybe _Exit(86) inside it.
 int phaseInstall() {

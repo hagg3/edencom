@@ -171,6 +171,7 @@ void intentPaint(int x, int z, int y, int color);
 // fuse runs out on time, Terrain::update calls burnFuseOut (wire order, y = height) for the follow-up
 // mine; a node ended by its cell going air first (a restore, a peer's mine) sends nothing.
 void intentBurn(int x, int z, int y);
+void intentUse(int x, int z, int y);   // K.6-1b: a build tap on a usable block (script event only; no wire form)
 void burnFuseOut(int x, int y, int z);
 // SignTool::answer: a sign placed or edited (its TrailerSign fields: file order, z = height). Nothing
 // is sent for a removal (the server drops a block's signs when it goes air, as retail).

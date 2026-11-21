@@ -25,6 +25,9 @@ struct DrawState {
     bool        csOn = false;                          // AT.6: R::setCloudShadow (the EDEN_CLOUD_SHADOW twins)
     R::Tex      csTex = 0;
     float       csU[4] = {0, 0, 0, 0}, csV[4] = {0, 0, 0, 0}, csParams[4] = {0, 0, 0, 0};
+    bool        ssOn = false;                          // SH.2: R::setSunShadow (the EDEN_SUN_SHADOW twins)
+    R::Tex      ssTex = 0;
+    float       ssMat[16] = {}, ssParams[4] = {0, 0, 0, 0}, ssFade[4] = {0, 0, 0, 0};
 };
 DrawState& ds();
 
@@ -39,6 +42,8 @@ struct Invariants {
     long unbalanced2D = 0, unbalancedScene = 0;
     long passUnbalancedFrames = 0;        // the pass tracker not back at depth 0 at endFrame (when tracking)
     long contractChecks = 0, contractFails = 0;
+    long depthPassMisuse = 0;             // SH.2: a depth pass begun in the scene pass or nested, an end without a
+                                          // begin, one left open at endFrame, a drawDepth outside one
     std::string firstFailure;
 };
 Invariants& inv();
@@ -69,6 +74,11 @@ void   drawSkinned(const R::Geometry& g, R::Tex t, const R::Rgba& tint, const fl
 void   drawLit(const R::Geometry& g, R::Tex t, const R::Rgba& tint);
 void   drawPrecip(const R::Geometry& g, const R::PrecipParams& p);   // AT.2b: program P_PRECIP
 void   drawClouds(const R::Geometry& g, const R::CloudParams& p);    // AT.6: program P_CLOUDS
+bool   beginDepthPass(R::Tex depth, int size);                       // SH.2: false = the target is incomplete
+void   endDepthPass();
+void   drawDepth(const R::Geometry& g, R::Tex alphaTex, float alphaRef);   // P_DEPTH / P_DEPTH_ALPHA
+void   depthTargetRelease();                                         // its texture is going: free the framebuffer
+bool   sunShadowEverUsed();                                          // a depth pass or a sun-shadow draw ever ran
 bool   readPixels(int x, int y, int w, int h, void* rgba);
 bool   texReadLevel(R::Tex t, int level, int w, int h, void* rgba);   // X.32
 void   texSampling(R::Tex t, const R::TexDesc& d);

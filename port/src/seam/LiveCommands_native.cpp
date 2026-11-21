@@ -24,6 +24,23 @@
 //   cmdtrace 0|1               print every command-block statement as it runs
 //   photo                      take the F2 screenshot (Hud's camera path): the frame becomes the
 //                              world's thumbnail, <world file>.png beside it in Documents
+//   shot NAME [KBTOP]          EX.1-0: the next frame WITH its UI (menus, dialogs, a mod's eden.menu/ask/input)
+//                              as NAME.bmp (".bmp" added if missing; relative to the cwd; the dir must exist),
+//                              the same capture as --shot's (drawn, read back, not presented). KBTOP (0..1) fakes
+//                              an on-screen keyboard covering that fraction of the screen from the bottom
+//                              (eden_text_input_keyboard_top's point-space, y-up answer), for 6 frames first so a
+//                              screen that lays out from it re-lays out (the Console, the server form; a GLDialog
+//                              prompt such as eden.input is lifted by the iOS view instead and does not move on a
+//                              desktop); the queue waits.
+//                              Prints `[live] shot NAME.bmp WxH` (or `[live] shot failed: ...`). Works in menus too.
+//   key NAME                   EX.1-0: press and release one key (an SDL scancode name: escape, return, tab, up, a ...)
+//                              through the event queue, as the keyboard would: `key escape` picks a dialog's safe
+//                              (last) button, cancels an eden.input, closes a mod menu.
+//   modspage                   EX.1-0: open the pause menu's Mods page (ModScript::openModsPage), as its button does
+//   installzip PATH            EX.1-0: install a pack zip into Documents/Packs as Mods > Install from file does
+//                              (PackInstall::installZip, no sha256, no expected id); prints `[live] installzip ok
+//                              <id> <version> -> Packs/<folder>` or `[live] installzip refused: <why>` and the
+//                              validator's lines. Works on the main menu: the pack loads at the next world entry.
 //   /<console line>            a Console line (Classes/Console.h) with the anchor fixed at =0 =0 =0, so
 //                              relative = absolute; output echoes as `[live] <text>` (errors `[live] ! <text>`).
 //                              `/cells` and `/quit` are the harness-only console verbs registered below.
@@ -37,8 +54,13 @@
 #include "../../../port/src/shim/foundation/eden_image.h"
 #include "../../../Classes/World.h"
 #include "../../../Classes/Constants.h"
+#include "../../../Lighting.h"   // LM.1: light_refreshRadius
 #include "../../../Classes/CmdScript.h"
 #include "../../../Classes/Console.h"
+#include "../../../Classes/ModScript.h"  // EX.1-0: modspage
+#include "../../../Classes/PackInstall.h" // EX.1-0: installzip
+#include "../../../Classes/Renderer.h"   // EX.1-0: R::readPixels
+#include "../render/gl/gl_context.h"     // EX.1-0: eden_gl_context_get_drawable_size
 #include <SDL3/SDL.h>
 #include <algorithm>
 #include <cstdio>
@@ -46,8 +68,11 @@
 #include <cstring>
 #include <deque>
 #include <string>
+#include <vector>
 
 void power_parse_exp(const char* list);   // harness/power.cpp (PW.0b)
+void eden_native_debug_set_keyboard_top(float top);   // Input_native.cpp
+namespace harness { namespace g_shots { bool write_bmp(const char* path, int w, int h, const std::vector<unsigned char>& rgba); } }
 
 extern "C" {
 int   eden_menu_world_count(void);
@@ -60,6 +85,8 @@ void  eden_menu_set_pending_world_type(int flat);
 void  eden_menu_set_pending_world_height(int height);
 const char* eden_debug_menu_state(void);
 void  eden_take_screenshot(void);
+void  eden_native_gl_set_present(int on);
+const char* eden_platform_documents_root(void);
 }
 void addlight(int xx, int zz, int yy, float brightness, Vector color);
 extern Vector colorTable[256];
@@ -72,6 +99,23 @@ std::deque<std::string> g_queue;
 int g_rate = 40;
 int g_wait = 0;
 bool g_awaitPlay = false;
+// EX.1-0 `shot`: frames left before the capture frame (-1 = none), whether the next drawn frame is it.
+std::string g_shotPath;
+int  g_shotFrames = -1;
+bool g_shotArmed = false;
+bool g_shotKb = false;
+
+void start_shot(const char* rest) {
+    char name[900] = {0};
+    float kb = -1.0f;
+    const int n = std::sscanf(rest, "%899s %f", name, &kb);
+    if (n < 1) { std::printf("[live] shot failed: usage shot NAME [KBTOP]\n"); std::fflush(stdout); return; }
+    g_shotPath = name;
+    if (g_shotPath.size() < 4 || g_shotPath.compare(g_shotPath.size() - 4, 4, ".bmp") != 0) g_shotPath += ".bmp";
+    g_shotKb = n >= 2 && kb >= 0.0f;
+    if (g_shotKb) eden_native_debug_set_keyboard_top(std::min(kb, 1.0f) * SCREEN_HEIGHT);
+    g_shotFrames = g_shotKb ? 6 : 0;
+}
 
 int game_mode() {
     const char* s = eden_debug_menu_state();
@@ -107,7 +151,7 @@ void set_block(int x, int y, int z, int type, int color) {
     if (type == TYPE_LIGHTBOX) addlight(x, z, y, 1.0f, colorTable[color & 255]);
     t->updateChunks(x, z, y, type);
     if (type != TYPE_NONE) t->setColor(x, z, y, (color8)color);
-    if (type == TYPE_LIGHTBOX) t->refreshChunksInRadius(x, z, y, LIGHT_RADIUS);
+    if (type == TYPE_LIGHTBOX) t->refreshChunksInRadius(x, z, y, light_refreshRadius());
 }
 
 void open_world(const char* name) {
@@ -186,6 +230,29 @@ bool run(const std::string& line) {
     else if (!std::strcmp(cmd, "rate")) g_rate = atoi(rest) > 0 ? atoi(rest) : 1;
     else if (!std::strcmp(cmd, "wait")) g_wait = atoi(rest);
     else if (!std::strcmp(cmd, "say"))  { std::printf("[live] %s\n", rest); std::fflush(stdout); }
+    else if (!std::strcmp(cmd, "shot")) start_shot(rest);
+    else if (!std::strcmp(cmd, "installzip")) {
+        const PackInstall::Result r = PackInstall::installZip(rest, eden_platform_documents_root(), "");
+        if (r.ok) std::printf("[live] installzip ok %s %s -> Packs/%s\n", r.id.c_str(), r.version.c_str(), r.folder.c_str());
+        else std::printf("[live] installzip refused: %s\n", r.error.c_str());
+        for (const std::string& l : r.lines) std::printf("[live] installzip | %s\n", l.c_str());
+        std::fflush(stdout);
+    }
+    else if (!std::strcmp(cmd, "key")) {
+        const SDL_Scancode sc = SDL_GetScancodeFromName(rest);
+        if (sc == SDL_SCANCODE_UNKNOWN) { std::printf("[live] key: unknown key %s\n", rest); std::fflush(stdout); return false; }
+        for (int down = 1; down >= 0; --down) {
+            SDL_Event e;
+            SDL_zero(e);
+            e.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+            e.key.scancode = sc;
+            e.key.key = SDL_GetKeyFromScancode(sc, SDL_KMOD_NONE, false);
+            e.key.down = down != 0;
+            e.key.timestamp = SDL_GetTicksNS();
+            SDL_PushEvent(&e);
+        }
+        g_wait = std::max(g_wait, 2);   // the press lands in the next frames' pump, before the next command
+    }
     else if (!inWorld) std::fprintf(stderr, "[live] not in a world, dropped: %s\n", line.c_str());
     else if (!std::strcmp(cmd, "set")) {
         int x, y, z, t, c = 0;
@@ -217,6 +284,7 @@ bool run(const std::string& line) {
     } else if (!std::strcmp(cmd, "cmdprobe")) { std::printf("[live] cmd %s\n", CmdScript::describe()); std::fflush(stdout); }
     else if (!std::strcmp(cmd, "cmdtrace")) CmdScript::trace = atoi(rest) != 0;
     else if (!std::strcmp(cmd, "photo")) eden_take_screenshot();
+    else if (!std::strcmp(cmd, "modspage")) { std::printf("[live] modspage %s\n", ModScript::openModsPage() ? "open" : "refused"); std::fflush(stdout); }
     else if (!std::strcmp(cmd, "quit")) { SDL_Event e; SDL_zero(e); e.type = SDL_EVENT_QUIT; SDL_PushEvent(&e); }
     else std::fprintf(stderr, "[live] unknown: %s\n", line.c_str());
     return false;
@@ -239,11 +307,37 @@ extern "C" void eden_live_commands_tick(void) {
         g_awaitPlay = false;
         g_wait = 90;   // let the first frames of streaming/meshing land before editing
     }
+    if (g_shotFrames >= 0 || g_shotArmed) {   // EX.1-0: the queue waits for a pending shot
+        if (g_shotFrames > 0) { --g_shotFrames; return; }
+        if (g_shotFrames == 0) { g_shotFrames = -1; g_shotArmed = true; eden_native_gl_set_present(0); }
+        return;
+    }
     if (g_wait > 0) { --g_wait; return; }
     int budget = g_rate;
-    while (!g_queue.empty() && budget > 0 && g_wait == 0 && !g_awaitPlay) {
+    while (!g_queue.empty() && budget > 0 && g_wait == 0 && !g_awaitPlay && g_shotFrames < 0) {
         std::string line = g_queue.front();
         g_queue.pop_front();
         if (run(line)) --budget;
     }
+}
+
+// EX.1-0: called by the interactive loop right after a frame is drawn (harness/core.cpp). The armed frame
+// was drawn with present off, so its back buffer is still whole (mode_shots.cpp capture()'s trick).
+extern "C" void eden_live_commands_after_frame(void) {
+    if (!g_shotArmed) return;
+    g_shotArmed = false;
+    int w = 0, h = 0;
+    eden_gl_context_get_drawable_size(&w, &h);
+    bool ok = w > 0 && h > 0;
+    std::vector<unsigned char> px;
+    if (ok) {
+        px.resize((size_t)w * h * 4);
+        ok = R::readPixels(0, 0, w, h, px.data());
+    }
+    eden_native_gl_set_present(1);
+    if (g_shotKb) { eden_native_debug_set_keyboard_top(-2.0f); g_shotKb = false; }
+    if (!ok) std::printf("[live] shot failed: no drawable (headless?)\n");
+    else if (!harness::g_shots::write_bmp(g_shotPath.c_str(), w, h, px)) std::printf("[live] shot failed: cannot write %s\n", g_shotPath.c_str());
+    else std::printf("[live] shot %s %dx%d\n", g_shotPath.c_str(), w, h);
+    std::fflush(stdout);
 }

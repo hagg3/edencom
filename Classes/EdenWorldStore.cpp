@@ -1166,6 +1166,7 @@ bool EdenWorldStore::putRecord(int type, const void* data, size_t len) {
         if (type == T_GENERATOR && len != GENERATOR_LEN) return fail("GENERATOR must be 28 bytes");
         if (type == T_SKY_CLOCK && len != SKY_CLOCK_LEN) return fail("SKY_CLOCK must be 16 bytes");
         if (type == T_WEATHER && len != WEATHER_LEN) return fail("WEATHER must be 32 bytes");
+        if (type == T_LIGHTING && len != LIGHTING_LEN) return fail("LIGHTING must be 8 bytes");
         if (type == T_MOD_DATA) {
             std::string why;
             if (!mod_data_parse((const uint8_t*)data, len, nullptr, &why)) return fail(why);
@@ -1185,7 +1186,7 @@ bool EdenWorldStore::putRecord(int type, const void* data, size_t len) {
     }
     uint8_t codec;
     std::vector<uint8_t>& enc = scratch_;
-    const bool raw = type == T_WORLD_HEADER || type == T_GENERATOR || type == T_SKY_CLOCK || type == T_WEATHER || type == T_BLOCK_PALETTE;   // codec 0 by spec
+    const bool raw = type == T_WORLD_HEADER || type == T_GENERATOR || type == T_SKY_CLOCK || type == T_WEATHER || type == T_LIGHTING || type == T_BLOCK_PALETTE;   // codec 0 by spec
     if (!codecs_.encode(codec_, (const uint8_t*)data, len, !raw, &codec, enc)) return fail("encode failed");
     if (enc.size() > MAX_PAYLOAD) return fail("record payload exceeds 16 MiB");
     addRecord((uint8_t)type, codec, 0, 0, 0, (uint32_t)len, enc.data(), enc.size());
@@ -1494,6 +1495,10 @@ std::vector<std::string> EdenWorldStore::verify() {
     if (we >= 0 && entries_[we].aux != WEATHER_LEN)
         errs.push_back(fmt("WEATHER raw length %u is not %u", entries_[we].aux, (unsigned)WEATHER_LEN));
     if (we >= 0 && entries_[we].codec != C_NONE) errs.push_back("WEATHER must be codec 0");
+    int32_t li = latestT_[T_LIGHTING];
+    if (li >= 0 && entries_[li].aux != LIGHTING_LEN)
+        errs.push_back(fmt("LIGHTING raw length %u is not %u", entries_[li].aux, (unsigned)LIGHTING_LEN));
+    if (li >= 0 && entries_[li].codec != C_NONE) errs.push_back("LIGHTING must be codec 0");
     // K.6-5: MOD_DATA's framing (the game ignores a record that breaks it, whole)
     int32_t md = latestT_[T_MOD_DATA];
     if (md >= 0 && decodeEntry(entries_[md], d)) {
@@ -1527,7 +1532,7 @@ std::vector<std::string> EdenWorldStore::verify() {
         }
     }
     bool high[256] = {false};
-    static const int single[] = {T_CREATURES, T_SIGN_TRAILER, T_PROVENANCE, T_SUMMARY, T_GENERATOR, T_BLOCK_PALETTE, T_SKY_CLOCK, T_WEATHER, T_MOD_DATA};
+    static const int single[] = {T_CREATURES, T_SIGN_TRAILER, T_PROVENANCE, T_SUMMARY, T_GENERATOR, T_BLOCK_PALETTE, T_SKY_CLOCK, T_WEATHER, T_MOD_DATA, T_LIGHTING};
     for (int t : single) {
         int32_t i = latestT_[t];
         if (i < 0) continue;

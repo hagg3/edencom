@@ -5,6 +5,7 @@ extern bool DEV_CONSOLE_ALLOWED;   // Hud.cpp
 #include "../../../Classes/Weather.h"       // SX.6
 #include "../../../Classes/DebugMenu.h"
 #include "../../../Classes/GLDialog.h"
+#include "../../../Classes/ContentPack.h"   // K.7-2b
 #include "eden_fs.h"
 #include "../shim/foundation/eden_prefs.h"
 extern "C" int eden_settings_set_by_key(const char* key, float v);   // SRC.8b
@@ -615,6 +616,14 @@ int mods_ui_checks(Menu* m) {
         put(packs + "/" + id + "/pack.json", std::string("{\"format\": 1, \"id\": \"") + id + "\", \"name\": \"Mod " + id +
             "\", \"version\": \"1.0\", \"blocks\": []}\n");
     }
+    eden_fs_make_dirs(packs + "/ms");   // K.7-2b: a pack with a settings page
+    eden_fs_remove(packs + "/.settings/ms.json");
+    put(packs + "/ms/pack.json", "{\"format\": 1, \"id\": \"ms\", \"name\": \"Mod ms\", \"version\": \"1.0\", \"blocks\": [], \"settings\": ["
+        "{\"type\": \"heading\", \"label\": \"Growth\"},"
+        "{\"id\": \"speed\", \"type\": \"slider\", \"label\": \"Grow speed\", \"hint\": \"Higher is faster.\", \"min\": 0.5, \"max\": 4, \"step\": 0.5, \"default\": 1},"
+        "{\"id\": \"glow\", \"type\": \"toggle\", \"label\": \"Glow at night\", \"default\": true},"
+        "{\"id\": \"mode\", \"type\": \"choice\", \"label\": \"Mode\", \"options\": [\"Simple\", \"Full\"], \"default\": \"Simple\"},"
+        "{\"id\": \"sign\", \"type\": \"text\", \"label\": \"Greeting\", \"max\": 32, \"default\": \"Hello\"}]}\n");
     eden_fs_make_dirs(packs + "/bad");
     put(packs + "/bad/pack.json", "{ not json");
     eden_fs_remove(packs + "/mods.json");
@@ -666,6 +675,73 @@ int mods_ui_checks(Menu* m) {
     ui_tap_rect(mm->controlRect("down"));
     tick(2);
     check(indexOf("ma") + 1 == indexOf("mb"), "Down moves it back", "");
+
+    // K.7-2b: the settings page (V15). Row 0 heading, 1 slider, 2 toggle, 3 choice, 4 text.
+    {
+        const std::string sfile = packs + "/.settings/ms.json";
+        auto fileText = [&]() { std::vector<unsigned char> b; return read_file(sfile, &b) ? std::string(b.begin(), b.end()) : std::string("(none)"); };
+        auto rowTap = [&](int i, float fx) {   // tap at fraction fx across row i's control, mid-height
+            mm->pageShowRow(i);
+            tick(1);
+            CGRect r;
+            if (!mm->pageRowRect(i, &r)) return false;
+            ui_tap_rect(CGRectMake(r.origin.x + r.size.width * fx, r.origin.y + r.size.height * 0.5f, 0, 0));
+            tick(2);
+            return true;
+        };
+        tapRow(indexOf("ma"));
+        const bool noneForMa = !mm->canSettings();
+        tapRow(indexOf("ms"));
+        check(noneForMa && mm->canSettings() && mm->controlRect("settings").size.width > 0, "Settings is on only for a pack that declares settings", "");
+        ui_tap_rect(mm->controlRect("settings"));
+        tick(3);
+        std::snprintf(detail, sizeof detail, "open %d rows %d title '%s'", mm->pageOpen(), mm->pageRowCount(), mm->pageTitle());
+        check(mm->pageOpen() && mm->pageRowCount() == 5 && std::strstr(mm->pageTitle(), "Mod ms") != NULL, "Settings opens the pack's page: one row per declared setting", detail);
+        check(fileText() == "(none)", "nothing is written until a value changes", fileText().c_str());
+        rowTap(2, 0.5f);
+        check(fileText().find("\"glow\":false") != std::string::npos, "flipping the toggle writes Packs/.settings/<id>.json", fileText().c_str());
+        rowTap(1, 1.0f);
+        check(fileText().find("\"speed\":4") != std::string::npos, "dragging the slider to its end writes the snapped value", fileText().c_str());
+        rowTap(3, 0.97f);
+        const bool full = fileText().find("\"mode\":\"Full\"") != std::string::npos;
+        rowTap(3, 0.97f);
+        check(full && fileText().find("\"mode\":\"Simple\"") != std::string::npos, "the choice's > steps to Full, then wraps to Simple", fileText().c_str());
+        if (GLDialog::textEntryAvailable()) {
+            rowTap(4, 0.5f);
+            tick(2);
+            const bool asked = GLDialog::active();
+            push_text("!");
+            tick(3);
+            CGRect sb;
+            if (GLDialog::buttonRect(0, &sb)) ui_tap_rect(sb);
+            tick(3);
+            check(asked && !GLDialog::active() && fileText().find("\"sign\":\"Hello!\"") != std::string::npos, "a text row edits through the prompt and saves", fileText().c_str());
+        }
+        ui_tap_rect(mm->controlRect("back"));
+        tick(3);
+        check(!mm->pageOpen() && m->showmods, "Back on the page returns to the list (the screen stays open)", "");
+        {   // the file holds what was set; a hand-broken value reads as the default
+            std::vector<std::string> sl;
+            const std::vector<ContentPack::ModPack> sp = ContentPack::scanPacks(docs, &sl);
+            const ContentPack::ModPack* ms = NULL;
+            for (const ContentPack::ModPack& q : sp) if (q.id == "ms") ms = &q;
+            std::vector<ContentPack::SettingValue> v = ms ? ContentPack::settingValues(docs, *ms) : std::vector<ContentPack::SettingValue>();
+            std::snprintf(detail, sizeof detail, "n %zu speed %g glow %d mode '%s'", v.size(), v.size() > 1 ? v[1].n : -1.0, v.size() > 2 ? (int)v[2].b : -1, v.size() > 3 ? v[3].s.c_str() : "-");
+            check(v.size() == 5 && v[1].n == 4.0 && !v[2].b && v[3].s == "Simple", "the four values read back", detail);
+            put(sfile, "{\"format\": 1, \"values\": {\"speed\": 99, \"glow\": \"yes\", \"mode\": \"Gigantic\", \"sign\": 5, \"gone\": 1}}\n");
+            v = ms ? ContentPack::settingValues(docs, *ms) : std::vector<ContentPack::SettingValue>();
+            check(v.size() == 5 && v[1].n == 1.0 && v[2].b && v[3].s == "Simple" && v[4].s == "Hello", "a hand-broken value reads as the default", "");
+            put(sfile, "{\"format\": 1, \"values\": {\"speed\": 3, \"glow\": false}}\n");
+        }
+        // Reinstalling the pack's zip keeps its values (they live outside the pack folder).
+        const std::string zms = docs + "/ui-ms.zip";
+        put(zms, g_mods::ui_pack_zip("ms", "2.0"));
+        mm->installFile(zms.c_str());
+        tick(3);
+        eden_fs_remove(zms);
+        check(!std::strcmp(mm->installedVersion("ms"), "2.0") && fileText().find("\"speed\": 3") != std::string::npos,
+              "reinstalling the pack's zip keeps its settings file", fileText().c_str());
+    }
 
     // Remove: Cancel keeps it, Remove deletes the folder.
     tapRow(indexOf("mc"));
@@ -1485,7 +1561,8 @@ int run_ui_selftest() {
     g_selftestTag = "eden-ui";
     g_tickInput = true;            // headless pump_events() only drains SDL's queue with this set
     char detail[240];
-    if (!mutation_known("eden-ui", "--ui-mutate", g_opt.uiMutate, {"menuback"})) return 2;
+    if (!mutation_known("eden-ui", "--ui-mutate", g_opt.uiMutate, {"menuback", "settingsinpack"})) return 2;
+    ContentPack::testSettingsInPack = g_opt.uiMutate == "settingsinpack";
     Menu::testBackSkip = g_opt.uiMutate == "menuback" ? 2 : -1;   // 2 = New World's row in kBackScreens
     tick(120);
     check(eden_settings_loaded() != 0, "the settings model loaded", "");

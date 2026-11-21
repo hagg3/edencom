@@ -35,8 +35,10 @@
 #include "Precip.h"
 #include "Ambient.h"     // AT.7
 #include "Clouds.h"     // AT.6
+#include "SunShadow.h"  // SH.3
 #include "ContentPack.h"   // K.2-4: mod packs at world entry
 #include "ModScript.h"     // K.4: mod scripts
+#include "ModMenuScreen.h" // K.7-3a: a script's eden.menu screen
 
 // Web port hook (port/src/seam/LoadFailure.cpp), same cross-TU-call convention FileManager.cpp
 // already uses for eden_report_load_failure -- see the doneLoading==2 check in World::loadWorld
@@ -566,6 +568,14 @@ void World::joinLoadThread(){
         loadThreadLive=false;
     }
 }
+bool World::requestExit(){
+    if(!ModScript::testLeaveAfterSave)ModScript::leaving();   // its edits and eden.store keys go out in this save (rule 7)
+    const bool saved=fm->saveWorld()||(g_save_test_ignore&SAVE_TEST_IGNORE_EXIT);
+    if(ModScript::testLeaveAfterSave)ModScript::leaving();    // mutation: too late, nothing saves them
+    if(!saved)return false;
+    exitToMenu();
+    return true;
+}
 void World::exitToMenu(){
     exit_to_menu=false;
    // printg("hihihi\n");
@@ -769,6 +779,7 @@ bool World::update(float etime){
 	}
 	// C.3: the Console is a play-only screen; leaving play closes it.
 	if(menu->showconsole&&game_mode!=GAME_MODE_PLAY) menu->console->close();
+	if(ModMenuScreen::isOpen()&&game_mode!=GAME_MODE_PLAY) ModMenuScreen::close();   // K.7-3a: likewise (no on_close: the world is going)
 	if(game_mode==GAME_MODE_MENU){
 		menu->update(etime);
 	}else if(game_mode==GAME_MODE_PLAY){
@@ -778,12 +789,16 @@ bool World::update(float etime){
 		// tap) and claims every touch; the play step below then runs as usual with no player
 		// input. Unlike Settings it freezes nothing.
 		if(menu->showconsole) menu->console->update(etime);
+		// K.7-3a: a mod's eden.menu screen, in the same slot and on the same terms (the world runs, it claims
+		// every touch); what the player did there runs in ModScript::update below, before meshing (V10, V12).
+		if(ModMenuScreen::isOpen()) ModMenuScreen::update(etime);
 		DebugMenu::tick(etime);   // the Debug menu's delayed screenshot (Classes/DebugMenu.h)
-        SkyCycle::update(etime,hud->inmenu);   // DN.2: the day/night clock (stops under the pause menu)
-        Weather::update(etime,hud->inmenu);    // AT.1b: returns at once while Gameplay > Weather is off
-        Precip::update(etime,hud->inmenu);     // AT.2b: the rain's motion clock (nothing while it is off)
-        Clouds::update(etime,hud->inmenu);     // AT.6: the wind (nothing while the clouds are off)
-        Ambient::update(etime,hud->inmenu);    // AT.7: ambient particles (the pool empties while they are off)
+		const bool skyHold=hud->inmenu||ModMenuScreen::isOpen();   // V12: the sky/weather clocks stop as under the pause menu
+        SkyCycle::update(etime,skyHold);   // DN.2: the day/night clock (stops under the pause menu)
+        Weather::update(etime,skyHold);    // AT.1b: returns at once while Gameplay > Weather is off
+        Precip::update(etime,skyHold);     // AT.2b: the rain's motion clock (nothing while it is off)
+        Clouds::update(etime,skyHold);     // AT.6: the wind (nothing while the clouds are off)
+        Ambient::update(etime,skyHold);    // AT.7: ambient particles (the pool empties while they are off)
         cam->update(etime);
 		
         pass_begin(P_U_TERRAIN);
@@ -874,6 +889,7 @@ void World::renderFrame(bool draw){
 		menu->render();
 	}else if(game_mode==GAME_MODE_PLAY){
         pass_begin(P_RENDER);
+        SunShadow::renderMap();   // SH.3: before the scene pass (iOS: no framebuffer switch inside it); P_R_SHADOW
         pass_begin(P_R_SETUP);
         R::beginScene(); //render-scale: the 3D pass may draw offscreen at its own resolution (FT.16: via R::)
         Graphics::prepareScene();
@@ -923,6 +939,7 @@ void World::renderFrame(bool draw){
 		if(!pexp(EDEN_PEXP_NOHUD)) hud->render(); //render hud last
 		if(menu->showsettings) menu->settings->render();   // Stage 5.5, see update()
 		if(menu->showconsole) menu->console->render();      // C.3, over the HUD
+		if(ModMenuScreen::isOpen()) ModMenuScreen::render(); // K.7-3a, over the HUD (a dialog draws over it)
         pass_end(P_R_HUD);
         pass_end(P_RENDER);
 

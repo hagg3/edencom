@@ -232,8 +232,21 @@ void beginFrame() {
     ds().hfogOn = false;                                          // AT.5: and without height fog
     ds().csOn = false;                                            // AT.6: or cloud shadows
     ds().wtOn = false;                                            // AT.8: or water tint
+    ds().ssOn = false; ds().ssTex = 0;                            // SH.2: or sun shadows
     if (eden_gl_have_context()) rgl::beginFrame();
 }
+
+// ---- SH.2: the depth pass ---------------------------------------------------------------------------
+// The core tracks which texture owns the backend's depth framebuffer (g_depthTex) and whether a pass is open,
+// so both backends share the rules: no pass inside the scene pass or another depth pass, no drawDepth outside
+// one, none left open at endFrame; texDestroy of the owning texture frees the framebuffer.
+namespace {
+Tex  g_depthTex = 0;
+bool g_depthOpen = false;
+void depthMisuse(const char* what) {
+    if (rcore::inv().depthPassMisuse++ == 0) rcore::fail(what);
+}
+}  // namespace
 
 void endFrame() {
     if (!g_inFrame) { if (inv().endWithoutBegin++ == 0) fail("endFrame without beginFrame"); return; }
@@ -249,6 +262,7 @@ void endFrame() {
     }
     if (g_open2D != 0) { if (inv().unbalanced2D++ == 0) fail("begin2D without end2D in a frame"); g_open2D = 0; }
     if (g_openScene != 0) { if (inv().unbalancedScene++ == 0) fail("beginScene without endScene in a frame"); g_openScene = 0; }
+    if (g_depthOpen) { depthMisuse("beginDepthPass without endDepthPass in a frame"); endDepthPass(); }
     if (g_pass.track && (eden_render_pass_depth() != 0 || eden_render_pass_unbalanced() != 0)) {
         if (inv().passUnbalancedFrames++ == 0) fail("pass_begin/pass_end unbalanced over a frame");
         eden_render_pass_reset();
@@ -312,6 +326,14 @@ void setWaterTint(const float tint[4], const float sun[4], const float up[4]) { 
 }
 void waterTintOff() { ds().wtOn = false; }
 void cloudShadowOff() { ds().csOn = false; ds().csTex = 0; }
+void setSunShadow(Tex map, const float ssMat[16], const float params[4], const float fade[4]) {   // SH.2
+    DrawState& d = ds();
+    d.ssOn = map != 0;
+    d.ssTex = map;
+    for (int i = 0; i < 16; ++i) d.ssMat[i] = ssMat[i];
+    for (int i = 0; i < 4; ++i) { d.ssParams[i] = params[i]; d.ssFade[i] = fade[i]; }
+}
+void sunShadowOff() { ds().ssOn = false; ds().ssTex = 0; }
 
 bool originalLighting() { return g_originalLighting; }
 void setOriginalLighting(bool on) { g_originalLighting = on; }
@@ -319,14 +341,14 @@ void setOriginalLighting(bool on) { g_originalLighting = on; }
 static Counts g_counts;
 const Counts& counts() { return g_counts; }
 void resetCounts() { g_counts = Counts(); }
-long drawsIn(int bit) { int i = 0; while (i < 9 && !((bit >> i) & 1)) ++i; return g_counts.draws[i]; }
-static void countDraw(const Geometry& g) {   // QA.24: per pass category, whatever the backend
+long drawsIn(int bit) { int i = 0; while (i < 10 && !((bit >> i) & 1)) ++i; return g_counts.draws[i]; }
+static void countDrawAs(int bit, const Geometry& g) {
     int i = 0;
-    const int bit = eden_render_draw_category();
-    while (i < 9 && !((bit >> i) & 1)) ++i;
+    while (i < 10 && !((bit >> i) & 1)) ++i;
     ++g_counts.draws[i];
     g_counts.verts[i] += g.count;
 }
+static void countDraw(const Geometry& g) { countDrawAs(eden_render_draw_category(), g); }   // QA.24: per pass category, whatever the backend
 
 // ---- X.32 texture ledger ---------------------------------------------------------------------------
 // Every live texture name with the label and call site that created it, and the last owner of each
@@ -442,8 +464,31 @@ void texUpdate(Tex t, int x, int y, int w, int h, TexFormat f, const void* px) {
 }
 void texDestroy(Tex t) {
     ledgerDestroy(t, __builtin_return_address(0));
+    if (t && t == g_depthTex) {   // SH.2: the depth framebuffer belongs to its texture
+        if (g_depthOpen) { depthMisuse("texDestroy of the depth pass's own texture inside the pass"); endDepthPass(); }
+        if (eden_gl_have_context()) rgl::depthTargetRelease();
+        g_depthTex = 0;
+    }
     if (eden_gl_have_context()) rgl::texDestroy(t); else rnull::texDestroy(t);
 }
+
+bool beginDepthPass(Tex depth, int size) {   // SH.2
+    if (g_depthOpen) { depthMisuse("beginDepthPass inside a depth pass"); return false; }
+    if (g_openScene > 0) { depthMisuse("beginDepthPass inside beginScene/endScene"); return false; }
+    if (!depth || size <= 0) return false;
+    ledgerUse(depth, __builtin_return_address(0));
+    if (eden_gl_have_context() && !rgl::beginDepthPass(depth, size)) return false;
+    g_depthTex = depth;
+    g_depthOpen = true;
+    ++g_counts.depthPasses;
+    return true;
+}
+void endDepthPass() {
+    if (!g_depthOpen) { depthMisuse("endDepthPass without beginDepthPass"); return; }
+    g_depthOpen = false;
+    if (eden_gl_have_context()) rgl::endDepthPass();
+}
+bool depthTargetLive() { return g_depthTex != 0; }
 void texSampling(Tex t, const TexDesc& d) {
     if (eden_gl_have_context()) rgl::texSampling(t, d);
 }
@@ -467,6 +512,7 @@ void bufDestroy(Buf b) {
 static void traceDraw(void* site, const char* prog, const Geometry& g, Tex t, const Rgba& tint, float alphaRef) {
     ledgerUse(t, site);                         // X.32: every draw passes here, whatever the backend
     if (ds().csOn) ledgerUse(ds().csTex, site);
+    if (ds().ssOn) ledgerUse(ds().ssTex, site);   // SH.2
     if (!g_trace) return;
     static const char* const kPrim[] = {"tri", "strip", "fan", "lines", "lstrip", "points"};
     static const char* const kBlend[] = {"off", "SA,1-SA", "SA,1", "1,1"};
@@ -483,7 +529,7 @@ static void traceDraw(void* site, const char* prog, const Geometry& g, Tex t, co
     const float* wl = d.worldLight;
     const bool wlOn = (!std::strcmp(prog, "world") || (!std::strcmp(prog, "lit") && !g_originalLighting)) &&
                       (wl[0] != 1.0f || wl[1] != 1.0f || wl[2] != 1.0f);
-    char wlb[96] = "";
+    char wlb[192] = "";
     if (wlOn) std::snprintf(wlb, sizeof wlb, " wlight=(%.3f,%.3f,%.3f)", wl[0], wl[1], wl[2]);
     // AT.5: the height-fog twin only when it is selected, so a trace without it is unchanged.
     if (!std::strcmp(prog, "world") && d.fogOn && d.hfogOn) {
@@ -495,6 +541,12 @@ static void traceDraw(void* site, const char* prog, const Geometry& g, Tex t, co
     if (!std::strcmp(prog, "world") && d.csOn) {
         const size_t n = std::strlen(wlb);
         std::snprintf(wlb + n, sizeof wlb - n, " cshadow=(%.2f,%.2f)", d.csParams[0], d.csParams[1]);
+    }
+    // SH.2: likewise the sun-shadow twin (strength, bias, reach).
+    if (!std::strcmp(prog, "world") && d.ssOn) {
+        const size_t n = std::strlen(wlb);
+        std::snprintf(wlb + n, sizeof wlb - n, " sshadow=(%.2f,%.3f,%.0f..%.0f)", d.ssParams[0], d.ssParams[2],
+                      d.ssFade[0], d.ssFade[1]);
     }
     if (!std::strcmp(prog, "lit")) {
         const LightSet& L = d.lights;
@@ -568,6 +620,16 @@ void drawClouds(const Geometry& g, const CloudParams& p) {   // AT.6
     noteDraw(true);
     countDraw(g);
     if (eden_gl_have_context()) rgl::drawClouds(g, p); else rnull::draw(g);
+}
+
+void drawDepth(const Geometry& g, Tex alphaTex, float alphaRef) {   // SH.2: always category "shadow"
+    if (!g_depthOpen) { depthMisuse("drawDepth outside beginDepthPass/endDepthPass"); return; }
+    if (!eden_render_category_allowed(EDEN_RC_SHADOW)) return;
+    traceDraw(__builtin_return_address(0), alphaTex ? "depth-alpha" : "depth", g, alphaTex, Rgba{1, 1, 1, 1},
+              alphaTex ? alphaRef : -1.0f);
+    noteDraw(true);
+    countDrawAs(EDEN_RC_SHADOW, g);
+    if (eden_gl_have_context()) rgl::drawDepth(g, alphaTex, alphaRef); else rnull::draw(g);
 }
 
 void pickViewport(int out[4]) {

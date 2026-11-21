@@ -1,0 +1,27 @@
+{
+  "format": 1, "id": "badset", "blocks": [],
+  "settings": [
+    7,
+    {"id": "a", "label": "No type"},
+    {"id": "Bad Id", "type": "toggle", "label": "x", "default": true},
+    {"id": "dup", "type": "toggle", "label": "First", "default": true},
+    {"id": "dup", "type": "toggle", "label": "Second", "default": true},
+    {"id": "nolabel", "type": "toggle", "default": true},
+    {"id": "longhint", "type": "toggle", "label": "x", "hint": "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789", "default": true},
+    {"id": "tog", "type": "toggle", "label": "x", "default": "yes"},
+    {"id": "s1", "type": "slider", "label": "x", "min": 4, "max": 1, "step": 1, "default": 2},
+    {"id": "s2", "type": "slider", "label": "x", "min": 0, "max": 4, "step": 0, "default": 2},
+    {"id": "s3", "type": "slider", "label": "x", "min": 0, "max": 4, "step": 0.001, "default": 2},
+    {"id": "s4", "type": "slider", "label": "x", "min": 0, "max": 4, "step": 1, "default": 9},
+    {"id": "s5", "type": "slider", "label": "x", "min": 0, "max": 4, "step": 1, "default": 1.5},
+    {"id": "c1", "type": "choice", "label": "x", "options": ["only"], "default": "only"},
+    {"id": "c2", "type": "choice", "label": "x", "options": ["a", "a"], "default": "a"},
+    {"id": "c3", "type": "choice", "label": "x", "options": ["a", "b"], "default": "c"},
+    {"id": "t1", "type": "text", "label": "x", "max": 0, "default": ""},
+    {"id": "t2", "type": "text", "label": "x", "max": 3, "default": "toolong"},
+    {"id": "t3", "type": "text", "label": "x", "max": 8, "default": "a\u0001b"},
+    {"id": "w1", "type": "toggle", "label": "x", "default": true, "colour": "red"},
+    {"id": "w2", "type": "toggle", "label": "x", "default": true, "min": 0},
+    {"id": "ok", "type": "toggle", "label": "Survivor", "default": false}
+  ]
+}

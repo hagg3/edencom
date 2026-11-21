@@ -338,6 +338,14 @@ is unaffected (it unprojects against the fixed point-space viewport). Anything n
 the world must draw *before* `_end`, and anything that is UI must draw *after* it, or it renders at
 the wrong resolution.
 
+**The sun-shadow depth pass runs before the bracket** (SH.3, 2026-11-16): `World::renderFrame` calls
+`SunShadow::renderMap()` inside `P_RENDER` but before `R::beginScene()`, because switching framebuffers
+inside the scene pass costs a tile flush on iOS GPUs. It draws only on a frame where the map is dirty
+(`R::beginDepthPass`/`endDepthPass`, which restore the previous framebuffer, viewport and colour mask), so
+most frames run no depth pass at all. The terrain receivers get the lookup from `SunShadow::apply()` in
+`Graphics::beginTerrain` and `Terrain::render2`; `endTerrain` and the sky pass turn it off. Details:
+`lighting-liquids-effects.md` "Sun shadows".
+
 **iOS presents the BOUND renderbuffer** (N.4.12, 2026-10-08). SDL's UIKit swap is a bare
 `presentRenderbuffer:GL_RENDERBUFFER`, so GL code on native must never leave a renderbuffer other
 than SDL's view's bound at the end of a frame. The scene framebuffer's allocation once ended with
@@ -424,6 +432,8 @@ time becomes an upper bound that includes its own GPU work.
   `r_objects` and `r_sky`; `r_transparent` contains `r_tchunks` and the flower part of
   `r_objects`; `r_cull` covers the single `renderTree` walk (P.7; was two) and the back-to-front `qsort`. Sum only the
   leaves. `render` is the play branch only, so a GL dialog drawn over it is not counted.
+  `r_shadow` (SH.3) is the sun-shadow depth pass: inside `render`, before `r_setup`, and non-zero only on a
+  frame that re-renders the map (draw category `EDEN_RC_SHADOW`).
 - **One draw per chunk per pass, not six.** The opaque loop builds one index list per chunk from the
   face buckets the camera can see, so `r_chunks.draws` is the number of chunks drawn. On the Mac, at
   the three `--pass-probe` poses: 49–80 draws, 66k–110k vertices (`WORKING/low-end-perf-audit-2026-10-12.md` §4).

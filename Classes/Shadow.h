@@ -65,6 +65,11 @@ void shadow_onSetLand(int x,int z,int y,int oldtype,int type);   // Terrain::set
 // mode re-meshes the window; shadowTop is already current.
 void shadow_setSetting(int mode);
 void shadow_setOverride(int mode);
+// SH.3: Video > Sun shadows on = the mesher runs Off (they replace these); off = the setting again. Each
+// change of the effective mode is one whole-window re-mesh, counted in g_shadow_remeshes (diagnostics).
+void shadow_setSunReplace(bool on);
+int  shadow_setting();                    // the mode the setting (or --shadows=) asks for, replaced or not
+extern int g_shadow_remeshes;
 // Settings > Tinted lamp shadows (default off): when off, a shaded top face by day (skylight 1) gets no
 // brick-store (lamp) light, so shadows are not tinted by lamp colour. Re-meshes the window on change.
 void shadow_setLampTint(bool on);

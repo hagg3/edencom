@@ -1,0 +1,3 @@
+# K.7-2a: "settings" that is not an array refuses the pack
+mod-settings-top@56: "settings" must be an array of objects
+= refused

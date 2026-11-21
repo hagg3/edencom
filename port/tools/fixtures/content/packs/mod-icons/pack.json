@@ -1,0 +1,14 @@
+{"format": 1, "id": "icons_test",
+ "icons": {
+  "Bad": "good.png",
+  "notstr": 5,
+  "escape": "../good.png",
+  "absent": "absent.png",
+  "text": "notpng.png",
+  "small": "small.png",
+  "a": "good.png", "b": "good.png", "c": "good.png", "d": "good.png",
+  "e": "good.png", "f": "good.png", "g": "good.png", "h": "good.png",
+  "over": "good.png"
+ },
+ "blocks": []
+}

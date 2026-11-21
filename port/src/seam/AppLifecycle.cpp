@@ -29,6 +29,7 @@
 #include "../../../Classes/Menu.h"
 #include "../../../Classes/Terrain.h"
 #include "../../../Classes/FileManager.h"
+#include "../../../Classes/ModScript.h"
 #include "../shim/foundation/platform_shims.h"
 #include "AppLifecycle.h"
 #include "SimpleAudioEngine_native.h"
@@ -57,7 +58,7 @@ int eden_world_loading(void) {
 void eden_world_load_join(void) {
     if (World::getWorld) World::getWorld->joinLoadThread();
 }
-int eden_app_will_background(void) {
+static int save_open_world(bool quitting) {
     World* w = World::getWorld;
     if (!w || !w->fm || !w->terrain || !w->menu) {
         return (g_last_status = EDEN_BG_NO_ENGINE);
@@ -95,12 +96,19 @@ int eden_app_will_background(void) {
         return (g_last_status = EDEN_BG_BUSY);
     }
 
+    // K.6-2 (V7): a clean quit closes the world for good, so the mods' `leave` handlers run first and
+    // their edits and eden.store keys go out in this save. Going to the background does not: the
+    // process may come back to the same world (state that must survive is in eden.store already).
+    if (quitting) ModScript::leaving();
     // QA.5: the app is going away, so a failed save cannot keep the world open; saveFailed has
     // printed why, and the answer says so (the last commit is intact on disk).
     if (!w->fm->saveWorld()) return (g_last_status = EDEN_BG_FAILED);
     ++g_background_saves;
     return (g_last_status = EDEN_BG_SAVED);
 }
+
+int eden_app_will_background(void) { return save_open_world(false); }
+int eden_app_will_quit(void) { return save_open_world(true); }
 
 // QA.18 (A2-09): iOS/Android send a low-memory warning shortly before jetsam/LMK kills the process,
 // and a kill saves nothing. Save now (same policy and guards as going to the background; the app

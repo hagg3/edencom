@@ -40,6 +40,9 @@ namespace Clouds {
     void applyShadow();
     // Terrain::deallocateMemory: free everything (the next render() rebuilds it).
     void reset();
+    // SH.3: the weather's share of the sky, 0 (off or clear) .. 1 (overcast and worse): what fades the cloud
+    // shadows and the sun shadows out as the sky closes over. Whatever Atmosphere says.
+    float weatherShare();
 
     // ---- diagnostics (--weather-selftest=clouds) ------------------------------------------------------
     bool live();            // the map and the buffer exist

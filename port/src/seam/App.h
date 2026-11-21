@@ -26,10 +26,12 @@ public:
     // Lifecycle, driven by the SDL events in port/src/harness/core.cpp:
     //   SDL_EVENT_WINDOW_FOCUS_LOST   -> onVisibilityHidden()  (stop the loop; does NOT save)
     //   SDL_EVENT_WINDOW_FOCUS_GAINED -> onVisibilityVisible()
-    //   SDL_EVENT_QUIT / WILL_ENTER_BACKGROUND (iOS) -> onPageHide(): save the open world, then stop.
+    //   WILL_ENTER_BACKGROUND / TERMINATING (iOS) -> onPageHide(): save the open world, then stop.
+    //   SDL_EVENT_QUIT -> onQuit(): the mods' `leave` handlers (K.6-2), the same save, then stop.
     void onVisibilityHidden();
     void onVisibilityVisible();
     void onPageHide();
+    void onQuit();
 
     // Force a FIXED etime instead of reading the clock. Zero (the default) means real elapsed time,
     // which an interactive session must use. Scripted harnesses set 1/60 s so that N frames is

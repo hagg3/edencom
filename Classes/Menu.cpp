@@ -9,6 +9,7 @@
 #include "Menu.h"
 #include "WorldPropertiesMenu.h"   // H.15 (Menu.h only forward-declares it)
 #include "ConsoleMenu.h"           // C.3 (likewise)
+#include "ModMenuScreen.h"         // K.7-3a: Escape closes a mod's menu first
 #include "ServerListMenu.h"        // MP.6 (likewise)
 #include "ModsMenu.h"              // K.3-5
 #include "MpWorld.h"
@@ -452,6 +453,9 @@ int Menu::testBackSkip = -1;
 
 bool Menu::back(){
     World* w=World::getWorld;
+    // K.7-3a: a mod's menu screen is over play and over everything the table lists (it closes the Console when
+    // it opens), so it takes Escape first; its Back is the script's on_close.
+    if(ModMenuScreen::isOpen()&&w&&w->game_mode==GAME_MODE_PLAY){ ModMenuScreen::back(); return true; }
     const int n=(int)(sizeof(kBackScreens)/sizeof(kBackScreens[0]));
     for(int i=0;i<n;i++){
         if(i==testBackSkip) continue;

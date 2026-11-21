@@ -184,6 +184,10 @@ bool open_world(const char* displayName, int height) {
     eden_menu_select(idx);
     if (eden_menu_play() != 1) { std::fprintf(stderr, "[eden-stage1] menu_play refused\n"); return false; }
     const bool ok = tick_until([] { return game_mode() == 1; }, 60000, "game_mode == PLAY");
+    // X.35: --height only applies to a world this call creates; an existing world keeps its own height.
+    // The Air 2's "ignored --height" was a leftover 64z world256 from an earlier run, not the parser.
+    if (ok && idx >= 0 && height == 256 && g_world_height != 256)
+        std::printf("[eden-stage1] WARNING --height=%d ignored: existing world \"%s\" is %dz (delete it to recreate)\n", height, displayName, g_world_height);
     std::printf("[eden-stage1] open_world \"%s\" %s first-load %llu ms\n", displayName, classic ? "(created Classic)" : "", (unsigned long long)(SDL_GetTicks() - tOpen0));
     std::fflush(stdout);
     return ok;
@@ -310,7 +314,7 @@ void pump_events() {
         switch (e.type) {
             case SDL_EVENT_QUIT:
                 g_running = false;
-                if (g_app) g_app->onPageHide();
+                if (g_app) g_app->onQuit();   // K.6-2: `leave`, then the save
                 break;
             case SDL_EVENT_WINDOW_FOCUS_LOST:
                 eden_settings_focus_changed(0);
@@ -688,7 +692,7 @@ bool interactive_iteration(double& nextFrameMs) {
     eden_native_input_tick();
     eden_live_commands_tick();
     eden_look_trace_frame();   // L.0: after the pump, before World::update reads the touches
-    if (g_app->isAnimating()) g_app->drawFrame(true);
+    if (g_app->isAnimating()) { g_app->drawFrame(true); eden_live_commands_after_frame(); }
     power_frame_end();
     // AFTER the tick that queued this frame's sounds, so a sound fired now is bound to
     // the device in the same frame rather than the next one.

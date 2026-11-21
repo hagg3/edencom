@@ -6,6 +6,7 @@
 #include "Globals.h"
 #include "World.h"
 #include "Terrain.h"
+#include "../Lighting.h"   // LM.1: light_refreshRadius
 #include "TerrainGen2.h"
 #include "FileManager.h"
 #include "Hud.h"
@@ -708,7 +709,7 @@ void execute(Inst* in) {
                         if (blockinfo[cur] & IS_LIQUID) ter->liquids->removeSource(x, z, y, cur);
                         if (cur == TYPE_LIGHTBOX) {
                             addlight(x, z, y, -1.0f, colorTable[ter->getColor(x, z, y) & 255]);
-                            ter->refreshChunksInRadius(x, z, y, LIGHT_RADIUS);
+                            ter->refreshChunksInRadius(x, z, y, light_refreshRadius());
                         }
                         ter->updateChunks(x, z, y, TYPE_TNT);   // a command block keeps its record until the blast
                         ter->setColor(x, z, y, 0);
@@ -946,6 +947,8 @@ bool CmdScript::tap(int mx, int my) {
     press(pos);
     return true;   // a tap on a command block pushes its button and never builds
 }
+
+void CmdScript::freshWork() { g_work = 0; }
 
 void CmdScript::update(float etime) {
     World* w = World::getWorld;

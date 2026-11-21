@@ -34,6 +34,7 @@
 #include "Texture2D.h"
 #include "UIIcons.h"
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace GLW {
@@ -89,6 +90,14 @@ void bevel(CGRect r, BevelStyle style);
 // tile, kTextPressed on a pressed one — the inversion `currentColor` gave the web's SVG icons. The
 // atlas is loaded on first use; an out-of-range id draws UIICON_FALLBACK.
 void icon(int id, CGRect r, Color c);
+// K.7-3c: pack icons. Ids UIICON_PACK_BASE.. are cells of a per-world atlas (8 x 4 cells of 64 px, RGBA, white on
+// transparent, tinted like the built-ins) that ContentPack::loadMods fills at world entry. setPackIcons replaces the
+// list (empty = none), copies the pixels (64x64x4 each) and frees the old atlas; the texture is made on first draw.
+// An id past the list draws UIICON_FALLBACK.
+enum { UIICON_PACK_BASE = 64, UIICON_PACK_GRID_W = 8 };
+void setPackIcons(const std::vector<const uint8_t*>& rgba64);
+int  packIconCount();
+const uint8_t* packIconPixels(int i);   // 64x64x4, or NULL
 
 // --- text ----------------------------------------------------------------------------------
 // The design system's two faces (design-system.md, "Type"): DISPLAY is Jersey 10, the pixel face
@@ -530,7 +539,7 @@ private:
 // settings screen's VERTICAL icon rail; this is its sibling for a screen whose tabs are a few words
 // (the world browser's sources). Equal-width tiles with the kit's 6u gap. Same input contract as
 // Button: the screen claims the touch, calls hit() on the down edge and setHeld() while it is down.
-#define GLW_MAX_TABS 6
+#define GLW_MAX_TABS 8   // K.7-3a: a script menu has up to 8 tabs
 class TabRail {
 public:
     TabRail();
@@ -670,6 +679,93 @@ private:
     float       m_height, m_x, m_yTop;
     bool        m_muted, m_last;
     Color       m_hintColor;
+};
+
+// --- RowList (K.7-2b) ----------------------------------------------------------------------
+// A data-driven settings page: a scrolling list of TwoLineRows, each with the kit control its Kind needs
+// (Toggle, Slider + readout, a < value > Stepper, a text Button), inside a content rect with a ScrollView
+// bar. The rows are the owner's data (setRows); the list owns widgets, layout, scrolling and touches, and
+// reports what the player changed through takeChange() (the Row already holds the new value). SettingsMenu
+// keeps its own table-keyed copy of this arithmetic (its rows are bound to the settings table and fixed
+// arrays); K.7-3a's script menus reuse this one.
+//
+// Touch protocol, from the screen's own touch loop (it owns usage ids): touchDown on the down edge (true =
+// the list took the touch), touchHeld every frame it is down, touchUp on release (a tap acts there, a drag
+// that scrolled or moved a slider does not). Tap = the row's control: toggle flips, the stepper's halves step
+// (wrapping), the text button reports EV_TEXT (the owner opens its prompt).
+//
+// K.7-3a (script menus) added three kinds: PARAGRAPH (the hint alone, a wrapped body-face paragraph; no
+// control), ITEM (a tappable row: an optional leading icon, the title, a right-aligned body-face `detail`; the
+// whole row is the control and reports EV_ACTIVATE) and BUTTON (title + hint with a Button labelled `text`,
+// TONE_DANGER when `danger`; EV_ACTIVATE). `enabled` = false greys a row's control and it never hits. An ITEM
+// row is its own Tab stop (a button, not a list row), so Tab walks the rows in order.
+class RowList {
+public:
+    enum Kind { HEADING, TOGGLE, SLIDER, CHOICE, TEXT, PARAGRAPH, ITEM, BUTTON };
+    struct Row {
+        Kind kind;
+        std::string title, hint;
+        bool on;                                // TOGGLE
+        float min, max, step, value;            // SLIDER (value snapped to step)
+        std::string readout;                    // SLIDER: the text beside the track
+        std::vector<std::string> options;       // CHOICE
+        int choice;
+        std::string text;                       // TEXT, BUTTON: the button's label
+        std::string detail;                     // ITEM
+        int icon;                               // ITEM: a UIIcons.h id, -1 = none
+        bool danger;                            // BUTTON
+        bool enabled;
+        Row() : kind(HEADING), on(false), min(0), max(1), step(1), value(0), choice(0), icon(-1), danger(false), enabled(true) {}
+    };
+    enum Event { EV_NONE, EV_TOGGLE, EV_SLIDER, EV_CHOICE, EV_TEXT, EV_ACTIVATE };
+
+    RowList();
+    ~RowList();
+
+    void setRows(const std::vector<Row>& rows);    // replaces the list; scrolls to the top
+    int  count() const;
+    const Row& row(int i) const;
+    void setSliderReadout(int i, const std::string& s);   // a texture upload only when it changed
+    void setTextLabel(int i, const std::string& s);       // likewise
+    // K.7-3a: replaces row i in place (same kind): its texts, value and enabled; the scroll position stays.
+    // A slider's readout is the caller's (setSliderReadout after).
+    void setRow(int i, const Row& r);
+
+    // Per frame, cheap when nothing changed. `content` is the white surface (its rows fill it), `bar` the
+    // scrollbar's rect; draws nothing.
+    void layout(CGRect content, CGRect bar);
+    void render();
+
+    bool touchDown(int touch, float x, float y);
+    void touchHeld(int touch, float x, float y);
+    void touchUp(int touch, float x, float y);
+    bool scrollBy(int rows) { return m_scroll.scrollBy(rows); }
+    // The next change the player made since the last call (false = none).
+    bool takeChange(int* row, Event* ev);
+
+    // Harness: where row i's control (or its row, for a heading) is; false = not on screen.
+    bool controlRect(int i, CGRect* r) const;
+    bool rowRect(int i, CGRect* r) const;
+    void showRow(int i) { m_scroll.ensureVisible(i); }
+    int  firstRow() const { return m_scroll.first(); }
+    int  visibleRows() const { return m_scroll.visible(); }
+
+private:
+    RowList(const RowList&);
+    RowList& operator=(const RowList&);
+    struct Item;
+    bool shown(int k) const;
+    void cancelPress();
+    void step(int k, int dir);
+    void applyState(Item* it);
+
+    std::vector<Item*> m_items;
+    ScrollView m_scroll;
+    CGRect     m_content;
+    float      m_builtU, m_builtW;
+    int        m_dragSlot, m_dragTouch, m_scrollTouch;
+    bool       m_barDrag;
+    std::vector<std::pair<int, int> > m_changes;
 };
 
 // `.eden-progress` (Stage 5.9): a SUNKEN track with the lime 12% fill growing from the left.

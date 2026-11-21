@@ -300,13 +300,13 @@ IS_LIQUID = 0x40
 IS_OBJECT = 0x1000
 IS_HARD = 0x8000
 IS_MISSING = 1 << 17
-IS_CLIMB, IS_BOUNCY, IS_SLIPPERY, IS_BLASTPROOF, IS_UNBREAKABLE, IS_NOSHADOW = [1 << b for b in range(18, 24)]
+IS_CLIMB, IS_BOUNCY, IS_SLIPPERY, IS_BLASTPROOF, IS_UNBREAKABLE, IS_NOSHADOW, IS_USABLE = [1 << b for b in range(18, 25)]
 # "solid" is the absence of IS_NOTSOLID; "paint_art" is blockPaintArt = every site.
 TRAITS = {"solid": 0, "hard": IS_HARD, "flammable": 0x1, "transparent": IS_ATLAS2, "climbable": IS_CLIMB,
           "bouncy": IS_BOUNCY, "slippery": IS_SLIPPERY, "blastproof": IS_BLASTPROOF,
-          "unbreakable": IS_UNBREAKABLE, "no_shadow": IS_NOSHADOW, "paint_art": 0}
+          "unbreakable": IS_UNBREAKABLE, "no_shadow": IS_NOSHADOW, "paint_art": 0, "usable": IS_USABLE}
 TRAIT_ORDER = ["solid", "hard", "flammable", "transparent", "climbable", "bouncy", "slippery", "blastproof",
-               "unbreakable", "no_shadow", "paint_art"]
+               "unbreakable", "no_shadow", "paint_art", "usable"]
 FLAGS = {"ramp": 0x4, "side": 0x8, "ramp_or_side": 0x10, "liquid": IS_LIQUID, "water": 0x80, "lava": 0x100,
          "colored_special": 0x200, "grass": 0x400, "ice": 0x800, "object": IS_OBJECT, "door": 0x2000,
          "portal": 0x4000, "block_tnt": 0x10000}
@@ -568,7 +568,9 @@ def compile_pack(data, label="eden"):
                             err(t.off, ctx + 'trait "%s" listed twice' % t.v)
                         else:
                             seen.add(t.v)
-                            if t.v == "solid":
+                            if t.v == "usable":
+                                err(t.off, ctx + 'trait "usable" is for mod blocks only')
+                            elif t.v == "solid":
                                 info &= ~IS_NOTSOLID
                             elif t.v == "paint_art":
                                 art = ART_ALL
@@ -705,7 +707,7 @@ def compile_pack(data, label="eden"):
 # K.2-4: mod packs (docs/content-packs.md "Mod packs"; the engine's copy is ContentPack::compileMod and
 # ContentPack::loadMods). Same rules, same order, same lines.
 
-MOD_TOP_KEYS = ["format", "id", "name", "version", "requires", "conflicts", "tiles", "blocks", "scripts"]
+MOD_TOP_KEYS = ["format", "id", "name", "version", "requires", "conflicts", "tiles", "blocks", "scripts", "settings", "icons"]
 MOD_TILE_KEYS = ["png", "unpainted"]
 MOD_BLOCK_KEYS = ["id", "kind", "traits", "faces", "color", "sounds", "fallback", "fallback_paint", "picker"]
 STOCK_ONLY_BLOCK_KEYS = ["stock_id", "flags", "paint_art_sites", "bt", "tnt_map"]
@@ -713,11 +715,14 @@ RESERVED_IDS = ["eden", "emod"]
 API_VERSION = 2  # ModScript::API_VERSION (Classes/ModScript.h): the virtual pack "emod"'s version (K.6-6)
 PNG_MAX_BYTES = 1 << 20
 TILE_PX = 32
+ICON_PX, ICONS_PER_PACK, ICONS_PER_WORLD = 64, 8, 32   # K.7-3c (V13 step 2): "icons"
 ATLAS1_FREE_FIRST, ATLAS2_FREE_FIRST = 66, 32
 ATLAS2_FRAMES = 8   # an atlas2 tile is an 8-frame strip (Terrain::render2 animates the transparent pass)
 TEX_MISSING = 65
 DEPS_MAX = 32   # K.3: entries in "requires" / "conflicts"
 SCRIPTS_MAX, SCRIPT_MAX_BYTES, SCRIPTS_MAX_BYTES = 16, 256 * 1024, 1024 * 1024   # K.4: "scripts"
+SETTINGS_MAX = 32                                                                  # K.7-2a (V14): "settings"
+SETTING_TYPES = ["heading", "toggle", "slider", "choice", "text"]
 RE_REQUIRE = re.compile(r"^([a-z0-9_]{1,24})(?:>=([0-9]+(?:\.[0-9]+)*))?$")
 
 
@@ -788,6 +793,8 @@ class ModPack(object):
         self.blocks_in_file = 0
         self.tiles = []      # (name, twin index or -1)
         self.scripts = []    # K.4: (path, bytes), list order
+        self.icons = []      # K.7-3c: names, the valid ones in file order
+        self.settings = []   # K.7-2a: dicts (type, id, label, ...), the valid ones in file order
         self.blocks = []     # dicts, the valid ones in file order
         self.lines = []
         self.refused = True
@@ -881,6 +888,12 @@ def compile_mod(data, d, label, stock):
                 pk.scripts.append((p, b))
         if total > SCRIPTS_MAX_BYTES:
             err(sv.off, '"scripts" add up to more than 1 MiB'); top = False
+    # K.7-2a (V14): the settings page's rows. The array is a top-level rule; each entry is checked below.
+    stv = root.get("settings")
+    if stv is not None and stv.t != "array":
+        err(stv.off, '"settings" must be an array of objects'); top = False
+    elif stv is not None and len(stv.v) > SETTINGS_MAX:
+        err(stv.off, '"settings" has %d entries (at most %d)' % (len(stv.v), SETTINGS_MAX)); top = False
     bv = root.get("blocks")
     if bv is None:
         if sv is None:
@@ -948,6 +961,36 @@ def compile_mod(data, d, label, stock):
                 pk.tiles[tiles[name]][1] = tiles[u.v]
         for name in bad_twin:
             del tiles[name]
+
+    # K.7-3c (V13 step 2): the pack's own icons, 64x64. A bad one is skipped with a line.
+    iv = root.get("icons")
+    if iv is not None:
+        if iv.t != "object":
+            err(iv.off, '"icons" must be an object of name -> png path')
+        else:
+            for name, e in iv.v:
+                ctx = 'icon "%s": ' % name
+                if not RE_LOCAL.match(name):
+                    err(e.off, ctx + "the name must match [a-z0-9_]{1,24}"); continue
+                if e.t != "string" or not rel_path_ok(e.v):
+                    err(e.off, ctx + "must be a relative path inside the pack"); continue
+                if len(pk.icons) >= ICONS_PER_PACK:
+                    err(e.off, ctx + "a pack has at most %d icons (skipped)" % ICONS_PER_PACK); continue
+                try:
+                    with open(os.path.join(d, e.v), "rb") as f:
+                        b = f.read(PNG_MAX_BYTES + 1)
+                except (IOError, OSError):
+                    err(e.off, ctx + 'cannot read "%s"' % e.v); continue
+                if len(b) > PNG_MAX_BYTES:
+                    err(e.off, ctx + '"%s" is larger than 1 MiB' % e.v); continue
+                wh = png_size(b)
+                if wh is None:
+                    err(e.off, ctx + '"%s" is not a PNG' % e.v); continue
+                if wh != (ICON_PX, ICON_PX):
+                    err(e.off, ctx + '"%s" is %dx%d (an icon is 64x64)' % (e.v, wh[0], wh[1])); continue
+                if not png_decodes(b):
+                    err(e.off, ctx + '"%s" does not decode' % e.v); continue
+                pk.icons.append(name)
 
     # ---- blocks
     own = pk.id + ":"
@@ -1080,8 +1123,97 @@ def compile_mod(data, d, label, stock):
             continue
         pk.blocks.append({"id": idv.v, "info": info, "faces": faces, "color": rgb, "sound_set": ss, "paint_art": art,
                           "fallback": fb_type, "fallback_paint": fb_paint, "picker": picker})
+    if stv is not None:
+        compile_settings(stv, pk, err)
     pk.refused = False
     return pk
+
+
+def compile_settings(stv, pk, err):
+    """K.7-2a (V14), the engine's copy is the end of ContentPack::compileMod: an error skips that setting."""
+    sids = set()
+    for n, e in enumerate(stv.v):
+        nb = "setting #%d" % n
+        ctx = nb
+        if e.t != "object":
+            err(e.off, "%s: must be an object" % nb); continue
+        tyv = e.get("type")
+        if tyv is None or tyv.t != "string":
+            err(tyv.off if tyv else e.off, '%s: "type" must be a string' % nb); continue
+        if tyv.v not in SETTING_TYPES:
+            err(tyv.off, 'warning: %s: unknown type "%s" (ignored)' % (nb, tyv.v)); continue
+        ty = tyv.v
+        heading = ty == "heading"
+        s = {"type": ty, "id": "", "label": "", "hint": ""}
+        idv = e.get("id")
+        if not heading:
+            if idv is None or idv.t != "string" or not RE_LOCAL.match(idv.v):
+                err(idv.off if idv else e.off, '%s: "id" must match [a-z0-9_]{1,24}' % nb); continue
+            s["id"] = idv.v
+            ctx = 'setting "%s"' % idv.v
+        for k, kv in e.v:
+            fits = (k in ("type", "label") or (not heading and k in ("id", "hint", "default")) or
+                    (ty == "slider" and k in ("min", "max", "step")) or (ty == "choice" and k == "options") or
+                    (ty == "text" and k == "max"))
+            if not fits:
+                err(kv.off, 'warning: %s: unknown key "%s" (ignored)' % (ctx, k))
+        if not heading:
+            if s["id"] in sids:
+                err(idv.off, "%s: duplicate id" % ctx); continue
+            sids.add(s["id"])
+        lv = e.get("label")
+        if lv is None or lv.t != "string" or not 1 <= len(lv.v.encode("utf-8")) <= 40:
+            err(lv.off if lv else e.off, '%s: "label" must be 1 to 40 bytes' % ctx); continue
+        s["label"] = lv.v
+        hv = e.get("hint")
+        if hv is not None and not heading:
+            if hv.t != "string" or len(hv.v.encode("utf-8")) > 120:
+                err(hv.off, '%s: "hint" must be at most 120 bytes' % ctx); continue
+            s["hint"] = hv.v
+        dv = e.get("default")
+        if heading:
+            pass
+        elif ty == "toggle":
+            if dv is None or dv.t != "bool":
+                err(dv.off if dv else e.off, '%s: "default" must be true or false' % ctx); continue
+            s["default"] = dv.v
+        elif ty == "slider":
+            mn, mx, st = e.get("min"), e.get("max"), e.get("step")
+            if not (mn is not None and mn.t == "number" and mx is not None and mx.t == "number" and mn.v < mx.v):
+                err(mn.off if mn else e.off, '%s: "min" and "max" must be numbers with min below max' % ctx); continue
+            if not (st is not None and st.t == "number" and st.v > 0):
+                err(st.off if st else e.off, '%s: "step" must be a number above 0' % ctx); continue
+            if (mx.v - mn.v) / st.v > 1000:
+                err(st.off, "%s: more than 1000 steps from min to max" % ctx); continue
+            q = (dv.v - mn.v) / st.v if dv is not None and dv.t == "number" else -1
+            if not (dv is not None and dv.t == "number" and mn.v <= dv.v <= mx.v and abs(q - math.floor(q + 0.5)) <= 1e-6):
+                err(dv.off if dv else e.off, '%s: "default" must be a number from min to max on a step' % ctx); continue
+            s.update(min=mn.v, max=mx.v, step=st.v, default=dv.v)
+        elif ty == "choice":
+            ov = e.get("options")
+            opts = []
+            ok = ov is not None and ov.t == "array" and 2 <= len(ov.v) <= 8
+            if ok:
+                for o in ov.v:
+                    if o.t != "string" or not 1 <= len(o.v.encode("utf-8")) <= 24 or o.v in opts:
+                        ok = False
+                        break
+                    opts.append(o.v)
+            if not ok:
+                err(ov.off if ov else e.off, '%s: "options" must be 2 to 8 different strings of 1 to 24 bytes' % ctx); continue
+            if dv is None or dv.t != "string" or dv.v not in opts:
+                err(dv.off if dv else e.off, '%s: "default" must be one of the options' % ctx); continue
+            s.update(options=opts, default=dv.v)
+        else:
+            mv = e.get("max")
+            m = as_int(mv, 1, 64)
+            if m is None:
+                err(mv.off if mv else e.off, '%s: "max" must be a whole number from 1 to 64' % ctx); continue
+            raw = dv.v.encode("utf-8") if dv is not None and dv.t == "string" else None
+            if raw is None or any(c < 0x20 or c == 0x7f for c in raw) or len(raw) > m:
+                err(dv.off if dv else e.off, '%s: "default" must be printable text of at most max bytes' % ctx); continue
+            s.update(max=m, default=dv.v)
+        pk.settings.append(s)
 
 
 def pack_dirs(roots):
@@ -1207,6 +1339,19 @@ def load_mods(roots, stock):
         o.append("pack %s %s %d/%d %d" % (pk.folder, pk.id or "-", sum(1 for b in blocks if b[4] == i),
                                           pk.blocks_in_file, 1 if pk.refused else 0))
         o += ["line " + l for l in pk.lines]
+        if pk.state == "loaded":
+            o += ["icon %s:%s" % (pk.id, n) for n in pk.icons]   # K.7-3c
+        for st in pk.settings:   # K.7-2a: what the pack's settings page will show
+            if st["type"] == "heading":
+                o.append("setting %s - heading %s" % (pk.id, st["label"]))
+            elif st["type"] == "toggle":
+                o.append("setting %s %s toggle %s" % (pk.id, st["id"], "true" if st["default"] else "false"))
+            elif st["type"] == "slider":
+                o.append("setting %s %s slider %g %g %g %g" % (pk.id, st["id"], st["min"], st["max"], st["step"], st["default"]))
+            elif st["type"] == "choice":
+                o.append("setting %s %s choice %s %s" % (pk.id, st["id"], "|".join(st["options"]), st["default"]))
+            else:
+                o.append("setting %s %s text %d %s" % (pk.id, st["id"], st["max"], st["default"]))
     o += ["loader " + l for l in lines]
     o.append("# block name info color faces(6) sound_set paint_art fallback paint picker")
     for name, info, mb, faces, _ in blocks:
@@ -1382,8 +1527,8 @@ def cmd_extract(dump_path, out_path):
         names2 = ATLAS2_TILES if info & IS_ATLAS2 else dict(enumerate(ATLAS1_TILES))
         tr = []
         if not info & IS_NOTSOLID: tr.append("solid")
-        for n in TRAIT_ORDER[1:-1]:
-            if info & TRAITS[n]: tr.append(n)
+        for n in TRAIT_ORDER[1:]:
+            if n != "paint_art" and info & TRAITS[n]: tr.append(n)
         if art == ART_ALL: tr.append("paint_art")
         fl = [n for n in FLAG_ORDER if info & FLAGS[n]]
         rest = info & ~(IS_NOTSOLID | sum(TRAITS.values()) | sum(FLAGS.values()))

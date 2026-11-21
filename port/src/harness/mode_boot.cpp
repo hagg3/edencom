@@ -227,7 +227,34 @@ int run_smoke() {
 
     if (!open_world(name, g_opt.height)) return 1;
     eden_console_teleport(g_opt.at[0], g_opt.at[1], g_opt.at[2]);
-    tick(g_opt.frames);
+    // X.34: wall time per world frame (update + render + present, so at the device's fps cap), for the
+    // device bar "no frame >= 100 ms". `all` includes the first frames' streaming and meshing; `settled`
+    // starts one second (60 frames) in. Informational: the bar is judged by whoever reads the log.
+    {
+        const int kSettle = 60;
+        double worst = 0, worstSettled = 0, sum = 0, sumSettled = 0;
+        int worstAt = -1, over33 = 0, over100 = 0, over100Settled = 0;
+        for (int i = 0; i < g_opt.frames; ++i) {
+            const double t0 = eden_platform_now_ms();
+            tick(1);
+            const double ms = eden_platform_now_ms() - t0;
+            sum += ms;
+            if (ms > worst) { worst = ms; worstAt = i; }
+            if (ms > 33.3) over33++;
+            if (ms >= 100.0) over100++;
+            if (i >= kSettle) {
+                sumSettled += ms;
+                if (ms > worstSettled) worstSettled = ms;
+                if (ms >= 100.0) over100Settled++;
+            }
+        }
+        const int n = g_opt.frames, ns = n > kSettle ? n - kSettle : 0;
+        std::printf("[eden-smoke] frame ms: all n=%d mean=%.1f worst=%.1f@%d >33.3=%d >=100=%d | "
+                    "settled n=%d mean=%.1f worst=%.1f >=100=%d\n",
+                    n, n ? sum / n : 0.0, worst, worstAt, over33, over100,
+                    ns, ns ? sumSettled / ns : 0.0, worstSettled, over100Settled);
+        std::fflush(stdout);
+    }
 
     const int draws = eden_gl_stat(0);
     std::printf("[eden-smoke] world frame: draws=%d issued=%d elided=%d\n",

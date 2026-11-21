@@ -25,6 +25,8 @@
 
 using namespace harness;
 
+extern "C" const unsigned char* eden_ui_pack_icon_pixels(int i);   // Classes/GLWidgets.cpp (K.7-3c)
+
 namespace harness {
 namespace g_packs {
 namespace {
@@ -147,6 +149,14 @@ int run_packs_selftest() {
     const std::string docs = eden_platform_documents_root();
     const std::string packs = docs + "/Packs", off = docs + "/Packs-off";
     const std::string src = fixturePack("emod_example");
+#if defined(EDEN_PLATFORM_IOS)
+    // X.33: an installed ipa ships only packs/eden; the fixture is there only when CI (or the tester)
+    // copied it to Documents/pack-fixtures. Without it the run is skipped, not 15 false failures.
+    if (!eden_fs_exists(src + "/pack.json")) {
+        std::printf("[eden-packs] SKIP: no emod_example fixture (copy it to Documents/pack-fixtures/)\n");
+        return 0;
+    }
+#endif
     eden_fs_remove_tree(packs);
     eden_fs_remove_tree(off);
     const bool copied = copyTree(src, packs + "/emod_example");
@@ -456,6 +466,45 @@ int run_packs_selftest() {
         std::snprintf(d, sizeof(d), "none %d, console %s, back %d", none, joined(out).c_str(), BlockRegistry::findDef(full("jelly")) != NULL);
         check(none && noPage && hasLine(out, "multiplayer") && BlockRegistry::findDef(full("jelly")) != NULL,
               "a session loads no pack (and the stock atlas); the next load has them again", d);
+    }
+
+    // ---- 8. K.7-3c: pack icons. The atlas cell holds the PNG's pixels; a wrong-size PNG is refused with a line
+    {
+        const int id = ContentPack::packIconByName(full("spark"));
+        const unsigned char* cell = eden_ui_pack_icon_pixels(id - 64);
+        std::vector<unsigned char> bytes;
+        {
+            const std::string pp = src + "/icons/spark.png";
+            FILE* f = std::fopen(pp.c_str(), "rb");
+            char buf[4096]; size_t n;
+            while (f && (n = std::fread(buf, 1, sizeof buf, f)) > 0) bytes.insert(bytes.end(), buf, buf + n);
+            if (f) std::fclose(f);
+        }
+        EdenImage* img = bytes.empty() ? NULL : eden_image_decode(bytes.data(), bytes.size());
+        const bool same = img && cell && img->width == 64 && img->height == 64 && std::memcmp(cell, img->rgba, 64 * 64 * 4) == 0;
+        eden_image_free(img);
+        std::snprintf(d, sizeof(d), "id %d, cell %p, pixels equal %d, icons in report %zu", id, (const void*)cell, same,
+                      ContentPack::modReport().icons.size());
+        check(id >= 64 && same && ContentPack::modReport().icons.size() == 1 && ContentPack::packIconByName("emod_example:nope") < 0,
+              "the pack's icon is named <pack>:<icon>, and its atlas cell holds the PNG's pixels", d);
+        eden_fs_make_dirs(packs + "/zy_iconbad/icons");
+        writeFile(packs + "/zy_iconbad/pack.json",
+                  "{\"format\": 1, \"id\": \"iconbad\", \"icons\": {\"small\": \"icons/small.png\"}, \"blocks\": []}\n");
+        eden_fs_copy(src + "/textures/oak.png", packs + "/zy_iconbad/icons/small.png");   // 32x32: a tile, not an icon
+        ContentPack::loadMods(docs, false);
+        bool line = false, loaded = false;
+        for (const ContentPack::ModPack& pk : ContentPack::modReport().packs)
+            if (pk.folder == "zy_iconbad") {
+                loaded = !pk.refused && pk.icons.empty();
+                for (const std::string& l : pk.lines) line |= l.find("is 32x32 (an icon is 64x64)") != std::string::npos;
+            }
+        std::snprintf(d, sizeof(d), "line %d, pack loaded without the icon %d, icons %zu", line, loaded, ContentPack::modReport().icons.size());
+        check(line && loaded && ContentPack::modReport().icons.size() == 1, "a 32x32 PNG as an icon is refused with a line (the pack still loads)", d);
+        eden_fs_remove_tree(packs + "/zy_iconbad");
+        ContentPack::loadMods(docs, true);
+        check(ContentPack::modReport().icons.empty() && ContentPack::packIconByName(full("spark")) < 0 && eden_ui_pack_icon_pixels(0) == NULL,
+              "a session has no pack icons", "");
+        ContentPack::loadMods(docs, false);
     }
     std::printf("[eden-packs] %s (%d failure(s))\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
     return g_selftestFailures ? 1 : 0;

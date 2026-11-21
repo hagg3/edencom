@@ -10,6 +10,7 @@
 #include "gl_programs.h"
 #include "../render_internal.h"
 
+#include <cstdio>
 #include <cstring>
 #include <unordered_map>
 
@@ -21,6 +22,7 @@ namespace rgl {
 namespace {
 
 GLuint g_white = 0;
+bool   g_ssEverUsed = false;   // SH.2: --render-selftest-gl's "unused = absent" leg
 struct BufInfo { R::BufKind kind; R::Usage usage; };
 std::unordered_map<GLuint, BufInfo> g_bufKind;
 
@@ -206,12 +208,17 @@ void drawWorld(const R::Geometry& g, R::Tex t, const R::Rgba& tint, float alphaR
     const rcore::DrawState& d = rcore::ds();
     const bool hfog = d.fogOn && d.hfogOn;   // AT.5: the twin only while R::setHeightFog is on
     const bool cs = d.csOn && d.csTex;       // AT.6: and the cloud-shadow twin while R::setCloudShadow is
-    ProgId id = alphaVariant(P_WORLD, alphaRef);
-    if (hfog) id = heightFogVariant(id);
-    if (cs) id = cloudShadowVariant(id);
+    unsigned key = noDiscard(alphaRef) ? WF_NO_DISCARD : 0;
+    if (hfog) key |= WF_HEIGHT_FOG;
+    if (cs) key |= WF_CLOUD_SHADOW;
+    const bool ss = d.ssOn && d.ssTex;       // SH.2: and the sun-shadow twin while R::setSunShadow is
+    if (ss) { key |= WF_SUN_SHADOW; g_ssEverUsed = true; }
     const bool wt = d.wtOn && alphaRef < 0.0f;   // AT.8: only the discard-free draws (the transparent chunk pass)
-    if (wt) id = waterTintVariant(id);
-    if (wt && d.wtSun[3] > 0.0f) id = waterGlintVariant(id);   // AT.11: the glint twin only while it shows
+    if (wt && (key & WF_NO_DISCARD)) {
+        key |= WF_WATER_TINT;
+        if (d.wtSun[3] > 0.0f) key |= WF_WATER_GLINT;   // AT.11: the glint twin only while it shows
+    }
+    const ProgId id = worldProg(key);
     Program* p = begin(id, t);
     if (!p) return;
     if (wt) { set4f(*p, U_WTINT, d.wtTint); set4f(*p, U_WSUN, d.wtSun); set4f(*p, U_WUP, d.wtUp); }
@@ -221,6 +228,14 @@ void drawWorld(const R::Geometry& g, R::Tex t, const R::Rgba& tint, float alphaR
         set4f(*p, U_CSU, d.csU);
         set4f(*p, U_CSV, d.csV);
         set4f(*p, U_CSHADOW, d.csParams);
+    }
+    if (ss) {
+        bindTextureUnit(2, (GLuint)d.ssTex);
+        set1i(*p, U_SSMAP, 2);
+        setMat4(*p, U_SSMAT, d.ssMat);
+        const float par[4] = {d.ssParams[0], d.ssParams[1], d.ssParams[2], 0.0f};
+        set4f(*p, U_SSPARAM, par);
+        set4f(*p, U_SSFADE, d.ssFade);
     }
     setMat4(*p, U_MVP, mvp());
     setMat4(*p, U_MV, R::mv().top().m);
@@ -341,6 +356,77 @@ void drawClouds(const R::Geometry& g, const R::CloudParams& cp) {
     submit(g, cp.lit, 1.0f);
 }
 
+// ---- SH.2: the depth pass ----------------------------------------------------------------------------
+// One depth-only framebuffer, created on the first pass and re-pointed when the texture changes. It has no colour
+// buffer: glDrawBuffers(GL_NONE) and glReadBuffer(GL_NONE) are framebuffer state (GL 3.3 core needs them for a
+// colourless framebuffer to be complete), set once. The pass saves the bound framebuffer (the window's is not 0 on
+// iOS) and viewport and puts both back at the end; the depth write mask goes through the state cache
+// (depthWriteNow), and the draws state the rest themselves. An incomplete framebuffer is logged once and the target
+// stays unavailable (every later begin answers false), never a crash: the Windows ARM VM's GL-over-D3D12 is the
+// driver most likely to refuse.
+namespace {
+GLuint g_depthFbo = 0, g_depthAttached = 0;
+bool   g_depthFailed = false, g_depthActive = false;
+GLint  g_depthPrevFbo = 0, g_depthPrevVp[4] = {0, 0, 0, 0};
+}  // namespace
+
+bool sunShadowEverUsed() { return g_ssEverUsed; }
+
+bool beginDepthPass(R::Tex depth, int size) {
+    g_ssEverUsed = true;
+    if (g_depthFailed) return false;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &g_depthPrevFbo);
+    glGetIntegerv(GL_VIEWPORT, g_depthPrevVp);
+    bindTextureUnit(2, 0);   // never sampled while it is the target (a feedback loop to strict drivers)
+    const bool fresh = !g_depthFbo;
+    if (fresh) glGenFramebuffers(1, &g_depthFbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, g_depthFbo);
+    if (fresh) {
+        const GLenum none = GL_NONE;
+        glDrawBuffers(1, &none);
+        glReadBuffer(GL_NONE);
+    }
+    if (g_depthAttached != (GLuint)depth) {
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, (GLuint)depth, 0);
+        g_depthAttached = (GLuint)depth;
+        const GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        if (status != GL_FRAMEBUFFER_COMPLETE) {
+            std::fprintf(stderr, "[eden-gl] sun-shadow depth framebuffer %dx%d incomplete (0x%x): sun shadows "
+                                 "unavailable on this driver.\n", size, size, (unsigned)status);
+            glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)g_depthPrevFbo);
+            depthTargetRelease();
+            g_depthFailed = true;
+            return false;
+        }
+    }
+    glViewport(0, 0, size, size);
+    depthWriteNow(true);
+    glClear(GL_DEPTH_BUFFER_BIT);
+    g_depthActive = true;
+    return true;
+}
+
+void endDepthPass() {
+    if (!g_depthActive) return;
+    g_depthActive = false;
+    glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)g_depthPrevFbo);
+    glViewport(g_depthPrevVp[0], g_depthPrevVp[1], g_depthPrevVp[2], g_depthPrevVp[3]);
+}
+
+void depthTargetRelease() {
+    if (g_depthFbo) glDeleteFramebuffers(1, &g_depthFbo);
+    g_depthFbo = 0;
+    g_depthAttached = 0;
+}
+
+void drawDepth(const R::Geometry& g, R::Tex alphaTex, float alphaRef) {
+    Program* p = begin(alphaTex ? P_DEPTH_ALPHA : P_DEPTH, alphaTex);
+    if (!p) return;
+    setMat4(*p, U_MVP, mvp());
+    if (alphaTex) { uvUniform(*p); set1f(*p, U_ALPHAREF, alphaRef); }
+    submit(g, R::Rgba{1, 1, 1, 1}, 1.0f);
+}
+
 bool readPixels(int x, int y, int w, int h, void* rgba) {
     if (!rgba || w <= 0 || h <= 0) return false;
     glReadPixels(x, y, w, h, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
@@ -393,6 +479,7 @@ void texFormat(R::TexFormat f, GLenum* format, GLenum* type) {
         case R::TF_L8:       *format = GL_LUMINANCE; break;
         case R::TF_A8:       *format = GL_ALPHA; break;
         case R::TF_LA88:     *format = GL_LUMINANCE_ALPHA; break;
+        case R::TF_DEPTH16:  *format = GL_DEPTH_COMPONENT; *type = GL_UNSIGNED_SHORT; break;   // SH.2
     }
 }
 // Rows are tightly packed (an RGB8 or L8 row need not be 4-byte aligned); the engine's own alignment
@@ -421,14 +508,16 @@ R::Tex texCreate(const R::TexDesc& d, const void* px) {
     if (d.label) eden_gl_debug_tex_label(d.label);
     {
         UnpackAlign1 a;
-        texImage2D(GL_TEXTURE_2D, 0, (GLint)format, d.w, d.h, 0, format, type, px);
+        // SH.2: a depth texture needs a sized internal format on ES 3.0 (DEPTH_COMPONENT16 + UNSIGNED_SHORT); no data.
+        const GLint internal = d.format == R::TF_DEPTH16 ? (GLint)GL_DEPTH_COMPONENT16 : (GLint)format;
+        texImage2D(GL_TEXTURE_2D, 0, internal, d.w, d.h, 0, format, type, d.format == R::TF_DEPTH16 ? nullptr : px);
     }
     if (d.label) eden_gl_debug_tex_label(nullptr);
     return t;
 }
 
 void texUpdate(R::Tex t, int x, int y, int w, int h, R::TexFormat f, const void* px) {
-    if (!t || !px || w <= 0 || h <= 0) return;
+    if (!t || !px || w <= 0 || h <= 0 || f == R::TF_DEPTH16) return;   // SH.2: a depth pass fills those
     GLenum format, type;
     texFormat(f, &format, &type);
 #if !defined(EDEN_GL_ES_DIALECT)
@@ -507,6 +596,8 @@ void invalidateAll() {
     invalidatePrograms();
     g_white = 0;
     g_bufKind.clear();
+    g_depthFbo = g_depthAttached = 0;   // SH.2: the dead context's framebuffer
+    g_depthFailed = g_depthActive = false;
 }
 
 }  // namespace rgl

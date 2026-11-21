@@ -115,7 +115,9 @@ struct SpriteParams {
 };
 
 // ---- resources ---------------------------------------------------------------------------------
-enum TexFormat { TF_RGBA8, TF_RGB8, TF_RGB565, TF_RGBA4444, TF_RGBA5551, TF_L8, TF_A8, TF_LA88 };
+// TF_DEPTH16 (SH.2): a 16-bit depth texture for beginDepthPass, created with px NULL, nearest, clamped; sampled
+// as a plain sampler2D (compare mode off) by the sun-shadow lookup. texUpdate ignores it.
+enum TexFormat { TF_RGBA8, TF_RGB8, TF_RGB565, TF_RGBA4444, TF_RGBA5551, TF_L8, TF_A8, TF_LA88, TF_DEPTH16 };
 struct TexDesc {
     int w, h;
     TexFormat format;
@@ -188,6 +190,30 @@ void cloudShadowOff();
 // unit; sun = the eye-space direction to the sun, unit). Kept until waterTintOff() and cleared by beginFrame.
 void setWaterTint(const float tint[4], const float sun[4], const float up[4]);
 void waterTintOff();
+// SH.2: sun shadows on drawWorld, a compiled variant of program 1
+// (EDEN_SUN_SHADOW), selected only while this is on; off = the plain program, so a caller that never sets it draws
+// exactly as before. `map` is a TF_DEPTH16 texture a depth pass filled (texture unit 2). Each vertex's eye-space
+// position goes through `ssMat` (column-major: eye space -> the map's [0,1]^3, z as the depth pass wrote it); per
+// fragment one nearest texel is the occluder's depth, gap = (z - occluder) x params[1] (the depth range in blocks:
+// how far along the sun ray the receiver is behind the first surface), and the colour is multiplied by
+// 1 - params[0] x step(params[2], gap) x reach x distance x inside, where reach is 1 up to fade[0] blocks of gap and
+// 0 from fade[1], distance is 1 up to eye distance fade[2] and 0 from fade[3], inside is 1 within the map's box.
+// With cloud shadows on too, a vertex under a cloud texel takes no sun shadow (the cloud already took the sun).
+// Kept until sunShadowOff() and cleared by beginFrame.
+void setSunShadow(Tex map, const float ssMat[16], const float params[4], const float fade[4]);
+void sunShadowOff();
+// SH.2: the depth pass that fills a sun-shadow map. Outside beginScene/endScene (a framebuffer switch inside the
+// scene pass costs iOS a tile flush): beginDepthPass binds a depth-only framebuffer on `depth` (a TF_DEPTH16 texture
+// of size x size), sets the viewport and clears depth; drawDepth draws position only into it (alphaTex 0: program
+// P_DEPTH, no discard; else P_DEPTH_ALPHA: discard where alphaTex's alpha <= alphaRef through R::uv(), and a vertex
+// whose colour alpha is 145/255, the mesher's water mark, collapses so water casts nothing), with the caller's
+// setState (depth test/write, cull, polygon offset as the bias); endDepthPass puts the previous framebuffer and
+// viewport back. false = unavailable (the framebuffer is incomplete: logged once, every later call false, the
+// feature behaves Off); the null backend answers true. The framebuffer belongs to `depth`: texDestroy(depth) frees it.
+bool beginDepthPass(Tex depth, int size);
+void endDepthPass();
+void drawDepth(const Geometry& g, Tex alphaTex, float alphaRef);
+bool depthTargetLive();                    // a depth pass's framebuffer exists (until its texture is destroyed)
 void drawWorld(const Geometry& g, Tex t, const Rgba& tint, float alphaRef = -1.0f);   // program 1
 void draw2D     (const Geometry& g, Tex t, const Rgba& tint);                          // program 2
 void drawSprites(const Geometry& g, Tex t, const SpriteParams& p);                     // program 3
@@ -254,12 +280,13 @@ void setOriginalLighting(bool on);
 // ---- readbacks ---------------------------------------------------------------------------------
 // The POINT space x SCALE_* (eden_gl_set_pick_viewport), never the drawable: what picking's gluUnProject needs.
 // QA.24 (A1-08): what the frame cost, counted at this layer so the null backend reports it too. Draws and
-// vertices are per pass category (eden_render_draw_category(): index = the bit's position, 0..9 = chunks,
-// objects, sky, models, signs, transparent, flowers, effects, hud, other); uploads and creates are totals.
-// Counted always (integer adds); only the selftests read and reset them.
+// vertices are per pass category (eden_render_draw_category(): index = the bit's position, 0..10 = chunks,
+// objects, sky, models, signs, transparent, flowers, effects, hud, other, shadow: every drawDepth, SH.2);
+// uploads and creates are totals. Counted always (integer adds); only the selftests read and reset them.
 struct Counts {
-    long draws[10], verts[10];
+    long draws[11], verts[11];
     long texCreates, texUpdates, bufCreates, bufUploads;   // bufUploads = bufData + bufSubData calls
+    long depthPasses;                                      // SH.2: beginDepthPass calls that bound a target
 };
 const Counts& counts();
 void resetCounts();

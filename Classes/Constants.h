@@ -306,6 +306,7 @@ enum BLOCK_TYPES{
 #define IS_BLASTPROOF      (1<<21)   // bedrock, steel: Terrain::explode leaves it
 #define IS_UNBREAKABLE     (1<<22)   // bedrock, golden cube: mining and destroyBlock refuse it
 #define IS_NOSHADOW        (1<<23)   // cloud, glass, weave: no baked-shadow caster (shadow_buildCasterTable)
+#define IS_USABLE          (1<<24)   // K.6-1b, mod blocks only: a build-mode tap fires `use` (how="tap") and builds nothing
 
 
 // Tiles per atlas strip (atlas.png and atlas2.png are both 32 x 32*ATLAS_TILES). Stock was 32, baked in

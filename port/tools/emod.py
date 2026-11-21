@@ -73,18 +73,20 @@ T_BLOCK_PALETTE = 10             # K.1-2: the world's block palette (docs/emod-f
 T_SKY_CLOCK = 11                 # DN.2: the day/night clock (docs/emod-file-format.md "SKY_CLOCK")
 T_WEATHER = 12                   # AT.1b: the weather state (docs/emod-file-format.md "WEATHER")
 T_MOD_DATA = 13                  # K.6-5: per-pack saved script data, eden.store (docs/emod-file-format.md "MOD_DATA")
+T_LIGHTING = 14                  # LM.2: the lamp light mode (docs/emod-file-format.md "LIGHTING")
 TYPE_NAMES = {1: 'COLUMN', 2: 'WORLD_HEADER', 3: 'CREATURES', 4: 'SIGN_TRAILER', 5: 'PROVENANCE',
               6: 'SUMMARY', 7: 'COMMIT', 8: 'INDEX', 9: 'GENERATOR', 10: 'BLOCK_PALETTE', 11: 'SKY_CLOCK',
-              12: 'WEATHER', 13: 'MOD_DATA'}
+              12: 'WEATHER', 13: 'MOD_DATA', 14: 'LIGHTING'}
 GENERATOR_LEN = 28
 SKY_CLOCK_LEN = 16
 WEATHER_LEN = 32
+LIGHTING_LEN = 8
 MOD_DATA_VERSION = 1
 MOD_DATA_ID = 24
 MOD_DATA_MAX_PACKS = 64
 MOD_DATA_ENTRY_MAX = 64 << 10
 MOD_DATA_MAX = 1 << 20           # decoded, the whole record
-RAW_TYPES = (2, 9, 10, 11, 12)   # WORLD_HEADER, GENERATOR, BLOCK_PALETTE, SKY_CLOCK, WEATHER: codec 0 by spec
+RAW_TYPES = (2, 9, 10, 11, 12, 14)   # WORLD_HEADER, GENERATOR, BLOCK_PALETTE, SKY_CLOCK, WEATHER, LIGHTING: codec 0 by spec
 # K.1-2: FileHeader.flags bit 0 -- type bytes 128-255 are defined by the live BLOCK_PALETTE. Any other bit
 # is still "written by a newer build".
 FH_FLAG_BLOCK_PALETTE = 1
@@ -107,7 +109,7 @@ SUMMARY_FMT = '<IIHHI'           # live_columns, next_ord, band_or, reserved, re
 DECODED_MAX = {T_COLUMN: 16 * BAND, T_WORLD_HEADER: EDEN_HEADER, T_CREATURES: MAX_SLOTS * ENT,
                T_SIGN_TRAILER: TRAILER_MAX, T_SUMMARY: 16, T_COMMIT: 24, T_GENERATOR: GENERATOR_LEN,
                T_BLOCK_PALETTE: 8 + PALETTE_MAX * PALETTE_ENTRY, T_SKY_CLOCK: SKY_CLOCK_LEN, T_WEATHER: WEATHER_LEN,
-               T_MOD_DATA: MOD_DATA_MAX}
+               T_MOD_DATA: MOD_DATA_MAX, T_LIGHTING: LIGHTING_LEN}
 
 # PROVENANCE flags: each names one reason an export cannot be byte-identical to the source.
 PF_NONCANONICAL_LAYOUT = 1       # columns not packed from offset 192 at full stride, or dead bytes
@@ -1205,6 +1207,11 @@ class Store:
             errs.append('WEATHER raw length %d is not %d' % (we.aux, WEATHER_LEN))
         if we and we.codec != C_NONE:
             errs.append('WEATHER must be codec 0')
+        li = self.live(T_LIGHTING)
+        if li and li.aux != LIGHTING_LEN:
+            errs.append('LIGHTING raw length %d is not %d' % (li.aux, LIGHTING_LEN))
+        if li and li.codec != C_NONE:
+            errs.append('LIGHTING must be codec 0')
         md = self.live(T_MOD_DATA)
         if md:                                        # K.6-5: the framing (the game ignores a record that breaks it)
             try:
@@ -1237,7 +1244,7 @@ class Store:
                 if lost:
                     errs.append('BLOCK_PALETTE @%d is not a superset of @%d: %s' % (b.off, a.off, ', '.join(lost)))
         for t in (T_CREATURES, T_SIGN_TRAILER, T_PROVENANCE, T_SUMMARY, T_GENERATOR, T_BLOCK_PALETTE, T_SKY_CLOCK, T_WEATHER,
-                  T_MOD_DATA):
+                  T_MOD_DATA, T_LIGHTING):
             r = self.live(t)
             if r:
                 if r.mask or r.x or r.z:
@@ -1509,6 +1516,21 @@ def weather_text(w):
         WEATHER_KINDS[kind], i, secs, spells, rng, (' ' + ' '.join(fl)) if fl else '')
 
 
+LIGHTING_MODES = {0: 'legacy', 1: 'new dawn'}
+
+
+def lighting_text(l):
+    """The LIGHTING record (Lighting.cpp light_recordDecode), for `dump`."""
+    if len(l) != LIGHTING_LEN:
+        return '%d B (not %d): unreadable (the engine draws Legacy)' % (len(l), LIGHTING_LEN)
+    ver, mode, origin, det = struct.unpack_from('<HBBB', l, 0)
+    if ver != 1:
+        return 'version %d (this reader knows 1): ignored (the engine draws Legacy)' % ver
+    return '%s%s %s detector=%d' % (LIGHTING_MODES.get(mode, 'mode %d' % mode),
+                                    '' if mode in LIGHTING_MODES else ' (drawn as legacy)',
+                                    'chosen' if origin else 'auto-detected', det)
+
+
 def generator_mirror(g):
     """The 36 B `.eden` mirror of a GENERATOR record: "EMG1" + record + CRC-32 of those 32 B."""
     b = GEN_MIRROR_MAGIC + bytes(g)
@@ -1558,6 +1580,9 @@ def dump(path, records=False):
     we = st.live(T_WEATHER)
     if we:
         print('weather: ' + weather_text(st.decode(we)))
+    li = st.live(T_LIGHTING)
+    if li:
+        print('lamp light: ' + lighting_text(st.decode(li)))
     md = st.live(T_MOD_DATA)
     if md:
         ents, why = parse_mod_data(st.decode(md))
@@ -1820,7 +1845,7 @@ def hostile(path, what):
 def compact(path, set_palette_flag=False, palette=None, quiet=False):
     """EdenWorldStore::compact(setPaletteFlag, palette): the live state as one batch (seq 1) in `path`.compact,
     fsync, rename over `path`. Order: WORLD_HEADER, CREATURES, a non-empty SIGN_TRAILER, PROVENANCE, GENERATOR,
-    SKY_CLOCK, WEATHER, MOD_DATA and the newest record of each reserved type 14-255 (ascending, verbatim: codec, header fields
+    SKY_CLOCK, WEATHER, MOD_DATA and the newest record of each reserved type 15-255 (ascending, verbatim: codec, header fields
     and stored bytes, a malformed MOD_DATA included; K.6-5a/K.6-5), COLUMNs by (ord, x, z), BLOCK_PALETTE, SUMMARY, COMMIT. zstd payloads are copied verbatim after they
     decode; codec 0 is kept for the raw types and empty payloads; anything else is re-encoded at zstd-3.
     K.1-2 flag compaction (`set_palette_flag` on an unflagged file): FileHeader flags bit 0, and a BLOCK_PALETTE of
@@ -1864,8 +1889,8 @@ def compact(path, set_palette_flag=False, palette=None, quiet=False):
             r = st.live(t)
             if r and not (t == T_SIGN_TRAILER and r.aux == 0):
                 copy(r)
-        # K.6-5a (C-4): the newest record of each reserved type (14-255, ascending), verbatim after it decodes; K.6-5's
-        # MOD_DATA (13) the same way, first
+        # K.6-5a (C-4): the newest record of each reserved type (15-255, ascending), verbatim after it decodes; K.6-5's
+        # MOD_DATA (13) and LM.2's LIGHTING (14) the same way, first
         for t in range(T_WEATHER + 1, 256):
             r = st.live(t)
             if r:
@@ -2273,11 +2298,11 @@ def fixtures_pack(d):
         export_line(f)
     # K.6-5a (C-4): `compact F` = copy F, EdenWorldStore::compact(), and the result must be emod.py's `compact` byte
     # for byte. F holds reserved types a newer build would write: 200 superseded once (zstd, then header fields
-    # set), 14 raw, 255 zlib; and K.6-5's MOD_DATA (13, zstd) for two packs; compaction keeps the newest of each, verbatim.
+    # set), 15 raw, 255 zlib; and K.6-5's MOD_DATA (13, zstd) for two packs; compaction keeps the newest of each, verbatim.
     rv = os.path.join(d, 'f64-reserved.emod')
     e = Eden(srcs['f64-basic.eden'])
     convert(srcs['f64-basic.eden'], rv, epoch=0, quiet=True)
-    append_batch(rv, extra=[(200, C_ZSTD, b'mod data v1 ' * 40, 0, 0, 0), (14, C_NONE, bytes(range(24)), 0, 0, 0),
+    append_batch(rv, extra=[(200, C_ZSTD, b'mod data v1 ' * 40, 0, 0, 0), (15, C_NONE, bytes(range(24)), 0, 0, 0),
                             (T_MOD_DATA, C_ZSTD, mod_data_payload([('wires', b'\x01\x02' * 300), ('a_pack', bytes(range(256)))]), 0, 0, 0)])
     c0 = bytearray(e.column(e.cols[0])); c0[77] ^= 0x33
     append_batch(rv, columns={(e.cols[0][0], e.cols[0][1]): bytes(c0)},
@@ -2557,19 +2582,19 @@ def reserved_selftest(work):
     p = os.path.join(work, 'r.emod')
     convert(src, p, epoch=0, quiet=True)
     append_batch(p, extra=[(200, C_ZSTD, b'old ' * 64, 0, 0, 0)])
-    append_batch(p, extra=[(200, C_ZLIB, b'new ' * 64, 3, -2, 4), (14, C_NONE, b'x' * 8, 0, 0, 0)])
+    append_batch(p, extra=[(200, C_ZLIB, b'new ' * 64, 3, -2, 4), (15, C_NONE, b'x' * 8, 0, 0, 0)])
     before = open_emod(p)
     want = {t: (r.codec, r.mask, r.x, r.z, r.aux, bytes(before.buf[r.poff:r.poff + r.plen]))
-            for t in (14, 200) for r in (before.live(t),)}
+            for t in (15, 200) for r in (before.live(t),)}
     d0 = state_digest_store(before)
     before.close()
     compact(p, quiet=True)
     after = open_emod(p)
     got = {t: (r.codec, r.mask, r.x, r.z, r.aux, bytes(after.buf[r.poff:r.poff + r.plen])) if r else None
-           for t in (14, 200) for r in (after.live(t),)}
+           for t in (15, 200) for r in (after.live(t),)}
     order = [r.type for r in after.recs]
     ok = (got == want and len(after.history[('T', 200)]) == 1 and state_digest_store(after) == d0 and
-          order.index(T_WORLD_HEADER) < order.index(14) < order.index(200) < order.index(T_COLUMN))
+          order.index(T_WORLD_HEADER) < order.index(15) < order.index(200) < order.index(T_COLUMN))
     after.close()
     once = open(p, 'rb').read()
     compact(p, quiet=True)
@@ -2623,6 +2648,32 @@ def moddata_selftest(work):
     ok = ok and not v
     print('  MOD_DATA: a good record verifies clean, each broken rule is named, compaction keeps it verbatim: %s'
           % ('ok' if ok else 'FAILED %s' % v))
+    shutil.rmtree(work)
+    return ok
+
+
+def lighting_selftest(work):
+    """LM.2: record 14 LIGHTING: an 8-byte raw record verifies clean and dumps; a wrong length or a zstd codec is named;
+    compaction keeps it verbatim (an unknown mode byte included)."""
+    import shutil
+    os.makedirs(work, exist_ok=True)
+    src = make_fixtures(os.path.join(work, 'fx'))[0][0]
+    p = os.path.join(work, 'l.emod')
+    convert(src, p, epoch=0, quiet=True)
+    good = struct.pack('<HBBB3x', 1, 1, 1, 1)
+    append_batch(p, extra=[(T_LIGHTING, C_NONE, good, 0, 0, 0)])
+    ok = not open_emod(p).verify() and lighting_text(good) == 'new dawn chosen detector=1'
+    ok &= lighting_text(struct.pack('<HBBB3x', 1, 7, 0, 1)).startswith('mode 7 (drawn as legacy)')
+    ok &= lighting_text(good[:7]).startswith('7 B')
+    compact(p, quiet=True)
+    st = open_emod(p)
+    r = st.live(T_LIGHTING)
+    ok &= r is not None and r.codec == C_NONE and bytes(st.buf[r.poff:r.poff + r.plen]) == good and not st.verify()
+    st.close()
+    convert(src, p, epoch=0, quiet=True)
+    append_batch(p, extra=[(T_LIGHTING, C_ZSTD, good, 0, 0, 0)])
+    ok &= any('LIGHTING must be codec 0' in e for e in open_emod(p).verify())
+    print('  LIGHTING: verify, dump text and compaction: %s' % ('ok' if ok else 'FAILED'))
     shutil.rmtree(work)
     return ok
 
@@ -2723,6 +2774,8 @@ def selftest(work):
     ok &= reserved_selftest(os.path.join(work, 'reserved'))
     print('== MOD_DATA framing (K.6-5)')
     ok &= moddata_selftest(os.path.join(work, 'moddata'))
+    print('== LIGHTING (LM.2)')
+    ok &= lighting_selftest(os.path.join(work, 'lighting'))
     print('== decode ceilings (QA.4)')
     ok &= ceiling_selftest()
     print('== resync budget (QA.13)')

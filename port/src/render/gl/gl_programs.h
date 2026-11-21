@@ -18,15 +18,23 @@ GLuint linkProgram(GLuint vs, GLuint fs, const char* name, std::string* log = nu
 
 // P_LIT_FLAT is program 5 compiled with a `flat` colour (ES 1.1 GL_FLAT: the triangle's last vertex
 // colours it), for the lit draws 2.1.1 made under glShadeModel(GL_FLAT) (block-break debris; G.5b-4).
-enum ProgId { P_WORLD = 0, P_UI, P_SPRITE, P_SKINNED, P_LIT, P_LIT_FLAT,
-              P_WORLD_OPAQUE, P_LIT_OPAQUE, P_LIT_FLAT_OPAQUE,   // PW.3: no `discard` (alphaRef < 0 draws)
+// SH.1: program 1 (world) is one program per feature key, built lazily; the other programs keep fixed ids.
+// The bits are in the order their #defines are emitted, so a key's source string is the one the hand-listed
+// twins used (NO_DISCARD = PW.3 no `discard`, HEIGHT_FOG = AT.5, CLOUD_SHADOW = AT.6, WATER_TINT = AT.8,
+// WATER_GLINT = AT.11, SUN_SHADOW = SH.2). WATER_TINT needs NO_DISCARD and WATER_GLINT needs WATER_TINT (worldKeyValid).
+enum WorldFeat { WF_NO_DISCARD = 1, WF_HEIGHT_FOG = 2, WF_CLOUD_SHADOW = 4, WF_WATER_TINT = 8, WF_WATER_GLINT = 16,
+                 WF_SUN_SHADOW = 32, WF_KEYS = 64 };
+enum ProgId { P_UI = 0, P_SPRITE, P_SKINNED, P_LIT, P_LIT_FLAT,
+              P_LIT_OPAQUE, P_LIT_FLAT_OPAQUE,   // PW.3: no `discard` (alphaRef < 0 draws)
               P_PRECIP,   // AT.2b: rain streaks (R::drawPrecip), built on first use: never while precipitation is off
-              P_WORLD_HFOG, P_WORLD_OPAQUE_HFOG,   // AT.5: EDEN_HEIGHT_FOG twins of P_WORLD / P_WORLD_OPAQUE (R::setHeightFog)
               P_CLOUDS,   // AT.6: the cloud layer (R::drawClouds), built on first use
-              P_WORLD_CS, P_WORLD_OPAQUE_CS, P_WORLD_HFOG_CS, P_WORLD_OPAQUE_HFOG_CS,   // AT.6: EDEN_CLOUD_SHADOW twins (R::setCloudShadow)
-              P_WORLD_OPAQUE_WT, P_WORLD_OPAQUE_HFOG_WT, P_WORLD_OPAQUE_CS_WT, P_WORLD_OPAQUE_HFOG_CS_WT,   // AT.8: EDEN_WATER_TINT twins of the four discard-free world programs (R::setWaterTint)
-              P_WORLD_OPAQUE_WG, P_WORLD_OPAQUE_HFOG_WG, P_WORLD_OPAQUE_CS_WG, P_WORLD_OPAQUE_HFOG_CS_WG,   // AT.11: + EDEN_WATER_GLINT (High: sun glint sparkles)
-              P_PROG_COUNT };
+              P_DEPTH, P_DEPTH_ALPHA,   // SH.2: the sun-shadow depth pass (R::drawDepth), built on first use
+              P_WORLD_BASE,   // P_WORLD_BASE + key: the world programs (worldProg)
+              P_PROG_COUNT = P_WORLD_BASE + WF_KEYS };
+inline ProgId worldProg(unsigned key) { return (ProgId)(P_WORLD_BASE + key); }
+bool worldKeyValid(unsigned key);
+int  programCount();   // programs reachable (every valid world key + the others): what compileAll links
+
 
 enum Uni {
     U_MVP = 0, U_MV, U_PROJ, U_UVSO, U_TEX,
@@ -40,6 +48,7 @@ enum Uni {
     U_CRAY0, U_CRAY1, U_CRAY2, U_CPOS, U_CPARAM, U_CCOLOR, U_CSHADE,   // AT.6: P_CLOUDS only
     U_CSU, U_CSV, U_CSHADOW, U_CLOUDTEX,                               // AT.6: the *_CS twins only
     U_WTINT, U_WSUN, U_WUP,                                            // AT.8: the *_WT twins (AT.11: WSUN/WUP the *_WG twins only)
+    U_SSMAT, U_SSPARAM, U_SSFADE, U_SSMAP,                             // SH.2: the SUN_SHADOW keys only
     U_COUNT
 };
 
@@ -53,12 +62,9 @@ struct Program {
     int    paletteN = 0;
 };
 
-// PW.3: world/lit/lit-flat become their discard-free twin when alphaRef < 0 (unless --power-exp=discard).
+// PW.3: lit/lit-flat become their discard-free twin when alphaRef < 0 (unless --power-exp=discard).
 ProgId alphaVariant(ProgId id, float alphaRef);
-ProgId heightFogVariant(ProgId id);   // AT.5: P_WORLD(_OPAQUE) -> its EDEN_HEIGHT_FOG twin
-ProgId waterTintVariant(ProgId id);   // AT.8: a discard-free world program (plain, hfog, cs, hfog+cs) -> its EDEN_WATER_TINT twin
-ProgId waterGlintVariant(ProgId id);  // AT.11: a *_WT twin -> its EDEN_WATER_GLINT twin (High, glint strength > 0)
-ProgId cloudShadowVariant(ProgId id); // AT.6: P_WORLD(_OPAQUE)(_HFOG) -> its EDEN_CLOUD_SHADOW twin
+bool noDiscard(float alphaRef);       // the same test for program 1: its WF_NO_DISCARD bit
 bool built(ProgId id);                // linked already (the selftest's "off = never built" check)
 
 // The program, compiled on first use (a context is live). nullptr if it failed to link.

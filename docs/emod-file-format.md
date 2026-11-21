@@ -119,7 +119,8 @@ the version S.2 vendors. Offline artefacts (the bundled map) may use level 19.
 | 11 | `SKY_CLOCK` | singleton | 16 bytes (below) | **0** | DN.2 (2026-10-31): the day/night cycle's time of day and lock. Taken from the reserved range, so a reader that predates it ignores it. |
 | 12 | `WEATHER` | singleton | 32 bytes (below) | **0** | AT.1b (2026-11-05): the weather's state, schedule RNG and lock. Taken from the reserved range, so a reader that predates it ignores it. |
 | 13 | `MOD_DATA` | singleton | ≤ 1 MiB (below) | any | K.6-5 (2026-11-15): what mod scripts saved with `eden.store`, per pack. Taken from the reserved range, so a reader that predates it ignores it. |
-| 14–255 | reserved | — | — | — | a reader treats one as a member of its batch and otherwise ignores it; `verify` reports it. Compaction keeps the newest record of each reserved type verbatim (K.6-5a, below); **builds up to 0.5 drop them when they compact**, so a world a newer build saved loses that build's records if one of those builds compacts it. |
+| 14 | `LIGHTING` | singleton | 8 bytes (below) | **0** | LM.2 (2026-11-18): the world's lamp light mode, Legacy or New Dawn. Taken from the reserved range, so a reader that predates it ignores it. |
+| 15–255 | reserved | — | — | — | a reader treats one as a member of its batch and otherwise ignores it; `verify` reports it. Compaction keeps the newest record of each reserved type verbatim (K.6-5a, below); **builds up to 0.5 drop them when they compact**, so a world a newer build saved loses that build's records if one of those builds compacts it. |
 
 ### BLOCK_PALETTE (K.1-2)
 
@@ -335,6 +336,25 @@ first spell clear. `verify` reports a wrong length or codec; `dump` decodes it. 
 `SKY_CLOCK`. Not in the state digest, not exported to `.eden`. A pre-AT build keeps it live through its own
 saves but drops it if it compacts (the weather then starts clear again).
 
+### LIGHTING (8 bytes, LM.2)
+
+The lamp light mode (`Lighting.h` `light_recordDecode`): **Legacy** (stock's radius-5 lamps) or **New Dawn**
+(the same falloff at radius 16; `docs/lighting-liquids-effects.md`). Written only when the player picks a mode in
+World Properties › World › *Lamp light*, in that screen's Save batch; absent means Legacy. Never written by
+conversion, never exported to `.eden`, not in the state digest. Codec 0.
+
+| offset | type | field |
+|---|---|---|
+| 0 | u16 | version = 1 |
+| 2 | u8 | mode: 0 Legacy, 1 New Dawn; any other value draws as Legacy and the record is kept verbatim, never rewritten unless the player picks a mode |
+| 3 | u8 | origin: 0 auto-detected, 1 the player chose |
+| 4 | u8 | detector revision (1) |
+| 5 | `u8[3]` | 0 |
+
+A record that is not 8 bytes or has a version other than 1 is ignored (Legacy). `verify` reports a wrong length or
+codec; `dump` decodes it. Compaction copies it verbatim with the reserved types, right after `MOD_DATA`. A build
+before LM.2 keeps it through saves and compaction (reserved type, K.6-5a) but ignores it.
+
 ### MOD_DATA (≤ 1 MiB, K.6-5)
 
 Per-pack data that mod scripts saved with `eden.store` (`docs/scripting.md` "Saved data"). The format checks
@@ -387,14 +407,14 @@ they are, so they may be sparse.
   `SIGN_TRAILER`, `PROVENANCE`, then H.4's `GENERATOR`, DN.2's `SKY_CLOCK`, AT.1b's `WEATHER`, `COLUMN`s by (ord, x, z),
   K.1-2's `BLOCK_PALETTE`, `SUMMARY`, `COMMIT`). A stray `BLOCK_PALETTE` in an unflagged file is dropped.
 - **`MOD_DATA` and the reserved types are kept** (K.6-5a, K.6-5): right after `WEATHER` and before the
-  `COLUMN`s, the newest `MOD_DATA` (type 13) and then the newest record of each type 14–255, in ascending
+  `COLUMN`s, the newest `MOD_DATA` (type 13), `LIGHTING` (14, LM.2) and then the newest record of each type 15–255, in ascending
   type order, **verbatim**: its codec, `band_mask`, `x`, `z`,
   `aux` and stored payload bytes are copied as they are (after the payload decodes; one that does not is
   damage, as for any live record), and only `seq` and the CRC are new. So a world a newer build saved
   (a type this build does not know, such as a mod's saved data) keeps that build's newest records through
   this build's compaction. Older versions of such a record are dropped, as for every singleton. Builds up
   to 0.5 dropped all reserved types (and `emod.py` before K.6-5a did too); the fixture pack's `compact`
-  line (`f64-reserved.emod`: type 200 superseded once with header fields set, 14 raw, 255 zlib, and a two-pack
+  line (`f64-reserved.emod`: type 200 superseded once with header fields set, 15 raw, 255 zlib, and a two-pack
   zstd `MOD_DATA`) proves the
   engine and `emod.py compact` agree byte for byte. The palette comes after the columns so the flag compaction
   learns the latent bytes ≥ 128 in the same decode pass. The file header keeps `flags`, or sets bit 0
@@ -466,7 +486,7 @@ outcome and is not damage.
 error inside the payload. It also fails, **before any buffer is sized**, when the decoded length the
 record declares (a COLUMN's popcount(band_mask) × 8,192, else `aux`) is over its type's ceiling
 (QA.4, 2026-11-11): COLUMN 131,072; WORLD_HEADER 192; CREATURES 24,000 (400 × 60); SIGN_TRAILER 1 MiB;
-SUMMARY 16; COMMIT 24; GENERATOR 28; BLOCK_PALETTE 8,712 (8 + 128 × 68); SKY_CLOCK 16; WEATHER 32;
+SUMMARY 16; COMMIT 24; GENERATOR 28; BLOCK_PALETTE 8,712 (8 + 128 × 68); SKY_CLOCK 16; WEATHER 32; LIGHTING 8;
 MOD_DATA 1 MiB; PROVENANCE, INDEX and every reserved type 16 MiB. These are the writer's own limits, so no conforming
 file is affected; without them a 36 KB file could make a reader allocate 1 GiB. (A new record type
 adds its row here, in `record_decoded_max()` (`Classes/EdenWorldStore.h`) and in `emod.py`'s `DECODED_MAX`.) When it does, the reader uses the newest **earlier applied** version of

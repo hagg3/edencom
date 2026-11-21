@@ -26,6 +26,7 @@ extern bool pendingRespawnSound;
 #include "ContentPack.h"   // K.2-5: the Mods page
 #include "BlockRegistry.h"
 #include "Hotbar.h"
+#include "ModScript.h"   // K.7-3b: the Mods page
 #include "Tutorial.h"   // UX.10-3: the hint card      // UX.8-3: applyHand / noteHand
 #include "BlockIcon.h"   // UX.8-1: the build button's block picture
 
@@ -222,9 +223,9 @@ extern "C" void eden_console_menu_open(void);      // Menu.cpp (C.3): opens Cons
 extern "C" int  eden_profile_touch_chrome(void);   // DisplayProfile.cpp (UX.3): hide the jump button on keyboard + mouse
 extern "C" int  eden_chat_open(int slash);          // Menu.cpp (MP.7): the Console screen on its Chat tile
 
-enum { PM_RESUME, PM_SAVE, PM_HOME, PM_PHOTO, PM_SETTINGS, PM_CONSOLE, PM_DEBUG, PM_QUIT, PM_COUNT };
+enum { PM_RESUME, PM_SAVE, PM_HOME, PM_PHOTO, PM_SETTINGS, PM_MODS, PM_CONSOLE, PM_DEBUG, PM_HINTS, PM_QUIT, PM_COUNT };
 static const char* kPauseLabels[PM_COUNT] = {
-    "Resume", "Save game", "Warp home", "Take photo", "Settings", "Console", "Debug", "Quit to menu"   // ui-label
+    "Resume", "Save game", "Warp home", "Take photo", "Settings", "Mods", "Console", "Debug", "Hide tutorial hints", "Quit to menu"   // ui-label
 };
 
 struct HudPauseKit {
@@ -526,12 +527,12 @@ void Hud::layoutForScreen(){
 
 void Hud::layoutPauseMenu(){
     using namespace GLW;
-    ::Button* r[PM_COUNT]={&rresume,&rsave,&rhome,&rcam,&rsettings,&rconsole,&rdebug,&rexit};
+    ::Button* r[PM_COUNT]={&rresume,&rsave,&rhome,&rcam,&rsettings,&rmods,&rconsole,&rdebug,&rhints,&rexit};
     const bool withSettings=eden_gl_settings_available()!=0;
     // MP.3a: a multiplayer session has no world file, no home and no thumbnail (engine plan §11), so
     // Save Game (which also sets home), Warp Home and Take Photo go the way Settings does without a GL screen.
     const bool session=MpWorld::active();
-    auto hidden=[&](int k){ return k==PM_CONSOLE||(k==PM_DEBUG&&!DebugMenu::shown())||(k==PM_SETTINGS&&!withSettings)||(session&&(k==PM_SAVE||k==PM_HOME||k==PM_PHOTO)); };
+    auto hidden=[&](int k){ return k==PM_CONSOLE||(k==PM_DEBUG&&!DebugMenu::shown())||(k==PM_HINTS&&!Tutorial::active())||(k==PM_SETTINGS&&!withSettings)||(k==PM_MODS&&!ModScript::modsPageAvailable())||(session&&(k==PM_SAVE||k==PM_HOME||k==PM_PHOTO)); };
     int n=0;
     for(int k=0;k<PM_COUNT;k++) if(!hidden(k)) n++;
     // Gap > 8pt on purpose: inbox2/inbox3 add 4pt of slop on every side, and a smaller gap would
@@ -887,10 +888,9 @@ bool Hud::update(float etime){
 		}else if(delayedaction==5){
             mode=MODE_NONE;
            // printg("trying to exit\n!!!");
-			if(!World::getWorld->fm->saveWorld()&&!(g_save_test_ignore&SAVE_TEST_IGNORE_EXIT)){
+			if(!World::getWorld->requestExit()){   // K.6-2: `leave`, the save, exitToMenu
                 show_save_fail_exit();   // QA.5: stay in the world; the dialog offers retry / leave / stay
             }else{
-                World::getWorld->exitToMenu();
                 Resources::getResources->playSound(S_EXIT_WORLD);
                 sb->clear();
             }
@@ -983,7 +983,7 @@ bool Hud::update(float etime){
                 if(inmenu==true){
                     rcam.pressed=rtCam.pressed=false;rhome.pressed=rtHome.pressed=false;
                     rsave.pressed=rtSave.pressed=false;rexit.pressed=rtExit.pressed=false;
-                    rresume.pressed=rsettings.pressed=rconsole.pressed=rdebug.pressed=false;
+                    rresume.pressed=rsettings.pressed=rmods.pressed=rconsole.pressed=rdebug.pressed=rhints.pressed=false;
                     if(mode==MODE_PICK_BLOCK){
                         mode=MODE_BUILD;
                         
@@ -1064,8 +1064,10 @@ bool Hud::update(float etime){
             if(inmenu){
                 if(inbox3(touches[i].mx,touches[i].my,&rresume)||
                    inbox3(touches[i].mx,touches[i].my,&rsettings)||
+                   inbox3(touches[i].mx,touches[i].my,&rmods)||
                    inbox3(touches[i].mx,touches[i].my,&rconsole)||
                    inbox3(touches[i].mx,touches[i].my,&rdebug)||
+                   inbox3(touches[i].mx,touches[i].my,&rhints)||
                    inbox3(touches[i].mx,touches[i].my,&rcam)||
                    inbox3(touches[i].mx,touches[i].my,&rhome)||
                    inbox3(touches[i].mx,touches[i].my,&rsave)||
@@ -1078,8 +1080,10 @@ bool Hud::update(float etime){
                     printg("something touched in menu\n");
                     inbox3(touches[i].mx,touches[i].my,&rresume);
                     inbox3(touches[i].mx,touches[i].my,&rsettings);
+                    inbox3(touches[i].mx,touches[i].my,&rmods);
                     inbox3(touches[i].mx,touches[i].my,&rconsole);
                     inbox3(touches[i].mx,touches[i].my,&rdebug);
+                    inbox3(touches[i].mx,touches[i].my,&rhints);
                     inbox3(touches[i].mx,touches[i].my,&rcam);
                     inbox3(touches[i].mx,touches[i].my,&rhome);
                     inbox3(touches[i].mx,touches[i].my,&rsave);
@@ -1394,6 +1398,14 @@ bool Hud::handlePickMenu(int x,int y){
         Input::getInput()->clearAll();
         return true;
     }
+    if(inbox2(x,y,&rmods)&&ModScript::modsPageAvailable()){
+        // K.7-3b (U2): the Mods page replaces the pause menu; its Back returns to play.
+        inmenu=false;
+        rmods.pressed=false;
+        Input::getInput()->clearAll();
+        ModScript::openModsPage();
+        return true;
+    }
     if(inbox2(x,y,&rconsole)){
         // C.3: the Console takes over from the pause menu; closing it returns to play (the key opens
         // it from play too), not to this menu. The world keeps running behind it.
@@ -1409,6 +1421,14 @@ bool Hud::handlePickMenu(int x,int y){
         rdebug.pressed=false;
         Input::getInput()->clearAll();
         DebugMenu::open();
+        return true;
+    }
+    if(inbox2(x,y,&rhints)&&Tutorial::active()){
+        // UX.10-5: the keyboard/pad route to the card's "Hide all" (the card's close box is pointer-only).
+        inmenu=false;
+        rhints.pressed=false;
+        Input::getInput()->clearAll();
+        Tutorial::askHideAll();
         return true;
     }
     if(inbox2(x,y,&rcam)||inbox2(x,y,&rtCam)){
@@ -1912,9 +1932,9 @@ void Hud::renderMenuScreen(){
         for(int j=0;j<PM_COUNT;j++) k->btn[j].setLabel(kPauseLabels[j], du(22));
         // C.3's UIICON_TERMINAL glyph gave way to the Maysunbo console_button art (2026-10-27).
     }
-    ::Button* r[PM_COUNT]={&rresume,&rsave,&rhome,&rcam,&rsettings,&rconsole,&rdebug,&rexit};
+    ::Button* r[PM_COUNT]={&rresume,&rsave,&rhome,&rcam,&rsettings,&rmods,&rconsole,&rdebug,&rhints,&rexit};
     // An rt* rect may carry the press (handlePickMenu tests both), so either lights the button.
-    const bool rtp[PM_COUNT]={false,rtSave.pressed,rtHome.pressed,rtCam.pressed,false,false,false,rtExit.pressed};
+    const bool rtp[PM_COUNT]={false,rtSave.pressed,rtHome.pressed,rtCam.pressed,false,false,false,false,false,rtExit.pressed};
 
     // Same GL set-up as GLDialog::render, minus the projection: the HUD's ortho (Graphics::
     // beginHud) is already SCREEN*2, the space GLW draws in.
@@ -1930,8 +1950,8 @@ void Hud::renderMenuScreen(){
 
     Resources* res=Resources::getResources;
     Texture2D* icon[PM_COUNT]={NULL,res->getTex(ICO_SAVE),res->getTex(ICO_HOME),
-                               res->getTex(ICO_SCREENSHOT),res->getTex(ICO_OPEN_MENU),
-                               res->getArtTex(ART_CONSOLE),NULL,res->getTex(ICO_EXIT)};
+                               res->getTex(ICO_SCREENSHOT),res->getTex(ICO_OPEN_MENU),NULL,
+                               res->getArtTex(ART_CONSOLE),NULL,NULL,res->getTex(ICO_EXIT)};
     for(int j=0;j<PM_COUNT;j++){
         if(r[j]->size.width<=0) continue;
         k->btn[j].setRect(CGRectMake(r[j]->origin.x,r[j]->origin.y,r[j]->size.width,r[j]->size.height));

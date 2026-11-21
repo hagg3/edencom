@@ -32,6 +32,7 @@
 #include "port/src/shim/foundation/platform_shims.h"   // G.2b-4: eden_platform_documents_root
 #include "SkyCycle.h"                                 // DN.2: the SKY_CLOCK record
 #include "Weather.h"                                  // AT.1b: the WEATHER record
+#include "Lighting.h"                                  // LM.2: the LIGHTING record, the lamp light profile
 #include "Hotbar.h"                                   // UX.8-3: the hotbar.json sidecar
 #include "Tutorial.h"                                 // UX.10-3: tutorial.json, the in-world hints
 #include "BlockRegistry.h"                            // K.1-3: the BLOCK_PALETTE record
@@ -90,6 +91,9 @@ static void fm_resetGenerator();
 void fm_setNewWorldGenerator(const ClassicGen& g);
 static Vector fm_classicSpawn(const ClassicGen& g);
 static void fm_generatorToast();
+extern "C" int eden_get_auto_lamp_light(void);   // port/src/seam/Settings.cpp (LM.3)
+static int fm_lightingOwed=-1;      // LM.3: a mode the next save stores as record 14 (origin 0), -1 = none
+static bool fm_lampToast=false;     // LM.3: New Dawn was just auto-detected: say so once the HUD is up
 static void fm_damageNotice();
 
 
@@ -2056,6 +2060,29 @@ void FileManager::finishLoadOnMain(){
             emodStore->readRecord(emod::T_MOD_DATA,mraw)<=emod::EdenWorldStore::READ_FALLBACK;
         ModScript::storeLoad(have&&!mraw.empty()?&mraw[0]:NULL,have?mraw.size():0);
     }
+    {   // LM.2/LM.3: the lamp light profile (record 14), before the first light sweep (Terrain::update). A usable record
+        // wins (the player's pick, or an earlier detection). An unreadable or unknown-version one is Legacy and left alone.
+        // No record: the detector (Lighting.h light_detectMode), stored by the next save with origin 0. An `.eden` is Legacy;
+        // a session (D9) follows the rule from its height alone and stores nothing.
+        std::vector<uint8_t> lraw;
+        LightingRecord lr;
+        int mode=LIGHT_MODE_LEGACY;
+        fm_lightingOwed=-1;
+        if(sessionWorld)mode=light_detectMode(eden_get_auto_lamp_light()!=0,T_HEIGHT==T_HEIGHT_MAX?16:4,true,0);
+        else if(emodStore&&emodStore->hasRecord(emod::T_LIGHTING)){
+            if(emodStore->readRecord(emod::T_LIGHTING,lraw)<=emod::EdenWorldStore::READ_FALLBACK&&!lraw.empty()&&
+               light_recordDecode(&lraw[0],lraw.size(),&lr))mode=light_recordProfile(lr.mode);
+        }else if(emodStore&&eden_get_auto_lamp_light()){
+            std::vector<uint8_t> pr;
+            const bool prov=emodStore->hasRecord(emod::T_PROVENANCE)&&
+                emodStore->readRecord(emod::T_PROVENANCE,pr)<=emod::EdenWorldStore::READ_FALLBACK&&pr.size()>=80;
+            const unsigned pf=prov?(unsigned)(pr[4]|(pr[5]<<8)|(pr[6]<<16)|((unsigned)pr[7]<<24)):0;
+            mode=light_detectMode(true,emodStore->bands(),prov,pf);
+            fm_lightingOwed=mode;
+            if(mode==LIGHT_MODE_NEWDAWN)fm_lampToast=true;
+        }
+        light_setWorldProfile(mode);
+    }
     if(firstSaveOwed){   // a new world's first save: creates the `.emod`
         firstSaveOwed=false;
         this->saveWorld();
@@ -2069,6 +2096,10 @@ void FileManager::finishLoadOnMain(){
         Tutorial::worldLoaded(dir.empty()?dir:documents+"/"+dir,World::getWorld->terrain->world_name);   // UX.10-3: the marker decides
     }
     fm_generatorToast();   // H.4: a GENERATOR record from a newer Emod
+    if(fm_lampToast){   // LM.3
+        fm_lampToast=false;
+        World::getWorld->hud->sb->setStatus("Lamp light: New Dawn, as this world was built. Change it in World Properties.",6);
+    }
     fm_damageNotice();     // QA.17: after the generator toast, so the damage line is the one left showing
 }
 
@@ -2770,6 +2801,17 @@ bool FileManager::saveEmodWorld(Vector warp){
         classic_encode_record(ter->tgen->classic,rec);
         if(!emodStore->putRecord(emod::T_GENERATOR,rec,sizeof(rec))){
             std::string why="could not stage the generator record: "+emodStore->error();
+            emodStore->abortBatch();
+            return saveFailed(why);
+        }
+    }
+    // LM.3: the detected lamp light mode, once, while the file has no LIGHTING record (a World Properties pick wrote one).
+    if(fm_lightingOwed>=0&&!emodStore->hasRecord(emod::T_LIGHTING)){
+        const LightingRecord lr={(unsigned char)fm_lightingOwed,0,LIGHTING_DETECTOR_REV};
+        unsigned char rec[LIGHTING_RECORD_BYTES];
+        light_recordEncode(lr,rec);
+        if(!emodStore->putRecord(emod::T_LIGHTING,rec,sizeof(rec))){
+            std::string why="could not stage the lamp light record: "+emodStore->error();
             emodStore->abortBatch();
             return saveFailed(why);
         }
@@ -3539,6 +3581,7 @@ bool FileManager::readWorldProperties(const std::string& file_name,WorldProps* o
     p.originalBytes=0; p.createdUnix=0; p.columns=-1; p.signs=-1; p.goldencubes=-1; p.convertedVersion=0;
     p.openMs=0;
     p.skyLocked=false; p.weatherLocked=false; p.skyT=SkyCycle::DEFAULT_TIME;
+    p.lampMode=LIGHT_MODE_LEGACY;
     const std::string fn=file_name,path=docs+"/"+fn;
     p.fileBytes=fileSizeOf(path);
     p.savedUnix=fileMtimeOf(path);
@@ -3563,6 +3606,10 @@ bool FileManager::readWorldProperties(const std::string& file_name,WorldProps* o
             Weather::State ws;
             if(Weather::decode(wraw.empty()?NULL:&wraw[0],wraw.size(),&ws))p.weatherLocked=(ws.flags&Weather::FLAG_LOCKED)!=0;
         }
+        std::vector<uint8_t> lraw;   // LM.2: the lamp light mode (record 14); no usable record = Legacy
+        LightingRecord lr;
+        if(st.hasRecord(emod::T_LIGHTING)&&st.readRecord(emod::T_LIGHTING,lraw)<=emod::EdenWorldStore::READ_FALLBACK&&
+           !lraw.empty()&&light_recordDecode(&lraw[0],lraw.size(),&lr))p.lampMode=light_recordProfile(lr.mode);
         std::vector<uint8_t> traw;
         p.signs=0;
         if(st.hasRecord(emod::T_SIGN_TRAILER)&&st.readRecord(emod::T_SIGN_TRAILER,traw)<=emod::EdenWorldStore::READ_FALLBACK&&!traw.empty()){
@@ -3609,6 +3656,7 @@ bool FileManager::readWorldProperties(const std::string& file_name,WorldProps* o
 
 // --props-selftest's mutation leg (gate 1): the GENERATOR append is skipped, which the round trip must catch.
 bool g_wp_test_skip_generator=false;
+bool g_wp_test_skip_lighting=false;   // LM.2's mutation leg: the LIGHTING append is skipped (the round trip must catch it)
 int FileManager::applyWorldProperties(const std::string& file_name,const WorldProps& e){
     WorldProps cur;
     if(!readWorldProperties(file_name,&cur))return -1;
@@ -3637,7 +3685,8 @@ int FileManager::applyWorldProperties(const std::string& file_name,const WorldPr
     }
     const bool lockChanged=e.skyLocked!=cur.skyLocked;   // DN.6: Lock time of day
     const bool wLockChanged=e.weatherLocked!=cur.weatherLocked;   // AT.1c: Lock weather
-    if(!nameChanged&&!writeGen&&!lockChanged&&!wLockChanged)return 0;
+    const bool lampChanged=e.lampMode!=cur.lampMode;   // LM.2: Lamp light
+    if(!nameChanged&&!writeGen&&!lockChanged&&!wLockChanged&&!lampChanged)return 0;
     const std::string path=docs+"/"+file_name;
     emod::EdenWorldStore own;
     emod::EdenWorldStore* st=(emodStore&&emodStore->path()==path)?emodStore:&own;
@@ -3701,6 +3750,16 @@ int FileManager::applyWorldProperties(const std::string& file_name,const WorldPr
             if(ok)res|=WP_WROTE_WEATHER;
         }
     }
+    if(ok&&lampChanged){
+        // The player's pick: origin 1, so no later auto-detection (LM.3) overrides it. Only a pick writes the
+        // record, so an unknown mode byte or a newer version is left alone until then.
+        LightingRecord lr={(unsigned char)(e.lampMode==LIGHT_MODE_NEWDAWN?LIGHT_MODE_NEWDAWN:LIGHT_MODE_LEGACY),1,LIGHTING_DETECTOR_REV};
+        unsigned char lrec[LIGHTING_RECORD_BYTES];
+        light_recordEncode(lr,lrec);
+        ok=!g_wp_test_skip_lighting&&st->putRecord(emod::T_LIGHTING,lrec,sizeof(lrec));
+        if(ok)res|=WP_WROTE_LIGHTING;
+        else if(g_wp_test_skip_lighting)ok=true;
+    }
     if(!ok){
         printg("applyWorldProperties: could not stage the records: %s\n",st->error().c_str());
         st->abortBatch();
@@ -3713,5 +3772,6 @@ int FileManager::applyWorldProperties(const std::string& file_name,const WorldPr
     if(st==emodStore&&emodHeader)memcpy(emodHeader,&h,sizeof(h));
     if(st==emodStore&&(res&WP_WROTE_SKY))SkyCycle::saved();
     if(st==emodStore&&(res&WP_WROTE_WEATHER))Weather::saved();
+    if(st==emodStore&&(res&WP_WROTE_LIGHTING))light_setWorldProfile(e.lampMode);   // live: D11's re-light + whole-window re-mesh
     return res;
 }

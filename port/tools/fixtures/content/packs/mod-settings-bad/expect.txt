@@ -1,0 +1,22 @@
+# K.7-2a: one line per V14 rule; an error skips that setting, an unknown key is a warning
+mod-settings-bad@67: setting #0: must be an object
+mod-settings-bad@74: setting #1: "type" must be a string
+mod-settings-bad@118: setting #2: "id" must match [a-z0-9_]{1,24}
+mod-settings-bad@261: setting "dup": duplicate id
+mod-settings-bad@327: setting "nolabel": "label" must be 1 to 40 bytes
+mod-settings-bad@444: setting "longhint": "hint" must be at most 120 bytes
+mod-settings-bad@657: setting "tog": "default" must be true or false
+mod-settings-bad@721: setting "s1": "min" and "max" must be numbers with min below max
+mod-settings-bad@837: setting "s2": "step" must be a number above 0
+mod-settings-bad@932: setting "s3": more than 1000 steps from min to max
+mod-settings-bad@1045: setting "s4": "default" must be a number from min to max on a step
+mod-settings-bad@1140: setting "s5": "default" must be a number from min to max on a step
+mod-settings-bad@1206: setting "c1": "options" must be 2 to 8 different strings of 1 to 24 bytes
+mod-settings-bad@1296: setting "c2": "options" must be 2 to 8 different strings of 1 to 24 bytes
+mod-settings-bad@1408: setting "c3": "default" must be one of the options
+mod-settings-bad@1468: setting "t1": "max" must be a whole number from 1 to 64
+mod-settings-bad@1555: setting "t2": "default" must be printable text of at most max bytes
+mod-settings-bad@1635: setting "t3": "default" must be printable text of at most max bytes
+mod-settings-bad@1724: warning: setting "w1": unknown key "colour" (ignored)
+mod-settings-bad@1805: warning: setting "w2": unknown key "min" (ignored)
+= blocks 0

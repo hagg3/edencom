@@ -1,5 +1,8 @@
 // G.4: split out of the old eden_main_native.cpp (see harness.h). Mode group "light".
 #include "harness.h"
+#include "../../../Classes/SkyCycle.h"
+#include "../../../Classes/Weather.h"
+#include "../seam/eden_settings.h"
 
 using namespace harness;
 
@@ -123,6 +126,166 @@ int run_light_selftest() {
 #endif
 
     std::printf("[eden-light] %s (%d failure(s))\n",
+                g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
+    return g_selftestFailures ? 1 : 0;
+}
+
+// ---------------------------------------------------------------------------------------------
+// --light-selftest=modes  (LM.1: the lamp light profile, Lighting.h)
+// ---------------------------------------------------------------------------------------------
+// One lamp in the air, at night (by day the mesher never reads the light). Its bytes along +x, -z,
+// +y and -y at d = 0..17 must be the splat formula at the profile's radius, Legacy then New Dawn;
+// a live switch each way must equal a fresh load at that profile, light hash AND night meshes (so a
+// switch back to Legacy that forgot to re-mesh the chunks New Dawn lit shows up); the radius cap
+// and refreshChunksInRadius's radius are pinned. New Dawn's radius is --lamp-radius= if given.
+int run_light_modes_selftest() {
+    g_selftestTag = "eden-light-modes";
+    const char* name = g_opt.world.empty() ? "light-modes-selftest" : g_opt.world.c_str();
+    if (g_opt.world.empty()) {   // a fresh scratch world (see --shadow-selftest's X.15 note)
+        for (int i = 0, n = eden_menu_world_count(); i < n; ++i)
+            if (std::strcmp(eden_menu_world_name(i), name) == 0) { eden_menu_delete_at(i); break; }
+    }
+    light_setProfile(LIGHT_MODE_LEGACY);
+    if (!open_world(name, g_opt.height)) return 1;
+    if (!g_opt.haveAt) { g_opt.at[0] = 65536.5f; g_opt.at[1] = 60.0f; g_opt.at[2] = 65536.5f; }
+    const float X0 = g_opt.at[0], Y0 = g_opt.at[1], Z0 = g_opt.at[2];
+    eden_console_teleport(X0, Y0, Z0);
+    tick(g_opt.frames);
+
+    auto field = [](const char* js, const char* key) -> long long {
+        const char* k = std::strstr(js, key);
+        return k ? atoll(k + std::strlen(key)) : -1;
+    };
+    auto str = [](const char* js, const char* key) {
+        const char* k = std::strstr(js, key);
+        if (!k) return std::string();
+        k += std::strlen(key);
+        const char* e = std::strchr(k, '"');
+        return e ? std::string(k, e - k) : std::string();
+    };
+    auto settle = [&] {
+        for (int i = 0; i < 1200 && field(eden_debug_light_state(), "\"pending\":") != 0; i++) tick(1);
+        tick(240);
+    };
+    struct Snap { std::string light, full, geom; long long lit; };
+    auto snap = [&](const char* what) {
+        const std::string l = eden_debug_light_state(), m = eden_debug_mesh_checksum();
+        std::printf("[eden-light-modes] %-14s R %.1f light %s\n[eden-light-modes] %-14s mesh %s\n", what,
+                    light_radius(), l.c_str(), what, m.c_str());
+        std::fflush(stdout);
+        return Snap{str(l.c_str(), "\"hash\":\""), str(m.c_str(), "\"full\":\""), str(m.c_str(), "\"geom\":\""),
+                    field(l.c_str(), "\"lit\":")};
+    };
+    auto same = [&](const Snap& a, const Snap& b, const char* what) {
+        char d[200];
+        std::snprintf(d, sizeof(d), "light %s vs %s, mesh full %s vs %s", a.light.c_str(), b.light.c_str(),
+                      a.full.c_str(), b.full.c_str());
+        check(a.lit > 0 && !a.full.empty() && a.light == b.light && a.full == b.full && a.geom == b.geom, what, d);
+    };
+
+    // The lamp: night everywhere, then one lightbox in the air beside the spawn, saved.
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 4; ++j) regionSkyColors[i][j] = 54;
+    paintSky(54);
+    const PlayerState ps = player_state();
+    // On the ground (the first air above the top block), so New Dawn's wider sphere lights faces
+    // that Legacy's refresh radius never re-meshes: the switch back must re-mesh them (D11). Kept
+    // 17 inside the window's height so the vertical samples are all in range.
+    const int H = g_world_height, LX = (int)ps.x + 3, LZ = (int)ps.z + 3;
+    int LY = H - 1;
+    while (LY > 0 && getLandc(LX, LZ, LY - 1) == TYPE_NONE) --LY;
+    LY = std::max(17, std::min(LY, H - 18));
+    eden_debug_light_edit(0, LX, LZ, LY, 12);
+    check(getLandc(LX, LZ, LY) == TYPE_LIGHTBOX, "the lamp is built", "");
+    const Vector C = colorTable[getColorc(LX, LZ, LY)];
+    save_world();
+
+    // The bytes: one lamp's splat at radius R, exactly as light_splat computes it.
+    auto sample = [&](const char* mode) {
+        const float R = light_radius();
+        static const int dirs[4][3] = {{1, 0, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};   // (x, z, y)
+        int bad = 0, nonzero = 0, lastNz = -1;
+        char first[160] = "";
+        for (const auto& dv : dirs)
+            for (int d = 0; d <= 17; ++d) {
+                const int x = LX + dv[0] * d, z = LZ + dv[1] * d, y = LY + dv[2] * d;
+                const Vector8 got = lightAtToroidal((x + g_offcx) % T_SIZE, (z + g_offcz) % T_SIZE, y);
+                Vector8 want; want.x = want.y = want.z = 0;
+                if ((float)(d * d) <= R * R) {
+                    const float inten = 1.0f - sqrtf((float)(d * d)) / R;
+                    want.x = MAX(0, MIN(255, 0 + 64.0f * inten * 1.0f * C.x));
+                    want.y = MAX(0, MIN(255, 0 + 64.0f * inten * 1.0f * C.y));
+                    want.z = MAX(0, MIN(255, 0 + 64.0f * inten * 1.0f * C.z));
+                }
+                if (got.x || got.y || got.z) { nonzero++; if (d > lastNz) lastNz = d; }
+                if (got.x != want.x || got.y != want.y || got.z != want.z) {
+                    if (!bad++) std::snprintf(first, sizeof(first), "first at d %d dir (%d,%d,%d): got %d/%d/%d want %d/%d/%d",
+                                              d, dv[0], dv[1], dv[2], got.x, got.y, got.z, want.x, want.y, want.z);
+                }
+            }
+        char d[320];
+        std::snprintf(d, sizeof(d), "%s R %.1f: %d of 72 wrong, last lit d %d (want %d)%s%s", mode, R, bad, lastNz,
+                      (int)ceilf(R) - 1, bad ? "; " : "", first);
+        check(bad == 0 && lastNz == (int)ceilf(R) - 1, "the lamp's bytes are the splat at the profile's radius", d);
+    };
+
+    // 1. Legacy, from a fresh load.
+    if (!quit_to_menu() || !open_world(name, g_opt.height)) { check(false, "reopen at Legacy", ""); return 1; }
+    eden_console_teleport(X0, Y0, Z0);
+    settle();
+    {
+        char d[96];
+        std::snprintf(d, sizeof(d), "radius %.2f, refresh radius %d", light_radius(), light_refreshRadius());
+        check(light_mode() == LIGHT_MODE_LEGACY && light_radius() == LIGHT_RADIUS && light_refreshRadius() == 5,
+              "Legacy is stock's radius 5", d);
+    }
+    sample("Legacy");
+    const Snap legacyFresh = snap("legacy fresh");
+
+    // 2. Switch to New Dawn live.
+    light_setProfile(LIGHT_MODE_NEWDAWN);
+    settle();
+    sample("New Dawn");
+    const Snap ndSwitched = snap("nd switched");
+    {
+        char d[96];
+        std::snprintf(d, sizeof(d), "lit %lld -> %lld", legacyFresh.lit, ndSwitched.lit);
+        check(ndSwitched.lit > legacyFresh.lit * 8, "New Dawn lights many more voxels", d);
+    }
+
+    // 3. New Dawn from a fresh load. A world with no LIGHTING record loads at Legacy since LM.2, so the profile is forced
+    //    across the reload (--props-selftest covers the record itself).
+    light_forceProfile(LIGHT_MODE_NEWDAWN);
+    if (!quit_to_menu() || !open_world(name, g_opt.height)) { check(false, "reopen at New Dawn", ""); return 1; }
+    eden_console_teleport(X0, Y0, Z0);
+    settle();
+    const Snap ndFresh = snap("nd fresh");
+    same(ndSwitched, ndFresh, "switch Legacy -> New Dawn == a fresh load at New Dawn");
+    light_forceProfile(-1);
+
+    // 4. Back to Legacy live: must be the Legacy load exactly (the whole-window re-mesh, D11).
+    light_setProfile(LIGHT_MODE_LEGACY);
+    settle();
+    const Snap legacySwitched = snap("legacy switch");
+    same(legacySwitched, legacyFresh, "switch New Dawn -> Legacy == a fresh load at Legacy");
+
+    // 5. The cap (D3) and refreshChunksInRadius's radius at the top of the range.
+    {
+        const bool r18 = g_light_test_mutation == 5;
+        light_setNewDawnRadius(40.0f);
+        light_setProfile(LIGHT_MODE_NEWDAWN);
+        const float capped = light_radius();
+        const int rr = light_refreshRadius();
+        char d[96];
+        std::snprintf(d, sizeof(d), "asked 40, got %.2f; refresh radius %d", capped, rr);
+        check(capped == (r18 ? LIGHT_RADIUS_MAX + 1 : LIGHT_RADIUS_MAX) && rr == CHUNK_SIZE,
+              "New Dawn's radius is capped at 17", d);
+        light_setNewDawnRadius(g_opt.lampRadius > 0 ? g_opt.lampRadius : LIGHT_RADIUS_NEWDAWN);
+        light_setProfile(LIGHT_MODE_LEGACY);
+        settle();
+    }
+
+    std::printf("[eden-light-modes] %s (%d failure(s))\n",
                 g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
     return g_selftestFailures ? 1 : 0;
 }
@@ -710,6 +873,205 @@ int run_evict_selftest() {
 
     std::printf("[eden-evict] %s (%d failure(s))%s\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures,
                 g_opt.evictMutate.empty() ? "" : (" [mutation " + g_opt.evictMutate + "]").c_str());
+    return g_selftestFailures ? 1 : 0;
+}
+
+// ---------------------------------------------------------------------------------------------
+// --sunshadow-selftest  (SH.3: the sun-shadow map's life cycle, headless on the null backend)
+// ---------------------------------------------------------------------------------------------
+// When the map re-renders and when it must not (Classes/SunShadow.h): off = absent; idle with the clock locked =
+// one render then none; 1 block walked = none, past a snap = one; one sun step = one; an edit inside the box = one,
+// far outside = none; a chunk behind the camera is a caster; night and a storm = no pass and no lookup; the
+// Shadows replace (one whole-window re-mesh each way); the Air 2 class (row hidden, read as off). The map is
+// shrunk to 512 texels (64 blocks across) so a meshed chunk can lie outside it. Plain legs (not a risky row).
+int run_sunshadow_selftest() {
+    g_selftestTag = "eden-sunshadow";
+    const char* name = g_opt.world.empty() ? "sunshadow-selftest" : g_opt.world.c_str();
+    if (g_opt.world.empty()) {
+        for (int i = 0, n = eden_menu_world_count(); i < n; ++i)
+            if (std::strcmp(eden_menu_world_name(i), name) == 0) { eden_menu_delete_at(i); break; }
+    }
+    SunShadow::setOverride(0);
+    SunShadow::setTestMapSize(512);
+    if (!open_world(name, g_opt.height)) return 1;
+    // Noon, the clock locked; a spot at chunk-local x 4.5 so the walks below (up to 6 blocks) stay in its chunk.
+    SkyCycle::setEnabled(true);
+    SkyCycle::setLocked(true);
+    SkyCycle::setTime(0.5);
+    // The bundled map's centre unless --at= (the harness default of 1440 is clamped to the map's corner).
+    const float ax = g_opt.haveAt ? g_opt.at[0] : (float)(4096 * CHUNK_SIZE), az = g_opt.haveAt ? g_opt.at[2] : (float)(4096 * CHUNK_SIZE);
+    float X0 = std::floor(ax / 16.0f) * 16.0f + 4.5f, Z0 = std::floor(az / 16.0f) * 16.0f + 4.5f;
+    eden_console_teleport(X0, (float)g_world_height - 2.0f, Z0);   // let the window stream in around it
+    tick(g_opt.frames > 300 ? g_opt.frames : 300);
+    auto topY = [](int x, int z) { int y = g_world_height - 1; while (y > 0 && getLandc(x, z, y) == TYPE_NONE) --y; return y; };
+    // Dry ground: the bundled map's centre is water, and a sinking eye crosses snap cells. The nearest column
+    // (whole chunks away, so x stays at chunk-local 4.5) whose top block is not a liquid, and all of a snap's
+    // walk along +x beside it too.
+    {
+        auto dry = [&](int x, int z) {
+            for (int dx = 0; dx <= 6; ++dx) {
+                const int b = getLandc(x + dx, z, topY(x + dx, z));
+                if (b <= 0 || (blockinfo[b] & IS_LIQUID) || topY(x + dx, z) != topY(x, z)) return false;
+            }
+            return true;
+        };
+        bool found = false;
+        for (int r = 0; r <= 6 && !found; ++r)
+            for (int i = -r; i <= r && !found; ++i)
+                for (int j = -r; j <= r && !found; ++j) {
+                    if (std::max(std::abs(i), std::abs(j)) != r) continue;
+                    const float x = X0 + 16.0f * i, z = Z0 + 16.0f * j;
+                    if (!dry((int)std::floor(x), (int)std::floor(z))) continue;
+                    X0 = x; Z0 = z; found = true;
+                }
+        if (!found) { std::printf("[eden-sunshadow] no dry, flat ground near the centre\n"); return 1; }
+        eden_console_teleport(X0, (float)topY((int)std::floor(X0), (int)std::floor(Z0)) + 1.5f, Z0);
+        tick(60);
+    }
+    char d[320];
+    PlayerState ps = player_state();
+    auto here = [&](float dx) {   // the player at X0 + dx, on the ground it stood on
+        eden_console_teleport(X0 + dx, ps.y, Z0);
+        tick(30);
+    };
+    here(0);
+    ps = player_state();
+    here(0);
+
+    // 1 off = absent: no map, no pass, no lookup.
+    R::resetCounts();
+    tick(60);
+    {
+        const R::Counts& c = R::counts();
+        std::snprintf(d, sizeof(d), "depth passes %ld, shadow draws %ld, live %d, stated %d", c.depthPasses, c.draws[10],
+                      SunShadow::live(), SunShadow::stated());
+        check(c.depthPasses == 0 && c.draws[10] == 0 && !SunShadow::live() && !SunShadow::stated(),
+              "1 off: no map, no depth pass, no lookup", d);
+    }
+
+    // 2 on, idle 600 frames: one render, then none.
+    SunShadow::setOverride(1);
+    tick(240);   // the Shadows replace re-meshes the window once: let it land
+    long r0 = SunShadow::renders();
+    tick(600);
+    long r1 = SunShadow::renders();
+    std::snprintf(d, sizeof(d), "renders before %ld, over 600 idle frames %ld, casters %d, live %d, stated %d", r0, r1 - r0,
+                  SunShadow::lastCasters(), SunShadow::live(), SunShadow::stated());
+    check(r0 >= 1 && r1 == r0 && SunShadow::live() && SunShadow::stated() && SunShadow::lastCasters() > 0,
+          "2 idle: rendered, then 0 re-renders over 600 frames", d);
+
+    // 3 walking: 1 block = 0; more than a snap (4 blocks) from the map's centre (x 6, the cell [4, 8)) = 1.
+    r0 = SunShadow::renders();
+    here(1.0f);
+    r1 = SunShadow::renders();
+    here(6.0f);
+    const long r2 = SunShadow::renders();
+    std::snprintf(d, sizeof(d), "1 block: %ld, snap: %ld", r1 - r0, r2 - r1);
+    check(r1 == r0 && r2 == r1 + 1, "3 walk: 1 block = 0 renders, past a snap = 1", d);
+    here(0);
+
+    // 4 one sun step (0.5 degrees of arc) = 1; a hair less = 0.
+    r0 = SunShadow::renders();
+    SkyCycle::setTime(0.5 + 0.2 / 360.0);
+    tick(20);
+    r1 = SunShadow::renders();
+    SkyCycle::setTime(0.5 + 0.5 / 360.0);
+    tick(20);
+    std::snprintf(d, sizeof(d), "0.2 deg: %ld, 0.5 deg: %ld", r1 - r0, SunShadow::renders() - r1);
+    check(r1 == r0 && SunShadow::renders() == r1 + 1, "4 the sun: under a step = 0 renders, one step = 1", d);
+    SkyCycle::setTime(0.5);
+    tick(20);
+
+    // 5 an edit inside the box = 1; far outside it (80 blocks across the sun, still meshed) = 0.
+    const int px = (int)std::floor(X0), pz = (int)std::floor(Z0);
+    r0 = SunShadow::renders();
+    const int yi = topY(px + 3, pz) + 1;
+    eden_console_setblock(px + 3, pz, yi, TYPE_STONE);
+    tick(30);
+    r1 = SunShadow::renders();
+    const int yo = topY(px + 80, pz) + 1;
+    eden_console_setblock(px + 80, pz, yo, TYPE_STONE);
+    tick(30);
+    std::snprintf(d, sizeof(d), "inside (%d,%d,%d): %ld, outside (%d,%d,%d): %ld", px + 3, yi, pz, r1 - r0, px + 80, yo, pz,
+                  SunShadow::renders() - r1);
+    check(r1 == r0 + 1 && SunShadow::renders() == r1, "5 edits: inside the box = 1 render, far outside = 0", d);
+    eden_console_setblock(px + 3, pz, yi, TYPE_NONE);
+    eden_console_setblock(px + 80, pz, yo, TYPE_NONE);
+    tick(30);
+
+    // 6 a chunk behind the camera (outside the view frustum) is a caster.
+    {
+        const float yaw = ps.yaw * 3.14159265f / 180.0f;
+        const int bx = (int)std::floor(X0 - std::cos(yaw) * 20.0f), bz = (int)std::floor(Z0 - std::sin(yaw) * 20.0f);
+        const int by = topY(bx, bz);
+        const int pb[6] = {(int)std::floor(bx / 16.0f) * 16, (by / 16) * 16, (int)std::floor(bz / 16.0f) * 16, 0, 0, 0};
+        float rb[6] = {(float)pb[0], (float)pb[1], (float)pb[2], (float)pb[0] + 16, (float)pb[1] + 16, (float)pb[2] + 16};
+        const bool outside = (ViewTestAABB(rb, 0) & VT_OUTSIDE) != 0;
+        std::snprintf(d, sizeof(d), "chunk (%d,%d,%d) behind yaw %.0f: frustum %s, caster %d of %d", pb[0], pb[1], pb[2], ps.yaw,
+                      outside ? "outside" : "INSIDE", SunShadow::lastCasterHad(pb), SunShadow::lastCasters());
+        check(outside && SunShadow::lastCasterHad(pb), "6 a chunk behind the camera casts", d);
+    }
+
+    // 7 night, then a storm: no pass and no lookup (the map is kept), even when it is dirty.
+    SkyCycle::setTime(0.0);
+    tick(240);   // the night flip re-meshes the window
+    r0 = SunShadow::renders();
+    here(6.0f);  // dirty it
+    R::resetCounts();
+    tick(60);
+    std::snprintf(d, sizeof(d), "renders %ld, depth passes %ld, stated %d, strength %.3f, live %d", SunShadow::renders() - r0,
+                  R::counts().depthPasses, SunShadow::stated(), SunShadow::strengthNow(), SunShadow::live());
+    check(SunShadow::renders() == r0 && R::counts().depthPasses == 0 && !SunShadow::stated() && SunShadow::live(),
+          "7a night: no pass, no lookup, the map kept", d);
+    SkyCycle::setTime(0.5);
+    here(0);
+    tick(240);
+    eden_weather_set_override(5);   // --weather=storm: a full storm from the next frame
+    tick(5);
+    r0 = SunShadow::renders();
+    here(6.0f);
+    R::resetCounts();
+    tick(60);
+    std::snprintf(d, sizeof(d), "renders %ld, depth passes %ld, stated %d, strength %.3f, intensity %.2f", SunShadow::renders() - r0,
+                  R::counts().depthPasses, SunShadow::stated(), SunShadow::strengthNow(), Weather::intensity());
+    check(SunShadow::renders() == r0 && R::counts().depthPasses == 0 && !SunShadow::stated(), "7b storm: no pass, no lookup", d);
+    eden_weather_set_override(0);
+    here(0);
+    tick(60);
+    check(SunShadow::stated(), "7c the sun back: the lookup is stated again", "");
+
+    // 8 the Shadows replace: Classic under them, Off while on, Classic again; one whole-window re-mesh each way.
+    const int si = eden_settings_index_of("shadows");
+    SunShadow::setOverride(0);
+    eden_settings_set(si, (float)SHADOW_CLASSIC);
+    tick(5);
+    const int m0 = g_shadow_mode, n0 = g_shadow_remeshes;
+    SunShadow::setOverride(1);
+    const int m1 = g_shadow_mode, n1 = g_shadow_remeshes;
+    tick(120);
+    SunShadow::setOverride(0);
+    const int m2 = g_shadow_mode, n2 = g_shadow_remeshes;
+    std::snprintf(d, sizeof(d), "modes %d -> %d -> %d, re-meshes +%d, +%d, setting %d", m0, m1, m2, n1 - n0, n2 - n1, shadow_setting());
+    check(m0 == SHADOW_CLASSIC && m1 == SHADOW_OFF && m2 == SHADOW_CLASSIC && n1 == n0 + 1 && n2 == n1 + 1 &&
+          shadow_setting() == SHADOW_CLASSIC, "8 Shadows: Off while sun shadows are on, back after; one re-mesh each way", d);
+    tick(5);
+    check(!SunShadow::live(), "8b off again frees the map", "");
+
+    // 9 the Air 2 class: the row is hidden and a stored On reads as off.
+    const int ri = eden_settings_index_of("sun_shadows");
+    SunShadow::setOverride(-1);
+    eden_settings_test_air2(1);
+    eden_settings_set(ri, 1.0f);
+    const bool hidden = eden_settings_native_hidden(ri) != 0, wantedAir2 = SunShadow::wanted();
+    eden_settings_test_air2(-1);
+    eden_settings_set(ri, 1.0f);
+    const bool hiddenMac = eden_settings_native_hidden(ri) != 0, wantedMac = SunShadow::wanted();
+    std::snprintf(d, sizeof(d), "Air 2: hidden %d wanted %d; here: hidden %d wanted %d", hidden, wantedAir2, hiddenMac, wantedMac);
+    check(hidden && !wantedAir2 && !hiddenMac && wantedMac, "9 Air 2 class: row hidden, forced off", d);
+    SunShadow::setOverride(0);
+    SunShadow::setTestMapSize(0);
+
+    std::printf("[eden-sunshadow] %s (%d failure(s))\n", g_selftestFailures ? "FAILURES" : "ALL PASS", g_selftestFailures);
     return g_selftestFailures ? 1 : 0;
 }
 

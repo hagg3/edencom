@@ -55,6 +55,11 @@ namespace SkyCycle {
 
     // Unit vector toward the sun (y up); the moon is its negation. For DN.3/DN.4 and DN.F.
     Vector sunDir();
+    // SH.3: the sun the terrain's shadows use, one rule for cloud and sun shadows. Cycle on: sunDir(), and
+    // `day` 0..1 a smoothstep of the elevation from 2 to 15 degrees; with quantDeg > 0 the direction is the
+    // clock's quantised to that many degrees of arc (the sun-shadow map ticks instead of swimming; `day` is
+    // never quantised). Cycle off: a fixed high sun (0.28, 0.94, 0.18), `day` 1, or 0 at night.
+    void shadowSun(Vector* dir, float* day, float quantDeg = 0);
 
     // ---- DN.5: lighting (plan section 4) --------------------------------------------------------
     // Sun elevation in degrees (-70..70 with the 20-degree tilt).

@@ -25,6 +25,9 @@ const char* eden_settings_group(int i);
 const char* eden_settings_page(int i);           // SX.1: display placement, "" = the group's tab
 const char* eden_settings_page_target(int i);    // SX.1: a KIND_PAGE row's page id
 const char* eden_settings_hint(int i);
+const char* eden_settings_inactive_hint(int i);   // SH.3: overridden by another row now (shown muted), or NULL
+int         eden_sun_shadows_offered(void);      // SH.3: 0 on the Air 2 class (the row is hidden, read as off)
+void        eden_settings_test_air2(int on);     // SH.3: --sunshadow-selftest pretends to be one (-1 = real)
 int         eden_settings_parent(int i);         // U.2: the toggle row this one depends on, or -1
 int         eden_settings_kind(int i);           // 0 toggle, 1 range, 2 enum, 4 text, 5 page, 6 heading, 7 cvar
 int         eden_settings_scope(int i);          // SX.6: 0 always, 1 world in play, 2 no world

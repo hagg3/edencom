@@ -10,6 +10,7 @@
 #include "BlockTraits.h"
 #include "Constants.h"
 #include "Globals.h"
+#include "GLWidgets.h"
 #include "Hud.h"
 #include "Json.h"
 #include "ModScript.h"
@@ -61,7 +62,7 @@ struct NameBits { const char* name; int bits; };
 const NameBits kTraits[] = {
     {"solid", 0}, {"hard", IS_HARD}, {"flammable", IS_FLAMMABLE}, {"transparent", IS_ATLAS2},
     {"climbable", IS_CLIMB}, {"bouncy", IS_BOUNCY}, {"slippery", IS_SLIPPERY}, {"blastproof", IS_BLASTPROOF},
-    {"unbreakable", IS_UNBREAKABLE}, {"no_shadow", IS_NOSHADOW}, {"paint_art", 0},
+    {"unbreakable", IS_UNBREAKABLE}, {"no_shadow", IS_NOSHADOW}, {"paint_art", 0}, {"usable", IS_USABLE},
 };
 // Bits that are kinds: the stock pack only (D7).
 const NameBits kFlags[] = {
@@ -325,6 +326,7 @@ Stock* compileStock(const char* data, size_t len, const char* label, std::vector
                     const NameBits* nb = t.isString() ? findBits(kTraits, t.str) : NULL;
                     if (!nb) err(t.offset, "%sunknown trait \"%s\"", ctx, textOr(t));
                     else if (!seen.insert(t.str).second) err(t.offset, "%strait \"%s\" listed twice", ctx, t.str.c_str());
+                    else if (t.str == "usable") err(t.offset, "%strait \"usable\" is for mod blocks only", ctx);
                     else if (t.str == "solid") info &= ~IS_NOTSOLID;
                     else if (t.str == "paint_art") art = ART_ALL;
                     else info |= nb->bits;
@@ -592,10 +594,11 @@ bool readScriptFile(const std::string& dir, const std::string& p, std::string* b
     return true;
 }
 
-const char* const kModTopKeys[] = {"format", "id", "name", "version", "requires", "conflicts", "tiles", "blocks", "scripts"};
+const char* const kModTopKeys[] = {"format", "id", "name", "version", "requires", "conflicts", "tiles", "blocks", "scripts", "settings", "icons"};
 const char* const kModTileKeys[] = {"png", "unpainted"};
 const char* const kModBlockKeys[] = {"id", "kind", "traits", "faces", "color", "sounds", "fallback", "fallback_paint", "picker"};
 const char* const kStockOnlyBlockKeys[] = {"stock_id", "flags", "paint_art_sites", "bt", "tnt_map"};
+const char* const kSettingTypes[] = {"heading", "toggle", "slider", "choice", "text"};
 const char* const kReservedIds[] = {"eden", "emod"};
 enum { PNG_MAX_BYTES = 1 << 20, DEPS_MAX = 32 };
 
@@ -658,6 +661,8 @@ bool compileMod(const char* data, size_t len, const std::string& dir, const std:
     pk->needs.clear();
     pk->conflicts.clear();
     pk->scripts.clear();
+    pk->settings.clear();
+    pk->icons.clear();
     pk->blocksInFile = 0;
     pk->refused = true;
     // K.3 (plan M5): the content hash: pack.json's bytes, then each readable tile PNG's bytes in file order.
@@ -734,6 +739,10 @@ bool compileMod(const char* data, size_t len, const std::string& dir, const std:
         }
         if (total > SCRIPTS_MAX_BYTES) { err(sv->offset, "\"scripts\" add up to more than 1 MiB"); top = false; }
     }
+    // K.7-2a (V14): the settings page's rows. The array is a top-level rule; each entry is checked below.
+    const Json::Value* stv = root.get("settings");
+    if (stv && !stv->isArray()) { err(stv->offset, "\"settings\" must be an array of objects"); top = false; }
+    else if (stv && stv->arr.size() > SETTINGS_MAX) { err(stv->offset, "\"settings\" has %zu entries (at most %d)", stv->arr.size(), (int)SETTINGS_MAX); top = false; }
     const Json::Value* bv = root.get("blocks");
     if (!bv) { if (!sv) { err(root.offset, "missing \"blocks\""); top = false; } }
     else if (!bv->isArray()) { err(bv->offset, "\"blocks\" must be an array"); top = false; }
@@ -809,6 +818,50 @@ bool compileMod(const char* data, size_t len, const std::string& dir, const std:
     for (const ModScriptSrc& sc : pk->scripts) {
         sha.update(sc.path.data(), sc.path.size() + 1);
         sha.update(sc.source.data(), sc.source.size());
+    }
+    // K.7-3c (V13 step 2): the pack's own icons, 64x64, after the scripts in the hash. A bad one is skipped with a line.
+    if (const Json::Value* iv = root.get("icons")) {
+        if (!iv->isObject()) err(iv->offset, "\"icons\" must be an object of name -> png path");
+        else for (const auto& m : iv->obj) {
+            const std::string& name = m.first;
+            const Json::Value& e = m.second;
+            const char* nm = name.c_str();
+            if (!localOk(name)) { err(e.offset, "icon \"%s\": the name must match [a-z0-9_]{1,24}", nm); continue; }
+            if (!e.isString() || !relPathOk(e.str)) { err(e.offset, "icon \"%s\": must be a relative path inside the pack", nm); continue; }
+            if (pk->icons.size() >= (size_t)ICONS_PER_PACK) { err(e.offset, "icon \"%s\": a pack has at most %d icons (skipped)", nm, (int)ICONS_PER_PACK); continue; }
+            const char* pp = e.str.c_str();
+            std::string bytes;
+            FILE* f = fopen((dir + "/" + e.str).c_str(), "rb");
+            bool readOk = f != NULL;
+            if (f) {
+                char buf[65536];
+                size_t n;
+                while ((n = fread(buf, 1, sizeof buf, f)) > 0) {
+                    bytes.append(buf, n);
+                    if (bytes.size() > PNG_MAX_BYTES) break;
+                }
+                readOk = !ferror(f);
+                fclose(f);
+            }
+            if (!readOk) { err(e.offset, "icon \"%s\": cannot read \"%s\"", nm, pp); continue; }
+            sha.update(e.str.data(), e.str.size() + 1);
+            sha.update(bytes.data(), bytes.size());
+            if (bytes.size() > PNG_MAX_BYTES) { err(e.offset, "icon \"%s\": \"%s\" is larger than 1 MiB", nm, pp); continue; }
+            int w = 0, h = 0;
+            if (!pngSize(bytes, &w, &h)) { err(e.offset, "icon \"%s\": \"%s\" is not a PNG", nm, pp); continue; }
+            if (w != ICON_PX || h != ICON_PX) { err(e.offset, "icon \"%s\": \"%s\" is %dx%d (an icon is 64x64)", nm, pp, w, h); continue; }
+            EdenImage* img = eden_image_decode(bytes.data(), bytes.size());
+            if (!img || img->width != ICON_PX || img->height != ICON_PX) {
+                eden_image_free(img);
+                err(e.offset, "icon \"%s\": \"%s\" does not decode", nm, pp);
+                continue;
+            }
+            ModIconSrc src;
+            src.name = name;
+            src.rgba.assign(img->rgba, img->rgba + ICON_PX * ICON_PX * 4);
+            eden_image_free(img);
+            pk->icons.push_back(src);
+        }
     }
     pk->blocksInFile = bv ? bv->arr.size() : 0;
     for (size_t n = 0; n < pk->blocksInFile; ++n) {
@@ -930,6 +983,92 @@ bool compileMod(const char* data, size_t len, const std::string& dir, const std:
         mb.info = info;
         mb.paintArt = (uint8_t)art;
         pk->blocks.push_back(mb);
+    }
+    // ---- settings (V14): an error skips that setting; an unknown type or key is a warning
+    if (stv) {
+        std::set<std::string> sids;
+        for (size_t n = 0; n < stv->arr.size(); ++n) {
+            const Json::Value& e = stv->arr[n];
+            char nb[32];
+            snprintf(nb, sizeof nb, "setting #%zu", n);
+            std::string ctxs = nb;
+            if (!e.isObject()) { err(e.offset, "%s: must be an object", nb); continue; }
+            const Json::Value* tyv = e.get("type");
+            if (!(tyv && tyv->isString())) { err(tyv ? tyv->offset : e.offset, "%s: \"type\" must be a string", nb); continue; }
+            if (indexOf(kSettingTypes, tyv->str) < 0) { err(tyv->offset, "warning: %s: unknown type \"%s\" (ignored)", nb, tyv->str.c_str()); continue; }
+            ModSetting s;
+            s.type = tyv->str;
+            const bool heading = s.type == "heading";
+            const Json::Value* idv = e.get("id");
+            if (!heading) {
+                if (!(idv && idv->isString() && localOk(idv->str))) { err(idv ? idv->offset : e.offset, "%s: \"id\" must match [a-z0-9_]{1,24}", nb); continue; }
+                s.id = idv->str;
+                ctxs = "setting \"" + s.id + "\"";
+            }
+            const char* ctx = ctxs.c_str();
+            const bool isSlider = s.type == "slider", isChoice = s.type == "choice", isText = s.type == "text";
+            for (const auto& k : e.obj) {
+                const std::string& key = k.first;
+                const bool fits = key == "type" || key == "label" || (!heading && (key == "id" || key == "hint" || key == "default")) ||
+                                  (isSlider && (key == "min" || key == "max" || key == "step")) || (isChoice && key == "options") ||
+                                  (isText && key == "max");
+                if (!fits) err(k.second.offset, "warning: %s: unknown key \"%s\" (ignored)", ctx, key.c_str());
+            }
+            if (!heading && !sids.insert(s.id).second) { err(idv->offset, "%s: duplicate id", ctx); continue; }
+            const Json::Value* lv = e.get("label");
+            if (!(lv && lv->isString() && lv->str.size() >= 1 && lv->str.size() <= 40)) { err(lv ? lv->offset : e.offset, "%s: \"label\" must be 1 to 40 bytes", ctx); continue; }
+            s.label = lv->str;
+            const Json::Value* hv = e.get("hint");
+            if (hv && !heading) {
+                if (!(hv->isString() && hv->str.size() <= 120)) { err(hv->offset, "%s: \"hint\" must be at most 120 bytes", ctx); continue; }
+                s.hint = hv->str;
+            }
+            const Json::Value* dv = e.get("default");
+            bool good = true;
+            if (heading) {}
+            else if (s.type == "toggle") {
+                if (dv && dv->isBool()) s.defBool = dv->b;
+                else { err(dv ? dv->offset : e.offset, "%s: \"default\" must be true or false", ctx); good = false; }
+            } else if (isSlider) {
+                const Json::Value* mn = e.get("min");
+                const Json::Value* mx = e.get("max");
+                const Json::Value* st = e.get("step");
+                if (!(mn && mn->isNumber() && mx && mx->isNumber() && mn->num < mx->num)) { err(mn ? mn->offset : e.offset, "%s: \"min\" and \"max\" must be numbers with min below max", ctx); good = false; }
+                else if (!(st && st->isNumber() && st->num > 0)) { err(st ? st->offset : e.offset, "%s: \"step\" must be a number above 0", ctx); good = false; }
+                else if ((mx->num - mn->num) / st->num > 1000) { err(st->offset, "%s: more than 1000 steps from min to max", ctx); good = false; }
+                else {
+                    s.min = mn->num; s.max = mx->num; s.step = st->num;
+                    const double q = dv && dv->isNumber() ? (dv->num - s.min) / s.step : -1;
+                    if (!(dv && dv->isNumber() && dv->num >= s.min && dv->num <= s.max && fabs(q - floor(q + 0.5)) <= 1e-6)) {
+                        err(dv ? dv->offset : e.offset, "%s: \"default\" must be a number from min to max on a step", ctx); good = false;
+                    } else s.defNum = dv->num;
+                }
+            } else if (isChoice) {
+                const Json::Value* ov = e.get("options");
+                bool okOpts = ov && ov->isArray() && ov->arr.size() >= 2 && ov->arr.size() <= 8;
+                std::set<std::string> seen;
+                if (okOpts) for (const Json::Value& o : ov->arr) {
+                    if (!(o.isString() && o.str.size() >= 1 && o.str.size() <= 24 && seen.insert(o.str).second)) okOpts = false;
+                    else s.options.push_back(o.str);
+                }
+                if (!okOpts) { err(ov ? ov->offset : e.offset, "%s: \"options\" must be 2 to 8 different strings of 1 to 24 bytes", ctx); good = false; }
+                else if (!(dv && dv->isString() && seen.count(dv->str))) { err(dv ? dv->offset : e.offset, "%s: \"default\" must be one of the options", ctx); good = false; }
+                else s.defText = dv->str;
+            } else {
+                const Json::Value* mv = e.get("max");
+                bool okMax;
+                s.maxLen = (int)intIn(mv, 1, 64, &okMax);
+                if (!okMax) { err(mv ? mv->offset : e.offset, "%s: \"max\" must be a whole number from 1 to 64", ctx); good = false; }
+                else {
+                    bool printable = dv && dv->isString();
+                    if (printable) for (unsigned char c : dv->str) if (c < 0x20 || c == 0x7f) printable = false;
+                    if (!(printable && dv->str.size() <= (size_t)s.maxLen)) { err(dv ? dv->offset : e.offset, "%s: \"default\" must be printable text of at most max bytes", ctx); good = false; }
+                    else s.defText = dv->str;
+                }
+            }
+            if (!good) continue;
+            pk->settings.push_back(s);
+        }
     }
     pk->refused = false;
     return true;
@@ -1071,6 +1210,102 @@ bool writeModList(const std::string& documents, const std::vector<ModListEntry>&
     return eden_fs_write_atomic(modListPath(documents), t.data(), t.size());   // QA.17: + fsync, no copy fallback
 }
 
+// ---- K.7-2b: setting values (V15)
+SettingValue settingDefault(const ModSetting& st) {
+    SettingValue v;
+    v.b = st.defBool;
+    v.n = st.defNum;
+    v.s = st.defText;
+    return v;
+}
+
+bool testSettingsInPack = false;
+
+std::string settingsFilePath(const std::string& documents, const std::string& packId) {
+    if (testSettingsInPack) return documents + "/Packs/" + packId + "/settings.json";
+    return documents + "/Packs/.settings/" + packId + ".json";
+}
+
+namespace {
+// The stored value for `st` when it passes the schema (a slider is snapped to its step), else false.
+bool settingFromJson(const ModSetting& st, const Json::Value& j, SettingValue* out) {
+    if (st.type == "toggle") {
+        if (!j.isBool()) return false;
+        out->b = j.b;
+    } else if (st.type == "slider") {
+        if (!j.isNumber() || j.num < st.min || j.num > st.max) return false;
+        const double q = (j.num - st.min) / st.step;
+        if (fabs(q - floor(q + 0.5)) > 1e-4) return false;
+        out->n = st.min + floor(q + 0.5) * st.step;
+    } else if (st.type == "choice") {
+        if (!j.isString() || std::find(st.options.begin(), st.options.end(), j.str) == st.options.end()) return false;
+        out->s = j.str;
+    } else if (st.type == "text") {
+        if (!j.isString() || j.str.size() > (size_t)st.maxLen) return false;
+        for (unsigned char c : j.str) if (c < 0x20 || c == 0x7f) return false;
+        out->s = j.str;
+    } else return false;
+    return true;
+}
+// The file's "values" object (members kept in order); empty when the file is absent or unreadable.
+Json::Value readValuesObject(const std::string& path) {
+    Json::Value v;
+    v.type = Json::Object;
+    std::string text;
+    Json::Value root;
+    Json::Error je;
+    if (!readPackFile(path, &text) || !Json::parse(text.data(), text.size(), &root, &je) || !root.isObject()) return v;
+    const Json::Value* vals = root.get("values");
+    if (vals && vals->isObject()) v = *vals;
+    return v;
+}
+}  // namespace
+
+std::vector<SettingValue> settingValues(const std::string& documents, const ModPack& pk) {
+    std::vector<SettingValue> out;
+    const Json::Value vals = pk.settings.empty() ? Json::Value() : readValuesObject(settingsFilePath(documents, pk.id));
+    for (const ModSetting& st : pk.settings) {
+        SettingValue v = settingDefault(st);
+        const Json::Value* j = vals.isObject() ? vals.get(st.id.c_str()) : NULL;
+        SettingValue got = v;
+        if (j && !st.id.empty() && settingFromJson(st, *j, &got)) v = got;
+        out.push_back(v);
+    }
+    return out;
+}
+
+bool saveSetting(const std::string& documents, const ModPack& pk, size_t index, const SettingValue& v) {
+    if (documents.empty() || pk.id.empty() || index >= pk.settings.size() || pk.settings[index].type == "heading") return false;
+    const ModSetting& st = pk.settings[index];
+    Json::Value j;
+    if (st.type == "toggle") { j.type = Json::Bool; j.b = v.b; }
+    else if (st.type == "slider") {
+        const double q = floor((std::min(std::max(v.n, st.min), st.max) - st.min) / st.step + 0.5);
+        j.type = Json::Number;
+        j.num = st.min + q * st.step;
+    } else {
+        j.type = Json::String;
+        j.str = v.s.size() > (size_t)(st.type == "text" ? st.maxLen : 64) ? v.s.substr(0, (size_t)st.maxLen) : v.s;
+    }
+    SettingValue check;
+    if (!settingFromJson(st, j, &check)) return false;   // a choice that is not an option, text with control bytes
+    Json::Value vals = readValuesObject(settingsFilePath(documents, pk.id));
+    bool found = false;
+    for (Json::Member& m : vals.obj)
+        if (m.first == st.id) { m.second = j; found = true; }
+    if (!found) vals.obj.push_back(Json::Member(st.id, j));
+    Json::Value root;
+    root.type = Json::Object;
+    Json::Value fmt;
+    fmt.type = Json::Number;
+    fmt.num = 1;
+    root.obj.push_back(Json::Member("format", fmt));
+    root.obj.push_back(Json::Member("values", vals));
+    const std::string text = Json::write(root) + "\n";
+    if (!eden_fs_make_dirs(testSettingsInPack ? documents + "/Packs/" + pk.id : documents + "/Packs/.settings")) return false;
+    return eden_fs_write_atomic(settingsFilePath(documents, pk.id), text.data(), text.size());
+}
+
 std::vector<ModPack> scanPacks(const std::string& documents, std::vector<std::string>* lines) {
     std::vector<ModPack> v;
     std::string problem;
@@ -1186,6 +1421,11 @@ bool removePackFolder(const std::string& documents, const std::string& folder) {
 
 void setExtraPackDirs(const std::vector<std::string>& dirs) { g_extraDirs = dirs; }
 const ModReport& modReport() { return g_report; }
+int packIconByName(const std::string& name) {
+    for (size_t i = 0; i < g_report.icons.size(); ++i)
+        if (g_report.icons[i].name == name) return GLW::UIICON_PACK_BASE + (int)i;
+    return -1;
+}
 
 // K.8-7: `scripts reload`. The loaded pack's listed script files, read again under compileMod's caps and refusals;
 // pack.json, tiles and blocks are not touched (the hash stays the world-entry one).
@@ -1252,8 +1492,21 @@ void loadMods(const std::string& documents, bool session) {
     for (int i = ATLAS1_FREE_FIRST; i < ATLAS_TILES; ++i) { tileTwin[i] = 0; tileParticleArt[i] = 0; }
     struct Placed { int atlas, index, pack, tile; };
     std::vector<Placed> placed;   // resolved to pixels once g_report.packs stops moving
+    std::vector<const uint8_t*> iconPx;   // K.7-3c: the world's pack icons, cell i
     if (!session) {
         g_report.packs = scanPacks(documents, &g_report.lines);
+        for (int pi = 0; pi < (int)g_report.packs.size(); ++pi) {   // K.7-3c: loaded packs' icons, 32 a world
+            const ModPack& pk = g_report.packs[pi];
+            if (pk.state != PACK_LOADED) continue;
+            for (const ModIconSrc& ic : pk.icons) {
+                if (g_report.icons.size() >= (size_t)ICONS_PER_WORLD) {
+                    loaderLine("%s: icon \"%s\": a world has at most %d pack icons (skipped)", pk.folder.c_str(), ic.name.c_str(), (int)ICONS_PER_WORLD);
+                    continue;
+                }
+                g_report.icons.push_back(LoadedIcon{pk.id + ":" + ic.name, pi});
+                iconPx.push_back(ic.rgba.data());
+            }
+        }
         // Tile slots: (pack, local tile, atlas) -> index. Allocation is first use, block by block (D15).
         std::map<std::pair<std::pair<int, int>, int>, int> slot;
         int next[3] = {0, ATLAS1_FREE_FIRST, ATLAS2_FREE_FIRST};
@@ -1327,6 +1580,8 @@ void loadMods(const std::string& documents, bool session) {
     // Resources copies the pixels; the report keeps only the tile names.
     if (Resources::getResources) Resources::getResources->setModTiles(upload);
     for (ModPack& pk : g_report.packs) for (ModTileSrc& t : pk.tiles) std::vector<uint8_t>().swap(t.rgba);
+    GLW::setPackIcons(iconPx);   // K.7-3c: replaces (and frees) the last world's atlas; copies the pixels
+    for (ModPack& pk : g_report.packs) for (ModIconSrc& ic : pk.icons) std::vector<uint8_t>().swap(ic.rgba);
     for (const ModPack& pk : g_report.packs)
         for (const std::string& l : pk.lines) fprintf(stderr, "[pack] %s\n", l.c_str());
     for (const std::string& l : g_report.lines) fprintf(stderr, "[pack] %s\n", l.c_str());

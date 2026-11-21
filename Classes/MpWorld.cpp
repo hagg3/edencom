@@ -1319,6 +1319,11 @@ void intentPaint(int x, int z, int y, int color) {
     in.send();
 }
 
+void intentUse(int x, int z, int y) {
+    if (active()) return;   // no scripts in a session; the tap still builds nothing
+    ModScript::noteUse(x, z, y, World::getWorld->terrain->getLand(x, z, y));
+}
+
 void intentBurn(int x, int z, int y) {
     Terrain* ter = World::getWorld->terrain;
     const int type = ter->getLand(x, z, y);

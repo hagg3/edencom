@@ -37,6 +37,7 @@
 #include "../../../Classes/Model.h"          // --cmds-selftest: CountActiveCreatures
 #include "../../../Classes/PassTimers.h"     // --pass-probe / --pass-timers (P.1b)
 #include "../../../Classes/Shadow.h"         // --shadows= / --shadow-selftest (H.2)
+#include "../../../Classes/SunShadow.h"      // --sunshadows= / --sunshadow-selftest (SH.3)
 #include "../../../Classes/TerrainGenerator.h"   // --classic-selftest (H.4)
 #include "../../../Classes/MpWorld.h"            // --mp-replay (MP.3a)
 #include "../../../Classes/TouchLook.h"          // --look-selftest (Stage L)
@@ -49,9 +50,11 @@ extern float NOCLIP_SPEED;                          // Classes/Player.mm (--fly-
 #include "../../../port/src/net/MpSession.h"     // --mp-replay: the session's own line parser, fed from a file
 extern int g_classic_cave_votes_cells, g_classic_cave_votes_air;   // FileManager.cpp (H.4), --classic-selftest
 extern bool g_wp_test_skip_generator;   // FileManager.cpp (H.15), --props-mutate=nogen
+extern bool g_wp_test_skip_lighting;    // FileManager.cpp (LM.2), --props-mutate=nolamp
 extern Vector colorTable[256];               // --cmds-selftest: the night sky (palette 54)
 extern int g_load_thread_delay_ms; // World.cpp, QA.7: --mods-selftest leg 9
 extern int g_ring_columns_landed, g_bulk_reloads, g_ring_evict_saves, g_ring_evict_held, g_ring_dynamics_dropped, g_autosaves; // Terrain.mm, --evict-selftest
+#include "../../../Lighting.h"               // root Lighting.h: g_light_test_mutation (--light-mutate), the LM.1 profile
 extern int g_light_test_mutation;            // Lighting.mm (B.5b-1c), --light-mutate
 bool light_columnKnownFree(int cx, int cz);  // Lighting.mm (P.10), --ring-light-selftest's last leg
 extern int g_offcx, g_offcz;                 // Terrain.mm: the toroidal offset (--light-selftest's edge step)
@@ -104,6 +107,7 @@ void  eden_native_gl_set_headless(int on);
 void  eden_native_gl_set_present(int on);
 int   eden_native_gl_present_guard_fires(void);
 int   eden_get_render_scale_pct(void);
+int   eden_sharp_ui_wanted(void);   // PW.4b (Settings.cpp)
 int   eden_power_exp(int bit);   // power.cpp (FT.15a): is this --power-exp switch on
 void  eden_native_gl_set_diag_clear(int on);   // --diag-clear (FT.16a): magenta window clear in play
 SDL_Window* eden_native_gl_window(void);
@@ -187,6 +191,7 @@ int   eden_debug_hotbar_overlaps(char* buf, int cap);                           
 int   eden_debug_safe_area_violations(float sx, float sy, float sw, float sh, char* buf, int cap);       // I.2, DebugState.cpp
 void  eden_live_commands_init(const char* path);   // src/seam/LiveCommands_native.cpp (diagnostics)
 void  eden_live_commands_tick(void);
+void  eden_live_commands_after_frame(void);   // EX.1-0: the `shot` verb's readback
 }
 void power_parse_exp(const char* list);   // power.cpp (FT.15a)
 void power_log_set(double secs);
@@ -301,6 +306,8 @@ struct Options {
     float walk[8] = {0};                 // --walk=DX,DZ[,...]: --stage1's scripted walk legs (B.5b-1a)
     int  walkLegs = 0;
     int  lightLattice = 0;               // --light-lattice=STEP: --stage1 prepares the ring-light gate's world (B.5b-1c)
+    int  lampMode = -1;                  // --lamp-light=legacy|newdawn (LM.1): the lamp light profile for the run
+    float lampRadius = 0;                // --lamp-radius=R (LM.1): New Dawn's radius, clamped to [1,17]
     bool drawable1x = false;             // --drawable=1x (PW.4): no HIGH_PIXEL_DENSITY, point-sized drawable, render scale 100
     int  renderScalePct = 0;             // --render-scale=50|75|100|125: 0 leaves the setting alone
     std::vector<std::pair<std::string,float>> sets;   // --set=KEY=VALUE (repeatable): a settings write once loaded (P.2a)
@@ -319,7 +326,8 @@ struct Options {
     std::string propsMutate;             // --props-mutate=nogen: --props-selftest's mutation leg (H.15)
     std::string saveFailMutate;          // --save-fail-mutate=exit|stream: --save-fail-selftest's mutation legs (QA.5)
     std::string modsMutate;              // --mods-mutate=anyid: --mods-selftest's mutation leg (K.8-3)
-    std::string luaMutate;               // --lua-mutate=hook|sandbox|loadearly|caperror|usefilter|signnocache: --lua-selftest's mutation legs (K.4)
+    std::string checkPack;               // --check-pack=DIR (K.8-8)
+    std::string luaMutate;               // --lua-mutate=hook|sandbox|loadearly|caperror|usefilter|signnocache|storenotdirty|leaveaftersave|toastflood|dialognoqueue|dialognoclamp: --lua-selftest's mutation legs (K.4)
     std::string propsWorld;              // --props-world=FILE: --props-selftest times reading this world (gate 4)
     std::string classicNew;              // --classic=SEED[,SCALE4]: a world open_world() CREATES is Classic (ring-walk gate)
     std::string skyTimes;                // --sky-times=T,T,...: --sky-shot's clock times (DN.3)
@@ -403,8 +411,10 @@ namespace g_hotbar { int run_hotbar_selftest(); }   // UX.8-3
 namespace g_tutorial { int run_tutorial_selftest(); }   // UX.10-1
 namespace g_mods { int run_mods_selftest(); std::string ui_pack_zip(const std::string& id, const std::string& version); }
 using g_mods::run_mods_selftest;
-namespace g_content { int run_content_dump(); int run_json_selftest(); int run_pack_selftest(const std::string& dir); }   // K.2-1, K.2-3
+namespace g_content { int run_lua_api_dump(); int run_check_pack(const std::string& dir); int run_content_dump(); int run_json_selftest(); int run_pack_selftest(const std::string& dir); }   // K.2-1, K.2-3
 using g_content::run_content_dump;
+using g_content::run_lua_api_dump;
+using g_content::run_check_pack;
 using g_content::run_json_selftest;
 using g_content::run_pack_selftest;
 namespace g_props { int run_settings_selftest(); int run_camera_selftest(); int run_props_selftest(); int run_signs_selftest(); int run_sign_shot(); }
@@ -417,8 +427,11 @@ namespace g_cmds { int run_cmds_selftest(); int run_console_selftest(); int run_
 using g_cmds::run_cmds_selftest;
 using g_cmds::run_console_selftest;
 using g_cmds::run_save_bench;
-namespace g_light { int run_light_selftest(); int run_ring_light_selftest(); int run_shadow_selftest(); int run_evict_selftest(); }
+namespace g_light { int run_light_selftest(); int run_light_modes_selftest(); int run_ring_light_selftest(); int run_shadow_selftest(); int run_evict_selftest();
+                    int run_sunshadow_selftest(); }
+using g_light::run_sunshadow_selftest;
 using g_light::run_light_selftest;
+using g_light::run_light_modes_selftest;
 using g_light::run_ring_light_selftest;
 using g_light::run_shadow_selftest;
 using g_light::run_evict_selftest;

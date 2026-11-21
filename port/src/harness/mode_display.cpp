@@ -699,6 +699,7 @@ int run_leak_probe() {
 // reuses a name, so a double destroy is caught on every platform. Windowed it runs on the real driver and
 // also reads the atlas's level 0 and 1 back each cycle: they must hash as they did before the first world.
 // ---------------------------------------------------------------------------------------------
+extern "C" unsigned eden_ui_pack_icon_atlas_name(int* w, int* h);   // K.7-3c
 extern "C" unsigned eden_ui_icon_atlas_name(int* w, int* h);   // Classes/GLWidgets.cpp (X.32)
 
 // FNV-1a of mip `level` of the atlas, or 0 when it cannot be read (headless, or no such level).
@@ -747,7 +748,7 @@ static void bind_cache_leg(unsigned atlas, int aw, int ah, uint64_t lv0, uint64_
 
 int run_rejoin_selftest() {
     g_selftestTag = "eden-rejoin";
-    if (!mutation_known("eden-rejoin", "--rejoin-mutate", g_opt.rejoinMutate, {"doubledestroy", "elide"})) return 2;
+    if (!mutation_known("eden-rejoin", "--rejoin-mutate", g_opt.rejoinMutate, {"doubledestroy", "elide", "packatlas"})) return 2;
     if (g_opt.rejoinMutate == "elide") eden_gl_set_upload_trusts_cache(1);
     const char* name = g_opt.world.empty() ? "rejoin" : g_opt.world.c_str();
     const int cycles = g_opt.cycles < 2 ? 2 : g_opt.cycles;
@@ -773,6 +774,7 @@ int run_rejoin_selftest() {
               "the icon atlas is live and owned by ui_icons.png before any world", d);
     }
     const long stale0 = R::texStaleDestroys(), uses0 = R::texStaleUses();
+    unsigned packAtlasPrev = 0;   // K.7-3c: the last cycle's pack-icon atlas (the next world entry must free it)
     std::printf("[eden-rejoin] %d enter/leave cycles of '%s' (%dz), icon atlas = texture %u\n",
                 cycles, name, g_opt.height, atlas);
     std::fflush(stdout);
@@ -820,6 +822,19 @@ int run_rejoin_selftest() {
         std::snprintf(what, sizeof what, "cycle %d/%d: no stale texture destroy or use, icon atlas intact", c + 1, cycles);
         check(stale == 0 && uses == 0 && owner && std::strstr(owner, "ui_icons.png") && eden_ui_icon_atlas_name(nullptr, nullptr) == atlas,
               what, d);
+        if (gl && havePack) {   // K.7-3c: the world's pack-icon atlas: built here (first draw), freed by the next entry
+            const bool packIn = c % 2 == 0;
+            const unsigned pa = eden_ui_pack_icon_atlas_name(nullptr, nullptr);
+            const char* po = pa ? R::texOwner(pa) : nullptr;
+            const bool prevGone = !packAtlasPrev || packAtlasPrev == pa || !R::texLive(packAtlasPrev);
+            std::snprintf(d, sizeof d, "pack in %d, pack atlas %u live %d owner '%s', previous %u (live %d)", packIn, pa,
+                          pa ? (int)R::texLive(pa) : 0, po ? po : "-", packAtlasPrev, packAtlasPrev ? (int)R::texLive(packAtlasPrev) : 0);
+            std::snprintf(what, sizeof what, "cycle %d/%d: the pack-icon atlas exists only while the pack is in, and the old one is freed", c + 1, cycles);
+            check(packIn ? (pa && R::texLive(pa)) : (pa == 0), what, d);
+            check(prevGone && R::texStaleDestroys() - stale0 == 0 && R::texStaleUses() - uses0 == 0, "  (and no stale destroy or use came with it)", d);
+            if (c == 0 && g_opt.rejoinMutate == "packatlas" && pa) R::texDestroy(pa);   // freed behind its owner; the name is kept
+            packAtlasPrev = pa;
+        }
         if (gl) {
             const uint64_t n0 = atlas_level_hash(atlas, 0, aw, ah), n1 = atlas_level_hash(atlas, 1, aw, ah);
             std::snprintf(d, sizeof d, "level 0 %016llx (was %016llx), level 1 %016llx (was %016llx)",

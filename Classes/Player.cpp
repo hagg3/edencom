@@ -426,6 +426,17 @@ void Player::processInput(float etime){
                     if(mode==MODE_BUILD&&!World::getWorld->hud->holding_creature&&
                        CmdScript::tap(touches[i].mx,touches[i].my))
                         continue;
+                    // K.6-1b: a build tap on a block with the `usable` trait fires `use` (how="tap") and builds nothing.
+                    if(mode==MODE_BUILD&&!World::getWorld->hud->holding_creature){
+                        const Point3D uh=findWorldCoords(touches[i].my,touches[i].mx,FC_DESTROY);
+                        if(uh.x!=-1&&fwc_result==-1){
+                            const int ut=World::getWorld->terrain->getLand(uh.x,uh.z,uh.y);
+                            if(ut>0&&(blockinfo[ut]&IS_USABLE)){
+                                MpWorld::intentUse(uh.x,uh.z,uh.y);
+                                continue;
+                            }
+                        }
+                    }
 					Point3D point;
                     if(fwc_result!=-1)printg("hit model: %d\n",fwc_result);
 					if(mode==MODE_BUILD){

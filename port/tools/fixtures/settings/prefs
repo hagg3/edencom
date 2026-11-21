@@ -82,6 +82,7 @@ touch_look_speed	n:3000
 touch_look_speed_y	n:3000
 ui_scale	n:4000
 upgrade_256z	n:1000
+auto_lamp_light	n:0
 view_distance	n:6000
 water_tint	n:0
 weather	n:0

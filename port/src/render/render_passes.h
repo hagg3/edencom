@@ -15,7 +15,8 @@ enum {
     EDEN_RC_EFFECTS     = 1 << 7,   // effects, fireworks, player (P_R_EFFECTS)
     EDEN_RC_HUD         = 1 << 8,   // P_R_HUD
     EDEN_RC_OTHER       = 1 << 9,   // any draw outside the above (menus, dialogs, a pass's own frame)
-    EDEN_RC_ALL         = (1 << 10) - 1
+    EDEN_RC_SHADOW      = 1 << 10,  // SH.2: every R::drawDepth (the sun-shadow depth pass), whatever pass is open
+    EDEN_RC_ALL         = (1 << 11) - 1
 };
 
 #ifdef __cplusplus
@@ -33,6 +34,7 @@ const char* eden_render_category_name(int bit);
 void eden_render_set_draw_mask(unsigned mask);     // EDEN_RC_ALL = draw everything (the default)
 int  eden_render_mask_active(void);                // mask != ALL: glClear also clears colour, see the shim
 int  eden_render_draw_allowed(void);
+int  eden_render_category_allowed(int bit);        // SH.2: a draw of a fixed category (drawDepth: EDEN_RC_SHADOW)
 #ifdef __cplusplus
 }
 #endif

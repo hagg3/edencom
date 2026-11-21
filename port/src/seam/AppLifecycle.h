@@ -18,6 +18,8 @@ enum {
 extern "C" {
 #endif
 int eden_app_will_background(void);
+// K.6-2: SDL_EVENT_QUIT (a clean quit: the window closed, Cmd-Q). The same save, after the mods' `leave` handlers.
+int eden_app_will_quit(void);
 int eden_app_background_save_count(void);
 int eden_app_background_last_status(void);
 // QA.18 (A2-09): SDL_EVENT_LOW_MEMORY. Same save policy as eden_app_will_background(), but the loop

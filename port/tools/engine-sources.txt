@@ -81,5 +81,7 @@ Classes/Weather.cpp
 Classes/Precip.cpp
 Classes/Clouds.cpp
 Classes/Ambient.cpp
+Classes/SunShadow.cpp
 Classes/ModScript.cpp
+Classes/ModMenuScreen.cpp
 port/src/shim/vendor/lua/lua_onefile.cpp

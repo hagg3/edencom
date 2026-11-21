@@ -80,6 +80,7 @@ extern "C" const char* eden_render_category_name(int bit) {
         case EDEN_RC_EFFECTS:     return "effects";
         case EDEN_RC_HUD:         return "hud";
         case EDEN_RC_OTHER:       return "other";
+        case EDEN_RC_SHADOW:      return "shadow";
         default:                  return "?";
     }
 }
@@ -91,6 +92,7 @@ extern "C" int eden_render_draw_allowed(void) {
     if (g_mask == EDEN_RC_ALL) return 1;
     return (g_mask & (unsigned)eden_render_draw_category()) ? 1 : 0;
 }
+extern "C" int eden_render_category_allowed(int bit) { return (g_mask & (unsigned)bit) ? 1 : 0; }
 
 extern "C" const char* eden_render_pass_name(int pass) {
     return (pass >= 0 && pass < P_COUNT) ? kEdenPassNames[pass] : "-";

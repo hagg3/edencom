@@ -29,6 +29,7 @@
 #include "../../../Classes/Menu.h"
 #include "../../../Classes/WorldPropertiesMenu.h"   // H.15: eden_world_props_menu_back
 #include "../../../Classes/ConsoleMenu.h"           // C.3: eden_console_menu_*
+#include "../../../Classes/ModMenuScreen.h"         // K.7-3a: a mod's menu owns the keys while open
 #include "../../../Classes/ServerListMenu.h"        // MP.6
 #include "../../../Classes/ModsMenu.h"              // K.3-5
 #include "../../../Classes/FileManager.h"
@@ -224,8 +225,8 @@ void eden_console_menu_open(void) {
 int eden_console_menu_toggle(void) {
     Menu* m = menu_ptr();
     if (!m || !m->console || !World::getWorld || World::getWorld->game_mode != GAME_MODE_PLAY) return 0;
-    // Not over another screen: a GL dialog, in-game Settings, or the pause menu owns the keys.
-    if (!m->console->isOpen() && (m->showsettings || GLDialog::active() || eden_hud_in_menu())) return 0;
+    // Not over another screen: a GL dialog, in-game Settings, the pause menu or a mod's menu (K.7-3a) owns the keys.
+    if (!m->console->isOpen() && (m->showsettings || GLDialog::active() || eden_hud_in_menu() || ModMenuScreen::isOpen())) return 0;
     m->console->toggle();
     return 1;
 }
@@ -252,7 +253,7 @@ int eden_chat_open(int slash) {
 // Keys belong to the Console while it is open, even with its field blurred (desktop): typing must
 // never walk the player. Input_native.cpp lets only the `menu` and `console` keys through.
 int eden_ui_captures_keys(void) {
-    return eden_console_menu_active();
+    return eden_console_menu_active() || ModMenuScreen::isOpen();   // K.7-3a: a mod's menu too (the world runs under it)
 }
 
 // -----------------------------------------------------------------------------------------------

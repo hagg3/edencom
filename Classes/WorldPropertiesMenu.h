@@ -27,7 +27,7 @@
 #include "Util.h"        // WorldNode
 #include <string>
 
-#define WP_MAX_ROWS 20   // both tabs: 8-10 World rows + 8 Terrain rows
+#define WP_MAX_ROWS 22   // both tabs: up to 13 World rows + 8 Terrain rows
 #define WP_MAX_OPTS 5
 
 class Texture2D;
@@ -55,6 +55,8 @@ public:
     bool terrainChanged() const;
     bool weatherLockChanged() const;   // AT.1c: Lock weather
     bool skyLockChanged() const;   // DN.6: Lock time of day
+    bool lampLightChanged() const;   // LM.2: Lamp light
+    int  editedLampMode() const;     // the LIGHT_MODE_* the Lamp light row shows
     void editedGenerator(ClassicGen* g) const;   // the Terrain tab's values over the world's record
     int  lastResult() const   { return m_lastResult; }   // the last applyWorldProperties() (-2 none)
     const WorldProps& props() const { return m_props; }

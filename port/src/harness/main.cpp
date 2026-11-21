@@ -150,6 +150,9 @@
 //                        the core tick vs port/tools/fixtures/srclike-pm/vectors.txt within 1 % (--srclike-vectors=PATH,
 //                        default relative to native/), rebuilt in voxels, plus the frame driver (tick rate,
 //                        interpolation at 60/144 Hz, re-seed on teleport, momentum adopted, start-solid lift).
+//   --lua-api-dump       K.8-8: the LuaLS stub file for eden.* on stdout (docs/eden-api.lua is this output); exit 1 if a kApi name has no doc line.
+//   --check-pack=DIR     K.8-8: validate DIR (a pack folder) like the loader does, plus a Lua syntax check of each script; prints the
+//                        loader's lines; exit 1 on an error (warnings alone exit 0).
 //   --content-dump       K.2-1: every per-type table + the BlockTraits oracle over 256 type values, canonical
 //                        text and its SHA-256 (.github/scripts/check-content-dump.py pins both).
 //   --json-selftest      K.2-1: Classes/Json (canonical forms, round trips, every refusal's byte offset).
@@ -261,6 +264,8 @@
 //                        context), seven scenes, max delta 2/255; DIR gets each scene's two BMPs.
 //   --light-selftest     R.3: lightbox place/repaint/break (incl. saturation, the y clip and the
 //                        toroidal seam) through the engine's own edit paths, light hash per step.
+//   --light-selftest=modes  LM.1: the lamp light profiles. One lamp at night: its bytes at d = 0..17 per
+//                        profile, a live switch each way == a fresh load (light hash and meshes), the cap.
 //   --evict-selftest     B.5b-1b: ring streaming's evict-save, node dropping and autosave. Edits in three
 //                        columns survive a 320-block walk (longer past radius 14) out and back and a quit/reload (gate 2);
 //                        a fire tower + water in the -x outer-ring column, evicted by one chunk of
@@ -304,6 +309,13 @@
 //                        (AT.1b) reads the kind from eden_weather_override().
 //   --shadows=off|classic|smooth  H.2: override the Shadows setting for this run, NOT stored (native
 //                        prefs are global, not per --docs). CI's geometry pair passes --shadows=off.
+//   --sunshadows=off|on  SH.3: override Video > Sun shadows for this run, NOT stored. Every scripted mode
+//                        (any --mode) runs with them off unless this is given, so no selftest, shot or
+//                        --stage1 pin moves (and --shadows= keeps the mesher's mode: they replace it).
+//   --sunshadow-selftest SH.3: the sun-shadow map's life cycle (Classes/SunShadow.h), headless: off = absent,
+//                        idle -> no re-render, walking (1 block: none, a snap: one), one sun step, an edit in
+//                        and far outside the box, a caster behind the camera, night and overcast = no pass, the
+//                        Shadows replace (one whole-window re-mesh each way), the Air 2 class (hidden, off).
 //   --light-selfcheck    R.3: also keep the stock dense light array, written by the stock code,
 //                        and report voxels where it and the brick store disagree (`.light`'s
 //                        `mismatch`, must be 0). --light-selftest asserts it when present.
@@ -371,11 +383,14 @@
 //                        (port/tools/ring-light-gate.sh): lightboxes every STEP blocks over --at
 //                        +-320 (alternately high in the air and on the surface, varied paint),
 //                        placed from 9 teleport stops through buildBlock, then saves and quits.
-//   --light-mutate=nosync|nomark|wrap|nolbmark  B.5b-1c's bug-put-back legs (Lighting.h
+//   --light-mutate=nosync|nomark|wrap|nolbmark|r18  B.5b-1c's bug-put-back legs (Lighting.h
 //                        g_light_test_mutation): never rebuild a landed column's light / rebuild it
 //                        but re-mesh nothing / let light wrap past the window edge / (P.10) never
-//                        forget a "no lightbox" column on a landing or a lightbox edit. Each must FAIL
-//                        the ring-light gate (wrap: --light-selftest's window-edge step).
+//                        forget a "no lightbox" column on a landing or a lightbox edit / (LM.1) run
+//                        New Dawn at radius 18, one past the cap. Each must FAIL the ring-light gate
+//                        (wrap: --light-selftest's window-edge step).
+//   --lamp-light=legacy|newdawn  LM.1: the lamp light profile for this run (Lighting.h; default Legacy).
+//   --lamp-radius=R      LM.1: New Dawn's radius (default 16), clamped to [1,17].
 //   --docs=DIR           the save directory. WORKS AS OF STAGE 2 — through Stage 1 it was inert,
 //                        because Classes/FileManager.mm asked real Foundation for
 //                        NSSearchPathForDirectoriesInDomains(NSDocumentDirectory) and the
@@ -574,6 +589,7 @@ static const char* const kModeHelp[][2] = {
     {"--json-selftest", "the JSON reader and writer, and every refusal"},
     {"--keybind-selftest", "the keybind model and the rebind path"},
     {"--light-selftest", "light boxes: place, repaint, break"},
+    {"--light-selftest=modes", "lamp light profiles: Legacy and New Dawn"},
     {"--load-fail-selftest", "a corrupt world is refused with a reason"},
     {"--look-selftest", "mouse and touch look: no loss, no staircase"},
     {"--lua-selftest", "sandboxed Lua mod scripts"},
@@ -593,6 +609,7 @@ static const char* const kModeHelp[][2] = {
     {"--save-fail-selftest", "a save that fails leaves the world intact"},
     {"--settings-selftest", "every settings row and what it writes"},
     {"--shadow-selftest", "baked top-face shadows"},
+    {"--sunshadow-selftest", "GPU sun shadows: when the map re-renders, the Shadows replace"},
     {"--signs-selftest", "signs: model, rendering, tool"},
     {"--srclike-selftest[=leg]", "Srclike movement"},
     {"--touch-selftest", "touch events reach the HUD"},
@@ -657,6 +674,8 @@ static int parse_one_arg(const char* a) {
         else if (starts_with(a, "--console-reference=")) g_opt.consoleRef = a + 20;
         else if (!std::strcmp(a, "--console-dump")) { g_opt.mode = "console-dump"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--content-dump")) { g_opt.mode = "content-dump"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--lua-api-dump")) { g_opt.mode = "lua-api-dump"; g_opt.headless = true; }   // K.8-8
+        else if (starts_with(a, "--check-pack=")) { g_opt.mode = "check-pack"; g_opt.headless = true; g_opt.checkPack = a + 13; }   // K.8-8
         else if (!std::strcmp(a, "--json-selftest")) { g_opt.mode = "json-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--packs-selftest")) { g_opt.mode = "packs-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--mods-selftest")) { g_opt.mode = "mods-selftest"; g_opt.headless = true; }
@@ -737,6 +756,7 @@ static int parse_one_arg(const char* a) {
         else if (starts_with(a, "--emod-ref="))      g_opt.emodRef = a + 11;
         else if (!std::strcmp(a, "--emod-quick"))    g_opt.emodQuick = true;
         else if (!std::strcmp(a, "--light-selftest")) { g_opt.mode = "light-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--light-selftest=modes")) { g_opt.mode = "light-modes-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--evict-selftest")) { g_opt.mode = "evict-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--ring-light-selftest")) { g_opt.mode = "ring-light-selftest"; g_opt.headless = true; }
         else if (starts_with(a, "--weather-mutate=")) g_opt.weatherMutate = a + 17;
@@ -744,6 +764,13 @@ static int parse_one_arg(const char* a) {
         else if (starts_with(a, "--evict-mutate="))  g_opt.evictMutate = a + 15;
         else if (starts_with(a, "--light-lattice=")) g_opt.lightLattice = atoi(a + 16);
         else if (!std::strcmp(a, "--shadow-selftest")) { g_opt.mode = "shadow-selftest"; g_opt.headless = true; }
+        else if (!std::strcmp(a, "--sunshadow-selftest")) { g_opt.mode = "sunshadow-selftest"; g_opt.headless = true; }
+        else if (starts_with(a, "--sunshadows=")) {
+            const char* m = a + 13;
+            const int v = !std::strcmp(m, "off") ? 0 : !std::strcmp(m, "on") ? 1 : -1;
+            if (v < 0) { std::fprintf(stderr, "[eden] --sunshadows= takes off|on\n"); return 2; }
+            SunShadow::setOverride(v);
+        }
         else if (!std::strcmp(a, "--classic-selftest")) { g_opt.mode = "classic-selftest"; g_opt.headless = true; }
         else if (starts_with(a, "--classic-fixture=")) g_opt.classicFixture = a + 18;
         else if (starts_with(a, "--classic-mutate=")) g_opt.classicMutate = a + 17;
@@ -767,9 +794,17 @@ static int parse_one_arg(const char* a) {
         }
         else if (starts_with(a, "--light-mutate=")) {
             const char* m = a + 15;
+            if (!mutation_known("eden-light", "--light-mutate", m, {"nosync", "nomark", "wrap", "nolbmark", "r18"})) return 2;
             g_light_test_mutation = !std::strcmp(m, "nosync") ? 1 : !std::strcmp(m, "nomark") ? 2
-                                  : !std::strcmp(m, "wrap") ? 3 : !std::strcmp(m, "nolbmark") ? 4 : 0;
+                                  : !std::strcmp(m, "wrap") ? 3 : !std::strcmp(m, "nolbmark") ? 4
+                                  : !std::strcmp(m, "r18") ? 5 : 0;
         }
+        else if (starts_with(a, "--lamp-light=")) {
+            const char* m = a + 13;
+            g_opt.lampMode = !std::strcmp(m, "legacy") ? LIGHT_MODE_LEGACY : !std::strcmp(m, "newdawn") ? LIGHT_MODE_NEWDAWN : -1;
+            if (g_opt.lampMode < 0) { std::fprintf(stderr, "[eden] --lamp-light= takes legacy|newdawn\n"); return 2; }
+        }
+        else if (starts_with(a, "--lamp-radius=")) g_opt.lampRadius = (float)atof(a + 14);
         else if (!std::strcmp(a, "--keybind-selftest")) { g_opt.mode = "keybind-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--ui-selftest"))   { g_opt.mode = "ui-selftest"; g_opt.headless = true; }
         else if (!std::strcmp(a, "--convert-prompt-selftest")) { g_opt.mode = "convert-prompt-selftest"; g_opt.headless = true;
@@ -904,6 +939,8 @@ static int eden_main_after_args(int argc, char** argv) {
     // (or EDEN_UPGRADE_256Z) says otherwise -- never the Settings toggle, which a --docs directory
     // starts at its default (on) and which would silently change what every convert gate measures.
     if ((g_opt.mode || !g_opt.liveCmds.empty()) && !getenv("EDEN_UPGRADE_256Z")) eden_setenv("EDEN_UPGRADE_256Z", "0");
+    // LM.3: likewise lamp-light auto-detect: off unless a mode says otherwise, so a converted fixture keeps its Legacy hashes.
+    if ((g_opt.mode || !g_opt.liveCmds.empty()) && !getenv("EDEN_AUTO_LAMP_LIGHT")) eden_setenv("EDEN_AUTO_LAMP_LIGHT", "0");
     // B.5b-2: likewise the window radius -- stock 9 unless --radius= (or EDEN_WINDOW_RADIUS) says otherwise.
     if ((g_opt.mode || !g_opt.liveCmds.empty()) && !getenv("EDEN_WINDOW_RADIUS")) eden_setenv("EDEN_WINDOW_RADIUS", "9");
     // Stage S / S.5: the world-file tools need no engine, no window and no save directory.
@@ -938,6 +975,17 @@ static int eden_main_after_args(int argc, char** argv) {
         if (eden_atmo_override() < 0) eden_atmo_set_override(0);
         if (eden_weather_override() < 0) eden_weather_set_override(0);
     }
+    // LM.1: the lamp light profile for this run (no world is loaded yet, so this only sets it). r18 is
+    // New Dawn at radius 18, one past the cap; --lamp-radius= sets New Dawn's radius (clamped to 17).
+    if (g_light_test_mutation == 5) { light_setNewDawnRadius(LIGHT_RADIUS_MAX + 1); light_setProfile(LIGHT_MODE_NEWDAWN); }
+    else {
+        if (g_opt.lampRadius > 0) light_setNewDawnRadius(g_opt.lampRadius);
+        if (g_opt.lampMode >= 0) light_forceProfile(g_opt.lampMode);
+    }
+    // SH.3: every scripted mode runs without sun shadows unless --sunshadows= asks (a desktop default of On would
+    // otherwise replace the baked shadows under every selftest and add a depth pass to every shot).
+    if (g_opt.mode && std::strcmp(g_opt.mode, "sunshadow-selftest") != 0 && SunShadow::override() < 0)
+        SunShadow::setOverride(0);
     // `--touch-selftest --window=WxH` runs WINDOWED, and that is the whole point of the
     // combination: headless has no window, so the letterbox is degenerate and the mapping under
     // test is the fallback rather than the real one. With a window — and `--touch-profile` for the
@@ -1003,6 +1051,8 @@ static int eden_main_after_args(int argc, char** argv) {
     // K.2-1: the content pin and the pack JSON reader's gate (mode_content.cpp); no world, no window.
     if (g_opt.mode && !std::strcmp(g_opt.mode, "content-dump")) return run_content_dump();
     if (g_opt.mode && !std::strcmp(g_opt.mode, "json-selftest")) return run_json_selftest();
+    if (g_opt.mode && !std::strcmp(g_opt.mode, "lua-api-dump")) return run_lua_api_dump();     // K.8-8
+    if (g_opt.mode && !std::strcmp(g_opt.mode, "check-pack")) return run_check_pack(g_opt.checkPack);
     if (g_opt.mode && !std::strcmp(g_opt.mode, "pack-selftest")) return run_pack_selftest(g_opt.packFixtures);
     // Only the platform default save directory migrates. An explicit --docs= / EDEN_DOCUMENTS is a
     // harness or a deliberate override: migrating into it MOVED a real save out of
@@ -1052,7 +1102,7 @@ static int eden_main_after_args(int argc, char** argv) {
     // engine running headless, which is exactly what the scripted modes want.
     eden_mem_trace_install();
     eden_mem_trace("boot");
-    eden_gl_context_set_drawable_1x(g_opt.drawable1x);
+    eden_gl_context_set_drawable_1x(g_opt.drawable1x || (!g_opt.headless && !eden_sharp_ui_wanted()));
     // UX.5 (I8): an interactive desktop session reopens at the size and place it closed at.
     int restoredPos = 0;
     {
@@ -1201,9 +1251,11 @@ static int eden_main_after_args(int argc, char** argv) {
         else if (!std::strcmp(g_opt.mode, "cmds-selftest")) rc = run_cmds_selftest();
         else if (!std::strcmp(g_opt.mode, "console-selftest")) rc = run_console_selftest();
         else if (!std::strcmp(g_opt.mode, "light-selftest")) rc = run_light_selftest();
+        else if (!std::strcmp(g_opt.mode, "light-modes-selftest")) rc = run_light_modes_selftest();
         else if (!std::strcmp(g_opt.mode, "evict-selftest")) rc = run_evict_selftest();
         else if (!std::strcmp(g_opt.mode, "ring-light-selftest")) rc = run_ring_light_selftest();
         else if (!std::strcmp(g_opt.mode, "shadow-selftest")) rc = run_shadow_selftest();
+        else if (!std::strcmp(g_opt.mode, "sunshadow-selftest")) rc = run_sunshadow_selftest();
         else if (!std::strcmp(g_opt.mode, "classic-selftest")) rc = run_classic_selftest();
         else if (!std::strcmp(g_opt.mode, "props-selftest")) rc = run_props_selftest();
         else if (!std::strcmp(g_opt.mode, "codec-bench"))   rc = eden_codec_bench(g_opt.codecFile.c_str(), g_opt.height, 500);

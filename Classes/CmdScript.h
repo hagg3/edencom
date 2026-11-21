@@ -147,6 +147,7 @@ public:
     static const Verb* findVerb(const char* name);   // case-insensitive; NULL if not a verb
 
     // ---- runtime (main thread, in play)
+    static void freshWork();             // K.6-2: ModScript::leaving() gets one WORK_PER_FRAME of its own
     static void update(float etime);     // World::update, once a frame: resume waits, fire triggers
     // A build tap at (mx, my) with a block (not a tool) armed: if it lands on a command block, press
     // it and return true -- the tap is used up and builds nothing.

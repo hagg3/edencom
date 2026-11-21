@@ -68,6 +68,17 @@ public:
     // True if a dialog was up and took it.
     static bool escape();
 
+    // K.7-1b (V11, finding C-7): a mod's dialog. Call right after show()/prompt(). `token` > 0 owns the dialog;
+    // `footer` is the muted "Mod: <pack>" line; `link` != NULL adds the footer link (a control OUTSIDE the button
+    // grid, so Escape still picks the script's own last button). `onEnd(token, why)` runs, once, when the dialog
+    // ends WITHOUT one of its buttons: END_REPLACED (a show()/prompt() over it, or dismiss()) or END_LINK (the
+    // link was tapped; the dialog has closed). It must not run script code. A button choice does not call it.
+    enum { END_REPLACED = 1, END_LINK = 2 };
+    static void setOwner(int token, const char* footer, const char* link, void (*onEnd)(int token, int why));
+    static int  ownerToken();                       // 0 = no dialog, or an engine dialog
+    static bool footerLinkRect(CGRect* r);          // where the footer link is (the harness taps it); false = none
+    static bool testNoClamp;                        // mutation (--lua-mutate=dialognoclamp): no body clamp (C-8)
+
     void update(float etime);
     void render();
 
@@ -76,6 +87,8 @@ private:
     void reset();
     void layout();
     void choose(int j);
+    void layoutFooter(float px, float pad, float innerW, float py);
+    void endOwned(int why);
 
     bool  m_active;
     void (*m_cb)(int);
@@ -91,6 +104,13 @@ private:
     GLW::Button m_btn[GLDIALOG_MAX_BUTTONS];
     CGRect      m_panel;
     float       m_titleTop, m_bodyTop; // point-space y of each block's top edge
+    int         m_owner;                           // K.7-1b: a mod dialog's token (0 = none)
+    void      (*m_onEnd)(int, int);
+    std::string m_footerText, m_linkText, m_bodyShown;
+    GLW::Label  m_footer;
+    GLW::Button m_link;
+    bool        m_hasLink;
+    float       m_footerTop;
 };
 
 #endif

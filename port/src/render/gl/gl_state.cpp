@@ -51,16 +51,18 @@ void activeTexture0() {
     stat_issued();
 }
 
-static GLuint g_unit1_tex = 0xFFFFFFFFu;   // AT.6: unknown
-void bindTexture1(GLuint t) {
-    if (g_unit1_tex == t) { stat_elided(); return; }
-    glActiveTexture(GL_TEXTURE1);
-    g_active_texture = GL_TEXTURE1;
+// AT.6 unit 1 (the cloud map), SH.2 unit 2 (the sun-shadow map). ~0 = unknown.
+static GLuint g_unit_tex[3] = {0, 0xFFFFFFFFu, 0xFFFFFFFFu};   // [0] unused: unit 0 is ACTUAL's tex2d
+void bindTextureUnit(int unit, GLuint t) {
+    if (g_unit_tex[unit] == t) { stat_elided(); return; }
+    glActiveTexture(GL_TEXTURE0 + unit);
+    g_active_texture = GL_TEXTURE0 + unit;
     glBindTexture(GL_TEXTURE_2D, t);
-    g_unit1_tex = t;
+    g_unit_tex[unit] = t;
     stat_issued();
     activeTexture0();
 }
+void bindTexture1(GLuint t) { bindTextureUnit(1, t); }
 
 void bindPathArray(GLuint buf) {
     if (g_path_array_buffer == buf) { stat_elided(); return; }
@@ -257,13 +259,13 @@ void applyRenderer(const R::State& s, GLuint tex) {
 void forgetTexture(GLuint name) {
     if (name == 0) return;
     if (g_actual.tex2d == name) g_actual.tex2d = 0;
-    if (g_unit1_tex == name) g_unit1_tex = 0;   // AT.6
+    for (int u = 1; u < 3; ++u) if (g_unit_tex[u] == name) g_unit_tex[u] = 0;   // AT.6, SH.2
 }
 
 void invalidate() {
     g_bound_program = 0;
     g_active_texture = 0;
-    g_unit1_tex = 0xFFFFFFFFu;   // AT.6
+    g_unit_tex[1] = g_unit_tex[2] = 0xFFFFFFFFu;   // AT.6, SH.2
     for (int i = 0; i < ATTR_COUNT; ++i) { g_attrCache[i] = AttrCache(); g_constKnown[i] = false; }
     g_path_array_buffer = 0;
     g_path_ebo_dirty = false;

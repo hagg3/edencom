@@ -15,7 +15,7 @@ everything else.
 | `port/src/render/render_internal.h` | What the core and the two backends share (`rcore::`, `rgl::`, `rnull::`). |
 | `port/src/render/gl/gl_state.{h,cpp}` | The GL state cache: program, texture unit, attributes (+ constant attributes), buffer bindings and `glDeleteBuffers`' rule, M0 buffer bytes, draw counters (`eden_gl_stat*`), and ACTUAL (what GL holds; the shim's LOGICAL half went in G.5b-7). |
 | `port/src/render/gl/gl_context.h`, `gl_context_native.cpp` | The context, window, drawable, letterbox, pick viewport and the scene pass at render scale (N.4.11); plain-C header, the host's only view of GL (moved from `port/src/shim/gl/` in G.5b-7). |
-| `port/src/render/gl/gl_loader_native.{h,cpp}` | Linux/Windows entry-point table (69 since G.5b-7). |
+| `port/src/render/gl/gl_loader_native.{h,cpp}` | Linux/Windows entry-point table (72 since SH.2: `glDrawBuffers`, `glReadBuffer`). |
 | `port/src/render/gl/framework/` | `<GLES/gl.h>`/`<GLES2/gl2.h>`: the platform's real GL, for the backend only. The engine-facing `<OpenGLES/ES1/*.h>` pair is gone (SM.7). |
 | `port/src/render/gl/gl_stream.{h,cpp}` | Q.5's two streaming rings. |
 | `port/src/render/gl/gl_textures.{h,cpp}` | Texture uploads (`texCreate`, `texSampling`) with every shim rule (deferred `GL_GENERATE_MIPMAP`, Q.4 swizzle, N.4.9 flush, accounting, probe, `--tex-exp=`). |
@@ -109,8 +109,49 @@ so every other bind stays a unit-0 bind; `forgetTexture` and `invalidate` clear 
 **AT.8: the water-tint twins (18-21).** `world-opaque-wt`, `-hfog-wt`, `-cs-wt`, `-hfog-cs-wt` are the four discard-free world programs with `#define EDEN_WATER_TINT`: in the vertex stage, where `abs(a_color.a - 0.5686) < 0.004` the colour mixes toward `u_wtint.rgb` by `u_wtint.w`, then (until AT.11, see below) added `u_wsun.w * (reflect(normalize(eye), u_wup) . u_wsun)^32`. `R::setWaterTint(tint, sun, up)` / `R::waterTintOff()` (DrawState `wtOn`, cleared by `beginFrame`); `drawWorld` picks `rgl::waterTintVariant` only for `alphaRef < 0` draws while it is on. `--render-selftest-gl` checks alpha 145 tinted, other alphas and off untouched.
 
 **AT.11: the glint twins (22-25), and the tint twins lose the glint.** The per-vertex glint moved out of `EDEN_WATER_TINT` (which is now the tint alone: Low draws only that) into `#define EDEN_WATER_GLINT`: `world-opaque-wg`, `-hfog-wg`, `-cs-wg`, `-hfog-cs-wg` add, in the vertex stage, `v_sp = a_position.xz * 4` (1/16-block cells) and `v_glint = (r . sun)^16` on water (0 elsewhere) plus a faint `0.3 * u_wsun.w * (r . sun)^32` sheen, and in the fragment stage a hash of `floor(v_sp)` that lights the cell near white when it is in the top `0.1 * v_glint` and its twinkle phase `fract(h * 13.7 + u_wup.w)` is < 0.3 (`u_wup.w` is the clock). `drawWorld` picks `rgl::waterGlintVariant` on top of the tint twin only while `wtSun[3] > 0` (High, by day, clear sky). 25 programs; `--render-selftest-gl` adds "no glint away from the mirror direction = the tint alone" (sun below the surface) and that the glint twin was the one drawn. Ambient's glows (AT.11) are plain `drawWorld` with `B_ADD`, a 16 × 16 L8 texture and `fogOff()` (they fade on the CPU by `Graphics::worldFogRange`).
-`compileAll` checks 17/17; `--state-trace` world lines gain `cshadow=(threshold,strength)` only when selected.
+**SH.1: program 1 is a feature key, not a list.** The 16 world ids and the `alphaVariant`/`heightFogVariant`/`cloudShadowVariant`/`waterTintVariant`/`waterGlintVariant` switches became one lazily built table: `rgl::worldProg(key)` with `key` = `WF_NO_DISCARD | WF_HEIGHT_FOG | WF_CLOUD_SHADOW | WF_WATER_TINT | WF_WATER_GLINT` (bit order = `#define` order, so each key's source string is the one the hand-listed twin had; names unchanged, `world[-opaque][-hfog][-cs][-wt|-wg]`). `worldKeyValid` rejects tint without no-discard and glint without tint; `drawWorld` builds the key from the draw state. `alphaVariant` stays for the lit programs; `noDiscard(alphaRef)` is the same test for program 1. The other programs keep fixed ids. A new world feature is one bit and one `#define`. `compileAll` links `programCount()` (25: 16 valid world keys + 9 others).
+`compileAll` checks 25/25; `--state-trace` world lines gain `cshadow=(threshold,strength)` only when selected.
 Engine side: `docs/lighting-liquids-effects.md` "Weather" › Clouds.
+
+**SH.2: sun shadows (the depth target, `depth`/`depth-alpha`, the `WF_SUN_SHADOW` key).** Renderer half only; nothing
+in the engine calls it yet, so every frame is unchanged.
+- **Depth target.** `R::TF_DEPTH16` is a depth texture (`DEPTH_COMPONENT16` + `UNSIGNED_SHORT`, no data, nearest, clamp;
+  sampled as a plain `sampler2D`, compare mode off; core in ES 3.0 and GL 3.3, no extension; 2 bytes a texel in the
+  upload accounting; `texUpdate` ignores it). `R::beginDepthPass(tex, size)` binds the backend's one depth-only
+  framebuffer (created on the first pass; `glDrawBuffers(GL_NONE)` + `glReadBuffer(GL_NONE)`, framebuffer state set
+  once, both in **both** lists of `gl_loader_native.h`, now 72), re-attaches when the texture changes, sets the viewport
+  and clears depth (the mask through `depthWriteNow`); `endDepthPass` puts back the framebuffer and viewport it read with
+  `glGetIntegerv` (the window's framebuffer is not 0 on iOS). The map is unbound from unit 2 first (no feedback loop).
+  An incomplete framebuffer prints `[eden-gl] sun-shadow depth framebuffer … incomplete` once and every later
+  `beginDepthPass` answers false: the feature is unavailable, never a crash. The framebuffer belongs to its texture:
+  `texDestroy` of it frees the framebuffer (`R::depthTargetLive()`), so a caller that frees the map leaves nothing behind.
+- **Rules** (core, both backends; counted in `rcore::inv().depthPassMisuse` and asserted by `--render-selftest`): no
+  depth pass inside `beginScene`/`endScene` (a framebuffer switch mid-scene costs iOS a tile flush) or inside another,
+  no `drawDepth` outside one, none left open at `endFrame` (closed there). The null backend answers true.
+- **`R::drawDepth(g, alphaTex, alphaRef)`**: `depth` (position × `u_mvp`, no discard) when `alphaTex` is 0, else
+  `depth-alpha` (`EDEN_DEPTH_ALPHA`: discard where the texture's alpha through `R::uv()` is ≤ `alphaRef`; a vertex with
+  colour alpha 145/255, the mesher's water mark, goes to `(0, 0, −2, 1)`, outside the clip volume, so water casts
+  nothing). The caller's `setState` applies (depth test/write, cull, polygon offset as the slope bias). Always counted in
+  category `EDEN_RC_SHADOW` (bit 10, `R::Counts` arrays grew to 11; `--scene-shot`'s mask can drop it) and
+  `Counts::depthPasses`; `--state-trace` names it `depth`/`depth-alpha`.
+- **The lookup** (`R::setSunShadow(map, ssMat, params, fade)` / `sunShadowOff()`, DrawState `ssOn`, cleared by
+  `beginFrame`): `drawWorld` adds `WF_SUN_SHADOW` (`#define EDEN_SUN_SHADOW`, name suffix `-ss`; 32 valid world keys, 43
+  programs) while it is on. Vertex: `v_sc = (u_ssMat · eye).xyz` (highp; an ortho light is affine, so exact per
+  fragment). Fragment, after the alpha test and before fog: one `texture(u_ssMap, v_sc.xy).r` (unit 2, `highp
+  sampler2D`), `gap = (v_sc.z − occluder) · params[1]` (blocks along the ray), amount = inside the [0,1]³ box ·
+  `step(params[2], gap)` · reach (1 up to `fade[0]` blocks of gap, 0 from `fade[1]`) · distance (1 up to `v_eyedist`
+  `fade[2]`, 0 from `fade[3]`), colour × `1 − params[0] · amount`. With cloud shadows on as well, the vertex stage also
+  writes `v_cs` (1 under a casting cloud texel at nonzero strength) and the sun term is × `1 − v_cs`: no stacking.
+  `--state-trace` world lines gain `sshadow=(strength,bias,reach_full..reach_end)` only when selected; the texture
+  ledger checks the map like the cloud map. `gl_state`'s `bindTextureUnit(unit, t)` caches units 1 and 2.
+- **Gates.** `--render-selftest` (null): a pass binds, two `drawDepth` count as shadow, the target lives as long as its
+  texture; five misuses refused and counted. `--render-selftest-gl`: before `compileAll`, nothing built for it while
+  unused (no depth program, no `-ss` key, no framebuffer); on a 32 × 32 map under the 64 × 64 check framebuffer (light =
+  camera, so texels line up): the framebuffer completes; `endDepthPass` rebinds the framebuffer it found; a draw after
+  the pass is byte-identical to one without it (a viewport left at 32 × 32 fails this: checked by mutation); under the
+  caster ×0.5 exactly, beside it unchanged; gap past `reach_end`, past the distance fade, outside the box: unchanged;
+  an alpha-checker caster shades only its opaque texels; a water-alpha caster casts nothing; freeing the map frees the
+  framebuffer; no GL error; ledger clean.
 
 
 

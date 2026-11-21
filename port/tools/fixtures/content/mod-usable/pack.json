@@ -1,0 +1,7 @@
+{
+  "format": 1, "id": "mod_usable", "name": "Usable block", "version": "1",
+  "blocks": [
+    {"id": "lever", "faces": {"all": "eden:stone"}, "color": [200, 200, 200],
+     "traits": ["solid", "usable"], "sounds": "eden:stone", "fallback": "eden:stone"}
+  ]
+}

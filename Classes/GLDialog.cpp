@@ -26,8 +26,14 @@ GLDialog::GLDialog() {
     m_nButtons = 0;
     m_touchSlot = -1;
     m_titleTop = m_bodyTop = 0.0f;
+    m_owner = 0;
+    m_onEnd = NULL;
+    m_hasLink = false;
+    m_footerTop = 0.0f;
     m_panel = CGRectMake(0, 0, 0, 0);
 }
+
+bool GLDialog::testNoClamp = false;
 
 GLDialog* GLDialog::getDialog() {
     static GLDialog* d = new GLDialog();
@@ -51,6 +57,44 @@ void GLDialog::reset() {
     m_cb = NULL;
     m_nButtons = 0;
     m_touchSlot = -1;
+    m_owner = 0;
+    m_onEnd = NULL;
+    m_hasLink = false;
+    m_link.setPressed(false);
+    m_footer.clear();
+    m_footerText.clear();
+    m_linkText.clear();
+    m_bodyShown.clear();
+}
+
+// K.7-1b: a dialog that ends without one of its buttons tells its owner (the owner's record, never script code).
+void GLDialog::endOwned(int why) {
+    const int tok = m_owner;
+    void (*fn)(int, int) = m_onEnd;
+    reset();
+    if (tok && fn) fn(tok, why);
+}
+
+void GLDialog::setOwner(int token, const char* footer, const char* link, void (*onEnd)(int, int)) {
+    GLDialog* d = getDialog();
+    if (!d->m_active) return;
+    d->m_owner = token;
+    d->m_onEnd = onEnd;
+    d->m_footerText = footer ? footer : "";
+    d->m_linkText = link ? link : "";
+    d->m_hasLink = !d->m_linkText.empty();
+    if (d->m_hasLink) { d->m_link.setLabel(d->m_linkText.c_str(), GLW::du(12)); d->m_link.sizeToFit(); }
+    d->layout();
+}
+
+int GLDialog::ownerToken() { GLDialog* d = getDialog(); return d->m_active ? d->m_owner : 0; }
+
+bool GLDialog::footerLinkRect(CGRect* r) {
+    GLDialog* d = getDialog();
+    if (!d->m_active || !d->m_hasLink) return false;
+    d->layout();
+    if (r) *r = d->m_link.rect();
+    return true;
 }
 
 void GLDialog::show(const char* title, const char* body,
@@ -59,7 +103,10 @@ void GLDialog::show(const char* title, const char* body,
     if (n > GLDIALOG_MAX_BUTTONS) n = GLDIALOG_MAX_BUTTONS;
 
     GLDialog* d = getDialog();
+    const int oldTok = d->m_active ? d->m_owner : 0;   // C-7: a show() over a mod's dialog resolves its waiter
+    void (*oldEnd)(int, int) = d->m_onEnd;
     d->reset();
+    if (oldTok && oldEnd) oldEnd(oldTok, END_REPLACED);
     d->m_active = true;
     d->m_cb = cb;
     d->m_nButtons = n;
@@ -74,7 +121,7 @@ void GLDialog::setDanger(int j) {
     if (d->m_active && j >= 0 && j < d->m_nButtons) d->m_btn[j].setTone(GLW::Button::TONE_DANGER);
 }
 
-void GLDialog::dismiss() { getDialog()->reset(); }
+void GLDialog::dismiss() { GLDialog* d = getDialog(); if (d->m_active && d->m_owner) d->endOwned(END_REPLACED); else d->reset(); }
 
 bool GLDialog::buttonRect(int j, CGRect* r) {
     GLDialog* d = getDialog();
@@ -147,13 +194,39 @@ void GLDialog::layout() {
     const float colW   = (innerW - gap) * 0.5f;
 
     m_title.set(m_titleText.c_str(), titlePt, UITextAlignmentLeft, innerW);
-    m_body.set(m_bodyText.c_str(),  bodyPt,  UITextAlignmentLeft, innerW, FACE_BODY);
 
+    // K.7-1b (C-8): the footer row ("Mod: <pack>", and the mute link at its right), then the rest of the panel
+    // without the body; the body gets what is left of the safe height and is cut to it with an ellipsis.
+    float footerRowH = 0.0f;
+    float linkW = 0.0f;
+    if (!m_footerText.empty() || m_hasLink) {
+        if (m_hasLink) { linkW = m_link.fitWidth(); m_link.setRect(CGRectMake(0, 0, linkW, controlH(26))); }
+        m_footer.set(m_footerText.c_str(), du(12), UITextAlignmentLeft, std::max(du(40), innerW - linkW - (m_hasLink ? du(8) : 0.0f)), FACE_BODY);
+        footerRowH = std::max(m_footer.height(), m_hasLink ? controlH(26) : 0.0f);
+    } else m_footer.clear();
     const int rows = (m_nButtons + 1) / 2;
     const float fieldH = m_hasField ? std::max(rowH, m_field.heightForLines(m_field.lines())) : rowH;
-    float ph = pad + m_title.height() + (m_body.empty() ? 0.0f : du(4) + m_body.height())
+    const float fixedH = pad + m_title.height()
              + (m_hasField ? du(12) + fieldH : 0.0f)
-             + du(14) + rows * (rowH + gap) - gap + pad;
+             + du(14) + rows * (rowH + gap) - gap + pad
+             + (footerRowH > 0.0f ? du(10) + footerRowH : 0.0f);
+    m_bodyShown = m_bodyText;
+    m_body.set(m_bodyShown.c_str(), bodyPt, UITextAlignmentLeft, innerW, FACE_BODY);
+    const float maxBodyH = safe.size.height - du(16) - fixedH - du(4);
+    if (!testNoClamp && !m_body.empty() && m_body.height() > maxBodyH) {
+        const float keep = std::max(maxBodyH, m_body.lineHeight());
+        size_t lo = 0, hi = m_bodyText.size();   // the longest prefix (+ "...") that fits
+        while (lo < hi) {
+            size_t mid = (lo + hi + 1) / 2;
+            while (mid > lo && ((unsigned char)m_bodyText[mid] & 0xC0) == 0x80) mid--;   // not inside a UTF-8 sequence
+            if (mid <= lo) { hi = lo; break; }
+            m_body.set((m_bodyText.substr(0, mid) + "...").c_str(), bodyPt, UITextAlignmentLeft, innerW, FACE_BODY);
+            if (m_body.height() <= keep) lo = mid; else hi = mid - 1;
+        }
+        m_bodyShown = m_bodyText.substr(0, lo) + "...";
+        m_body.set(m_bodyShown.c_str(), bodyPt, UITextAlignmentLeft, innerW, FACE_BODY);
+    }
+    float ph = fixedH + (m_body.empty() ? 0.0f : du(4) + m_body.height());
 
     const float px = safe.origin.x + (safe.size.width  - pw) * 0.5f;
     const float py = safe.origin.y + (safe.size.height - ph) * 0.5f;
@@ -161,6 +234,10 @@ void GLDialog::layout() {
 
     m_titleTop = py + ph - pad;
     m_bodyTop  = m_titleTop - m_title.height() - du(4);
+    if (footerRowH > 0.0f) {
+        m_footerTop = py + pad + footerRowH - (footerRowH - m_footer.height()) * 0.5f;
+        if (m_hasLink) m_link.setRect(CGRectMake(px + pw - pad - linkW, py + pad, linkW, footerRowH));
+    }
 
     float rowTop = (m_body.empty() ? m_titleTop - m_title.height()
                                    : m_bodyTop - m_body.height()) - du(14);
@@ -202,6 +279,7 @@ void GLDialog::update(float etime) {
             touches[i].inuse = usage_id;
             for (int j = 0; j < m_nButtons; j++)
                 m_btn[j].setPressed(m_btn[j].hit(touches[i].mx, touches[i].my));
+            if (m_hasLink) m_link.setPressed(m_link.hit(touches[i].mx, touches[i].my));
         }
         if (touches[i].inuse == usage_id && touches[i].down == M_RELEASE) {
             int chosen = -1;
@@ -209,10 +287,13 @@ void GLDialog::update(float etime) {
                 m_btn[j].setPressed(false);
                 if (m_btn[j].hit(touches[i].mx, touches[i].my)) chosen = j;
             }
+            const bool onLink = m_hasLink && m_link.hit(touches[i].mx, touches[i].my);
+            m_link.setPressed(false);
             const bool onField = m_hasField && m_field.hit(touches[i].mx, touches[i].my);
             touches[i].inuse = 0;
             touches[i].down = M_NONE;
             if (chosen >= 0) { choose(chosen); return; }
+            if (onLink) { endOwned(END_LINK); return; }
             // Tapping the field re-raises the keyboard after the player dismissed it (iOS).
             if (onField) m_field.focus();
         }
@@ -242,6 +323,8 @@ void GLDialog::render() {
     m_title.draw(tx, m_titleTop, GLW::kText);
     if (!m_body.empty()) m_body.draw(tx, m_bodyTop, GLW::kTextSecondary);
 
+    if (m_footer.empty() == false) m_footer.draw(tx, m_footerTop, GLW::kTextMuted);
+    if (m_hasLink) m_link.render();
     if (m_hasField) m_field.render();
     for (int j = 0; j < m_nButtons; j++) m_btn[j].render();
 

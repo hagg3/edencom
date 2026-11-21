@@ -321,6 +321,10 @@ void tapClose() {
         S.cur = -1; S.shown = false;
         return;
     }
+    askHideAll();
+}
+
+void askHideAll() {
     static const char* const kButtons[2] = {"Hide", "Keep"};
     GLDialog::show("Hide all tutorial hints?", "You can get them back with Restore tutorial world in Settings.", kButtons, 2, onHideAll);
 }

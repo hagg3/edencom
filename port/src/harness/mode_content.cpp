@@ -26,6 +26,7 @@
 #include "../../../Classes/BlockTraits.h"
 #include "../../../Classes/Hud.h"
 #include "../../../Classes/Json.h"
+#include "../../../Classes/ModScript.h"
 #include <chrono>
 
 extern "C" int hudBlocksMap[BLOCK_IDS];
@@ -121,6 +122,18 @@ std::string modDumpText() {
         for (const ContentPack::LoadedBlock& b : r.blocks) if (b.pack == (int)i) ++n;
         line(&o, "pack %s %s %d/%zu %d", p.folder.c_str(), p.id.empty() ? "-" : p.id.c_str(), n, p.blocksInFile, (int)p.refused);
         for (const std::string& l : p.lines) line(&o, "line %s", l.c_str());
+        if (p.state == ContentPack::PACK_LOADED)
+            for (const ContentPack::ModIconSrc& ic : p.icons) line(&o, "icon %s:%s", p.id.c_str(), ic.name.c_str());   // K.7-3c
+        for (const ContentPack::ModSetting& s : p.settings) {   // K.7-2a: what the pack's settings page will show
+            if (s.type == "heading") line(&o, "setting %s - heading %s", p.id.c_str(), s.label.c_str());
+            else if (s.type == "toggle") line(&o, "setting %s %s toggle %s", p.id.c_str(), s.id.c_str(), s.defBool ? "true" : "false");
+            else if (s.type == "slider") line(&o, "setting %s %s slider %g %g %g %g", p.id.c_str(), s.id.c_str(), s.min, s.max, s.step, s.defNum);
+            else if (s.type == "choice") {
+                std::string opts;
+                for (const std::string& op : s.options) opts += (opts.empty() ? "" : "|") + op;
+                line(&o, "setting %s %s choice %s %s", p.id.c_str(), s.id.c_str(), opts.c_str(), s.defText.c_str());
+            } else line(&o, "setting %s %s text %d %s", p.id.c_str(), s.id.c_str(), s.maxLen, s.defText.c_str());
+        }
     }
     for (const std::string& l : r.lines) line(&o, "loader %s", l.c_str());
     line(&o, "# block name info color faces(6) sound_set paint_art fallback paint picker");
@@ -179,6 +192,33 @@ int run_content_dump() {
         std::printf("[content-dump] mods BEGIN\n%s[content-dump] mods END\n", modDumpText().c_str());
     }
     return fireDiffs ? 1 : 0;
+}
+
+// K.8-8: the LuaLS stubs on stdout. Exit 1 when the API table and its doc lines disagree.
+int run_lua_api_dump() {
+    const std::string miss = ModScript::apiDocsMissing();
+    if (!miss.empty()) { std::fprintf(stderr, "[lua-api-dump] no doc line for: %s\n", miss.c_str()); return 1; }
+    std::fputs(ModScript::apiStubs().c_str(), stdout);
+    return 0;
+}
+
+// K.8-8: what the loader would say about one pack folder, plus a syntax check of its scripts. Warnings alone exit 0.
+int run_check_pack(const std::string& dir) {
+    std::vector<unsigned char> bytes;
+    if (!harness::read_file(dir + "/pack.json", &bytes)) { std::fprintf(stderr, "check-pack: %s/pack.json: cannot read\n", dir.c_str()); return 1; }
+    ContentPack::ModPack pk;
+    const bool ok = ContentPack::compileMod((const char*)bytes.data(), bytes.size(), dir, dir, &pk);
+    int errors = (!ok || pk.refused) ? 1 : 0;
+    for (const std::string& l : pk.lines) {
+        std::printf("%s\n", l.c_str());
+        if (l.find("warning:") == std::string::npos) ++errors;
+    }
+    for (const ContentPack::ModScriptSrc& sc : pk.scripts) {
+        std::string err;
+        if (!ModScript::syntaxCheck(sc.source, "@" + sc.path, &err)) { std::printf("%s: %s\n", sc.path.c_str(), err.c_str()); ++errors; }
+    }
+    std::printf("check-pack: %s: %d block(s), %zu script(s), %d error(s)\n", pk.id.empty() ? dir.c_str() : pk.id.c_str(), (int)pk.blocks.size(), pk.scripts.size(), errors);
+    return errors ? 1 : 0;
 }
 
 // ---------------------------------------------------------------------------------------------

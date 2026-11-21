@@ -82,7 +82,16 @@ def main(out):
         c = [(200, 40, 40), (40, 90, 200), (230, 200, 40), (40, 170, 80)][pane]
         return c + (150,)
     png(os.path.join(out, "stained_glass.png"), 32, 32, stained, True)
-    print("wrote 6 tiles to %s" % out)
+    # K.7-3c: a 64x64 white-on-transparent icon (a four-point sparkle), tinted by the UI like a built-in one.
+    def spark(x, y):
+        dx, dy = abs(x - 31.5) / 31.5, abs(y - 31.5) / 31.5
+        d = (dx ** 0.5 + dy ** 0.5)
+        a = max(0.0, min(1.0, (1.0 - d) * 6.0))
+        return (255, 255, 255, int(255 * a))
+    icons = os.path.join(os.path.dirname(out.rstrip("/")), "icons")
+    os.makedirs(icons, exist_ok=True)
+    png(os.path.join(icons, "spark.png"), 64, 64, spark, True)
+    print("wrote 6 tiles to %s and 1 icon to %s" % (out, icons))
 
 
 if __name__ == "__main__":

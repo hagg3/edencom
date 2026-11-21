@@ -63,6 +63,7 @@ struct CatalogueEntry {
     std::string id, name, version, description, author, url, sha256;
     long long size = -1;
     std::vector<std::string> needs;   // "requires", as written
+    bool scripts = false;             // K.8-6: "scripts": true, the pack runs Lua (a tag only; the pack's own manifest decides)
 };
 bool parseCatalogue(const char* data, size_t len, std::vector<CatalogueEntry>* out, int* dropped, std::string* error);
 

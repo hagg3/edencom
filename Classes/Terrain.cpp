@@ -22,6 +22,7 @@
 #include "Precip.h"
 #include "Ambient.h"              // AT.7
 #include "Clouds.h"              // AT.6 cloud layer + shadows
+#include "SunShadow.h"           // SH.3 GPU sun shadows
 #include "MpWorld.h"             // MP.3a: the session world (no file behind the window)
 
 // Repo-root Lighting.h is the built one; these explicit decls predate it.
@@ -251,6 +252,7 @@ void Terrain::clearBlocks(){
 	memset(blockarray,0,sizeof(block8)*T_SIZE*T_SIZE*T_HEIGHT);
   //  memset(shadowarray,0,sizeof(color8)*T_SIZE*T_SIZE);
     shadow_clear();   // H.2: the 1.x shadowarray's successor (Shadow.h)
+    SunShadow::reset();   // SH.3: the window's contents start over
     Precip::reset();  // AT.2b
     Ambient::reset(); // AT.7
     if(!LOW_MEM_DEVICE)
@@ -333,6 +335,7 @@ void Terrain::allocateMemory(){
     memset(chunksToUpdateImmediatley,0,sizeof(bool)*CHUNKS_PER_SIDE*CHUNKS_PER_SIDE*CHUNKS_PER_COLUMN);
     blockarray=(block8*)malloc(sizeof(block8)*(T_SIZE+1)*(T_SIZE+1)*(T_HEIGHT+1));
     shadow_allocate();   // H.2: T_SIZE*T_SIZE tops, sized like blockarray from the window radius
+    SunShadow::reset();  // SH.3: a new window
     if(!LOW_MEM_DEVICE)
     light_storeAllocate();   // Stage R / R.3: a brick table, not the dense lightarray (Lighting.h)
 }
@@ -360,6 +363,7 @@ void Terrain::deallocateMemory(){
     shadow_free();
     Precip::reset();  // AT.2b: the rain's texture and buffer
     Clouds::reset();  // AT.6: the cloud map and quad
+    SunShadow::reset();   // SH.3: the shadow map and its framebuffer
     Ambient::reset(); // AT.7: the particle pool
     if(!LOW_MEM_DEVICE)
 light_storeFree();   // R.3: the only place a light brick is freed (Lighting.h)
@@ -949,7 +953,7 @@ void Terrain::destroyBlock(int x,int z,int y){
         extern Vector colorTable[256];
         addlight(x,z,y,-1.0f,colorTable[paint]);
         updateChunks(x ,z ,y ,TYPE_NONE);
-         refreshChunksInRadius(x,z,y,LIGHT_RADIUS);
+         refreshChunksInRadius(x,z,y,light_refreshRadius());
         
     }
 	
@@ -1000,7 +1004,7 @@ void Terrain::explodeBlock(int x,int z,int y){
         //paint=getColor:x:z:y];
         addlight(x,z,y,-1.0f,colorTable[paint]);
         
-        refreshChunksInRadius(x,z,y,LIGHT_RADIUS);
+        refreshChunksInRadius(x,z,y,light_refreshRadius());
         
         updateChunks(x ,z ,y ,TYPE_NONE);
         
@@ -1322,7 +1326,7 @@ void Terrain::buildBlock(int x,int z,int y){
         addlight(x,z,y,1.0f,colorTable[World::getWorld->hud->block_paintcolor]);
         
         updateChunks(x ,z ,y ,type);
-        refreshChunksInRadius(x,z,y,LIGHT_RADIUS);
+        refreshChunksInRadius(x,z,y,light_refreshRadius());
         setColor(x ,z ,y ,World::getWorld->hud->block_paintcolor );
 
     }else{
@@ -1352,7 +1356,7 @@ void Terrain::paintBlock(int x,int z,int y,int color){
             extern Vector colorTable[256];
             addlight(x,z,y,-1.0f,colorTable[pcolor]);
             addlight(x,z,y,1.0f,colorTable[color]);
-            refreshChunksInRadius(x,z,y,LIGHT_RADIUS);
+            refreshChunksInRadius(x,z,y,light_refreshRadius());
             
             
             
@@ -1634,7 +1638,7 @@ void Terrain::setCellState(int x,int z,int y,int type,int color){
     updateChunks(x,z,y,type);                    // air also drops what hangs on the block
     if(type!=TYPE_NONE||paint)setColor(x,z,y,(color8)paint);
     if(type==TYPE_WATER||type==TYPE_LAVA)liquids->addSource(x,z,y);
-    if(cur==TYPE_LIGHTBOX||type==TYPE_LIGHTBOX)refreshChunksInRadius(x,z,y,LIGHT_RADIUS);
+    if(cur==TYPE_LIGHTBOX||type==TYPE_LIGHTBOX)refreshChunksInRadius(x,z,y,light_refreshRadius());
 }
 /*- (void)updateCustom:(int)x :(int)z :(int)y:(int)type:(int)color{
    	int pos[3]={x/2,y/2,z/2};
@@ -3965,6 +3969,7 @@ void Terrain::render(){
     // HUD left: SA,1-SA, or with the HUD hidden beginHud's ONE,ONE, an accident; docs/rendering.md.)
     R::fogOff();
     R::cloudShadowOff();   // AT.6: the shadows are the terrain's; the sky and the swirls draw without them
+    R::sunShadowOff();     // SH.3: likewise
     R::waterTintOff();     // AT.8
     R::proj().push();
     R::proj().loadIdentity();
@@ -4210,6 +4215,7 @@ void Terrain::render2(){
     Graphics::applyWorldFog();
     Graphics::applyHeightFog();   // AT.5: before the x0.25 (the plane is the camera's view)
     Clouds::applyShadow();        // AT.6: likewise (water and glass take the cloud shadows too)
+    SunShadow::apply();           // SH.3: likewise (and the sun's)
     Graphics::applyWaterTint();   // AT.8: likewise (state it before the x0.25: it reads the camera's view)
 	R::mv().push();
 	R::mv().scale(.25f,.25f,.25f);

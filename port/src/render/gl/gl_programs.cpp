@@ -5,6 +5,7 @@
 #include "gl_programs.h"
 
 #include <cstdio>
+#include <string>
 #include <cstring>
 
 extern "C" int eden_gl_tex_experiments(void);   // gl_textures.cpp, --tex-exp=
@@ -115,6 +116,13 @@ static const char* kWorldVS =
     "out highp vec2 v_sp;\n"     // the sparkle cell (1/16 block) of the surface
     "out float v_glint;\n"       // how near the mirror direction (0 off water)
     "#endif\n"
+    "#ifdef EDEN_SUN_SHADOW\n"   // SH.2: eye space -> the shadow map's [0,1]^3 (an ortho light: affine, exact per fragment)
+    "uniform highp mat4 u_ssMat;\n"
+    "out highp vec3 v_sc;\n"
+    "#ifdef EDEN_CLOUD_SHADOW\n"
+    "out float v_cs;\n"          // 1 under a casting cloud texel: the sun is already taken
+    "#endif\n"
+    "#endif\n"
     "void main() {\n"
     "  gl_Position = u_mvp * a_position;\n"
     "  vec4 eye = u_mv * a_position;\n"
@@ -128,6 +136,12 @@ static const char* kWorldVS =
     "  vec2 cuv = vec2(dot(u_csU.xyz, eye.xyz) + u_csU.w, dot(u_csV.xyz, eye.xyz) + u_csV.w);\n"
     "  float cv = textureLod(u_cloudTex, cuv, 0.0).r;\n"
     "  v_color.rgb *= 1.0 - u_cshadow.y * step(u_cshadow.x, cv);\n"
+    "#ifdef EDEN_SUN_SHADOW\n"
+    "  v_cs = step(u_cshadow.x, cv) * step(0.001, u_cshadow.y);\n"
+    "#endif\n"
+    "#endif\n"
+    "#ifdef EDEN_SUN_SHADOW\n"
+    "  v_sc = (u_ssMat * eye).xyz;\n"
     "#endif\n"
     "#ifdef EDEN_WATER_TINT\n"
     "  bool water = abs(a_color.a - 0.5686) < 0.004;\n"
@@ -167,6 +181,15 @@ static const char* kWorldFS =
     "in highp vec2 v_sp;\n"
     "in float v_glint;\n"
     "#endif\n"
+    "#ifdef EDEN_SUN_SHADOW\n"   // SH.2: the map on unit 2, one nearest texel (compare mode off): the occluder's depth
+    "uniform highp sampler2D u_ssMap;\n"
+    "uniform highp vec4 u_ssParam;\n"   // strength, depth range (blocks), bias (blocks)
+    "uniform highp vec4 u_ssFade;\n"    // reach full, reach end (blocks of gap); eye distance fade start, end
+    "in highp vec3 v_sc;\n"
+    "#ifdef EDEN_CLOUD_SHADOW\n"
+    "in float v_cs;\n"
+    "#endif\n"
+    "#endif\n"
     "void main() {\n"
     "  vec4 c = v_color * texture(u_tex, EDEN_UV(v_texcoord));\n"
     "#ifdef EDEN_WATER_GLINT\n"   // AT.11: texel-sized sparkles along the sun's path, each twinkling on its own phase
@@ -178,6 +201,19 @@ static const char* kWorldFS =
     "#endif\n"
     "#ifndef EDEN_NO_DISCARD\n"   // PW.3: the opaque variants never discard, so the GPU keeps early-Z/HSR
     "  if (c.a <= u_alphaRef) discard;\n"
+    "#endif\n"
+    "#ifdef EDEN_SUN_SHADOW\n"   // gap: blocks along the sun ray behind the first surface it hit
+    "  {\n"
+    "    highp float gap = (v_sc.z - texture(u_ssMap, v_sc.xy).r) * u_ssParam.y;\n"
+    "    highp vec3 in3 = step(vec3(0.0), v_sc) * step(v_sc, vec3(1.0));\n"
+    "    float amt = in3.x * in3.y * in3.z * step(u_ssParam.z, gap)\n"
+    "              * (1.0 - clamp((gap - u_ssFade.x) / max(u_ssFade.y - u_ssFade.x, 1e-3), 0.0, 1.0))\n"
+    "              * (1.0 - clamp((v_eyedist - u_ssFade.z) / max(u_ssFade.w - u_ssFade.z, 1e-3), 0.0, 1.0));\n"
+    "#ifdef EDEN_CLOUD_SHADOW\n"
+    "    amt *= 1.0 - v_cs;\n"
+    "#endif\n"
+    "    c.rgb *= 1.0 - u_ssParam.x * amt;\n"
+    "  }\n"
     "#endif\n"
     "  float f = clamp((u_fogEnd - v_eyedist) / u_fogRange, 0.0, 1.0);\n"
     "#ifdef EDEN_HEIGHT_FOG\n"   // denser the deeper below the mist top, and the farther away
@@ -471,6 +507,41 @@ static const char* kPrecipFS =
     "  fragColor = vec4(v_color.rgb, v_color.a * mix(soft, ring, v_side.z));\n"
     "}\n";
 
+// SH.2: the sun-shadow depth pass. Position only into a depth-only framebuffer (no colour buffer: the output is
+// discarded by glDrawBuffers(GL_NONE)). EDEN_DEPTH_ALPHA is stream 2 (leaves, glass, water): the atlas alpha test
+// gives leaves and glass their texture's shape, and a vertex with the mesher's water mark (alpha 145/255) leaves the
+// clip volume, so water's triangles collapse and cast nothing.
+static const char* kDepthVS =
+    "uniform mat4 u_mvp;\n"
+    "uniform vec4 u_uvso;\n"
+    "in vec4 a_position;\n"
+    "#ifdef EDEN_DEPTH_ALPHA\n"
+    "in vec4 a_color;\n"
+    "in vec2 a_texcoord;\n"
+    "out vec2 v_texcoord;\n"
+    "#endif\n"
+    "void main() {\n"
+    "  gl_Position = u_mvp * a_position;\n"
+    "#ifdef EDEN_DEPTH_ALPHA\n"
+    "  v_texcoord = a_texcoord * u_uvso.xy + u_uvso.zw;\n"
+    "  if (abs(a_color.a - 0.5686) < 0.004) gl_Position = vec4(0.0, 0.0, -2.0, 1.0);\n"
+    "#endif\n"
+    "}\n";
+static const char* kDepthFS =
+    "precision mediump float;\n"
+    "#ifdef EDEN_DEPTH_ALPHA\n"
+    "uniform sampler2D u_tex;\n"
+    "uniform float u_alphaRef;\n"
+    "in highp vec2 v_texcoord;\n"
+    "#endif\n"
+    "out vec4 fragColor;\n"
+    "void main() {\n"
+    "#ifdef EDEN_DEPTH_ALPHA\n"
+    "  if (texture(u_tex, EDEN_UV(v_texcoord)).a <= u_alphaRef) discard;\n"
+    "#endif\n"
+    "  fragColor = vec4(1.0);\n"
+    "}\n";
+
 // I.1/FT.8: the texcoord varyings are `highp` in every fragment stage. Under `precision mediump`
 // they were fp16 on Apple GPUs (A18 measured by eye: iPhone 16 Pro Max), and the block atlas is
 // 32x4096 (128 tiles of 32 rows) whose tile UVs are inset only 1e-5 (0.04 row): fp16 rounds v by up
@@ -492,46 +563,67 @@ static const char* kUvFS =
 // `defs` follows the preamble: EDEN_COLOR_QUAL is the colour varying's interpolation qualifier.
 struct ProgSrc { const char* name; const char* vs; const char* fs; const char* defs; };
 static const char* kSmooth = "#define EDEN_COLOR_QUAL\n";
-static const ProgSrc kProgSrc[P_PROG_COUNT] = {
-    {"world", kWorldVS, kWorldFS, kSmooth},
+static const ProgSrc kProgSrc[P_WORLD_BASE] = {
     {"ui", kUiVS, kUiFS, kSmooth},
     {"sprite", kSpriteVS, kSpriteFS, kSmooth},
     {"skinned", kSkinnedVS, kSkinnedFS, kSmooth},
     {"lit", kLitVS, kWorldFS, kSmooth},   // lit shares the world fragment stage (texture, alpha, fog)
     {"lit-flat", kLitVS, kWorldFS, "#define EDEN_COLOR_QUAL flat\n"},
     // PW.3 (G1): the same fragment stage with the alpha test compiled out, for draws with alphaRef < 0.
-    {"world-opaque", kWorldVS, kWorldFS, "#define EDEN_COLOR_QUAL\n#define EDEN_NO_DISCARD\n"},
     {"lit-opaque", kLitVS, kWorldFS, "#define EDEN_COLOR_QUAL\n#define EDEN_NO_DISCARD\n"},
     {"lit-flat-opaque", kLitVS, kWorldFS, "#define EDEN_COLOR_QUAL flat\n#define EDEN_NO_DISCARD\n"},
     {"precip", kPrecipVS, kPrecipFS, kSmooth},   // AT.2b
-    // AT.5 (P3): program 1 with the height-fog term, for the High tier's mist; built on first use.
-    {"world-hfog", kWorldVS, kWorldFS, "#define EDEN_COLOR_QUAL\n#define EDEN_HEIGHT_FOG\n"},
-    {"world-opaque-hfog", kWorldVS, kWorldFS, "#define EDEN_COLOR_QUAL\n#define EDEN_NO_DISCARD\n#define EDEN_HEIGHT_FOG\n"},
     {"clouds", kCloudsVS, kCloudsFS, kSmooth},   // AT.6
-    // AT.6 (P3): the cloud-shadow twins of the four world programs above (a vertex-stage term only).
-    {"world-cs", kWorldVS, kWorldFS, "#define EDEN_COLOR_QUAL\n#define EDEN_CLOUD_SHADOW\n"},
-    {"world-opaque-cs", kWorldVS, kWorldFS, "#define EDEN_COLOR_QUAL\n#define EDEN_NO_DISCARD\n#define EDEN_CLOUD_SHADOW\n"},
-    {"world-hfog-cs", kWorldVS, kWorldFS, "#define EDEN_COLOR_QUAL\n#define EDEN_HEIGHT_FOG\n#define EDEN_CLOUD_SHADOW\n"},
-    {"world-opaque-hfog-cs", kWorldVS, kWorldFS,
-     "#define EDEN_COLOR_QUAL\n#define EDEN_NO_DISCARD\n#define EDEN_HEIGHT_FOG\n#define EDEN_CLOUD_SHADOW\n"},
-    // AT.8: the water-tint twins of the four discard-free world programs (the transparent chunk draws).
-    {"world-opaque-wt", kWorldVS, kWorldFS, "#define EDEN_COLOR_QUAL\n#define EDEN_NO_DISCARD\n#define EDEN_WATER_TINT\n"},
-    {"world-opaque-hfog-wt", kWorldVS, kWorldFS,
-     "#define EDEN_COLOR_QUAL\n#define EDEN_NO_DISCARD\n#define EDEN_HEIGHT_FOG\n#define EDEN_WATER_TINT\n"},
-    {"world-opaque-cs-wt", kWorldVS, kWorldFS,
-     "#define EDEN_COLOR_QUAL\n#define EDEN_NO_DISCARD\n#define EDEN_CLOUD_SHADOW\n#define EDEN_WATER_TINT\n"},
-    {"world-opaque-hfog-cs-wt", kWorldVS, kWorldFS,
-     "#define EDEN_COLOR_QUAL\n#define EDEN_NO_DISCARD\n#define EDEN_HEIGHT_FOG\n#define EDEN_CLOUD_SHADOW\n#define EDEN_WATER_TINT\n"},
-    // AT.11: the glint twins of the four water-tint twins (High: sparkles in the fragment stage, water draws only).
-    {"world-opaque-wg", kWorldVS, kWorldFS,
-     "#define EDEN_COLOR_QUAL\n#define EDEN_NO_DISCARD\n#define EDEN_WATER_TINT\n#define EDEN_WATER_GLINT\n"},
-    {"world-opaque-hfog-wg", kWorldVS, kWorldFS,
-     "#define EDEN_COLOR_QUAL\n#define EDEN_NO_DISCARD\n#define EDEN_HEIGHT_FOG\n#define EDEN_WATER_TINT\n#define EDEN_WATER_GLINT\n"},
-    {"world-opaque-cs-wg", kWorldVS, kWorldFS,
-     "#define EDEN_COLOR_QUAL\n#define EDEN_NO_DISCARD\n#define EDEN_CLOUD_SHADOW\n#define EDEN_WATER_TINT\n#define EDEN_WATER_GLINT\n"},
-    {"world-opaque-hfog-cs-wg", kWorldVS, kWorldFS,
-     "#define EDEN_COLOR_QUAL\n#define EDEN_NO_DISCARD\n#define EDEN_HEIGHT_FOG\n#define EDEN_CLOUD_SHADOW\n#define EDEN_WATER_TINT\n#define EDEN_WATER_GLINT\n"},
+    {"depth", kDepthVS, kDepthFS, kSmooth},      // SH.2
+    {"depth-alpha", kDepthVS, kDepthFS, "#define EDEN_COLOR_QUAL\n#define EDEN_DEPTH_ALPHA\n"},
 };
+
+// SH.1: the world program for a feature key: defines in WorldFeat bit order, name "world[-opaque][-hfog][-cs][-wt|-wg][-ss]".
+static const char* worldDefs(unsigned key) {
+    static std::string s[WF_KEYS];
+    std::string& d = s[key];
+    if (d.empty()) {
+        d = "#define EDEN_COLOR_QUAL\n";
+        if (key & WF_NO_DISCARD) d += "#define EDEN_NO_DISCARD\n";
+        if (key & WF_HEIGHT_FOG) d += "#define EDEN_HEIGHT_FOG\n";
+        if (key & WF_CLOUD_SHADOW) d += "#define EDEN_CLOUD_SHADOW\n";
+        if (key & WF_WATER_TINT) d += "#define EDEN_WATER_TINT\n";
+        if (key & WF_WATER_GLINT) d += "#define EDEN_WATER_GLINT\n";
+        if (key & WF_SUN_SHADOW) d += "#define EDEN_SUN_SHADOW\n";
+    }
+    return d.c_str();
+}
+static const char* worldName(unsigned key) {
+    static std::string s[WF_KEYS];
+    std::string& n = s[key];
+    if (n.empty()) {
+        n = "world";
+        if (key & WF_NO_DISCARD) n += "-opaque";
+        if (key & WF_HEIGHT_FOG) n += "-hfog";
+        if (key & WF_CLOUD_SHADOW) n += "-cs";
+        if (key & WF_WATER_GLINT) n += "-wg";
+        else if (key & WF_WATER_TINT) n += "-wt";
+        if (key & WF_SUN_SHADOW) n += "-ss";
+    }
+    return n.c_str();
+}
+static ProgSrc srcFor(ProgId id) {
+    if (id >= P_WORLD_BASE) return {worldName(id - P_WORLD_BASE), kWorldVS, kWorldFS, worldDefs(id - P_WORLD_BASE)};
+    return kProgSrc[id];
+}
+
+bool worldKeyValid(unsigned key) {
+    if (key >= WF_KEYS) return false;
+    if ((key & WF_WATER_TINT) && !(key & WF_NO_DISCARD)) return false;
+    if ((key & WF_WATER_GLINT) && !(key & WF_WATER_TINT)) return false;
+    return true;
+}
+static bool idValid(int id) { return id >= 0 && id < P_PROG_COUNT && (id < P_WORLD_BASE || worldKeyValid(id - P_WORLD_BASE)); }
+int programCount() {
+    int n = 0;
+    for (int i = 0; i < P_PROG_COUNT; ++i) n += idValid(i);
+    return n;
+}
 
 static const char* const kUniName[U_COUNT] = {
     "u_mvp", "u_mv", "u_proj", "u_uvso", "u_tex",
@@ -545,6 +637,7 @@ static const char* const kUniName[U_COUNT] = {
     "u_cray0", "u_cray1", "u_cray2", "u_cpos", "u_cparam", "u_ccolor", "u_cshade",
     "u_csU", "u_csV", "u_cshadow", "u_cloudTex",
     "u_wtint", "u_wsun", "u_wup",
+    "u_ssMat", "u_ssParam", "u_ssFade", "u_ssMap",
 };
 
 static Program g_progs[P_PROG_COUNT];
@@ -553,7 +646,7 @@ static bool build(ProgId id, std::string* log) {
     Program& p = g_progs[id];
     p = Program();
     p.tried = true;
-    const ProgSrc& s = kProgSrc[id];
+    const ProgSrc s = srcFor(id);
     std::string fsDefs = s.defs;
     if (eden_gl_tex_experiments() & EDEN_TEX_EXP_FP16UV) fsDefs += "#define EDEN_UV_FP16\n";
     fsDefs += kUvFS;
@@ -571,50 +664,14 @@ static bool build(ProgId id, std::string* log) {
 }
 
 extern "C" int eden_power_exp(int bit);   // power.cpp
+bool noDiscard(float alphaRef) {
+    return alphaRef < 0.0f && !eden_power_exp(32768 /* EDEN_PEXP_DISCARD, harness.h */);
+}
 ProgId alphaVariant(ProgId id, float alphaRef) {
-    if (alphaRef >= 0.0f || eden_power_exp(32768 /* EDEN_PEXP_DISCARD, harness.h */)) return id;
+    if (!noDiscard(alphaRef)) return id;
     switch (id) {
-        case P_WORLD: return P_WORLD_OPAQUE;
         case P_LIT: return P_LIT_OPAQUE;
         case P_LIT_FLAT: return P_LIT_FLAT_OPAQUE;
-        default: return id;
-    }
-}
-
-// AT.5: the height-fog twin of a world program (P_WORLD or P_WORLD_OPAQUE); anything else unchanged.
-ProgId heightFogVariant(ProgId id) {
-    return id == P_WORLD ? P_WORLD_HFOG : id == P_WORLD_OPAQUE ? P_WORLD_OPAQUE_HFOG : id;
-}
-
-// AT.8: the water-tint twin of a discard-free world program (plain, height-fog, cloud-shadow or both).
-ProgId waterTintVariant(ProgId id) {
-    switch (id) {
-        case P_WORLD_OPAQUE: return P_WORLD_OPAQUE_WT;
-        case P_WORLD_OPAQUE_HFOG: return P_WORLD_OPAQUE_HFOG_WT;
-        case P_WORLD_OPAQUE_CS: return P_WORLD_OPAQUE_CS_WT;
-        case P_WORLD_OPAQUE_HFOG_CS: return P_WORLD_OPAQUE_HFOG_CS_WT;
-        default: return id;
-    }
-}
-
-// AT.11: the glint twin of a water-tint twin; anything else unchanged.
-ProgId waterGlintVariant(ProgId id) {
-    switch (id) {
-        case P_WORLD_OPAQUE_WT: return P_WORLD_OPAQUE_WG;
-        case P_WORLD_OPAQUE_HFOG_WT: return P_WORLD_OPAQUE_HFOG_WG;
-        case P_WORLD_OPAQUE_CS_WT: return P_WORLD_OPAQUE_CS_WG;
-        case P_WORLD_OPAQUE_HFOG_CS_WT: return P_WORLD_OPAQUE_HFOG_CS_WG;
-        default: return id;
-    }
-}
-
-// AT.6: the cloud-shadow twin of a world program (plain or height-fog); anything else unchanged.
-ProgId cloudShadowVariant(ProgId id) {
-    switch (id) {
-        case P_WORLD: return P_WORLD_CS;
-        case P_WORLD_OPAQUE: return P_WORLD_OPAQUE_CS;
-        case P_WORLD_HFOG: return P_WORLD_HFOG_CS;
-        case P_WORLD_OPAQUE_HFOG: return P_WORLD_OPAQUE_HFOG_CS;
         default: return id;
     }
 }
@@ -622,6 +679,7 @@ ProgId cloudShadowVariant(ProgId id) {
 bool built(ProgId id) { return g_progs[id].id != 0; }
 
 Program* program(ProgId id) {
+    if (!idValid(id)) return nullptr;   // an unreachable world key (e.g. glint without tint) is never built
     Program& p = g_progs[id];
     if (!p.tried) build(id, nullptr);
     return p.id ? &p : nullptr;
@@ -630,6 +688,7 @@ Program* program(ProgId id) {
 int compileAll(std::string* log) {
     int n = 0;
     for (int i = 0; i < P_PROG_COUNT; ++i) {
+        if (!idValid(i)) continue;
         if (g_progs[i].id) { ++n; continue; }
         if (build((ProgId)i, log)) ++n;
     }

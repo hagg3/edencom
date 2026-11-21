@@ -352,7 +352,7 @@ All in `Terrain.cpp`:
   4 side neighbours are solid; two adjacent solid sides ⇒ becomes a corner ("side")
   piece, otherwise faces the player's yaw quadrant. Doors/portals place two stacked
   blocks (`TYPE_*1+r` bottom encoding direction, `TYPE_*_TOP` top). Lightboxes call
-  `addlight(…, +1)` and refresh chunks in `LIGHT_RADIUS`. Golden cubes decrement the
+  `addlight(…, +1)` and refresh chunks in `light_refreshRadius()` (the lamp light profile's radius, `docs/lighting-liquids-effects.md`). Golden cubes decrement the
   `goldencubes` inventory.
 - **`destroyBlock` / `explodeBlock`** — refuse bedrock/golden-cube
   (destroy) and bedrock/steel (explosion); remove liquid sources; spawn break/explode

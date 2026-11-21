@@ -27,6 +27,8 @@ extern TerrainChunk** chunkTablec;
 
 static int g_shadow_setting=SHADOW_OFF;
 static int g_shadow_override=-1;
+static bool g_shadow_sun_replace=false;   // SH.3: Video > Sun shadows is on (Classes/SunShadow.h)
+int g_shadow_remeshes=0;
 static bool g_shadow_lamp_tint=false;
 // One byte per chunk-column slot (getColIndex): its voxels landed since its tops were scanned.
 static bool g_shadow_stale[CHUNKS_PER_SIDE_MAX*CHUNKS_PER_SIDE_MAX];
@@ -149,15 +151,24 @@ void shadow_onSetLand(int x,int z,int y,int oldtype,int type){
 }
 
 static void shadow_apply(){
-    const int mode=g_shadow_override>=0?g_shadow_override:g_shadow_setting;
+    // SH.3: the sun shadows replace these while they are on (one shadow per tree), whatever the setting
+    // or the override says; the setting is kept and comes back when they go off.
+    const int mode=g_shadow_sun_replace?SHADOW_OFF:g_shadow_override>=0?g_shadow_override:g_shadow_setting;
     if(mode==g_shadow_mode)return;
     g_shadow_mode=mode;
     // Every chunk re-meshes, the way --ring-light-selftest's reference does; the tops are current.
     if(chunksToUpdate&&columnsToUpdate&&chunkTablec){
         memset(chunksToUpdate,true,sizeof(bool)*CHUNKS_PER_SIDE*CHUNKS_PER_SIDE*CHUNKS_PER_COLUMN);
         memset(columnsToUpdate,true,sizeof(bool)*CHUNKS_PER_SIDE*CHUNKS_PER_SIDE);
+        g_shadow_remeshes++;
     }
 }
+void shadow_setSunReplace(bool on){
+    if(on==g_shadow_sun_replace)return;
+    g_shadow_sun_replace=on;
+    shadow_apply();
+}
+int shadow_setting(){return g_shadow_override>=0?g_shadow_override:g_shadow_setting;}
 void shadow_setSetting(int mode){
     g_shadow_setting=mode<SHADOW_OFF?SHADOW_OFF:mode>SHADOW_SMOOTH?SHADOW_SMOOTH:mode;
     shadow_apply();

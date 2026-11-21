@@ -257,11 +257,13 @@ A variable is `group.name`. **`NAME`** prints it, **`NAME VALUE`** sets it. Name
 
 | Variable | Values | Default | Applies | What |
 |---|---|---|---|---|
-| `video.graphics_preset` | Custom, Low, Default, High | Default | at once | Sets view distance, render scale and atmosphere. |
+| `video.graphics_preset` | Custom, Low, Default, High | Default | at once | Sets view distance, render scale, atmosphere and sun shadows. |
 | `video.view_distance` | Auto, 4, 5, 6, 7, 8, 9 | Auto | at once | How far terrain is drawn. Lower is faster. |
 | `video.render_radius` | 4, 5, 6, 7, 8, 9, 10, 12, 16 | 9 | when a world opens | Applies when a world opens. |
 | `video.render_scale` | 50%, 75%, 100%, 125% | 100% | at once | Below 100% is softer but cooler and faster. |
+| `video.sharp_ui` | on / off | on | at once | Full-resolution drawing. Off is cooler and softer. Applies on relaunch. |
 | `video.shadows` | Off, Classic, Smooth | Classic | at once | Soft shading under overhangs. Smooth costs a little more meshing. |
+| `video.sun_shadows` | on / off | off | at once | Shadows cast by the sun near you. Replaces Shadows while on. |
 | `video.shadow_lamp_tint` | on / off | off | at once | Lamp light colours shadows, even by day. |
 | `video.atmosphere` | Off, Low, High, Custom | High | at once | Clouds, precipitation and ambient particles. |
 | `video.fps_cap` | Uncapped, 30, 45, 60 | Uncapped | at once | 30 or 60 saves battery and heat. |
@@ -313,6 +315,7 @@ A variable is `group.name`. **`NAME`** prints it, **`NAME VALUE`** sets it. Name
 | `saves.autosave` | Off, 1 min, 2 min, 5 min | 5 min | at once | Off still saves on exit and warp. |
 | `saves.save_backup` | on / off | off | at once | Keep the previous save as a .bak. |
 | `saves.upgrade_256z` | on / off | on | at the next conversion | Upgrade 64z worlds to 256z when converting: room to build up to y 255. Uses more memory. |
+| `saves.auto_lamp_light` | on / off | on | when a world opens | Imported 256z worlds that have no lamp-light choice yet open in New Dawn. Change it per world in World Properties. |
 
 #### `keys.`
 
@@ -377,6 +380,17 @@ A variable is `group.name`. **`NAME`** prints it, **`NAME VALUE`** sets it. Name
 | `gen.clouds` | text | - | read-only in game | Clouds |
 | `gen.size` | text | - | read-only in game | World size |
 | `gen.scale` | text | - | read-only in game | Scale |
+
+#### `shadow.`
+
+| Variable | Values | Default | Applies | What |
+|---|---|---|---|---|
+| `shadow.distance` | 16 to 256 | 128 | at once | Blocks from you that sun shadows reach (the map limits it: about 120 on desktop, 56 on iOS). |
+| `shadow.strength` | 0 to 1 | 0.35 | at once | How dark a sun shadow is (0 none, 1 black). |
+| `shadow.reach_full` | 1 to 128 | 24 | at once | Blocks behind the first sunlit surface, along the sun, that are fully shaded. |
+| `shadow.reach_end` | 1 to 256 | 48 | at once | Blocks behind it where shading ends: deeper caves keep their own light. |
+| `shadow.sun_step` | 0.05 to 5 | 0.5 | at once | Degrees the sun moves between shadow updates. Lower is smoother and costs more. |
+| `shadow.snap` | 1 to 16 | 4 | at once | Blocks you move between shadow updates. |
 
 <!-- END generated:variables -->
 

@@ -36,6 +36,7 @@
 #include <deque>
 #include <unordered_map>
 
+#include "SunShadow.h"        // SH.3: shadow.*
 #include "eden_settings.h"   // QA.19: the port's Settings / keybind tables (port/src/seam/Settings.cpp)
 
 extern int fwc_result;
@@ -480,6 +481,38 @@ void bridgeWorld() {
         Cvar c = {};
         c.name = gen[i]; c.label = genLabel[i]; c.help = genLabel[i];
         c.kind = KIND_TEXT; c.apply = APPLY_READONLY; c.tag = i; c.getText = genText;
+        addCvar(c);
+    }
+}
+
+// ---- shadow.* (SH.3) ---------------------------------------------------------------------------------------
+// The sun shadows' tuning (Classes/SunShadow.h): session values, not stored, `reset` puts the default back. Each
+// change re-renders the map.
+float* shadowTunable(int tag) {
+    SunShadow::Tunables& t = SunShadow::tunables();
+    float* f[] = {&t.distance, &t.strength, &t.reachFull, &t.reachEnd, &t.sunStep, &t.snap};
+    return tag >= 0 && tag < 6 ? f[tag] : nullptr;
+}
+float shadowGet(int tag) { const float* f = shadowTunable(tag); return f ? *f : 0.0f; }
+void shadowSet(int tag, float v) { if (float* f = shadowTunable(tag)) { *f = v; SunShadow::tunablesChanged(); } }
+struct ShadowCvar { const char* name; const char* label; const char* help; float min, max, step, def; };
+const ShadowCvar kShadowCvars[] = {
+    {"shadow.distance", "Sun shadow distance", "Blocks from you that sun shadows reach (the map limits it: about 120 on desktop, 56 on iOS).", 16, 256, 1, 128},
+    {"shadow.strength", "Sun shadow strength", "How dark a sun shadow is (0 none, 1 black).", 0, 1, 0.05f, 0.35f},
+    {"shadow.reach_full", "Sun shadow full reach", "Blocks behind the first sunlit surface, along the sun, that are fully shaded.", 1, 128, 1, 24},
+    {"shadow.reach_end", "Sun shadow reach", "Blocks behind it where shading ends: deeper caves keep their own light.", 1, 256, 1, 48},
+    {"shadow.sun_step", "Sun shadow step", "Degrees the sun moves between shadow updates. Lower is smoother and costs more.", 0.05f, 5, 0.05f, 0.5f},
+    {"shadow.snap", "Sun shadow snap", "Blocks you move between shadow updates.", 1, 16, 1, 4},
+};
+void shadowReset(int tag) { shadowSet(tag, kShadowCvars[tag].def); }
+void bridgeShadow() {
+    for (int i = 0; i < 6; ++i) {
+        const ShadowCvar& s = kShadowCvars[i];
+        Cvar c = {};
+        c.name = s.name; c.label = s.label; c.help = s.help;
+        c.kind = KIND_RANGE; c.min = s.min; c.max = s.max; c.step = s.step; c.def = s.def;
+        c.apply = APPLY_LIVE; c.tag = i;
+        c.get = shadowGet; c.set = shadowSet; c.reset = shadowReset;
         addCvar(c);
     }
 }
@@ -953,6 +986,7 @@ void init() {
     addCommand("stats", "", "The command interpreter's counters.", CF_DIAG, {}, cmdStats);
     if (!testNoBridge) bridgeSettings();
     bridgeWorld();
+    bridgeShadow();   // SH.3
     historyLoad();
 }
 

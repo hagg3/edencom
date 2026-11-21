@@ -141,6 +141,7 @@ defines sets in K.2; custom sound files are a conditional row (K.2-A).
 | `unbreakable` | `IS_UNBREAKABLE` (22) |
 | `no_shadow` | `IS_NOSHADOW` (23): no baked-shadow caster |
 | `paint_art` | `blockPaintArt` = every site (`ART_ALL`) |
+| `usable` | `IS_USABLE` (24), **mod blocks only** (the stock pack refuses it): a build-mode tap on the block fires the script event `use` with `how="tap"` and builds nothing (no block is placed against it either). Without a script pack running it does nothing at all |
 
 A trait or flag listed twice is an error.
 
@@ -229,6 +230,29 @@ skips the whole pack. Every line goes to stderr as `[pack] ...` and to the conso
   can do, its budgets and its events: [scripting.md](scripting.md). The example pack's `scripts/main.lua` adds
   `mod pillar N`.
 
+- **Icons (K.7-3c).** `"icons": {"wire": "icons/wire.png"}` adds PNG icons for `eden.menu` rows and tabs: each
+  64×64 (not 32), white on transparent (the UI tints them like the built-in icons), under 1 MiB. Names match
+  `[a-z0-9_]{1,24}`; a script says `"<pack id>:wire"`. At most 8 a pack and 32 a world (in load order); a bad,
+  wrong-size or surplus icon is skipped with a loader line and the rest of the pack loads. The icons of the loaded
+  packs are packed into one 512×256 atlas texture built when a world is entered (first draw) and freed at the next
+  entry; a multiplayer session has none. The PNG bytes join the pack's hash. `port/tools/pack.py` checks the same rules.
+- **Settings (K.7-2a).** `"settings"` declares the pack's settings page: an array of at most 32 objects (else the
+  pack is refused, like a bad `scripts`). Types: `heading` (`label` only), `toggle` (`default` boolean), `slider`
+  (`min < max`, `step > 0`, `(max - min) / step <= 1000`, `default` in range and on a step), `choice` (2 to 8
+  different `options` of 1 to 24 bytes, `default` one of them), `text` (`max` 1 to 64 bytes, printable `default`
+  within it). Every setting but a heading has an `id` (`[a-z0-9_]{1,24}`, unique in the pack); `label` is 1 to 40
+  bytes, `hint` at most 120. An error skips that setting with a line; an unknown type or key is a `warning:` and is
+  ignored, so a pack written for a later build still loads.
+  `--content-dump`'s `## mods` lists each kept setting as a `setting <pack> <id> <type> ...` line (`pack.py compile`
+  prints the same); fixtures `mod-settings`, `mod-settings-bad`, `mod-settings-top`.
+- **Setting values (K.7-2b, V15).** The player's values are not in the pack: `Packs/.settings/<pack id>.json`,
+  `{"format": 1, "values": {"speed": 2, "glow": false}}`, written one change at a time with `eden_fs_write_atomic`
+  (`ContentPack::saveSetting`; `settingValues` reads). So reinstalling or updating the pack's zip keeps them, and they
+  are not part of the pack hash. An id the pack no longer declares is kept in the file; a value that fails the
+  pack's current schema (wrong type, off its step, not an option, over `max`) reads as the default. The page is the
+  Mods screen's **Settings** button on the selected pack ([ui.md](ui.md)); scripts read a value with
+  `eden.setting(id)` ([scripting.md](scripting.md)). `Packs/` folders that start with a dot are never packs.
+
 ## Managing packs (K.3)
 
 Code: `Classes/ContentPack` (list, order, resolution, hash,
@@ -272,7 +296,7 @@ world mods) and `Classes/PackInstall` (zip install, catalogue). Gate: `eden_nati
   ("Install older version" / "Keep the installed one", the safe choice last) and calls again with `allowDowngrade`. An equal or newer
   version replaces as before. Gates: `--mods-selftest` (`--mods-mutate=anyid` must FAIL it), `--ui-selftest` `mods_ui_checks`.
 - **The catalogue** a Get Mods source serves: `{"format": 1, "packs": [{"id", "name", "version", "description",
-  "author", "url", "sha256", "size", "requires"}]}`. An entry without a valid id, an `http(s)://` url or a 64-hex
+  "author", "url", "sha256", "size", "requires", "scripts"}]}` (`"scripts": true` only adds the "Runs scripts" tag in Get Mods; the pack's own manifest is what counts). An entry without a valid id, an `http(s)://` url or a 64-hex
   sha256, a duplicate id, or `eden`/`emod` is dropped (`PackInstall::parseCatalogue`). No catalogue is hosted yet.
 - **The screen** (K.3-5/6) that drives all of the above: `docs/ui.md` "The Mods screen". It lists `scanPacks`, toggles with `setPackEnabled`, reorders with
   `movePack`, removes with `removePackFolder`, installs a picked zip or a catalogue entry with `installZip`; a world that uses an off or missing mod says so once on entry (`World::showModsNotice`, once the load is done: QA.7; `--mods-selftest` leg 9).

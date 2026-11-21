@@ -222,7 +222,7 @@ void waterTintCheck() {
         Pixels gs = grab();
         float wg[4] = {100 / 255.0f, 50 / 255.0f, 0.5f, 1};
         expect("water glint twin (AT.11): no glint away from the mirror direction = the tint alone", gs, 32, 32, wg, 2, false);
-        note(rgl::built(rgl::P_WORLD_OPAQUE_WG), "the glint twin was the program drawn (sun strength > 0)");
+        note(rgl::built(rgl::worldProg(rgl::WF_NO_DISCARD | rgl::WF_WATER_TINT | rgl::WF_WATER_GLINT)), "the glint twin was the program drawn (sun strength > 0)");
     }
 }
 
@@ -277,6 +277,119 @@ void cloudsCheck(R::Tex map) {
     for (int i = 0; i < 3; ++i) want[i] = c[i] * 0.5f;
     expect("cloud shadow (AT.6 twin: strength 0.5 under a cloud texel)", ws[0], 32, 32, want, 2, false);
     same("cloud shadow with no texel over the threshold = off", ws[1], ws[2]);
+}
+
+// ---- SH.2 sun shadows ---------------------------------------------------------------------------------
+// The light is the camera (ortho2's projection and view), so the map's texels line up with the screen: ssMat =
+// bias(0.5) x the ortho, and the depth range is far - near = 20 units. A caster at eye z -2 (window depth 0.6) over
+// the receiver quad at -3 (0.65) leaves a gap of 1 unit. The colour pass draws only the receiver; where the caster
+// was in the depth pass it is x(1 - strength). The map is 32 x 32, half the framebuffer, so a viewport left behind
+// by the depth pass would show in the next draw.
+struct SV { float pos[3]; unsigned char col[4]; float uv[2]; };
+const R::VertexFormat kFmtSV = {sizeof(SV), {R::A_F32, 3, 0}, {R::A_U8N, 4, 12}, {R::A_F32, 2, 16},
+                                {R::A_NONE, 0, 0}, {R::A_NONE, 0, 0}, {R::A_NONE, 0, 0}, {R::A_NONE, 0, 0}};
+void svQuad(SV q[4], float x0, float x1, float y0, float y1, float z, unsigned char a) {
+    const float xy[4][2] = {{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}}, uv[4][2] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+    for (int i = 0; i < 4; ++i) {
+        q[i] = SV{{xy[i][0], xy[i][1], z}, {200, 150, 100, a}, {uv[i][0], uv[i][1]}};
+    }
+}
+bool depthPassOf(R::Tex map, const SV q[4], R::Tex alphaTex, float alphaRef) {
+    baseline(); ortho2();
+    R::setState(R::State{R::B_OFF, true, true, false, 2.0f, 4.0f});   // the plan's starting bias
+    if (!R::beginDepthPass(map, 32)) return false;
+    R::drawDepth({&kFmtSV, 0, q, 0, kQuadIdx, R::I_U16, 0, 6, R::TRIANGLES}, alphaTex, alphaRef);
+    R::endDepthPass();
+    return true;
+}
+Pixels receiverShot(R::Tex map, const R::Mat4* mat, const float fade[4]) {
+    SV r[4];
+    svQuad(r, -1.2f, 1.2f, -1.2f, 1.2f, 0.0f, 255);
+    baseline(); clear(); ortho2();
+    R::setState(kOpaque);
+    const float par[4] = {0.5f, 20.0f, 1.0f / 16.0f, 0.0f};
+    if (map) R::setSunShadow(map, mat->m, par, fade); else R::sunShadowOff();
+    R::drawWorld({&kFmtSV, 0, r, 0, kQuadIdx, R::I_U16, 0, 6, R::TRIANGLES}, 0, {1, 1, 1, 1}, -1.0f);
+    R::sunShadowOff();
+    return grab();
+}
+// Off = absent: nothing is built for sun shadows unless something used them (runs before compileAll, after the
+// harness's menu and world play).
+void sunShadowAbsentCheck() {
+    const bool used = rgl::sunShadowEverUsed();
+    bool anyBuilt = rgl::built(rgl::P_DEPTH) || rgl::built(rgl::P_DEPTH_ALPHA);
+    for (unsigned k = 0; k < rgl::WF_KEYS; ++k)
+        if ((k & rgl::WF_SUN_SHADOW) && rgl::worldKeyValid(k) && rgl::built(rgl::worldProg(k))) anyBuilt = true;
+    note(used || (!anyBuilt && !R::depthTargetLive()), "sun shadows unused = absent (no depth program, no sun-shadow "
+         "twin, no depth framebuffer)%s", used ? " [not checked: used before this point]" : "");
+}
+void sunShadowCheck() {
+    R::takeError();
+    const long staleD = R::texStaleDestroys(), staleU = R::texStaleUses();
+    const R::TexDesc md = {32, 32, R::TF_DEPTH16, false, false, true, true, "selftest-sunshadow"};
+    const R::Tex map = R::texCreate(md, nullptr);
+    GLint fbo0 = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo0);
+    const float fadeOn[4] = {24.0f, 48.0f, 100.0f, 200.0f};
+    R::MatrixStack ms;
+    ms.translate(0.5f, 0.5f, 0.5f); ms.scale(0.5f, 0.5f, 0.5f); ms.ortho(-2, 2, -2, 2, -10, 10);
+    const R::Mat4 mat = ms.top();
+
+    const Pixels off = receiverShot(0, nullptr, fadeOn);   // before any depth pass
+    SV left[4];
+    svQuad(left, -2.0f, 0.0f, -2.0f, 2.0f, 1.0f, 255);
+    const bool ok = depthPassOf(map, left, 0, -1.0f);
+    note(ok, "sun shadows: the depth-only framebuffer completes (TF_DEPTH16 32x32)");
+    if (!ok) { R::texDestroy(map); return; }
+    GLint fbo1 = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo1);
+    note(fbo1 == fbo0, "sun shadows: endDepthPass rebinds the framebuffer it found (%d, was %d)", (int)fbo1, (int)fbo0);
+    const Pixels after = receiverShot(0, nullptr, fadeOn);
+    same("sun shadows: a draw after endDepthPass = one with no pass (framebuffer, viewport, state restored)", off, after);
+
+    const Pixels on = receiverShot(map, &mat, fadeOn);
+    const float c[3] = {200 / 255.0f, 150 / 255.0f, 100 / 255.0f};
+    float half[4] = {c[0] * 0.5f, c[1] * 0.5f, c[2] * 0.5f, 1}, full[4] = {c[0], c[1], c[2], 1};
+    expect("sun shadow (SH.2 twin: under the caster x(1 - strength 0.5))", on, 20, 32, half, 1, false);
+    expect("sun shadow: beside the caster unchanged", on, 44, 32, full, 0, false);
+    note(rgl::built(rgl::worldProg(rgl::WF_NO_DISCARD | rgl::WF_SUN_SHADOW)), "sun shadows: the -ss twin was the program drawn");
+    const float fadeReach[4] = {0.2f, 0.5f, 100.0f, 200.0f};
+    same("sun shadow: a gap past reach_end = no shadow", off, receiverShot(map, &mat, fadeReach));
+    const float fadeDist[4] = {24.0f, 48.0f, 1.0f, 2.0f};
+    same("sun shadow: past the distance fade = no shadow", off, receiverShot(map, &mat, fadeDist));
+    R::MatrixStack mo;
+    mo.translate(2.0f, 0.0f, 0.0f); mo.mult(mat.m);
+    const R::Mat4 outside = mo.top();
+    same("sun shadow: outside the map's box = no shadow", off, receiverShot(map, &outside, fadeOn));
+
+    // An alpha-tested caster casts its texels: a 2x2 alpha checker over the whole map, opaque at (0,0) and (1,1).
+    unsigned char ck[2 * 2 * 4];
+    for (int i = 0; i < 4; ++i) { ck[i * 4] = ck[i * 4 + 1] = ck[i * 4 + 2] = 255; ck[i * 4 + 3] = (i == 0 || i == 3) ? 255 : 0; }
+    const R::TexDesc cd = {2, 2, R::TF_RGBA8, false, false, true, true, "selftest-alpha-checker"};
+    const R::Tex checkerA = R::texCreate(cd, ck);
+    SV whole[4];
+    svQuad(whole, -2.0f, 2.0f, -2.0f, 2.0f, 1.0f, 255);
+    depthPassOf(map, whole, checkerA, 0.5f);
+    const Pixels alpha = receiverShot(map, &mat, fadeOn);
+    note(px(alpha, 20, 20)[0] == px(on, 20, 32)[0] && px(alpha, 44, 44)[0] == px(on, 20, 32)[0] &&
+         px(alpha, 44, 20)[0] == px(off, 44, 20)[0] && px(alpha, 20, 44)[0] == px(off, 20, 44)[0],
+         "sun shadow: an alpha-tested caster casts its texel shape (r at 20,20 %u 44,44 %u shaded; 44,20 %u 20,44 %u lit)",
+         px(alpha, 20, 20)[0], px(alpha, 44, 44)[0], px(alpha, 44, 20)[0], px(alpha, 20, 44)[0]);
+    // Water (vertex alpha 145) through the alpha program casts nothing.
+    const R::Tex opaque = solid(255, 255, 255);
+    svQuad(whole, -2.0f, 2.0f, -2.0f, 2.0f, 1.0f, 145);
+    depthPassOf(map, whole, opaque, 0.5f);
+    same("sun shadow: a water-alpha (145) caster casts nothing", off, receiverShot(map, &mat, fadeOn));
+    R::texDestroy(opaque);
+    R::texDestroy(checkerA);
+
+    note(R::depthTargetLive(), "sun shadows: the depth framebuffer is live while its texture is");
+    R::texDestroy(map);
+    note(!R::depthTargetLive(), "sun shadows: destroying the map frees its framebuffer");
+    const unsigned err = R::takeError();
+    note(err == 0, "sun shadows: no GL error (0x%x)", err);
+    note(R::texStaleDestroys() == staleD && R::texStaleUses() == staleU, "sun shadows: the texture ledger is clean "
+         "(stale destroys +%ld, uses +%ld)", R::texStaleDestroys() - staleD, R::texStaleUses() - staleU);
 }
 
 // ---- ui --------------------------------------------------------------------------------------------
@@ -486,8 +599,9 @@ int selftest(std::string* log) {
     g_log = log;
     g_fails = 0;
     std::string clog;
+    sunShadowAbsentCheck();
     const int linked = rgl::compileAll(&clog);
-    note(linked == rgl::P_PROG_COUNT, "the programs compile and link (%d/%d: the five + lit-flat + three discard-free twins + AT.2b precip + AT.5's two height-fog twins + AT.6 clouds + four cloud-shadow twins + AT.8's four water-tint twins + AT.11's four glint twins)%s%s", linked, (int)rgl::P_PROG_COUNT,
+    note(linked == rgl::programCount(), "the programs compile and link (%d/%d: every reachable world feature key (32) + ui, sprite, skinned, lit, lit-flat, two discard-free lit + precip + clouds + depth, depth-alpha)%s%s", linked, rgl::programCount(),
          clog.empty() ? "" : ": ", clog.c_str());
     GLint prevFbo = 0, prevRb = 0, vp[4];
     GLfloat cc[4];
@@ -515,6 +629,7 @@ int selftest(std::string* log) {
         heightFogCheck();
         waterTintCheck();
         { const R::Tex cm = cloudMap(); cloudsCheck(cm); R::texDestroy(cm); }
+        sunShadowCheck();
         uiCheck(tex);
         spriteCheck();
         skinnedCheck(tex);

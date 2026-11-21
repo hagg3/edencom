@@ -14,6 +14,7 @@
 #include "Graphics.h"
 #include "Globals.h"
 #include "Input.h"
+#include "Lighting.h"          // LM.2: LIGHT_MODE_*
 #include "Menu.h"
 #include "World.h"
 #include "Texture2D.h"
@@ -28,6 +29,8 @@ extern float SCREEN_HEIGHT;
 
 // Row kinds. PHOTO is the World tab's first row (its own drawing, no TwoLineRow); VALUE is a
 // read-only row with right-aligned text; the rest are New World's controls.
+static const NWOption kLamp[]={ { "Legacy", LIGHT_MODE_LEGACY }, { "New Dawn", LIGHT_MODE_NEWDAWN } };   // LM.2: Lamp light
+
 enum { WPK_PHOTO=0, WPK_TEXT=1, WPK_VALUE=2, WPK_CHOICE=3, WPK_SLIDER=4, WPK_TOGGLE=5 };
 
 static const int usage_id=14;   // distinct from Menu (7), SettingsMenu (3), GLDialog (9), Keybinds (11), WorldBrowser (12), NewWorld (13)
@@ -186,6 +189,8 @@ void WorldPropertiesMenu::buildRows(){
         addRow(TAB_WORLD,WPK_TOGGLE,"locktime","Lock time of day","Keeps this world's clock still when the Day/night cycle is on (Settings > Gameplay).");
     if(p.kind==WP_KIND_EMOD)
         addRow(TAB_WORLD,WPK_TOGGLE,"lockweather","Lock weather","Keeps the current weather from ever ending when Gameplay > Weather is on. Change it with the weather command.");
+    if(p.kind==WP_KIND_EMOD)
+        addRow(TAB_WORLD,WPK_CHOICE,"lamplight","Lamp light","Legacy: the original game's small, stepped pools. New Dawn: wide, smooth pools like the later releases. Applies at once if the world is open.","",kLamp,2);
     if(p.originalBytes>0)
         addRow(TAB_WORLD,WPK_VALUE,"original","Original kept","The file it was converted from. Share > Remove original deletes it.",
                wp_bytes(p.originalBytes).c_str());
@@ -250,6 +255,7 @@ bool WorldPropertiesMenu::open(WorldNode* node){
         const Row& R=m_rows[r];
         m_choice[r]=0;
         if(!std::strcmp(R.key,"hills")) m_choice[r]=classic_option_index(kHills,5,g.hilliness);
+        if(!std::strcmp(R.key,"lamplight")) m_choice[r]=classic_option_index(kLamp,2,p.lampMode);
         if(!std::strcmp(R.key,"caves")) m_choice[r]=classic_option_index(kCaves,3,g.caves);
         if(!std::strcmp(R.key,"trees")) m_choice[r]=classic_option_index(kTrees,4,g.trees);
         if(!std::strcmp(R.key,"size"))  m_choice[r]=classic_option_index(kSizes,2,g.size);
@@ -389,7 +395,14 @@ bool WorldPropertiesMenu::weatherLockChanged() const{
     return r>=0&&m_toggle[r].on()!=m_props.weatherLocked;
 }
 
-bool WorldPropertiesMenu::saveEnabled() const{ return m_open&&(nameChanged()||terrainChanged()||skyLockChanged()||weatherLockChanged()); }
+int WorldPropertiesMenu::editedLampMode() const{
+    const int r=rowOf("lamplight");
+    return r>=0?kLamp[m_choice[r]].value:m_props.lampMode;
+}
+
+bool WorldPropertiesMenu::lampLightChanged() const{ return editedLampMode()!=m_props.lampMode; }
+
+bool WorldPropertiesMenu::saveEnabled() const{ return m_open&&(nameChanged()||terrainChanged()||skyLockChanged()||weatherLockChanged()||lampLightChanged()); }
 
 // ---------------------------------------------------------------------------------------------
 // saving (plan §3)
@@ -422,6 +435,7 @@ void WorldPropertiesMenu::commit(){
     editedGenerator(&e.gen);
     {const int lr=rowOf("locktime"); if(lr>=0) e.skyLocked=m_toggle[lr].on();}
     {const int wr=rowOf("lockweather"); if(wr>=0) e.weatherLocked=m_toggle[wr].on();}
+    e.lampMode=editedLampMode();   // LM.2
     const int r=fm->applyWorldProperties(m_fileName,e);
     m_lastResult=r;
     if(r<0){

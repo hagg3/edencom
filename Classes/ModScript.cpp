@@ -22,12 +22,18 @@
 #include "MpWorld.h"
 #include "Weather.h"
 #include "SignTool.h"
+#include "GLDialog.h"
 #include "EdenWorldStore.h"
+#include "ModMenuScreen.h"
+#include "UIIcons.h"
+#include "Model.h"
+#include "Util.h"
 
 #include "lua/lua.h"
 #include "lua/lauxlib.h"
 #include "lua/lualib.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -37,6 +43,7 @@
 #include <map>
 #include <memory>
 #include <new>
+#include <set>
 
 namespace ModScript {
 
@@ -46,17 +53,26 @@ bool testLoadEarly = false;
 bool testCapError = false;
 bool testUseFilter = false;
 bool testStoreNotDirty = false;
+bool testLeaveAfterSave = false;
+bool testToastFlood = false;
+bool testDialogNoQueue = false;
+bool testNoGen = false;
+bool testNonFinite = false;
+bool testLookBuild = false;
+bool testNoReport = false;
 
 namespace {
 
-const char* const kEventNames[] = {"load", "tick", "build", "mine", "paint", "burn", "weather", "use", "sign", NULL};
+const char* const kEventNames[] = {"load", "tick", "build", "mine", "paint", "burn", "weather", "use", "sign", "leave", "setting", "menu", NULL};
 const char* const kEditMeta = "emod.edit";
+const char* const kCreatureMeta = "emod.creature";   // K.6-4a
 
 struct Co {
     lua_State* T = NULL;
     int ref = LUA_NOREF;
     double wait = 0;
     int preempts = 0;
+    int ticket = 0;                       // K.7-1b: waiting for the player's answer to this dialog request (0 = not)
     int ev = -1;                          // the event that started it (-1: a chunk, the console, a command)
     int handler = LUA_NOREF;              // the handler's registry ref (tick: one live call per handler)
     bool started = false;
@@ -68,6 +84,16 @@ struct Co {
     std::string what;                     // "tick handler", "scripts/main.lua", ...
 };
 struct Cmd { std::string name, help; int fn; };
+// K.7-3a: one eden.menu{...}: the validated spec (plain C++; the screen holds a copy), the two callbacks and, while it
+// is open or a callback of it is queued, a registry ref to its handle (so the handle outlives the script's last
+// reference until then). The handle's __gc drops the record.
+struct MenuRec {
+    int serial = 0;
+    ModMenu::Spec spec;
+    int onAction = LUA_NOREF, onClose = LUA_NOREF, self = LUA_NOREF;
+    bool open = false;
+    int tab = 0;
+};
 struct Pack {
     std::string id;
     bool console = false;
@@ -89,6 +115,13 @@ struct Pack {
     std::string lastError;
     int printsFrame = 0;
     float toastQuiet = 0;
+    bool muted = false;                   // K.7-1b: the player chose "Stop dialogs from this mod" (until the world closes)
+    bool dlgSeen = false;
+    double dlgLast = 0, dlgNext = 0;      // game time of this pack's last dialog; before dlgNext its next one is held (0.5 s)
+    double toastNext = 0;                 // K.7-1a: g_clock before which eden.toast returns false
+    bool settingsRead = false;            // K.7-2b: settingVals holds this pack's values (read on the first eden.setting)
+    std::vector<ContentPack::SettingValue> settingVals;
+    std::vector<std::unique_ptr<MenuRec>> menus;   // K.7-3a
     CmdScript::Sink* sink = NULL;         // the running coroutine's sink
     std::vector<int> handlers[EV_COUNT];
     std::vector<Co> cos;
@@ -98,19 +131,39 @@ struct QEvent { int ev, x, y, z, a, b; std::string text; };
 
 Limits g_lim;
 }  // namespace
-extern "C" int eden_script_low_memory(void);   // port/src/seam/DisplayProfile.cpp
-size_t defaultAllMemBytes() { return eden_script_low_memory() ? (size_t)24 << 20 : (size_t)64 << 20; }
+extern "C" int eden_device_class(void);   // port/src/seam/DisplayProfile.cpp: 2 = mobile_low (EDEN_DEVICE_MOBILE_LOW)
+size_t defaultAllMemBytes() { return eden_device_class() == 2 ? (size_t)24 << 20 : (size_t)64 << 20; }
 namespace {
 Stats g_stats;
 std::vector<std::unique_ptr<Pack>> g_packs;
+std::vector<Info> g_lastReport;   // K.8-6
 std::vector<QEvent> g_queue;
 bool g_pending = false;    // start the packs' scripts on the next update
 bool g_started = false;    // they were started (this world)
 bool g_session = false;
 bool g_resetPending = false;
+bool g_leaving = false;    // K.6-2: leaving() is running the `leave` handlers (nothing may pause)
 int g_depth = 0;           // > 0 while Lua runs (reset/restart wait for it)
 long g_instrFrame = 0;
 double g_clock = 0;
+
+// K.7-1b: dialog requests (V9-V11). A request is queued by eden.ask/eden.input, shown by pumpDialogs() at the end of
+// update(), and answered by a GLDialog callback that only RECORDS the result (rule 7: no Lua there); step 1 of the next
+// update() resumes the waiting coroutine.
+struct DlgReq {
+    int ticket = 0;
+    Pack* p = NULL;
+    bool input = false;
+    std::string title, body, def, ok, cancel;
+    std::vector<std::string> buttons;
+    int danger = 0, max = 64, lines = 1;
+};
+struct DlgRes { int ticket; int index; std::string text, why; };
+std::vector<DlgReq> g_dlgQueue;
+std::vector<DlgRes> g_dlgResults;
+int g_ticket = 0;
+int g_dlgShownTicket = 0;
+Pack* g_dlgShownPack = NULL;
 
 Pack* packOf(lua_State* L) { return *(Pack**)lua_getextraspace(L); }
 
@@ -151,7 +204,7 @@ void countHook(lua_State* L, lua_Debug*) {
     g_instrFrame += HOOK_EVERY;
     if (p->closing) luaL_error(L, "the world closed");   // (no script __gc exists to run at lua_close: safeSetmetatable)
     if (testNoHook) return;
-    if (overBudget(p) && L == p->running && lua_isyieldable(L)) {
+    if (overBudget(p) && !g_leaving && L == p->running && lua_isyieldable(L)) {
         p->preempted = true;
         lua_yield(L, 0);   // a hook yields with no values; the scheduler resumes it next frame
         return;
@@ -307,7 +360,7 @@ void resumeCo(Pack* p, size_t i) {
 bool spawn(Pack* p, int fnRef, const std::function<int(lua_State*)>& push, int ev, const std::string& what,
            CmdScript::Sink* sink, bool printResults) {
     if (p->stopped || !p->L) return false;
-    if (liveCos(p) >= MAX_COROUTINES) {
+    if (liveCos(p) >= MAX_COROUTINES && ev != EV_LEAVE) {   // K.6-2: `leave` is bounded by MAX_HANDLERS instead
         const std::string msg = what + ": not started, " + std::to_string((int)MAX_COROUTINES) + " handlers are still waiting";
         if (testCapError) { scriptError(p, msg, sink); return false; }
         // K.8-2: the cap is a limit, not a fault: skipped / dropped, counted, never an error. A command or the console
@@ -433,13 +486,18 @@ int safeSetmetatable(lua_State* L) {
 }
 
 // ---- the API (S8): world edits are command-block statements -----------------------------------------------
-enum { K_SET = 0, K_COUNT, K_NONE };
+enum { K_SET = 0, K_COUNT, K_NONE, K_SPAWN };
+struct CreatureUD { int slot; uint32_t gen; };   // K.6-4a
+enum { CREATURES_RADIUS_MAX = 64, CREATURES_RESULTS_MAX = 64 };
 struct EditJob {
     std::shared_ptr<const CmdScript::Program> prog;
     size_t pc = 0;
     int cells = 0, refused = 0, kind = K_NONE, ax = 0, ay = 0, az = 0;
+    int spawnSlot = -1;        // K_SPAWN: the slot SpawnCreatureAt filled, and its generation then
+    uint32_t spawnGen = 0;
     std::string firstRefusal;
 };
+void pushCreature(lua_State* L, int slot, uint32_t gen);
 struct CaptureSink : CmdScript::Sink {
     std::string* first;
     explicit CaptureSink(std::string* f) : first(f) {}
@@ -457,8 +515,16 @@ int editStep(lua_State* L, int status, lua_KContext ctx) {
     EditJob* j = (EditJob*)lua_touserdata(L, (int)ctx);
     if (!worldOpen()) return luaL_error(L, "no world is open");
     CaptureSink sink(&j->firstRefusal);
+    int lastSlot = -1;
+    const uint32_t spawnsBefore = CreatureSpawns(&lastSlot);
     const bool done = CmdScript::runNow(j->prog, &j->pc, j->ax, j->ay, j->az, &sink, &j->cells, &j->refused);
-    if (!done) {   // this frame's WORK_PER_FRAME is spent: carry on next frame (a block pauses the same way)
+    if (j->kind == K_SPAWN && CreatureSpawns(&lastSlot) != spawnsBefore) {   // (one statement: nothing else spawns in this call)
+        j->spawnSlot = lastSlot;
+        j->spawnGen = CreatureGen(lastSlot);
+    }
+    if (!done && g_leaving) {   // K.6-2: there is no next frame; what is left is refused
+        if (j->firstRefusal.empty()) j->firstRefusal = "the world is closing: its world-edit budget is spent";
+    } else if (!done) {   // this frame's WORK_PER_FRAME is spent: carry on next frame (a block pauses the same way)
         if (!lua_isyieldable(L)) return luaL_error(L, "this frame's world-edit budget is spent (an edit inside a callback that can't pause)");
         return lua_yieldk(L, 0, ctx, editStep);
     }
@@ -468,6 +534,14 @@ int editStep(lua_State* L, int status, lua_KContext ctx) {
     case K_SET:
         lua_pushboolean(L, j->refused == 0 && !why);
         if (why) lua_pushstring(L, why); else lua_pushnil(L);
+        return 2;
+    case K_SPAWN:   // K.6-4a: a handle, or false, why (a spawn that did nothing used to return true)
+        if (!why && j->spawnSlot >= 0) {
+            pushCreature(L, j->spawnSlot, j->spawnGen);
+            return 1;
+        }
+        lua_pushboolean(L, 0);
+        lua_pushstring(L, why ? why : !CREATURES_ON ? "creatures are off" : !CreatureSlotFree() ? "every creature slot is in use" : "that spot isn't loaded");
         return 2;
     case K_COUNT:
         lua_pushinteger(L, j->cells);
@@ -550,7 +624,173 @@ int apiFire(lua_State* L) { return edit(L, "fire " + at3(L, 1), 0, 0, 0, true, K
 int apiTp(lua_State* L) { return edit(L, "tp " + at3(L, 1), 0, 0, 0, true, K_NONE); }
 int apiRun(lua_State* L) { return edit(L, "run " + at3(L, 1), 0, 0, 0, true, K_NONE); }
 int apiSpawn(lua_State* L) {
-    return edit(L, "spawn " + wordArg(L, 1) + (lua_isnoneornil(L, 2) ? std::string() : " " + at3(L, 2)), 0, 0, 0, true, K_NONE);
+    return edit(L, "spawn " + wordArg(L, 1) + (lua_isnoneornil(L, 2) ? std::string() : " " + at3(L, 2)), 0, 0, 0, true, K_SPAWN);
+}
+
+// ---- K.6-4a: creature handles (V5) ---------------------------------------------------------------------------
+// A handle is (slot, generation): Model.cpp moves a slot's generation whenever it stops holding the same live
+// creature (death, pick-up, removal, reuse, its cell leaving the loaded area), so a stale handle reads as gone instead
+// of reading whatever took the slot. One userdata per (slot, generation) per state, kept in a weak registry table, so
+// the same creature is the same value (== and table keys work). No __gc: nothing to free.
+const char kCreatureCache = 0;   // its address keys the registry table
+void pushCreature(lua_State* L, int slot, uint32_t gen) {
+    luaL_checkstack(L, 4, "creature handle");
+    if (lua_rawgetp(L, LUA_REGISTRYINDEX, &kCreatureCache) != LUA_TTABLE) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_createtable(L, 0, 1);
+        lua_pushliteral(L, "v");
+        lua_setfield(L, -2, "__mode");
+        lua_setmetatable(L, -2);
+        lua_pushvalue(L, -1);
+        lua_rawsetp(L, LUA_REGISTRYINDEX, &kCreatureCache);
+    }
+    if (lua_rawgeti(L, -1, slot) == LUA_TUSERDATA) {
+        const CreatureUD* u = (const CreatureUD*)lua_touserdata(L, -1);
+        if (u->gen == gen) { lua_remove(L, -2); return; }
+    }
+    lua_pop(L, 1);
+    CreatureUD* u = (CreatureUD*)lua_newuserdatauv(L, sizeof(CreatureUD), 0);
+    u->slot = slot;
+    u->gen = gen;
+    luaL_setmetatable(L, kCreatureMeta);
+    lua_pushvalue(L, -1);
+    lua_rawseti(L, -3, slot);
+    lua_remove(L, -2);
+}
+// The slot, or -1 when the handle is gone (or no world is open).
+int creatureSlot(lua_State* L) {
+    const CreatureUD* u = (const CreatureUD*)luaL_checkudata(L, 1, kCreatureMeta);
+    if (!worldOpen() || g_session) return -1;
+    return CreatureHandleLive(u->slot, testNoGen ? CreatureGen(u->slot) : u->gen) ? u->slot : -1;
+}
+std::string creatureKind(int type) {
+    const std::vector<std::string> names = CmdScript::creatureNames();
+    return type >= 0 && type < (int)names.size() ? names[type] : std::to_string(type);
+}
+// h:valid() -> boolean
+int creatureValid(lua_State* L) {
+    lua_pushboolean(L, creatureSlot(L) >= 0);
+    return 1;
+}
+// h:pos() -> x, y, z (numbers: the point eden.spawn put at the cell's centre), or nil when gone
+int creaturePos(lua_State* L) {
+    Vector v;
+    const int s = creatureSlot(L);
+    if (s < 0 || !CreatureRead(s, NULL, &v)) return 0;
+    lua_pushnumber(L, v.x);
+    lua_pushnumber(L, v.y);
+    lua_pushnumber(L, v.z);
+    return 3;
+}
+// h:kind() -> the creature's name (eden.spawn's first argument), or nil when gone
+int creatureKindApi(lua_State* L) {
+    int type;
+    const int s = creatureSlot(L);
+    if (s < 0 || !CreatureRead(s, &type, NULL)) return 0;
+    lua_pushstring(L, creatureKind(type).c_str());
+    return 1;
+}
+// h:remove() -> true (the creature is gone, silently: no sound, no puff), or nil when it already was
+int creatureRemove(lua_State* L) {
+    const int s = creatureSlot(L);
+    if (s < 0 || !RemoveCreature(s)) return 0;
+    lua_pushboolean(L, 1);
+    return 1;
+}
+// ---- K.6-4b: moving a creature against its AI ---------------------------------------------------------------
+// Three numbers from stack index i on; a non-finite or huge one raises (it would reach the (int) casts in Move and
+// CheckCollision, and the save's EntityData). --lua-mutate=nonfinite lets h:setvel take them.
+Vector vec3Arg(lua_State* L, int i, bool check) {
+    double c[3];
+    for (int k = 0; k < 3; ++k) {
+        c[k] = luaL_checknumber(L, i + k);
+        if (check && (!std::isfinite(c[k]) || std::fabs(c[k]) > 1000000000.0)) luaL_argerror(L, i + k, "a finite number is needed");
+    }
+    return MakeVector((float)c[0], (float)c[1], (float)c[2]);
+}
+// h:vel() -> vx, vy, vz in blocks a second (the AI's own walking included), or nil when gone
+int creatureVel(lua_State* L) {
+    Vector v;
+    const int s = creatureSlot(L);
+    if (s < 0 || !CreatureVel(s, &v)) return 0;
+    lua_pushnumber(L, v.x);
+    lua_pushnumber(L, v.y);
+    lua_pushnumber(L, v.z);
+    return 3;
+}
+// h:setpos(x, y, z) -> true, or false, why (the cell holding the point is not loaded, or is solid: anything a creature
+// collides with, so air, flowers and water are open); nil when gone. The creature lands there still, then falls.
+int creatureSetPos(lua_State* L) {
+    const Vector p = vec3Arg(L, 2, true);
+    const int s = creatureSlot(L);
+    if (s < 0) return 0;
+    const int x = (int)std::floor(p.x), y = (int)std::floor(p.y), z = (int)std::floor(p.z);
+    const char* why = NULL;
+    if (!CmdScript::residentCell(x, y, z)) why = "that spot isn't loaded";
+    else {
+        const int t = World::getWorld->terrain->getLand(x, z, y);
+        if (t < 0) why = "that spot isn't loaded";
+        else if (t > 0 && t != TYPE_FLOWER && !(blockinfo[t] & IS_WATER)) why = "that spot is solid";
+    }
+    if (!why) {
+        const int r = CreatureSetPos(s, p);
+        if (r == 1) return 0;
+        if (r == 2) why = "that spot isn't loaded";
+    }
+    lua_pushboolean(L, !why);
+    if (!why) return 1;
+    lua_pushstring(L, why);
+    return 2;
+}
+// h:setvel(vx, vy, vz) -> true, or nil when gone. A launch, not a held state: the velocity is set once (its length
+// clamped to 16 blocks/s), then gravity, friction, water and collisions act on it while the AI holds off walking and
+// deciding; when the creature is down and nearly still (or after 3 s) the AI takes over again. h:vel() + h:setvel()
+// adds to the current velocity.
+int creatureSetVel(lua_State* L) {
+    const Vector v = vec3Arg(L, 2, !testNonFinite);
+    const int s = creatureSlot(L);
+    if (s < 0 || !CreatureSetVel(s, v)) return 0;
+    lua_pushboolean(L, 1);
+    return 1;
+}
+int creatureToString(lua_State* L) {
+    int type;
+    const int s = creatureSlot(L);
+    if (s >= 0 && CreatureRead(s, &type, NULL)) lua_pushfstring(L, "creature %s #%d", creatureKind(type).c_str(), s);
+    else lua_pushliteral(L, "creature (gone)");
+    return 1;
+}
+const luaL_Reg kCreatureMethods[] = {{"valid", creatureValid}, {"pos", creaturePos}, {"kind", creatureKindApi}, {"remove", creatureRemove},
+                                     {"vel", creatureVel}, {"setpos", creatureSetPos}, {"setvel", creatureSetVel}, {NULL, NULL}};
+
+// eden.creatures(x, y, z, r) -> an array of handles, nearest first: the live creatures within r (0 < r <= 64) of the
+// point, at most 64. Empty when no world is open.
+int apiCreatures(lua_State* L) {
+    double c[3];
+    for (int i = 0; i < 3; ++i) {
+        c[i] = luaL_checknumber(L, i + 1);
+        if (!std::isfinite(c[i]) || std::fabs(c[i]) > 1000000000.0) luaL_argerror(L, i + 1, "coordinate out of range");
+    }
+    const double r = luaL_checknumber(L, 4);
+    if (!(r > 0 && r <= CREATURES_RADIUS_MAX)) luaL_argerror(L, 4, "a radius over 0 and up to 64");
+    std::vector<std::pair<double, int> > found;
+    if (worldOpen() && !g_session) {
+        for (int s = 0, n = CreatureSlots(); s < n; ++s) {
+            Vector v;
+            if (!CreatureRead(s, NULL, &v)) continue;
+            const double dx = v.x - c[0], dy = v.y - c[1], dz = v.z - c[2], d2 = dx * dx + dy * dy + dz * dz;
+            if (d2 <= r * r) found.push_back(std::make_pair(d2, s));
+        }
+    }
+    std::sort(found.begin(), found.end());
+    if (found.size() > CREATURES_RESULTS_MAX) found.resize(CREATURES_RESULTS_MAX);
+    lua_createtable(L, (int)found.size(), 0);
+    for (size_t i = 0; i < found.size(); ++i) {
+        pushCreature(L, found[i].second, CreatureGen(found[i].second));
+        lua_rawseti(L, -2, (lua_Integer)i + 1);
+    }
+    return 1;
 }
 int apiSay(lua_State* L) {
     std::string t = luaL_checkstring(L, 1);
@@ -652,6 +892,223 @@ int apiSetSign(lua_State* L) {
     lua_pushstring(L, why.c_str());
     return 2;
 }
+// K.7-1a: eden.toast(text [, seconds]) -> true, or false when this pack toasted less than 1 s ago (game time). text is
+// at most 120 bytes (longer raises), seconds is clamped to 1..6 (default 3). It is the HUD status line, so an engine
+// status replaces it and a later toast replaces an engine status.
+int apiToast(lua_State* L) {
+    size_t n;
+    const char* text = luaL_checklstring(L, 1, &n);
+    const double secs = lua_isnoneornil(L, 2) ? 3.0 : luaL_checknumber(L, 2);
+    if (n > 120) return luaL_argerror(L, 1, "the text is longer than 120 bytes");
+    if (!worldOpen() || !World::getWorld->hud) return luaL_error(L, "no world is open");
+    Pack* p = packOf(L);
+    if (!testToastFlood && g_clock < p->toastNext) { lua_pushboolean(L, 0); return 1; }
+    p->toastNext = g_clock + 1.0;
+    std::string t(text, n);
+    for (char& ch : t) if ((unsigned char)ch < 0x20) ch = ' ';
+    World::getWorld->hud->sb->setStatus(t, (float)(secs < 1.0 ? 1.0 : secs > 6.0 ? 6.0 : secs));
+    lua_pushboolean(L, 1);
+    return 1;
+}
+// ---- K.7-1b: eden.ask / eden.input ------------------------------------------------------------------------
+std::string cleanText(const char* s, size_t n) {
+    std::string t(s, n);
+    for (char& ch : t) if ((unsigned char)ch < 0x20) ch = ' ';
+    return t;
+}
+// Reads the string at stack index idx (absolute) into out; false + err if it is not one, or too long.
+bool readStr(lua_State* L, int idx, const std::string& what, size_t maxB, bool allowEmpty, std::string& out, std::string& err) {
+    if (lua_type(L, idx) != LUA_TSTRING) { err = what + " must be a string"; return false; }
+    size_t n;
+    const char* s = lua_tolstring(L, idx, &n);
+    if (n > maxB) { err = what + " is longer than " + std::to_string(maxB) + " bytes"; return false; }
+    if (n == 0 && !allowEmpty) { err = what + " is empty"; return false; }
+    out = cleanText(s, n);
+    return true;
+}
+bool readButtons(lua_State* L, int idx, std::vector<std::string>& out, std::string& err) {
+    if (lua_type(L, idx) != LUA_TTABLE) { err = "buttons must be a table of 1 to 4 strings"; return false; }
+    const lua_Integer n = (lua_Integer)lua_rawlen(L, idx);
+    if (n < 1 || n > 4) { err = "buttons must have 1 to 4 entries"; return false; }
+    for (lua_Integer i = 1; i <= n; ++i) {
+        lua_rawgeti(L, idx, i);
+        std::string b;
+        const bool ok = readStr(L, lua_gettop(L), "buttons[" + std::to_string(i) + "]", 24, false, b, err);
+        lua_pop(L, 1);
+        if (!ok) return false;
+        out.push_back(b);
+    }
+    return true;
+}
+bool readInt(lua_State* L, int idx, const char* what, lua_Integer lo, lua_Integer hi, int& out, std::string& err) {
+    int isnum = 0;
+    const lua_Integer v = lua_tointegerx(L, idx, &isnum);
+    if (!isnum || v < lo || v > hi) { err = std::string(what) + " must be a whole number " + std::to_string(lo) + ".." + std::to_string(hi); return false; }
+    out = (int)v;
+    return true;
+}
+// eden.ask(title, body, buttons) / eden.ask{...} and eden.input(title, body [, default]) / eden.input{...}.
+// Never raises (the caller's strings are alive): false + err.
+bool parseDialog(lua_State* L, DlgReq& r, std::string& err) {
+    const std::string fn = r.input ? "eden.input" : "eden.ask";
+    r.ok = "OK"; r.cancel = "Cancel";
+    if (lua_type(L, 1) == LUA_TTABLE) {
+        lua_pushnil(L);
+        while (lua_next(L, 1)) {
+            const int v = lua_gettop(L);
+            const std::string key = lua_type(L, v - 1) == LUA_TSTRING ? lua_tostring(L, v - 1) : "";
+            bool ok = true;
+            if (key == "title") ok = readStr(L, v, "title", 60, true, r.title, err);
+            else if (key == "body") ok = readStr(L, v, "body", 400, true, r.body, err);
+            else if (!r.input && key == "buttons") ok = readButtons(L, v, r.buttons, err);
+            else if (!r.input && key == "danger") ok = readInt(L, v, "danger", 1, 4, r.danger, err);
+            else if (r.input && key == "default") ok = readStr(L, v, "default", 256, true, r.def, err);
+            else if (r.input && key == "max") ok = readInt(L, v, "max", 1, 256, r.max, err);
+            else if (r.input && key == "lines") ok = readInt(L, v, "lines", 1, 4, r.lines, err);
+            else if (r.input && key == "ok") ok = readStr(L, v, "ok", 24, false, r.ok, err);
+            else if (r.input && key == "cancel") ok = readStr(L, v, "cancel", 24, false, r.cancel, err);
+            else { err = "unknown key '" + key + "'"; ok = false; }
+            if (!ok) { lua_settop(L, 1); err = fn + ": " + err; return false; }
+            lua_pop(L, 1);
+        }
+    } else {
+        bool ok = readStr(L, 1, "title", 60, true, r.title, err);
+        if (ok && !lua_isnoneornil(L, 2)) ok = readStr(L, 2, "body", 400, true, r.body, err);
+        if (ok && !r.input) ok = readButtons(L, 3, r.buttons, err);
+        if (ok && r.input && !lua_isnoneornil(L, 3)) ok = readStr(L, 3, "default", 256, true, r.def, err);
+        if (!ok) { err = fn + ": " + err; return false; }
+    }
+    if (!r.input && r.buttons.empty()) { err = fn + ": buttons is required"; return false; }
+    if (!r.input && r.danger > (int)r.buttons.size()) { err = fn + ": danger is past the last button"; return false; }
+    if (r.input && (int)r.def.size() > r.max) r.def.resize(r.max);
+    return true;
+}
+
+void dlgClosed(int ticket, int index, const char* text, const char* why) {
+    if (g_dlgShownPack) g_dlgShownPack->dlgNext = g_clock + 0.5;   // V11: the player gets frames to reach the pause menu
+    g_dlgShownTicket = 0;
+    g_dlgShownPack = NULL;
+    g_dlgResults.push_back(DlgRes{ticket, index, text ? text : "", why ? why : ""});
+}
+void onAskChosen(int j) { dlgClosed(g_dlgShownTicket, j + 1, "", ""); }
+void onInputChosen(int j, const char* text) {
+    if (j == 0) dlgClosed(g_dlgShownTicket, 0, text, "");
+    else dlgClosed(g_dlgShownTicket, 0, "", "dismissed");
+}
+void onDialogEnd(int token, int why) {   // GLDialog: replaced by an engine dialog, or the footer link was tapped
+    if (why == GLDialog::END_LINK) {
+        if (g_dlgShownPack) g_dlgShownPack->muted = true;
+        dlgClosed(token, 0, "", "muted");
+    } else dlgClosed(token, 0, "", "replaced");
+}
+
+void showDialog(const DlgReq& r) {
+    Pack* p = r.p;
+    const bool link = p->dlgSeen && g_clock - p->dlgLast < 60.0;   // V11: a second dialog within 60 s of game time
+    p->dlgSeen = true;
+    p->dlgLast = g_clock;
+    const char* b[4];
+    if (!r.input) {
+        for (size_t i = 0; i < r.buttons.size(); ++i) b[i] = r.buttons[i].c_str();
+        GLDialog::show(r.title.c_str(), r.body.c_str(), b, (int)r.buttons.size(), onAskChosen);
+        if (r.danger) GLDialog::setDanger(r.danger - 1);
+    } else {
+        b[0] = r.ok.c_str(); b[1] = r.cancel.c_str();
+        GLDialog::prompt(r.title.c_str(), r.body.c_str(), r.def.c_str(), r.max, b, 2, onInputChosen, r.lines);
+    }
+    const std::string footer = "Mod: " + p->id;
+    GLDialog::setOwner(r.ticket, footer.c_str(), link ? "Stop dialogs from this mod" : NULL, onDialogEnd);
+    g_dlgShownTicket = r.ticket;   // after show(): a show() over a mod dialog reports to the OLD owner first
+    g_dlgShownPack = p;
+}
+
+Co* coOfTicket(int ticket) {
+    for (std::unique_ptr<Pack>& p : g_packs)
+        for (Co& c : p->cos) if (!c.done && c.ticket == ticket) return &c;
+    return NULL;
+}
+bool hasResult(int ticket) {
+    for (const DlgRes& r : g_dlgResults) if (r.ticket == ticket) return true;
+    return false;
+}
+
+// End of update(): one mod dialog at a time, the first queued request whose pack is past its 0.5 s gap.
+void pumpDialogs() {
+    for (size_t i = 0; i < g_dlgQueue.size();) {
+        DlgReq& r = g_dlgQueue[i];
+        if (r.p->stopped || !coOfTicket(r.ticket)) { g_dlgQueue.erase(g_dlgQueue.begin() + i); continue; }
+        if (r.p->muted) { g_dlgResults.push_back(DlgRes{r.ticket, 0, "", "muted"}); g_dlgQueue.erase(g_dlgQueue.begin() + i); continue; }
+        ++i;
+    }
+    if (GLDialog::active()) return;
+    for (size_t i = 0; i < g_dlgQueue.size(); ++i) {
+        if (g_clock < g_dlgQueue[i].p->dlgNext) continue;
+        const DlgReq r = g_dlgQueue[i];
+        g_dlgQueue.erase(g_dlgQueue.begin() + i);
+        showDialog(r);
+        return;
+    }
+}
+
+int uiStep(lua_State* L, int, lua_KContext ctx) {
+    const int ticket = (int)ctx;
+    for (size_t i = 0; i < g_dlgResults.size(); ++i) {
+        const DlgRes& r = g_dlgResults[i];
+        if (r.ticket != ticket) continue;
+        int n;
+        if (!r.why.empty()) { lua_pushnil(L); lua_pushstring(L, r.why.c_str()); n = 2; }
+        else if (r.index > 0) { lua_pushinteger(L, r.index); n = 1; }
+        else { lua_pushlstring(L, r.text.data(), r.text.size()); n = 1; }
+        g_dlgResults.erase(g_dlgResults.begin() + i);
+        return n;
+    }
+    lua_pushnil(L);
+    lua_pushstring(L, "dismissed");
+    return 2;
+}
+
+// The call pauses the handler like eden.wait until the player answers (WAIT_UI: `Co::ticket`; no timer, no work
+// budget, one coroutine slot). Returns the button index (ask) or the text (input), or nil, why.
+int apiDialog(lua_State* L, bool input) {
+    static char msg[300];
+    const char* nilWhy = NULL;
+    int ticket = 0;
+    msg[0] = 0;
+    {   // (everything with a destructor ends here: luaL_error and lua_yieldk longjmp)
+        DlgReq r;
+        std::string err;
+        r.input = input;
+        const std::string fn = input ? "eden.input" : "eden.ask";
+        Pack* p = packOf(L);
+        if (!parseDialog(L, r, err)) {}
+        else if (g_leaving) err = fn + ": can't pause while the world closes";
+        else if (!lua_isyieldable(L)) err = fn + " can't pause here (inside a callback that can't pause)";
+        else if (!worldOpen()) err = "no world is open";
+        else if (p->muted) nilWhy = "muted";
+        else if (input && !GLDialog::textEntryAvailable()) nilWhy = "unavailable";
+        else {
+            int pending = 0;
+            for (const DlgReq& q : g_dlgQueue) pending += q.p == p;
+            Co* c = NULL;
+            for (Co& k : p->cos) if (k.T == L && !k.done) c = &k;
+            if (pending >= 1 || g_dlgQueue.size() >= 4) nilWhy = "busy";
+            else if (!c) err = fn + " can't pause here";
+            else {
+                r.p = p;
+                r.ticket = c->ticket = ++g_ticket;
+                ticket = r.ticket;
+                if (testDialogNoQueue) showDialog(r);   // mutation: no queue, a second dialog replaces the first
+                else g_dlgQueue.push_back(r);
+            }
+        }
+        if (!err.empty()) std::snprintf(msg, sizeof msg, "%s", err.c_str());
+    }
+    if (msg[0]) return luaL_error(L, "%s", msg);
+    if (nilWhy) { lua_pushnil(L); lua_pushstring(L, nilWhy); return 2; }
+    return lua_yieldk(L, 0, ticket, uiStep);
+}
+int apiAsk(lua_State* L) { return apiDialog(L, false); }
+int apiInput(lua_State* L) { return apiDialog(L, true); }
 int apiBlockId(lua_State* L) {
     const int id = CmdScript::blockByName(luaL_checkstring(L, 1));
     if (id < 0) return 0;
@@ -674,13 +1131,42 @@ int apiPlayer(lua_State* L) {
     int ax, ay, az;
     CmdScript::playerAnchor(&ax, &ay, &az);
     lua_pushinteger(L, ay); lua_setfield(L, -2, "cell_y");   // the cell under the feet (eden.cmd's anchor)
+    // K.6-7: what the hand holds. block = the picked block's name (absent for a tool or a mod block not yet placed),
+    // colour = the paint colour, mode = the tool in use.
+    static const char* const kModes[] = {"camera", "pick_block", "build", "mine", "burn", "paint", "pick_color"};
+    const int m = w->hud->mode;
+    if (m >= 0 && m <= MODE_PICK_COLOR) { lua_pushstring(L, kModes[m]); lua_setfield(L, -2, "mode"); }
+    const int bt = w->hud->blocktype;
+    if (bt > 0 && !hud_picker_is_tool(bt) && !hud_picker_is_mod(bt)) { pushBlock(L, bt); lua_setfield(L, -2, "block"); }
+    lua_pushinteger(L, w->hud->block_paintcolor); lua_setfield(L, -2, "colour");
     return 1;
+}
+// K.6-7: eden.look() -> x, y, z, face, block for the cell under the crosshair (the hit cell, not the build point);
+// nothing for the sky, a creature, or a menu. face is the record's (0 -x, 1 +x, 2 under, 3 top, 4 -z, 5 +z) = the side hit.
+int apiLook(lua_State* L) {
+    if (!worldOpen()) return 0;
+    int x, y, z;
+    if (!Console::lookCell(&x, &y, &z)) return 0;
+    World* w = World::getWorld;
+    const Point3D place = findWorldCoords((int)(SCREEN_HEIGHT / 2), (int)(SCREEN_WIDTH / 2), FC_PLACE);
+    int face = 3;
+    if (place.x != -1) {
+        const int dx = place.x - x, dy = place.y - y, dz = place.z - z;
+        if (dx == -1) face = 0; else if (dx == 1) face = 1;
+        else if (dy == -1) face = 2; else if (dy == 1) face = 3;
+        else if (dz == -1) face = 4; else if (dz == 1) face = 5;
+    }
+    if (testLookBuild && place.x != -1) { x = place.x; y = place.y; z = place.z; }   // mutation: the empty cell in front
+    lua_pushinteger(L, x); lua_pushinteger(L, y); lua_pushinteger(L, z); lua_pushinteger(L, face);
+    pushBlock(L, w->terrain->getLand(x, z, y));
+    return 5;
 }
 int apiClock(lua_State* L) { lua_pushnumber(L, g_clock); return 1; }
 int apiWait(lua_State* L) {
     double s = luaL_optnumber(L, 1, 0);
     if (!(s >= 0)) s = 0;
     if (s > CmdScript::MAX_WAIT) s = CmdScript::MAX_WAIT;
+    if (g_leaving) return luaL_error(L, "eden.wait: can't pause while the world closes");
     if (!lua_isyieldable(L)) return luaL_error(L, "eden.wait can't pause here (inside a callback that can't pause)");
     lua_settop(L, 0);
     lua_pushnumber(L, s);
@@ -821,7 +1307,7 @@ bool storeEncodeValue(lua_State* L, int idx, int depth, std::string& out, std::s
     }
     case LUA_TNIL: *why = "nil deletes a key: it is not stored"; return false;
     default:
-        *why = std::string("can't store a ") + luaL_typename(L, idx);
+        *why = luaL_testudata(L, idx, kCreatureMeta) ? std::string("can't store a creature handle") : std::string("can't store a ") + luaL_typename(L, idx);
         return false;
     }
 }
@@ -1007,14 +1493,617 @@ int apiStoreKeys(lua_State* L) {
         }
     return 1;
 }
+// K.7-2b (V15): eden.setting(id) -> the player's value for one of this pack's pack.json "settings": a boolean (toggle),
+// number (slider), or string (choice: the option; text). Read from Packs/.settings/<pack id>.json on the first call and
+// kept until the world closes (the page is on the Mods screen, which never opens in a world); a value that fails the
+// pack's schema reads as the default. An id the pack does not declare raises.
+int apiSetting(lua_State* L) {
+    Pack* p = packOf(L);
+    size_t n;
+    const std::string id(luaL_checklstring(L, 1, &n), n);
+    const ContentPack::ModPack* mp = NULL;
+    for (const ContentPack::ModPack& q : ContentPack::modReport().packs)
+        if (q.state == ContentPack::PACK_LOADED && !q.refused && q.id == p->id) { mp = &q; break; }
+    if (!mp) return luaL_argerror(L, 1, "this pack declares no settings");
+    if (!p->settingsRead) {
+        p->settingVals = ContentPack::settingValues(World::getWorld->fm->documents, *mp);
+        p->settingsRead = true;
+    }
+    for (size_t i = 0; i < mp->settings.size() && i < p->settingVals.size(); ++i) {
+        const ContentPack::ModSetting& st = mp->settings[i];
+        if (st.id.empty() || st.id != id) continue;
+        const ContentPack::SettingValue& v = p->settingVals[i];
+        if (st.type == "toggle") lua_pushboolean(L, v.b);
+        else if (st.type == "slider") lua_pushnumber(L, v.n);
+        else lua_pushlstring(L, v.s.data(), v.s.size());
+        return 1;
+    }
+    return luaL_argerror(L, 1, "this pack declares no such setting");
+}
+
+// ---- K.7-3a: eden.menu{...} (V8, V12, V13) ---------------------------------------------------------------
+// The spec is read once into ModMenu::Spec (plain C++: no Lua value is held but the two callbacks and the handle),
+// with every cap of plan V8; a violation raises with its path ("tabs[2].rows[7].label: longer than 40 bytes"), an
+// unknown row type or key raises too (silently dropping a row would hide the bug). ModMenuScreen draws it; what the
+// player does comes back through menuInput / menuClosed and runs as an ordinary handler coroutine in step 2.
+const char* const kMenuMeta = "emod.menu";
+enum { MENU_TABS_MAX = 8, MENU_TAB_ROWS_MAX = 48, MENU_ROWS_MAX = 128, MENU_LABEL_MAX = 40, MENU_HINT_MAX = 120,
+       MENU_TEXT_MAX = 400, MENU_ACTION_MAX = 16, MENU_OPTIONS_MAX = 8, MENU_OPTION_MAX = 24, MENU_STEPS_MAX = 1000 };
+struct MenuUD { int serial; };
+struct MenuEv { int serial; bool close; int tab, row; ModMenu::Row now; };
+std::vector<MenuEv> g_menuEvents;
+int g_menuSerial = 0;
+std::set<std::string> g_iconWarned;   // unknown icon names already reported (once per name until the world closes)
+
+bool menuIdOk(const std::string& s) { return cmdNameOk(s.data(), s.size()); }
+bool readBool(lua_State* L, int idx, const std::string& what, bool& out, std::string& err) {
+    if (lua_type(L, idx) != LUA_TBOOLEAN) { err = what + " must be true or false"; return false; }
+    out = lua_toboolean(L, idx) != 0;
+    return true;
+}
+bool readNum(lua_State* L, int idx, const std::string& what, double& out, std::string& err) {
+    if (lua_type(L, idx) != LUA_TNUMBER || !std::isfinite((double)lua_tonumber(L, idx))) { err = what + " must be a number"; return false; }
+    out = (double)lua_tonumber(L, idx);
+    return true;
+}
+bool readIcon(lua_State* L, int idx, const std::string& what, Pack* p, int& out, std::string& err) {
+    std::string name;
+    if (!readStr(L, idx, what, 64, false, name, err)) return false;
+    out = name.find(':') != std::string::npos ? ContentPack::packIconByName(name) : uiIconByName(name.c_str());   // K.7-3c: "<pack>:<icon>"
+    if (out < 0) {   // V13: a pack written for a later atlas still opens; the fallback draws and the console says so once
+        out = UIICON_FALLBACK;
+        if (g_iconWarned.insert(name).second)
+            Console::print(CmdScript::Sink::ERR, "[" + p->id + "] warning: " + what + ": no icon \"" + name + "\" in this build or world (drawn as \"settings\")");
+    }
+    return true;
+}
+const char* const kRowTypes[] = {"heading", "text", "row", "button", "toggle", "slider", "choice"};
+
+// Reads one key of a row (or of m:set's fields, `set` = true: no id/type, a value checked against the row as it is).
+bool menuRowKey(lua_State* L, int v, const std::string& key, const std::string& kp, Pack* p, ModMenu::Row& r,
+                bool set, int* choiceValue, std::string& err) {
+    const int t = r.type;
+    if (key == "label") return readStr(L, v, kp, t == ModMenu::R_TEXT ? MENU_TEXT_MAX : MENU_LABEL_MAX, false, r.label, err);
+    if (key == "hint" && t >= ModMenu::R_ROW) return readStr(L, v, kp, MENU_HINT_MAX, true, r.hint, err);
+    if (key == "detail" && t == ModMenu::R_ROW) return readStr(L, v, kp, MENU_HINT_MAX, true, r.detail, err);
+    if (key == "icon" && t == ModMenu::R_ROW) return readIcon(L, v, kp, p, r.icon, err);
+    if (key == "action" && t == ModMenu::R_BUTTON) return readStr(L, v, kp, MENU_ACTION_MAX, false, r.action, err);
+    if (key == "danger" && t == ModMenu::R_BUTTON) return readBool(L, v, kp, r.danger, err);
+    if (key == "enabled" && t >= ModMenu::R_ROW) return readBool(L, v, kp, r.enabled, err);
+    if (key == "value" && t == ModMenu::R_TOGGLE) return readBool(L, v, kp, r.on, err);
+    if (key == "value" && t == ModMenu::R_SLIDER) {
+        if (!readNum(L, v, kp, r.value, err)) return false;
+        if (set && (r.value < r.min || r.value > r.max)) { err = kp + " is outside min..max"; return false; }
+        return true;
+    }
+    if (key == "value" && t == ModMenu::R_CHOICE) {
+        int n = 0;
+        if (!readInt(L, v, kp.c_str(), 1, MENU_OPTIONS_MAX, n, err)) return false;
+        if (set && n > (int)r.options.size()) { err = kp + " is past the last option"; return false; }
+        *choiceValue = n;
+        return true;
+    }
+    if (!set && t == ModMenu::R_SLIDER && (key == "min" || key == "max" || key == "step"))
+        return readNum(L, v, kp, key == "min" ? r.min : key == "max" ? r.max : r.step, err);
+    if (!set && key == "options" && t == ModMenu::R_CHOICE) {
+        if (lua_type(L, v) != LUA_TTABLE) { err = kp + " must be a table of 2 to 8 strings"; return false; }
+        const lua_Integer n = (lua_Integer)lua_rawlen(L, v);
+        if (n < 2 || n > MENU_OPTIONS_MAX) { err = kp + " must have 2 to 8 entries"; return false; }
+        r.options.clear();
+        for (lua_Integer i = 1; i <= n; ++i) {
+            lua_rawgeti(L, v, i);
+            std::string o;
+            const bool ok = readStr(L, lua_gettop(L), kp + "[" + std::to_string((long long)i) + "]", MENU_OPTION_MAX, false, o, err);
+            lua_pop(L, 1);
+            if (!ok) return false;
+            r.options.push_back(o);
+        }
+        return true;
+    }
+    err = kp + ": unknown key (type '" + std::string(kRowTypes[t]) + "')";
+    return false;
+}
+
+bool parseMenuRow(lua_State* L, int idx, const std::string& path, Pack* p, ModMenu::Row& r, std::string& err) {
+    const int top = lua_gettop(L);
+    idx = lua_absindex(L, idx);
+    if (lua_type(L, idx) != LUA_TTABLE) { err = path + " must be a table"; return false; }
+    lua_pushliteral(L, "type");
+    lua_rawget(L, idx);
+    std::string type;
+    bool ok = readStr(L, lua_gettop(L), path + ".type", 16, false, type, err);
+    lua_settop(L, top);
+    if (!ok) return false;
+    r = ModMenu::Row();
+    r.type = -1;
+    for (int k = 0; k < (int)(sizeof kRowTypes / sizeof kRowTypes[0]); ++k) if (type == kRowTypes[k]) r.type = k;
+    if (r.type < 0) { err = path + ".type: unknown row type '" + type + "'"; return false; }
+    bool hasLabel = false, hasId = false, hasAction = false, hasMin = false, hasMax = false, hasValue = false, hasOptions = false;
+    int choiceValue = 1;
+    lua_pushnil(L);
+    while (lua_next(L, idx)) {
+        const int v = lua_gettop(L);
+        if (lua_type(L, v - 1) != LUA_TSTRING) { lua_settop(L, top); err = path + ": a key must be a name"; return false; }
+        const std::string key = lua_tostring(L, v - 1), kp = path + "." + key;
+        if (key == "type") ok = true;
+        else if (key == "id") {
+            hasId = true;
+            ok = readStr(L, v, kp, 24, false, r.id, err);
+            if (ok && !menuIdOk(r.id)) { err = kp + ": an id matches [a-z0-9_]{1,24}"; ok = false; }
+        } else {
+            ok = menuRowKey(L, v, key, kp, p, r, false, &choiceValue, err);
+            hasLabel |= key == "label"; hasAction |= key == "action"; hasMin |= key == "min"; hasMax |= key == "max";
+            hasValue |= key == "value"; hasOptions |= key == "options";
+        }
+        if (!ok) { lua_settop(L, top); return false; }
+        lua_pop(L, 1);
+    }
+    lua_settop(L, top);
+    if (!hasLabel) { err = path + ".label is required"; return false; }
+    if (r.type >= ModMenu::R_ROW && !hasId) { err = path + ".id is required (on_action names the row by it)"; return false; }
+    if (r.type == ModMenu::R_BUTTON && !hasAction) { err = path + ".action is required (the button's text)"; return false; }
+    if (r.type == ModMenu::R_SLIDER) {
+        if (!hasMin || !hasMax) { err = path + ": a slider needs min and max"; return false; }
+        if (!(r.min < r.max)) { err = path + ": min must be less than max"; return false; }
+        if (!(r.step > 0)) { err = path + ".step must be more than 0"; return false; }
+        if ((r.max - r.min) / r.step > MENU_STEPS_MAX + 1e-9) { err = path + ": (max - min) / step is more than 1000"; return false; }
+        if (!hasValue) r.value = r.min;
+        if (r.value < r.min || r.value > r.max) { err = path + ".value is outside min..max"; return false; }
+        r.value = std::min(r.max, r.min + std::floor((r.value - r.min) / r.step + 0.5) * r.step);
+    }
+    if (r.type == ModMenu::R_CHOICE) {
+        if (!hasOptions) { err = path + ".options is required"; return false; }
+        if (choiceValue > (int)r.options.size()) { err = path + ".value is past the last option"; return false; }
+        r.choice = choiceValue - 1;
+    }
+    return true;
+}
+
+// rows = the table at idx; appends to tab.rows, counting toward *total.
+bool parseMenuRows(lua_State* L, int idx, const std::string& path, Pack* p, ModMenu::Tab& tab, int* total,
+                   std::set<std::string>& ids, std::string& err) {
+    if (lua_type(L, idx) != LUA_TTABLE) { err = path + " must be a table of rows"; return false; }
+    const lua_Integer n = (lua_Integer)lua_rawlen(L, idx);
+    if (n > MENU_TAB_ROWS_MAX) { err = path + ": more than 48 rows in a tab"; return false; }
+    for (lua_Integer i = 1; i <= n; ++i) {
+        const std::string rp = path + "[" + std::to_string((long long)i) + "]";
+        if (++*total > MENU_ROWS_MAX) { err = rp + ": more than 128 rows in the menu"; return false; }
+        lua_rawgeti(L, idx, i);
+        ModMenu::Row r;
+        const bool ok = parseMenuRow(L, lua_gettop(L), rp, p, r, err);
+        lua_pop(L, 1);
+        if (!ok) return false;
+        if (!r.id.empty() && !ids.insert(r.id).second) { err = rp + ".id: '" + r.id + "' is used twice in this menu"; return false; }
+        tab.rows.push_back(r);
+    }
+    return true;
+}
+
+bool parseMenu(lua_State* L, int idx, Pack* p, ModMenu::Spec& s, std::string& err) {
+    const int top = lua_gettop(L);
+    bool hasTitle = false, hasTabs = false, hasRows = false;
+    int total = 0;
+    std::set<std::string> ids, tabIds;
+    lua_pushnil(L);
+    while (lua_next(L, idx)) {
+        const int v = lua_gettop(L);
+        if (lua_type(L, v - 1) != LUA_TSTRING) { lua_settop(L, top); err = "a key must be a name"; return false; }
+        const std::string key = lua_tostring(L, v - 1);
+        bool ok = true;
+        if (key == "id") {
+            ok = readStr(L, v, "id", 24, false, s.id, err);
+            if (ok && !menuIdOk(s.id)) { err = "id: an id matches [a-z0-9_]{1,24}"; ok = false; }
+        } else if (key == "title") { hasTitle = true; ok = readStr(L, v, "title", MENU_LABEL_MAX, false, s.title, err); }
+        else if (key == "on_action" || key == "on_close") {
+            if (lua_type(L, v) != LUA_TFUNCTION && lua_type(L, v) != LUA_TNIL) { err = key + " must be a function"; ok = false; }
+        } else if (key == "rows") {
+            hasRows = true;
+            s.tabs.push_back(ModMenu::Tab());
+            ok = parseMenuRows(L, v, "rows", p, s.tabs.back(), &total, ids, err);
+        } else if (key == "tabs") {
+            hasTabs = true;
+            if (lua_type(L, v) != LUA_TTABLE) { err = "tabs must be a table of 1 to 8 tabs"; ok = false; }
+            const lua_Integer n = ok ? (lua_Integer)lua_rawlen(L, v) : 0;
+            if (ok && (n < 1 || n > MENU_TABS_MAX)) { err = "tabs must have 1 to 8 entries"; ok = false; }
+            for (lua_Integer i = 1; ok && i <= n; ++i) {
+                const std::string tp = "tabs[" + std::to_string((long long)i) + "]";
+                lua_rawgeti(L, v, i);
+                const int ti = lua_gettop(L);
+                ModMenu::Tab tab;
+                bool tabRows = false;
+                if (lua_type(L, ti) != LUA_TTABLE) { err = tp + " must be a table"; ok = false; }
+                if (ok) {
+                    lua_pushnil(L);
+                    while (ok && lua_next(L, ti)) {
+                        const int tv = lua_gettop(L);
+                        const std::string tk = lua_type(L, tv - 1) == LUA_TSTRING ? lua_tostring(L, tv - 1) : "", kp = tp + "." + tk;
+                        if (tk == "id") {
+                            ok = readStr(L, tv, kp, 24, false, tab.id, err);
+                            if (ok && !menuIdOk(tab.id)) { err = kp + ": an id matches [a-z0-9_]{1,24}"; ok = false; }
+                            if (ok && !tabIds.insert(tab.id).second) { err = kp + ": '" + tab.id + "' is used twice in this menu"; ok = false; }
+                        } else if (tk == "label") ok = readStr(L, tv, kp, MENU_LABEL_MAX, false, tab.label, err);
+                        else if (tk == "icon") ok = readIcon(L, tv, kp, p, tab.icon, err);
+                        else if (tk == "rows") { tabRows = true; ok = parseMenuRows(L, tv, kp, p, tab, &total, ids, err); }
+                        else { err = tk.empty() ? tp + ": a key must be a name" : kp + ": unknown key for a tab"; ok = false; }
+                        lua_settop(L, ok ? tv - 1 : ti);
+                    }
+                }
+                if (ok && !tabRows) { err = tp + ".rows is required"; ok = false; }
+                if (ok && n > 1 && tab.label.empty()) { err = tp + ".label is required (the menu has more than one tab)"; ok = false; }
+                if (ok && n > 1 && tab.id.empty()) { err = tp + ".id is required (the menu has more than one tab)"; ok = false; }
+                lua_settop(L, v);
+                if (ok) s.tabs.push_back(tab);
+            }
+        } else { err = key + ": unknown key"; ok = false; }
+        if (!ok) { lua_settop(L, top); return false; }
+        lua_pop(L, 1);
+    }
+    lua_settop(L, top);
+    if (!hasTitle) { err = "title is required"; return false; }
+    if (hasTabs == hasRows) { err = hasTabs ? "give tabs or rows, not both" : "tabs (or rows) is required"; return false; }
+    s.pack = p->id;
+    return true;
+}
+
+MenuRec* menuRec(Pack* p, int serial) {
+    for (std::unique_ptr<MenuRec>& m : p->menus) if (m->serial == serial) return m.get();
+    return NULL;
+}
+bool menuFind(int serial, Pack** pp, MenuRec** mm) {
+    for (std::unique_ptr<Pack>& p : g_packs)
+        if (MenuRec* m = menuRec(p.get(), serial)) { *pp = p.get(); *mm = m; return true; }
+    return false;
+}
+// The record closed (the player, m:close): on_close is queued; the handle stays referenced until it has run.
+void menuClose(MenuRec* m) {
+    m->open = false;
+    g_menuEvents.push_back(MenuEv{m->serial, true, 0, 0, ModMenu::Row()});
+}
+bool menuShow(Pack* p, MenuRec* m, lua_State* L, int handleIdx) {
+    if (ModMenuScreen::isOpen() || p->muted) return false;
+    if (m->self == LUA_NOREF) { lua_pushvalue(L, handleIdx); m->self = luaL_ref(L, LUA_REGISTRYINDEX); }
+    m->open = true;
+    ModMenuScreen::open(m->serial, m->spec, m->tab);
+    return true;
+}
+
+// eden.menu{...} -> a handle, or nil, why ("busy": a mod menu is open; "muted": the player stopped this pack's dialogs).
+int apiMenu(lua_State* L) {
+    Pack* p = packOf(L);
+    if (g_leaving) return luaL_error(L, "eden.menu: can't pause while the world closes");
+    if (!worldOpen() || g_session) return luaL_error(L, "no world is open");
+    luaL_checktype(L, 1, LUA_TTABLE);
+    lua_settop(L, 1);
+    std::unique_ptr<MenuRec> m(new MenuRec());
+    std::string err;
+    if (!parseMenu(L, 1, p, m->spec, err)) return luaL_error(L, "eden.menu: %s", err.c_str());
+    if (p->muted || ModMenuScreen::isOpen()) {
+        lua_pushnil(L);
+        lua_pushstring(L, p->muted ? "muted" : "busy");
+        return 2;
+    }
+    MenuUD* u = (MenuUD*)lua_newuserdatauv(L, sizeof(MenuUD), 0);   // index 2
+    u->serial = 0;
+    luaL_setmetatable(L, kMenuMeta);
+    for (const char* f : {"on_action", "on_close"}) {
+        lua_pushstring(L, f);
+        lua_rawget(L, 1);
+        const int ref = lua_type(L, -1) == LUA_TFUNCTION ? luaL_ref(L, LUA_REGISTRYINDEX) : (lua_pop(L, 1), LUA_NOREF);
+        (f[3] == 'a' ? m->onAction : m->onClose) = ref;
+    }
+    m->serial = u->serial = ++g_menuSerial;
+    MenuRec* rec = m.get();
+    p->menus.push_back(std::move(m));
+    menuShow(p, rec, L, 2);
+    lua_settop(L, 2);
+    return 1;
+}
+
+MenuRec* checkMenu(lua_State* L, Pack** pp) {
+    MenuUD* u = (MenuUD*)luaL_checkudata(L, 1, kMenuMeta);
+    Pack* p = packOf(L);
+    MenuRec* m = menuRec(p, u->serial);
+    if (!m) luaL_error(L, "this menu is gone");
+    *pp = p;
+    return m;
+}
+// m:set(row, {label=, detail=, hint=, value=, enabled=, action=, danger=, icon=}) -> true
+int menuSet(lua_State* L) {
+    Pack* p;
+    MenuRec* m = checkMenu(L, &p);
+    size_t n;
+    const std::string id(luaL_checklstring(L, 2, &n), n);
+    luaL_checktype(L, 3, LUA_TTABLE);
+    lua_settop(L, 3);
+    int ti = -1, ri = -1;
+    for (size_t t = 0; t < m->spec.tabs.size() && ti < 0; ++t)
+        for (size_t r = 0; r < m->spec.tabs[t].rows.size(); ++r)
+            if (m->spec.tabs[t].rows[r].id == id) { ti = (int)t; ri = (int)r; break; }
+    if (ti < 0) return luaL_argerror(L, 2, "this menu has no row with that id");
+    ModMenu::Row r = m->spec.tabs[(size_t)ti].rows[(size_t)ri];
+    std::string err;
+    int choiceValue = r.choice + 1;
+    lua_pushnil(L);
+    while (lua_next(L, 3)) {
+        if (lua_type(L, -2) != LUA_TSTRING) return luaL_error(L, "m:set: a key must be a name");
+        const std::string key = lua_tostring(L, -2);
+        if (!menuRowKey(L, lua_gettop(L), key, key, p, r, true, &choiceValue, err)) return luaL_error(L, "m:set: %s", err.c_str());
+        lua_pop(L, 1);
+    }
+    if (r.type == ModMenu::R_SLIDER) r.value = std::min(r.max, r.min + std::floor((r.value - r.min) / r.step + 0.5) * r.step);
+    if (r.type == ModMenu::R_CHOICE) r.choice = choiceValue - 1;
+    m->spec.tabs[(size_t)ti].rows[(size_t)ri] = r;
+    if (m->open && ModMenuScreen::serial() == m->serial) ModMenuScreen::setRow(ti, ri, r);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+// m:tab(id) -> true, or false when the menu has no such tab.
+int menuTab(lua_State* L) {
+    Pack* p;
+    MenuRec* m = checkMenu(L, &p);
+    const char* id = luaL_checkstring(L, 2);
+    for (size_t t = 0; t < m->spec.tabs.size(); ++t)
+        if (m->spec.tabs[t].id == id) {
+            m->tab = (int)t;
+            if (m->open && ModMenuScreen::serial() == m->serial) ModMenuScreen::showTab((int)t);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+    lua_pushboolean(L, 0);
+    return 1;
+}
+// m:close() -> true, or false when it was not open. on_close runs (step 2 of the next update).
+int menuCloseApi(lua_State* L) {
+    Pack* p;
+    MenuRec* m = checkMenu(L, &p);
+    if (!m->open) { lua_pushboolean(L, 0); return 1; }
+    if (ModMenuScreen::serial() == m->serial) ModMenuScreen::close();
+    menuClose(m);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+// m:open() -> true (it is open), or false while another mod menu is open or the pack is muted.
+int menuOpenApi(lua_State* L) {
+    Pack* p;
+    MenuRec* m = checkMenu(L, &p);
+    if (g_leaving) return luaL_error(L, "m:open: can't pause while the world closes");
+    if (m->open) { lua_pushboolean(L, 1); return 1; }
+    lua_pushboolean(L, menuShow(p, m, L, 1));
+    return 1;
+}
+int menuGc(lua_State* L) {
+    MenuUD* u = (MenuUD*)lua_touserdata(L, 1);
+    Pack* p = packOf(L);
+    for (size_t i = 0; i < p->menus.size(); ++i) {
+        MenuRec* m = p->menus[i].get();
+        if (m->serial != u->serial) continue;
+        if (!p->closing) {   // (inside lua_close the whole registry goes anyway)
+            if (m->onAction != LUA_NOREF) luaL_unref(L, LUA_REGISTRYINDEX, m->onAction);
+            if (m->onClose != LUA_NOREF) luaL_unref(L, LUA_REGISTRYINDEX, m->onClose);
+        }
+        p->menus.erase(p->menus.begin() + (long)i);
+        break;
+    }
+    return 0;
+}
+const luaL_Reg kMenuMethods[] = {{"set", menuSet}, {"tab", menuTab}, {"close", menuCloseApi}, {"open", menuOpenApi}, {NULL, NULL}};
+
+// ---- K.7-3b: the pause menu's Mods page (U2) ----------------------------------------------------------------
+struct PageTab { std::string pack; bool menu; };
+std::vector<PageTab> g_pageTabs;
+// A `setting` / `menu` event for one pack (not broadcast: the value belongs to that pack).
+struct PackEv { std::string pack; int ev; std::string id; ContentPack::SettingValue now, old; std::string type; };
+std::vector<PackEv> g_packEvents;
+const ContentPack::ModPack* loadedPack(const std::string& id) {
+    for (const ContentPack::ModPack& q : ContentPack::modReport().packs)
+        if (q.state == ContentPack::PACK_LOADED && !q.refused && q.id == id) return &q;
+    return NULL;
+}
+Pack* livePack(const std::string& id) {
+    for (std::unique_ptr<Pack>& p : g_packs) if (p->id == id && !p->console) return p.get();
+    return NULL;
+}
+bool packHandlesMenu(const std::string& id) {
+    Pack* p = livePack(id);
+    return p && !p->stopped && !p->handlers[EV_MENU].empty();
+}
+bool hasRealSettings(const ContentPack::ModPack& mp) {
+    for (const ContentPack::ModSetting& st : mp.settings) if (!st.id.empty() && st.type != "heading") return true;
+    return false;
+}
+void queueSettingEvent(const std::string& pack, int ev, const std::string& id, const std::string& type,
+                       const ContentPack::SettingValue& now, const ContentPack::SettingValue& old) {
+    if ((int)g_packEvents.size() >= MAX_EVENTS) { g_stats.eventsDropped++; return; }
+    g_packEvents.push_back(PackEv{pack, ev, id, now, old, type});
+}
+std::string g_textPack;
+int g_textIdx = -1;
+void pageTextCb(int chosen, const char* text) {
+    const std::string pid = g_textPack;
+    const int i = g_textIdx;
+    g_textPack.clear();
+    g_textIdx = -1;
+    const ContentPack::ModPack* mp = loadedPack(pid);
+    if (chosen != 0 || !mp || !World::getWorld || !World::getWorld->fm || i < 0 || i >= (int)mp->settings.size()) return;
+    const std::string& docs = World::getWorld->fm->documents;
+    std::vector<ContentPack::SettingValue> vals = ContentPack::settingValues(docs, *mp);
+    ContentPack::SettingValue v = vals[(size_t)i], old = v;
+    std::string t = text ? text : "";
+    for (char& c : t) if ((unsigned char)c < 0x20 || c == 0x7f) c = ' ';
+    const int mx = mp->settings[(size_t)i].maxLen;
+    if ((int)t.size() > mx) {
+        t.resize((size_t)mx);
+        while (!t.empty() && ((unsigned char)t[t.size() - 1] & 0xC0) == 0x80) t.erase(t.size() - 1);
+        if (!t.empty() && (unsigned char)t[t.size() - 1] >= 0xC0) t.erase(t.size() - 1);
+    }
+    v.s = t;
+    if (v.s == old.s || !ContentPack::saveSetting(docs, *mp, (size_t)i, v)) return;
+    if (Pack* lp = livePack(pid)) if (lp->settingsRead && i < (int)lp->settingVals.size()) lp->settingVals[(size_t)i] = v;
+    queueSettingEvent(pid, EV_SETTING, mp->settings[(size_t)i].id, "text", v, old);
+    if (ModMenuScreen::serial() == MODS_PAGE) {   // the button shows the new text
+        for (size_t t2 = 0; t2 < g_pageTabs.size(); ++t2)
+            if (g_pageTabs[t2].pack == pid) {
+                ModMenu::Row r;
+                r.type = ModMenu::R_BUTTON; r.id = mp->settings[(size_t)i].id; r.label = mp->settings[(size_t)i].label;
+                r.hint = mp->settings[(size_t)i].hint; r.action = v.s.size() > 24 ? v.s.substr(0, 22) + ".." : v.s;
+                if (r.action.empty()) r.action = "Edit";
+                ModMenuScreen::setRow((int)t2, i + (g_pageTabs[t2].menu ? 1 : 0), r);
+            }
+    }
+}
+
+void dispatch(Pack* p, int ev, const std::function<int(lua_State*)>& push);
+// K.7-3b: `setting` (id, value, old) and `menu` () go to the one pack the Mods page named.
+void dispatchPackEvents() {
+    std::vector<PackEv> evs;
+    evs.swap(g_packEvents);
+    for (const PackEv& e : evs) {
+        Pack* p = livePack(e.pack);
+        if (!p || p->stopped || !p->L || p->handlers[e.ev].empty()) continue;
+        g_stats.events++;
+        dispatch(p, e.ev, [&](lua_State* L) {
+            if (e.ev == EV_MENU) return 0;
+            auto push = [&](const ContentPack::SettingValue& v) {
+                if (e.type == "toggle") lua_pushboolean(L, v.b);
+                else if (e.type == "slider") lua_pushnumber(L, v.n);
+                else lua_pushlstring(L, v.s.data(), v.s.size());
+            };
+            lua_pushlstring(L, e.id.data(), e.id.size());
+            push(e.now);
+            push(e.old);
+            return 3;
+        });
+    }
+}
+
+// Step 2 of update(): what the player did in the menu this frame, in order.
+void dispatchMenus() {
+    std::vector<MenuEv> evs;
+    evs.swap(g_menuEvents);
+    for (const MenuEv& e : evs) {
+        Pack* p;
+        MenuRec* m;
+        if (!menuFind(e.serial, &p, &m) || !p->L || m->self == LUA_NOREF) continue;
+        const int fn = e.close ? m->onClose : m->onAction;
+        const int self = m->self;
+        if (fn != LUA_NOREF && !p->stopped) {
+            const ModMenu::Row now = e.now;
+            const std::string rowId = e.close ? std::string() : m->spec.tabs[(size_t)e.tab].rows[(size_t)e.row].id;
+            if (spawn(p, fn, [&](lua_State* L) {
+                    lua_rawgeti(L, LUA_REGISTRYINDEX, self);
+                    if (e.close) return 1;
+                    lua_pushlstring(L, rowId.data(), rowId.size());
+                    switch (now.type) {
+                    case ModMenu::R_TOGGLE: lua_pushboolean(L, now.on); break;
+                    case ModMenu::R_SLIDER: lua_pushnumber(L, now.value); break;
+                    case ModMenu::R_CHOICE: lua_pushinteger(L, now.choice + 1); break;
+                    default: lua_pushnil(L); break;
+                    }
+                    return 3;
+                }, -1, e.close ? "menu on_close" : "menu on_action", NULL, false))
+                runNew(p);
+        }
+        if (e.close && !m->open && m->self != LUA_NOREF && menuFind(e.serial, &p, &m)) {   // (the handler may have reopened it)
+            luaL_unref(p->L, LUA_REGISTRYINDEX, m->self);
+            m->self = LUA_NOREF;
+        }
+    }
+    dispatchPackEvents();
+}
+
 const luaL_Reg kStoreApi[] = {{"get", apiStoreGet}, {"set", apiStoreSet}, {"keys", apiStoreKeys}, {NULL, NULL}};
 
 const luaL_Reg kApi[] = {
     {"cmd", apiCmd}, {"set", apiSet}, {"fill", apiFill}, {"paint", apiPaint}, {"explode", apiExplode},
-    {"fire", apiFire}, {"tp", apiTp}, {"run", apiRun}, {"spawn", apiSpawn}, {"say", apiSay},
+    {"fire", apiFire}, {"tp", apiTp}, {"run", apiRun}, {"spawn", apiSpawn}, {"creatures", apiCreatures}, {"say", apiSay},
     {"time", apiTime}, {"timefreeze", apiTimefreeze}, {"heal", apiHeal}, {"hurt", apiHurt}, {"gold", apiGold},
-    {"sound", apiSound}, {"flash", apiFlash}, {"get", apiGet}, {"sign", apiSign}, {"setsign", apiSetSign}, {"blockid", apiBlockId}, {"player", apiPlayer},
+    {"sound", apiSound}, {"flash", apiFlash}, {"get", apiGet}, {"sign", apiSign}, {"setsign", apiSetSign}, {"toast", apiToast}, {"setting", apiSetting}, {"menu", apiMenu}, {"ask", apiAsk}, {"input", apiInput}, {"blockid", apiBlockId}, {"player", apiPlayer}, {"look", apiLook},
     {"weather", apiWeather}, {"weatherlock", apiWeatherlock}, {"clock", apiClock}, {"wait", apiWait}, {"on", apiOn}, {"command", apiCommand}, {NULL, NULL}};
+
+// K.8-8: one line of help per eden.* function: what `--lua-api-dump` writes as docs/eden-api.lua (LuaLS stubs). Every kApi
+// name needs a row here (apiDocsMissing(), checked in CI). args are the Lua parameter names, `?` suffix = optional.
+struct ApiDoc { const char* name; const char* args; const char* doc; };
+const ApiDoc kApiDocs[] = {
+    {"cmd", "line, ax?, ay?, az?", "Runs any block-command line; returns cells, refused, why."},
+    {"set", "x, y, z, block, colour?", "Sets one cell; returns ok, why (false when refused)."},
+    {"fill", "x1, y1, z1, x2, y2, z2, block, colour?", "Fills a box (at most 4096 cells); returns cells, refused, why."},
+    {"paint", "x, y, z, colour", "Paints one cell."},
+    {"explode", "x, y, z", "Explodes at a cell."},
+    {"fire", "x, y, z", "Sets a cell on fire."},
+    {"tp", "x, y, z", "Teleports the player."},
+    {"run", "x, y, z", "Runs the command block at a cell."},
+    {"spawn", "creature, x?, y?, z?", "Spawns a creature; returns a handle, or false, why."},
+    {"creatures", "x, y, z, r", "Returns an array of creature handles within r (up to 64), nearest first."},
+    {"say", "text", "Shows a chat line."},
+    {"time", "t", "Sets the world time."},
+    {"timefreeze", "on", "Freezes or releases the world time."},
+    {"heal", "", "Heals the player fully."},
+    {"hurt", "n", "Hurts the player."},
+    {"gold", "n", "Gives or takes golden cubes."},
+    {"sound", "n", "Plays a sound by number."},
+    {"flash", "", "Flashes the screen."},
+    {"get", "x, y, z", "Returns the block name and colour at a cell, or nothing if it is not loaded."},
+    {"sign", "x, y, z, face?", "Returns text, colour, face of a sign, or nothing."},
+    {"setsign", "x, y, z, face, text, colour?", "Writes (or with empty text deletes) a sign; returns true, or false, why."},
+    {"toast", "text, seconds?", "Shows a line in the HUD status bar; false if this pack toasted less than 1 s ago."},
+    {"setting", "id", "Returns the player's value of one of this pack's settings."},
+    {"menu", "spec", "Opens a full-screen menu over the world; returns a menu handle, or nil, why."},
+    {"ask", "title, body, buttons", "Raises a dialog and waits; returns the button index 1..n, or nil, why."},
+    {"input", "title, body, default?", "Raises a text dialog and waits; returns the text, or nil, why."},
+    {"blockid", "name", "Returns the byte this world uses for a block name, or nothing."},
+    {"player", "", "Returns {x, y, z, yaw, pitch, health, dead, gold, cell_y, block?, colour, mode}."},
+    {"look", "", "Returns x, y, z, face, block of the cell under the crosshair, or nothing."},
+    {"weather", "kind?, secs?", "Starts a weather spell; returns kind, intensity, locked, precip."},
+    {"weatherlock", "on", "Locks the current weather spell so it never ends."},
+    {"clock", "", "Returns seconds of game time since the scripts started."},
+    {"wait", "seconds", "Pauses this handler for game seconds (0 = next frame)."},
+    {"on", "event, fn", "Registers a handler for an event (load, tick, build, mine, paint, burn, weather, use, sign, leave, setting, menu)."},
+    {"command", "name, help, fn", "Registers a console command run as `mod NAME ARGS...`."},
+};
+}  // namespace
+
+std::string apiStubs() {
+    std::string o = "---@meta\n-- Generated by `eden_native --lua-api-dump` from Classes/ModScript.cpp (kApiDocs). Do not edit.\n"
+                    "---Emod mod-script API (beta). docs/scripting.md has the full description of every call.\n---@class eden\n"
+                    "eden = {}\n---The id of the pack this script belongs to.\n---@type string\neden.pack = \"\"\n"
+                    "---The scripting API version.\n---@type integer\neden.version = 2\n"
+                    "eden.store = {}\n---Returns the value saved under key (a copy), or nil.\nfunction eden.store.get(key) end\n"
+                    "---Saves a value (nil deletes); returns true, or false, why.\nfunction eden.store.set(key, value) end\n"
+                    "---Returns an array of this pack's keys.\nfunction eden.store.keys() end\n";
+    for (const ApiDoc& d : kApiDocs) {
+        o += std::string("---") + d.doc + "\n";
+        std::string args = d.args, plain;
+        for (char c : args) if (c != '?') plain += c;
+        o += std::string("function eden.") + d.name + "(" + plain + ") end\n";
+    }
+    return o;
+}
+
+std::string apiDocsMissing() {
+    std::string miss;
+    for (const luaL_Reg* r = kApi; r->name; ++r) {
+        bool found = false;
+        for (const ApiDoc& d : kApiDocs) found |= !std::strcmp(d.name, r->name);
+        if (!found) miss += std::string(miss.empty() ? "" : ", ") + r->name;
+    }
+    for (const ApiDoc& d : kApiDocs) {
+        bool found = false;
+        for (const luaL_Reg* r = kApi; r->name; ++r) found |= !std::strcmp(d.name, r->name);
+        if (!found) miss += std::string(miss.empty() ? "" : ", ") + d.name + " (documented, not in the API)";
+    }
+    return miss;
+}
+
+bool syntaxCheck(const std::string& source, const std::string& chunkName, std::string* err) {
+    lua_State* L = luaL_newstate();
+    if (!L) { if (err) *err = "out of memory"; return false; }
+    const int st = luaL_loadbufferx(L, source.data(), source.size(), chunkName.c_str(), "t");
+    if (st != LUA_OK && err) *err = lua_tostring(L, -1) ? lua_tostring(L, -1) : "syntax error";
+    lua_close(L);
+    return st == LUA_OK;
+}
+
+namespace {
 
 void openLib(lua_State* L, const char* name, lua_CFunction open) {
     luaL_requiref(L, name, open, 1);
@@ -1054,6 +2143,22 @@ void setupState(lua_State* L) {
     lua_pushcfunction(L, editGc);
     lua_setfield(L, -2, "__gc");
     lua_pop(L, 1);
+    luaL_newmetatable(L, kMenuMeta);   // K.7-3a: the eden.menu handle
+    luaL_newlib(L, kMenuMethods);
+    lua_setfield(L, -2, "__index");
+    lua_pushcfunction(L, menuGc);
+    lua_setfield(L, -2, "__gc");
+    lua_pushliteral(L, "emod.menu");
+    lua_setfield(L, -2, "__metatable");
+    lua_pop(L, 1);
+    luaL_newmetatable(L, kCreatureMeta);   // K.6-4a: the creature handle
+    luaL_newlib(L, kCreatureMethods);
+    lua_setfield(L, -2, "__index");
+    lua_pushcfunction(L, creatureToString);
+    lua_setfield(L, -2, "__tostring");
+    lua_pushliteral(L, "emod.creature");
+    lua_setfield(L, -2, "__metatable");
+    lua_pop(L, 1);
     luaL_newlib(L, kApi);
     luaL_newlib(L, kStoreApi);
     lua_setfield(L, -2, "store");
@@ -1088,13 +2193,30 @@ Pack* newPack(const std::string& id, bool console) {
 
 void closePack(Pack* p) {
     if (!p->L) return;
+    for (const std::unique_ptr<MenuRec>& m : p->menus)   // K.7-3a: its menu goes with its state, no on_close
+        if (m->open && ModMenuScreen::serial() == m->serial) ModMenuScreen::close();
     p->closing = true;
     p->cos.clear();
     lua_close(p->L);
     p->L = NULL;
+    p->menus.clear();
 }
 
 void closeAll() {
+    if (GLDialog::ownerToken()) GLDialog::dismiss();   // a mod's dialog does not outlive its world
+    if (ModMenuScreen::isOpen()) ModMenuScreen::close();   // nor its menu (no on_close: the states are closing)
+    g_menuEvents.clear();
+    g_packEvents.clear();
+    g_dlgQueue.clear();
+    g_dlgResults.clear();
+    g_dlgShownTicket = 0;
+    g_dlgShownPack = NULL;
+    // K.8-6: keep what the Mods screen shows after the world (and its states) are gone; a world with no script packs keeps the older report
+    {
+        std::vector<Info> now = info();
+        now.erase(std::remove_if(now.begin(), now.end(), [](const Info& i) { return i.pack == "console"; }), now.end());
+        if (!now.empty()) g_lastReport = now;
+    }
     for (std::unique_ptr<Pack>& p : g_packs) closePack(p.get());
     g_packs.clear();
     g_queue.clear();
@@ -1201,6 +2323,7 @@ void reset() {
     closeAll();
     g_store.clear();   // K.6-5: the world closed (its exit save has been written) or the next one is loading
     g_storeDirty = false;
+    g_iconWarned.clear();
     g_pending = g_started = false;
     g_clock = 0;
 }
@@ -1238,6 +2361,15 @@ void noteEdit(int ev, int x, int z, int y, int before) {
     }
     if ((int)g_queue.size() >= MAX_EVENTS) { g_stats.eventsDropped++; return; }
     g_queue.push_back(q);
+}
+
+void noteUse(int x, int z, int y, int type) {
+    if (!g_started || g_session || !worldOpen() || type <= 0) return;
+    bool any = false;
+    for (const std::unique_ptr<Pack>& p : g_packs) any |= !p->stopped && !p->handlers[EV_USE].empty();
+    if (!any) return;
+    if ((int)g_queue.size() >= MAX_EVENTS) { g_stats.eventsDropped++; return; }
+    g_queue.push_back(QEvent{EV_USE, x, y, z, type, 1, std::string()});   // b = 1: how "tap"
 }
 
 void noteWeather(int kind, int previous) {
@@ -1278,8 +2410,11 @@ void update(float etime) {
         const size_t n = p->cos.size();
         for (size_t i = 0; i < n && !p->stopped; ++i) {
             if (p->cos[i].done) continue;
-            p->cos[i].wait -= etime;
-            if (p->cos[i].wait > 0 || overBudget(p)) continue;
+            const bool ui = p->cos[i].ticket != 0;   // K.7-1b: WAIT_UI, resumed only when its answer is recorded
+            if (ui && !hasResult(p->cos[i].ticket)) continue;
+            if (!ui) p->cos[i].wait -= etime;
+            if ((!ui && p->cos[i].wait > 0) || overBudget(p)) continue;
+            p->cos[i].ticket = 0;   // (uiStep finds the answer by its own continuation context)
             resumeCo(p, i);
         }
     }
@@ -1303,15 +2438,44 @@ void update(float etime) {
                 if (e.ev == EV_PAINT) { lua_pushinteger(L, e.a); pushBlock(L, e.b); return 5; }
                 if (e.ev == EV_SIGN) { lua_pushinteger(L, e.a); lua_pushlstring(L, e.text.data(), e.text.size()); return 5; }   // K.6-3: face, text
                 pushBlock(L, e.a);
-                if (e.ev == EV_USE) { lua_pushstring(L, "fire"); return 5; }   // K.6-1a: how (K.6-1b adds "tap")
+                if (e.ev == EV_USE) { lua_pushstring(L, e.b == 1 ? "tap" : "fire"); return 5; }   // K.6-1a/b: how
                 return 4;
             });
         }
     }
+    dispatchMenus();   // K.7-3a: the menu's on_action / on_close for what the player did this frame (V10)
     // 3. tick
     for (std::unique_ptr<Pack>& p : g_packs)
         if (!p->stopped && !p->handlers[EV_TICK].empty())
             dispatch(p.get(), EV_TICK, [&](lua_State* L) { lua_pushnumber(L, etime); return 1; });
+    pumpDialogs();
+    sweep();
+}
+
+void leaving() {
+    if (!g_started || g_session || MpWorld::active() || !worldOpen() || g_depth > 0 || g_leaving) return;
+    bool any = false;
+    for (const std::unique_ptr<Pack>& p : g_packs) any |= !p->stopped && !p->handlers[EV_LEAVE].empty();
+    if (!any) return;
+    g_leaving = true;
+    g_stats.leaves++;
+    CmdScript::freshWork();   // one fresh WORK_PER_FRAME for every handler together, as one frame would have
+    g_instrFrame = 0;
+    for (std::unique_ptr<Pack>& up : g_packs) {
+        Pack* p = up.get();
+        p->instrFrame = 0;
+        const size_t n = p->handlers[EV_LEAVE].size();   // (a handler that calls eden.on("leave") adds none to this close)
+        for (size_t h = 0; h < n && !p->stopped; ++h) {
+            if (!spawn(p, p->handlers[EV_LEAVE][h], nullptr, EV_LEAVE, "leave handler", NULL, false)) continue;
+            const size_t i = p->cos.size() - 1;
+            resumeCo(p, i);   // whatever the frame budget says: the count hook does not preempt while leaving
+            if (!p->cos[i].done) {   // it yielded (coroutine.yield at its top): there is no next frame to resume it
+                scriptError(p, "leave handler: can't pause while the world closes", NULL);
+                if (!p->cos[i].done) finishCo(p, p->cos[i]);
+            }
+        }
+    }
+    g_leaving = false;
     sweep();
 }
 
@@ -1356,6 +2520,17 @@ std::vector<Info> info() {
         v.push_back(i);
     }
     return v;
+}
+
+std::vector<Info> lastReport() {
+    std::vector<Info> v;
+    if (testNoReport) return v;   // mutation
+    if (!g_packs.empty()) {
+        v = info();
+        v.erase(std::remove_if(v.begin(), v.end(), [](const Info& i) { return i.pack == "console"; }), v.end());
+        if (!v.empty()) return v;
+    }
+    return g_lastReport;
 }
 
 // The pack that owns a short command name: the first (load order) running pack that registered it.
@@ -1412,6 +2587,117 @@ bool runCommand(const std::string& name, const std::vector<std::string>& args, C
     return true;
 }
 
+// ---- K.7-3a: the menu screen's reports (World::update's input slot; Lua runs in step 2 of update())
+void menuInput(int serial, int tab, int row, const ModMenu::Row& now) {
+    Pack* p;
+    MenuRec* m;
+    if (!menuFind(serial, &p, &m) || tab < 0 || tab >= (int)m->spec.tabs.size() || row < 0 ||
+        row >= (int)m->spec.tabs[(size_t)tab].rows.size()) return;
+    m->spec.tabs[(size_t)tab].rows[(size_t)row] = now;   // the value the player set is the menu's now (m:set, a reopen)
+    if ((int)g_menuEvents.size() < MAX_EVENTS) g_menuEvents.push_back(MenuEv{serial, false, tab, row, now});
+    else g_stats.eventsDropped++;
+}
+bool modsPageAvailable() {
+    if (!worldOpen() || g_session || MpWorld::active() || !g_started) return false;
+    for (const ContentPack::ModPack& q : ContentPack::modReport().packs) {
+        if (q.state != ContentPack::PACK_LOADED || q.refused) continue;
+        if (hasRealSettings(q) || packHandlesMenu(q.id)) return true;
+    }
+    return false;
+}
+bool openModsPage() {
+    if (!modsPageAvailable() || ModMenuScreen::isOpen()) return false;
+    const std::string& docs = World::getWorld->fm->documents;
+    ModMenu::Spec spec;
+    spec.id = "mods";
+    spec.title = "Mods";
+    g_pageTabs.clear();
+    for (const ContentPack::ModPack& q : ContentPack::modReport().packs) {
+        if (q.state != ContentPack::PACK_LOADED || q.refused || spec.tabs.size() >= 8) continue;
+        const bool menu = packHandlesMenu(q.id);
+        if (!hasRealSettings(q) && !menu) continue;
+        ModMenu::Tab t;
+        t.id = q.id;
+        t.label = q.name.empty() ? q.id : q.name;
+        if (t.label.size() > 24) t.label.resize(24);
+        if (menu) {
+            ModMenu::Row r;
+            r.type = ModMenu::R_BUTTON; r.id = "open_menu"; r.label = "Menu"; r.action = "Open";
+            t.rows.push_back(r);
+        }
+        const std::vector<ContentPack::SettingValue> vals = ContentPack::settingValues(docs, q);
+        for (size_t i = 0; i < q.settings.size(); ++i) {
+            const ContentPack::ModSetting& st = q.settings[i];
+            ModMenu::Row r;
+            r.id = st.id; r.label = st.label; r.hint = st.hint;
+            if (st.type == "heading") r.type = ModMenu::R_HEADING;
+            else if (st.type == "toggle") { r.type = ModMenu::R_TOGGLE; r.on = vals[i].b; }
+            else if (st.type == "slider") { r.type = ModMenu::R_SLIDER; r.min = st.min; r.max = st.max; r.step = st.step; r.value = vals[i].n; }
+            else if (st.type == "choice") {
+                r.type = ModMenu::R_CHOICE; r.options = st.options;
+                for (size_t k = 0; k < st.options.size(); ++k) if (st.options[k] == vals[i].s) r.choice = (int)k;
+            } else {
+                r.type = ModMenu::R_BUTTON;
+                r.action = vals[i].s.size() > 24 ? vals[i].s.substr(0, 22) + ".." : vals[i].s;
+                if (r.action.empty()) r.action = "Edit";
+            }
+            t.rows.push_back(r);
+        }
+        spec.tabs.push_back(t);
+        g_pageTabs.push_back(PageTab{q.id, menu});
+    }
+    if (spec.tabs.empty()) return false;
+    ModMenuScreen::open(MODS_PAGE, spec, 0);
+    return true;
+}
+void modsPageInput(int tab, int row, const ModMenu::Row& now) {
+    if (tab < 0 || tab >= (int)g_pageTabs.size() || !World::getWorld || !World::getWorld->fm) return;
+    const PageTab& pt = g_pageTabs[(size_t)tab];
+    const ContentPack::ModPack* mp = loadedPack(pt.pack);
+    if (!mp) return;
+    if (pt.menu && row == 0) {   // "Open": the page gives way so the pack's eden.menu can open (its handler runs in step 2)
+        ModMenuScreen::close();
+        queueSettingEvent(pt.pack, EV_MENU, "", "", ContentPack::SettingValue(), ContentPack::SettingValue());
+        return;
+    }
+    const int i = row - (pt.menu ? 1 : 0);
+    if (i < 0 || i >= (int)mp->settings.size()) return;
+    const ContentPack::ModSetting& st = mp->settings[(size_t)i];
+    const std::string& docs = World::getWorld->fm->documents;
+    if (st.type == "text") {
+        if (!GLDialog::textEntryAvailable()) return;
+        const std::vector<ContentPack::SettingValue> vals = ContentPack::settingValues(docs, *mp);
+        g_textPack = pt.pack;
+        g_textIdx = i;
+        static const char* const kBtn[] = { "Save", "Cancel" };
+        GLDialog::prompt(st.label.c_str(), st.hint.empty() ? "Type the new text." : st.hint.c_str(), vals[(size_t)i].s.c_str(), st.maxLen, kBtn, 2, pageTextCb);
+        return;
+    }
+    std::vector<ContentPack::SettingValue> vals = ContentPack::settingValues(docs, *mp);
+    const ContentPack::SettingValue old = vals[(size_t)i];
+    ContentPack::SettingValue v = old;
+    if (st.type == "toggle") v.b = now.on;
+    else if (st.type == "slider") v.n = now.value;
+    else if (st.type == "choice" && now.choice >= 0 && now.choice < (int)st.options.size()) v.s = st.options[(size_t)now.choice];
+    else return;
+    if (!ContentPack::saveSetting(docs, *mp, (size_t)i, v)) return;
+    v = ContentPack::settingValues(docs, *mp)[(size_t)i];   // what the file holds (a slider snapped to its step)
+    if (v.b == old.b && v.n == old.n && v.s == old.s) return;   // a drag inside one step
+    if (Pack* lp = livePack(pt.pack)) if (lp->settingsRead && i < (int)lp->settingVals.size()) lp->settingVals[(size_t)i] = v;
+    queueSettingEvent(pt.pack, EV_SETTING, st.id, st.type, v, old);
+}
+void menuClosed(int serial) {
+    Pack* p;
+    MenuRec* m;
+    if (!menuFind(serial, &p, &m) || !m->open) return;
+    menuClose(m);
+}
+size_t menuRecords() {
+    size_t n = 0;
+    for (const std::unique_ptr<Pack>& p : g_packs) n += p->menus.size();
+    return n;
+}
+
 // ---- K.6-5: the store's host side (FileManager)
 void storeLoad(const uint8_t* rec, size_t n) {
     g_store.clear();
@@ -1458,14 +2744,14 @@ size_t storeEntries() { return g_store.size(); }
 Stats stats() { return g_stats; }
 
 const char* describe() {
-    static char buf[360];
+    static char buf[400];
     int packs = 0, cos = 0;
     for (const std::unique_ptr<Pack>& p : g_packs) { packs += !p->console; cos += liveCos(p.get()); }
     std::snprintf(buf, sizeof buf,
                   "{\"packs\":%d,\"coroutines\":%d,\"started\":%d,\"finished\":%d,\"errors\":%d,\"preempted\":%d,"
-                  "\"stopped\":%d,\"events\":%d,\"eventsDropped\":%d,\"edits\":%d,\"skipped\":%d}",
+                  "\"stopped\":%d,\"events\":%d,\"eventsDropped\":%d,\"edits\":%d,\"skipped\":%d,\"leaves\":%d}",
                   packs, cos, g_stats.started, g_stats.finished, g_stats.errors, g_stats.preempted, g_stats.stopped,
-                  g_stats.events, g_stats.eventsDropped, g_stats.edits, g_stats.skipped);
+                  g_stats.events, g_stats.eventsDropped, g_stats.edits, g_stats.skipped, g_stats.leaves);
     return buf;
 }
 

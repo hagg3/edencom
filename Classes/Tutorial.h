@@ -29,6 +29,7 @@ void render();                       // Hud::render, after the status toast
 // A tap/click at (x, y) (point space, y up) on the card's close box. tapClose() acts on it (the touch release).
 bool closeHit(float x, float y);
 void tapClose();
+void askHideAll();                   // the "Hide all tutorial hints?" confirm (the pause-menu row, UX.10-5)
 // The player did something the steps watch: an edit (MpWorld's intent calls) or a hotbar select.
 void note(int event);
 

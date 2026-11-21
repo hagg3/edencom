@@ -64,6 +64,13 @@ struct ModTileSrc {
     std::vector<uint8_t> rgba;             // 32x32x4
     int twin;                              // pack tile index of the "unpainted" twin, -1 none
 };
+// K.7-3c (V13 step 2): `"icons": {"wire": "icons/wire.png"}`, 64x64 white-on-transparent PNGs tinted like the built-in
+// icons; named `"<pack id>:wire"` in eden.menu. At most ICONS_PER_PACK a pack and ICONS_PER_WORLD a world.
+struct ModIconSrc {
+    std::string name;
+    std::vector<uint8_t> rgba;             // 64x64x4 (freed once the world's icon atlas has them)
+};
+enum { ICON_PX = 64, ICONS_PER_PACK = 8, ICONS_PER_WORLD = 32 };
 struct ModBlockSrc {
     std::string id;
     int info;
@@ -77,6 +84,17 @@ struct ModRequire { std::string id, minVersion; };   // minVersion "" = any
 // compile time (a script never opens a file afterwards), run by Classes/ModScript in list order.
 struct ModScriptSrc { std::string path, source; };
 enum { SCRIPTS_MAX = 16, SCRIPT_MAX_BYTES = 256 * 1024, SCRIPTS_MAX_BYTES = 1024 * 1024 };
+// K.7-2a (V14): `"settings": [...]`, the pack's settings page. Validated at compile time; the page and the values
+// are K.7-2b. `type`: heading | toggle | slider | choice | text. A heading has only a label (id empty).
+struct ModSetting {
+    std::string id, type, label, hint;
+    bool defBool = false;                  // toggle
+    double min = 0, max = 0, step = 0, defNum = 0;   // slider
+    std::vector<std::string> options;      // choice
+    std::string defText;                   // choice (the option) and text
+    int maxLen = 0;                        // text: bytes
+};
+enum { SETTINGS_MAX = 32 };
 // Where a folder ended up after the last scan (K.3). Refused = compileMod refused it or its id is taken.
 enum PackState { PACK_LOADED, PACK_DISABLED, PACK_REFUSED, PACK_NEEDS, PACK_CONFLICT };
 struct ModPack {
@@ -91,6 +109,8 @@ struct ModPack {
     std::vector<ModTileSrc> tiles;
     std::vector<ModBlockSrc> blocks;       // the valid ones, in file order
     std::vector<ModScriptSrc> scripts;     // K.4: every listed script (a bad entry refuses the pack)
+    std::vector<ModIconSrc> icons;         // K.7-3c: the valid ones, in file order
+    std::vector<ModSetting> settings;      // K.7-2a: the valid ones, in file order
     std::vector<std::string> lines;        // every error and warning, in order
     bool refused = false;                  // a top-level error: nothing of the pack loads
 };
@@ -98,8 +118,23 @@ struct ModPack {
 // stock pack loaded (eden: tiles, sound sets and names). False = refused (out->refused).
 bool compileMod(const char* data, size_t len, const std::string& dir, const std::string& label, ModPack* out);
 
+// K.7-2b (V15): a pack's setting values live outside the pack, in `<documents>/Packs/.settings/<id>.json`
+// ({"format": 1, "values": {"speed": 2, "glow": false}}), so reinstalling the pack keeps them. Written with
+// eden_fs_write_atomic; ids the pack no longer declares are kept; a value that fails the pack's current schema
+// reads as its default. Values do not enter the pack hash. A heading has no value (its entry is all default).
+struct SettingValue { bool b = false; double n = 0; std::string s; };   // toggle: b; slider: n; choice and text: s
+extern bool testSettingsInPack;   // mutation (--ui-mutate=settingsinpack): the file lives in the pack's folder
+SettingValue settingDefault(const ModSetting& st);
+std::string settingsFilePath(const std::string& documents, const std::string& packId);
+// One value per `pk.settings` entry, in order.
+std::vector<SettingValue> settingValues(const std::string& documents, const ModPack& pk);
+// Writes entry `index` (a slider value is snapped to its step, a choice must be an option, text is cut to `max`
+// bytes). False: bad index, a heading, or the write failed.
+bool saveSetting(const std::string& documents, const ModPack& pk, size_t index, const SettingValue& v);
+
 // What the last loadMods did, for the console's `packs` verb, --content-dump and K.2-5's picker.
 struct LoadedBlock { std::string name; int pack; bool picker, missingTexture; };
+struct LoadedIcon { std::string name; int pack; };   // name `<pack id>:<icon>`; index in modReport().icons = the cell
 struct LoadedTile { int atlas, index; std::string name; };   // name `<pack id>:<tile>`
 struct ModReport {
     bool ran = false;                      // loadMods has run (a world was entered)
@@ -108,6 +143,7 @@ struct ModReport {
     std::vector<std::string> lines;        // loader lines (skipped folders, duplicate ids, tile budget)
     std::vector<LoadedBlock> blocks;       // registered definitions, in load order
     std::vector<LoadedTile> tiles;         // allocated atlas tiles, in allocation order
+    std::vector<LoadedIcon> icons;         // K.7-3c: the world's pack icons, in load order (cell i of the icon atlas)
 };
 // `--packs=DIR` (repeatable): a pack directory, or a directory of packs, loaded before Documents/Packs.
 void setExtraPackDirs(const std::vector<std::string>& dirs);
@@ -117,6 +153,8 @@ void setExtraPackDirs(const std::vector<std::string>& dirs);
 // nothing (D6/K.1 D7) and puts the stock atlases back.
 void loadMods(const std::string& documents, bool session);
 const ModReport& modReport();
+// K.7-3c: the id (UIICON_PACK_BASE + cell) of the loaded pack icon `<pack>:<name>`, or -1.
+int packIconByName(const std::string& name);
 // K.8-7 (`scripts reload`): re-reads the script files of the loaded pack `id` from disk with compileMod's caps and
 // refusals (unreadable, over 256 KiB, over 1 MiB together, precompiled). False + `lines`: refused, the sources
 // read at world entry stay. Not pack.json, tiles or blocks, and not the pack's hash (stale until the next world).

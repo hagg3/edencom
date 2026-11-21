@@ -158,6 +158,9 @@ int run_camera_selftest() {
 //      settings' pure function and differ from the old, the edited column is byte-equal; setting
 //      Caves back restores the untouched land. --props-mutate=nogen (skip the GENERATOR append)
 //      must FAIL it.
+//   6. LM.2: Lamp light: no record = Legacy; picking New Dawn writes record 14 (origin 1); it survives a reopen
+//      and compaction; an unknown mode byte shows Legacy and is never rewritten; a world applies its record at load
+//      and the next world without one is back at Legacy. --props-mutate=nolamp (skip the append) must FAIL it.
 //   2. Legacy: the H.4 1.x fixture, no record: detected caves shown; a name-only save raises no
 //      dialog and writes exactly one GENERATOR (profile 1, detected flag kept).
 //   3. Lift: home in an unsaved column lands on the new surface (solid under, two air above);
@@ -276,9 +279,10 @@ int run_props_selftest() {
     std::string err;
     const std::string docs = eden_platform_documents_root();
     FileManager* fm = World::getWorld->fm;
-    if (!mutation_known("eden-props", "--props-mutate", g_opt.propsMutate, {"nogen"})) return 2;
+    if (!mutation_known("eden-props", "--props-mutate", g_opt.propsMutate, {"nogen", "nolamp"})) return 2;
     const bool mut = g_opt.propsMutate == "nogen";
     g_wp_test_skip_generator = mut;
+    g_wp_test_skip_lighting = g_opt.propsMutate == "nolamp";   // LM.2: the LIGHTING append is skipped
     const int S = 4096 * 16 + 8;
 
     // ---- 1. round trip through the screen
@@ -521,6 +525,189 @@ int run_props_selftest() {
                   "a Flat world's Terrain tab is its type only", d);
             close_props();
         }
+    }
+
+    // ---- 6. LM.2: Lamp light (record 14 LIGHTING) through the screen
+    {
+        const std::string lampPath = docs + "/props-lamp.emod", oddPath = docs + "/props-lamp-odd.emod";
+        ok = write_bare(lampPath, "props lamp", 0, 4, S, S, NULL, err) && write_bare(oddPath, "props lamp odd", 0, 4, S, S, NULL, err);
+        check(ok, "the lamp-light worlds are written", err.c_str());
+        fm->adoptLooseWorlds();
+        auto lighting = [](const std::string& path, std::vector<uint8_t>* rec) {
+            emod::EdenWorldStore st;
+            return st.open(path.c_str(), false) && st.hasRecord(emod::T_LIGHTING) &&
+                   st.readRecord(emod::T_LIGHTING, *rec) == emod::EdenWorldStore::READ_OK;
+        };
+        std::string lampKey = lampPath;
+        if (ok && open_props("props-lamp.emod")) {
+            WorldPropertiesMenu* lw = menu()->props;
+            lampKey = docs + "/" + FileManager::adoptedKeyOf("props-lamp.emod");
+            std::snprintf(d, sizeof d, "row %d shown %d save %d records %d", lw->rowVisible("lamplight") ? 1 : 0,
+                          lw->choice("lamplight"), lw->saveEnabled() ? 1 : 0, count_records(lampKey, emod::T_LIGHTING));
+            check(lw->rowVisible("lamplight") && lw->choice("lamplight") == LIGHT_MODE_LEGACY && !lw->saveEnabled() &&
+                  count_records(lampKey, emod::T_LIGHTING) == 0, "no record: Lamp light shows Legacy, nothing to save", d);
+            tap_choice("lamplight", 1);
+            const bool enabled = lw->saveEnabled();
+            ui_tap_rect(lw->controlRect("save"));
+            tick(3);
+            std::vector<uint8_t> rec;
+            const bool have = lighting(lampKey, &rec);
+            LightingRecord lr = {255, 255, 255};
+            const bool dec = have && light_recordDecode(&rec[0], rec.size(), &lr);
+            std::snprintf(d, sizeof d, "enabled %d result %d record %d decoded %d mode %d origin %d detector %d", enabled ? 1 : 0,
+                          lw->lastResult(), have ? 1 : 0, dec ? 1 : 0, lr.mode, lr.origin, lr.detector);
+            check(enabled && (lw->lastResult() & WP_WROTE_LIGHTING) && dec && lr.mode == LIGHT_MODE_NEWDAWN && lr.origin == 1 &&
+                  lr.detector == LIGHTING_DETECTOR_REV && rec.size() == LIGHTING_RECORD_BYTES && rec[1] == 0 && rec[5] == 0,
+                  "picking New Dawn writes record 14 (mode 1, origin 1)", d);
+            close_props();
+        }
+        if (ok && open_props("props-lamp.emod")) {
+            WorldPropertiesMenu* lw = menu()->props;
+            check(lw->choice("lamplight") == LIGHT_MODE_NEWDAWN && !lw->saveEnabled(), "reopened: New Dawn, clean",
+                  lw->choice("lamplight") == LIGHT_MODE_NEWDAWN ? "" : "the choice did not survive");
+            close_props();
+        }
+        {   // compaction keeps it verbatim
+            std::vector<uint8_t> before, after;
+            bool c = lighting(lampKey, &before);
+            if (c) { emod::EdenWorldStore st; c = st.open(lampKey.c_str(), true) && st.compact(); }
+            c = c && lighting(lampKey, &after) && before == after && count_records(lampKey, emod::T_LIGHTING) == 1;
+            check(c, "compaction keeps the LIGHTING record byte for byte", "");
+        }
+        {   // an unknown mode byte draws Legacy, is shown as Legacy, and a plain open never rewrites it
+            std::string oddKey = docs + "/" + FileManager::adoptedKeyOf("props-lamp-odd.emod");
+            const uint8_t odd[LIGHTING_RECORD_BYTES] = {1, 0, 7, 1, 1, 0, 0, 0};
+            bool w;
+            {
+                emod::EdenWorldStore st;
+                st.open(oddKey.c_str(), true);
+                st.beginBatch();
+                w = st.putRecord(emod::T_LIGHTING, odd, sizeof odd) && st.commitBatch();
+            }
+            std::vector<uint8_t> rec;
+            if (w && open_props("props-lamp-odd.emod")) {
+                WorldPropertiesMenu* lw = menu()->props;
+                check(lw->choice("lamplight") == LIGHT_MODE_LEGACY && !lw->saveEnabled() && lighting(oddKey, &rec) &&
+                      std::memcmp(&rec[0], odd, sizeof odd) == 0, "an unknown mode byte shows Legacy and is kept verbatim", "");
+                close_props();
+            } else check(false, "the odd-mode world opens", "");
+        }
+        // the world applies it at load: New Dawn from the record, Legacy for a world with none
+        const std::string lampPlay = FileManager::adoptedKeyOf("props-lamp.emod");
+        light_forceProfile(-1);
+        light_setProfile(LIGHT_MODE_LEGACY);
+        if (ok && play_file(lampPlay.c_str())) {
+            tick(30);
+            const int m = light_mode();
+            const float rad = light_radius();
+            std::snprintf(d, sizeof d, "mode %d radius %.1f", m, rad);
+            check(m == LIGHT_MODE_NEWDAWN && rad > LIGHT_RADIUS, "loading a world with the record switches to New Dawn", d);
+            quit_to_menu();
+            tick(10);
+        } else check(false, "the lamp world plays", "");
+        const std::string oddPlay = FileManager::adoptedKeyOf("props-lamp-odd.emod");
+        if (ok && play_file(oddPlay.c_str())) {
+            tick(30);
+            std::snprintf(d, sizeof d, "mode %d", light_mode());
+            check(light_mode() == LIGHT_MODE_LEGACY, "the next world (unknown mode byte) loads at Legacy, not the last world's profile", d);
+            quit_to_menu();
+            tick(10);
+        } else check(false, "the odd-mode world plays", "");
+    }
+
+    // ---- 7. LM.3: auto-detect (plan section 4.2): the pure rule, then real loads of each fixture shape
+    {
+        auto rule = [](bool on, int bands, bool prov, unsigned fl) { return light_detectMode(on, bands, prov, fl); };
+        check(rule(true, 16, true, 0) == LIGHT_MODE_NEWDAWN && rule(true, 16, true, 1 | 128) == LIGHT_MODE_NEWDAWN &&
+              rule(true, 16, true, LIGHT_PROV_PROMOTED) == LIGHT_MODE_LEGACY && rule(true, 4, true, 0) == LIGHT_MODE_LEGACY &&
+              rule(true, 16, false, 0) == LIGHT_MODE_LEGACY && rule(false, 16, true, 0) == LIGHT_MODE_LEGACY,
+              "the detector: 16 bands + PROVENANCE + not promoted = New Dawn, else Legacy", "");
+        struct Fx { const char* file; int bands; bool prov; unsigned flags; int rec; int expect; const char* what; };
+        // rec: -1 no record, else a stored mode with origin 1 (the player's pick)
+        const Fx fx[] = {
+            {"props-ad-v5.emod",    16, true,  0,   -1, LIGHT_MODE_NEWDAWN, "an imported 256z world (16 bands, PROVENANCE) -> New Dawn"},
+            {"props-ad-promo.emod", 16, true,  256, -1, LIGHT_MODE_LEGACY,  "a promoted 64z world -> Legacy"},
+            {"props-ad-64.emod",     4, true,  0,   -1, LIGHT_MODE_LEGACY,  "a 64z imported world -> Legacy"},
+            {"props-ad-new.emod",   16, false, 0,   -1, LIGHT_MODE_LEGACY,  "an Emod-made 256z world (no PROVENANCE) -> Legacy"},
+            {"props-ad-pick.emod",  16, true,  0,   LIGHT_MODE_LEGACY, LIGHT_MODE_LEGACY, "the player's Legacy pick survives detection"},
+        };
+        auto addProv = [](const std::string& path, unsigned flags) {
+            emod::EdenWorldStore st;
+            if (!st.open(path.c_str(), true)) return false;
+            std::vector<uint8_t> p(80, 0);
+            for (int i = 0; i < 4; ++i) p[4 + i] = (uint8_t)(flags >> (8 * i));
+            st.beginBatch();
+            return st.putRecord(emod::T_PROVENANCE, &p[0], p.size()) && st.commitBatch();
+        };
+        auto putLamp = [](const std::string& path, int mode) {
+            emod::EdenWorldStore st;
+            if (!st.open(path.c_str(), true)) return false;
+            const LightingRecord r = {(unsigned char)mode, 1, LIGHTING_DETECTOR_REV};
+            unsigned char b[LIGHTING_RECORD_BYTES];
+            light_recordEncode(r, b);
+            st.beginBatch();
+            return st.putRecord(emod::T_LIGHTING, b, sizeof b) && st.commitBatch();
+        };
+        auto lampOf = [](const std::string& path, std::vector<uint8_t>* rec) {
+            emod::EdenWorldStore st;
+            return st.open(path.c_str(), false) && st.hasRecord(emod::T_LIGHTING) &&
+                   st.readRecord(emod::T_LIGHTING, *rec) == emod::EdenWorldStore::READ_OK;
+        };
+        eden_setenv("EDEN_AUTO_LAMP_LIGHT", "1");
+        for (const Fx& f : fx) {
+            const std::string path = docs + "/" + f.file;
+            bool w = write_bare(path, f.file, 9, f.bands, S, S, NULL, err);
+            if (w && f.prov) w = addProv(path, f.flags);
+            if (w && f.rec >= 0) w = putLamp(path, f.rec);
+            fm->adoptLooseWorlds();
+            const std::string key = FileManager::adoptedKeyOf(f.file);
+            light_forceProfile(-1);
+            light_setProfile(LIGHT_MODE_LEGACY);
+            if (w && play_file(key.c_str())) {
+                tick(30);
+                const std::string* t = World::getWorld->hud->sb->current();
+                const bool toast = t && t->find("New Dawn") != std::string::npos;
+                const int m = light_mode();
+                quit_to_menu();
+                tick(10);
+                std::vector<uint8_t> rec;
+                LightingRecord lr = {255, 255, 255};
+                const bool have = lampOf(docs + "/" + key, &rec) && light_recordDecode(&rec[0], rec.size(), &lr);
+                const int wantOrigin = f.rec >= 0 ? 1 : 0;
+                std::snprintf(d, sizeof d, "mode %d toast %d record %d mode %d origin %d", m, toast ? 1 : 0, have ? 1 : 0, lr.mode, lr.origin);
+                check(m == f.expect && toast == (f.expect == LIGHT_MODE_NEWDAWN && f.rec < 0) && have && lr.mode == f.expect &&
+                      lr.origin == wantOrigin, f.what, d);
+            } else check(false, f.what, "the world did not play");
+        }
+        {   // toggle off: Legacy and nothing stored; flipping it on later still detects
+            eden_setenv("EDEN_AUTO_LAMP_LIGHT", "0");
+            const std::string path = docs + "/props-ad-off.emod";
+            bool w = write_bare(path, "props ad off", 9, 16, S, S, NULL, err) && addProv(path, 0);
+            fm->adoptLooseWorlds();
+            const std::string key = FileManager::adoptedKeyOf("props-ad-off.emod");
+            light_setProfile(LIGHT_MODE_NEWDAWN);
+            int m = -1; bool stored = true;
+            if (w && play_file(key.c_str())) {
+                tick(30);
+                m = light_mode();
+                quit_to_menu();
+                tick(10);
+                stored = count_records(docs + "/" + key, emod::T_LIGHTING) != 0;
+            }
+            std::snprintf(d, sizeof d, "mode %d stored %d", m, stored ? 1 : 0);
+            check(m == LIGHT_MODE_LEGACY && !stored, "toggle off: Legacy, nothing stored", d);
+            eden_setenv("EDEN_AUTO_LAMP_LIGHT", "1");
+            m = -1;
+            if (w && play_file(key.c_str())) {
+                tick(30);
+                m = light_mode();
+                quit_to_menu();
+                tick(10);
+            }
+            check(m == LIGHT_MODE_NEWDAWN, "turning the toggle on later still detects New Dawn", "");
+        }
+        eden_setenv("EDEN_AUTO_LAMP_LIGHT", "0");
+        light_setProfile(LIGHT_MODE_LEGACY);
     }
 
     // ---- 4. cost on a real world
@@ -1079,7 +1266,7 @@ extern float eden_look_sensitivity, eden_srclike_sens, eden_fov_degrees, eden_vi
     eden_fps_normalize, eden_mouse_sensitivity_y, eden_hold_to_act, eden_hotbar_shown, eden_crosshair,
     eden_render_scale, eden_fps_cap, eden_ui_scale, eden_display_layout,
     eden_gamepad_enabled, eden_gamepad_look_sensitivity, eden_gamepad_deadzone,
-    eden_save_backup, eden_upgrade_256z;
+    eden_save_backup, eden_upgrade_256z, eden_auto_lamp_light;
 extern float FLY_ACCEL_MULT, FLY_MAX_SPEED, FLY_BRAKING, FLY_VERTICAL_MULT, NOCLIP_SPEED;
 extern float TOUCH_LOOK_SENS_X, TOUCH_LOOK_SENS_Y, TOUCH_LOOK_SMOOTH, TOUCH_LOOK_GLIDE;
 extern bool CREATURE_WALK_VOICES, DOUBLE_BRUSH, DEV_CONSOLE_ALLOWED, FIRE_MELTS_ICE, FIRE_CHARS_VINES;
@@ -1092,6 +1279,8 @@ static void settings_set_all() {
         const int k = eden_settings_kind(i);
         if (k != 0 && k != 1 && k != 2) continue;   // toggle, range, enum
         if (!std::strcmp(eden_settings_key(i), "debug_menu")) continue;   // added after the capture: stays at its default (off) in both legs, alternation unchanged; --ui-selftest drives it
+        if (!std::strcmp(eden_settings_key(i), "sharp_ui")) continue;   // PW.4b: read at window creation; stays at its device default
+        if (!std::strcmp(eden_settings_key(i), "sun_shadows")) continue;   // SH.3, the same: stays at its device default in both legs; --sunshadow-selftest drives it
         const float d = eden_settings_def(i), lo = eden_settings_min(i), hi = eden_settings_max(i);
         const float v = k == 0 ? ((toggles++ % 2) ? d : (d != 0.0f ? 0.0f : 1.0f)) : (d != hi ? hi : lo);
         eden_settings_set(i, v);
@@ -1122,6 +1311,7 @@ static std::string settings_dump() {
         {"eden_gamepad_enabled", eden_gamepad_enabled}, {"eden_gamepad_look_sensitivity", eden_gamepad_look_sensitivity},
         {"eden_gamepad_deadzone", eden_gamepad_deadzone}, {"eden_save_backup", eden_save_backup},
         {"eden_upgrade_256z", eden_upgrade_256z},
+        {"eden_auto_lamp_light", eden_auto_lamp_light},
         {"FLY_ACCEL_MULT", FLY_ACCEL_MULT}, {"FLY_MAX_SPEED", FLY_MAX_SPEED}, {"FLY_BRAKING", FLY_BRAKING},
         {"FLY_VERTICAL_MULT", FLY_VERTICAL_MULT}, {"NOCLIP_SPEED", NOCLIP_SPEED},
         {"TOUCH_LOOK_SENS_X", TOUCH_LOOK_SENS_X}, {"TOUCH_LOOK_SENS_Y", TOUCH_LOOK_SENS_Y},
@@ -1191,6 +1381,7 @@ int run_settings_selftest() {
         tick(2);
         const bool ok = settings_write(g_opt.settingsCapture + "/dump.txt", settings_dump());
         check(ok, "capture written", g_opt.settingsCapture.c_str());
+        settings_write(g_opt.settingsCapture + "/schema.json", eden_settings_schema());   // N.6-2b: the option lists, per device class
         eden_prefs_reset_for_test(nullptr);
     } else {
         const std::string fx = g_opt.settingsFixtures, want = settings_read(fx + "/dump.txt");

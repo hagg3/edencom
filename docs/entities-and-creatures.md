@@ -123,6 +123,36 @@ workarounds — the file-static `guys[]`/`nguys` meant a seam file could not rea
 state directly, so a small exported entry point was the only option once a runtime spawn command
 was wanted.
 
+### Script handles (K.6-4a)
+
+Mod scripts hold creatures as `(slot, generation)` handles (`docs/scripting.md` "Creatures (handles)"). The
+generation is `slotGen[nguys]` in `Model.cpp`: never saved (it is not in `EntityData`, which stays 60 bytes,
+`static_assert` in `Vector.h`) and never reset, and moved by `slotChanged(i)` at every point where slot `i` stops
+holding the same live creature: `ResetModel` (every reuse by `SpawnCreatureAt`, the ambient spawner, `PlaceModel`,
+and every slot at `LoadModels2`), `killCreature`, `PickupModel`, `RemoveCreature`, `UpdateModels` setting `update`
+false as the cell leaves the resident window, and its bad-`model_type` kill. A creature that comes back into the
+window (`addMoreCreaturesIfNeeded` sets a touched one's `update` true again) keeps the moved generation, so to
+scripts it is a new creature. "Live" is `alive && update && 0 <= model_type < NUM_CREATURES`.
+
+Entry points (`Model.h`): `CreatureSlots`, `CreatureGen`, `CreatureHandleLive(slot, gen)` (also moves the generation
+when it finds a match on a slot that is no longer live), `CreatureRead(slot, &type, &pos)`, `RemoveCreature` (as
+`killCreature` without the sound and vanish effect), `CreatureSpawns(&lastSlot)` (`SpawnCreatureAt`'s success count and
+its latest slot) and `CreatureSlotFree` (`SpawnCreatureAt`'s scavenging test). A new code path that clears `alive` or
+`update`, or refills a slot without `ResetModel`, must call `slotChanged`.
+
+K.6-4b adds the movers. `CreatureVel(slot, &vel)` reads; `CreatureSetPos(slot, pos)` moves a live creature (0), or
+refuses a slot that is not live (1) or a point outside `UpdateModels`' own window test (2): the caller (`ModScript`)
+has already refused unloaded and solid cells. It zeroes `vel`, clears `onground`/`onIce` and any launch, so the
+creature falls from there as from a spawn. `CreatureSetVel(slot, vel)` is a **launch**: it sets `vel` once (clamped to
+`CREATURE_SPEED_MAX` = 16 blocks/s, so a `Move` sub-step stays within its 0.4-block bound at the 1/20 s etime cap),
+clears `onground` and sets `Entity::knock` = 3 s (a runtime field, not in `EntityData`). While `knock > 0`: `Move`
+skips the walk override that sets `vel.x/z` from `angle` each frame, `UpdateModels` calls `Move` even out of view, and
+the decision block (greeting, rage, runaway, the random idle/walk/turn) is skipped; gravity, friction, water and
+`CheckCollision` act as they do on a sword hit (`HitModel`, which works the same way through the damage state). The
+launch ends when the creature is on the ground or in liquid with horizontal speed under 0.5 blocks/s, or when `knock`
+runs out; `endCycle` is then set so the AI decides at once. `setvel` also moves a walking/jumping creature to idle, so
+it does not fly in its walk animation. `CreatureKnocked(slot)` is for `--lua-selftest` leg 30.
+
 ## Interactions with other systems
 - Terrain: collision reads `getLandc`; spawning samples surface heights; explosions
   come from `Terrain::explode`/`blocktntexplode`.

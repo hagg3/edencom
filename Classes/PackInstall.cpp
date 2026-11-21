@@ -309,6 +309,8 @@ bool parseCatalogue(const char* data, size_t len, std::vector<CatalogueEntry>* o
         if (sz && sz->isNumber() && sz->num >= 0) c.size = (long long)sz->num;
         const Json::Value* rq = e.isObject() ? e.get("requires") : NULL;
         if (rq && rq->isArray()) for (const Json::Value& x : rq->arr) if (x.isString()) c.needs.push_back(x.str);
+        const Json::Value* sc = e.isObject() ? e.get("scripts") : NULL;
+        c.scripts = sc && sc->isBool() && sc->b;
         bool ok = !c.id.empty() && c.id.size() <= 24 && c.sha256.size() == 64 &&
                   (c.url.compare(0, 8, "https://") == 0 || c.url.compare(0, 7, "http://") == 0);
         for (char ch : c.id) ok &= (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_';

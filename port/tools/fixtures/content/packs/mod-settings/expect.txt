@@ -1,0 +1,3 @@
+# K.7-2a: "settings" valid (heading, slider, toggle, choice, text); an unknown type is a warning and skipped
+mod-settings@579: warning: setting #5: unknown type "future_dial" (ignored)
+= blocks 0

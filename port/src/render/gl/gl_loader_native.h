@@ -13,7 +13,7 @@
 // THE LIST IS EXPLICIT, AND THAT IS THE POINT. It is not a hand-guessed set: it is the exact
 // symbol set the macOS link leaves undefined, extracted mechanically —
 //
-//     nm -u native/build/eden_native | grep -oE '^_gl[A-Za-z0-9]+'   # -> exactly the 69 below
+//     nm -u native/build/eden_native | grep -oE '^_gl[A-Za-z0-9]+'   # -> the 72 below (SH.2: + glDrawBuffers, glReadBuffer)
 //
 // (G.5b-7 ran it on the linked binary, not the .o files: CMakeFiles keeps objects of sources the
 // build no longer compiles, and the deleted ES 1.1 shim's stale object made the old per-object recipe
@@ -73,6 +73,7 @@
   X(void,           glDisable,                 (GLenum cap))                                     \
   X(void,           glDisableVertexAttribArray,(GLuint index))                                   \
   X(void,           glDrawArrays,              (GLenum mode, GLint first, GLsizei count))        \
+  X(void,           glDrawBuffers,             (GLsizei n, const GLenum *bufs))                  \
   X(void,           glDrawElements,            (GLenum mode, GLsizei count, GLenum type,         \
                                                 const void *indices))                            \
   X(void,           glEnable,                  (GLenum cap))                                     \
@@ -103,6 +104,7 @@
                                                 GLbitfield access))                              \
   X(void,           glPixelStorei,             (GLenum pname, GLint param))                      \
   X(void,           glPolygonOffset,           (GLfloat factor, GLfloat units))                  \
+  X(void,           glReadBuffer,              (GLenum src))                                     \
   X(void,           glReadPixels,              (GLint x, GLint y, GLsizei width, GLsizei height, \
                                                 GLenum format, GLenum type, void *pixels))       \
   X(void,           glRenderbufferStorage,     (GLenum target, GLenum internalformat, GLsizei width, GLsizei height)) \
@@ -209,6 +211,7 @@ enum { EDEN_GL_ENTRY_POINT_COUNT = 0 EDEN_GL_ENTRY_POINTS(EDEN_GL_COUNT_ONE) };
 #define glDisable                  eden_glfp_glDisable
 #define glDisableVertexAttribArray eden_glfp_glDisableVertexAttribArray
 #define glDrawArrays               eden_glfp_glDrawArrays
+#define glDrawBuffers              eden_glfp_glDrawBuffers
 #define glDrawElements             eden_glfp_glDrawElements
 #define glEnable                   eden_glfp_glEnable
 #define glEnableVertexAttribArray  eden_glfp_glEnableVertexAttribArray
@@ -235,6 +238,7 @@ enum { EDEN_GL_ENTRY_POINT_COUNT = 0 EDEN_GL_ENTRY_POINTS(EDEN_GL_COUNT_ONE) };
 #define glMapBufferRange           eden_glfp_glMapBufferRange
 #define glPixelStorei              eden_glfp_glPixelStorei
 #define glPolygonOffset            eden_glfp_glPolygonOffset
+#define glReadBuffer               eden_glfp_glReadBuffer
 #define glReadPixels               eden_glfp_glReadPixels
 #define glRenderbufferStorage      eden_glfp_glRenderbufferStorage
 #define glShaderSource             eden_glfp_glShaderSource

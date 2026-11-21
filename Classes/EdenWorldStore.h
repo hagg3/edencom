@@ -48,6 +48,7 @@ enum : uint32_t {
     GENERATOR_LEN = 28,          // H.4: the GENERATOR record (TerrainGenerator.h CLASSIC_RECORD_BYTES)
     SKY_CLOCK_LEN = 16,          // DN.2: the SKY_CLOCK record (Classes/SkyCycle.h)
     WEATHER_LEN = 32,            // AT.1b: the WEATHER record (Classes/Weather.h)
+    LIGHTING_LEN = 8,            // LM.2: the LIGHTING record (Lighting.h light_recordDecode)
     // K.1-2 (WORKING/block-registry-plan-2026-10-31.md §3): FileHeader flags bit 0 = type bytes 128-255 are
     // defined by the live BLOCK_PALETTE. Any other bit is still "written by a newer build".
     FH_FLAG_BLOCK_PALETTE = 1,
@@ -75,9 +76,10 @@ enum RecordType : uint8_t {
     T_SKY_CLOCK = 11,            // DN.2: the day/night clock, 16 B, codec 0 (Classes/SkyCycle.h)
     T_WEATHER = 12,              // AT.1b: the weather state, 32 B, codec 0 (Classes/Weather.h)
     T_MOD_DATA = 13,             // K.6-5: per-pack saved script data (eden.store), any codec, <= 1 MiB decoded
+    T_LIGHTING = 14,             // LM.2: the lamp light mode (Legacy / New Dawn), 8 B, codec 0 (Lighting.h)
 };
 // A type this build reads (the rest of 1..255 is reserved: a member of its batch, otherwise ignored).
-inline bool known_record_type(int t) { return t >= 1 && t <= T_MOD_DATA; }
+inline bool known_record_type(int t) { return t >= 1 && t <= T_LIGHTING; }
 enum Codec : uint8_t { C_NONE = 0, C_ZSTD = 1, C_ZLIB = 2 };
 // QA.4 (A3-03): the most a record of `type` may declare it decodes to (RecordHeader `aux`; a COLUMN's
 // is popcount(mask) x BAND <= 128 KiB). A reader refuses a larger one as "does not decode" (damage)
@@ -96,6 +98,7 @@ inline uint32_t record_decoded_max(int type) {
     case T_SKY_CLOCK: return SKY_CLOCK_LEN;
     case T_WEATHER: return WEATHER_LEN;
     case T_MOD_DATA: return MOD_DATA_MAX;
+    case T_LIGHTING: return LIGHTING_LEN;
     default: return MAX_PAYLOAD;   // PROVENANCE (its lists grow with the source's directory), INDEX, reserved
     }
 }
@@ -311,7 +314,7 @@ public:
 
     // ---- writing (append-only; docs/emod-file-format.md "Batches and commits")
     // Columns are full-stride (bands() * 8192 bytes). A rewritten column keeps its ord; a new one
-    // takes SUMMARY.next_ord. Singletons: WORLD_HEADER, GENERATOR, SKY_CLOCK, WEATHER, BLOCK_PALETTE and
+    // takes SUMMARY.next_ord. Singletons: WORLD_HEADER, GENERATOR, SKY_CLOCK, WEATHER, LIGHTING, BLOCK_PALETTE and
     // SUMMARY are stored raw, the rest compressed with the store's codec. Nothing reaches the file
     // until commitBatch(). A BLOCK_PALETTE is refused unless the file is flagged (compact(true)
     // first: D14), it obeys palette_parse, and it keeps every entry of the live one (D8). A MOD_DATA
@@ -333,9 +336,9 @@ public:
     // when read-only, or mid-batch. zstd payloads are copied verbatim after a successful decode;
     // other codecs are re-encoded with the store's codec. Order: WORLD_HEADER, CREATURES,
     // SIGN_TRAILER (if non-empty), PROVENANCE, GENERATOR, SKY_CLOCK, WEATHER, then MOD_DATA and the newest
-    // record of each reserved type (14-255, ascending; K.6-5a), COLUMNs by ord, BLOCK_PALETTE, SUMMARY,
+    // record of each reserved type (15-255, ascending; K.6-5a), COLUMNs by ord, BLOCK_PALETTE, SUMMARY,
     // COMMIT — conversion's order, so compacting a fresh conversion reproduces it byte for byte.
-    // MOD_DATA and a reserved-type record are copied verbatim (codec, band_mask, x, z, aux and the stored
+    // MOD_DATA, LIGHTING (LM.2, a malformed one included) and a reserved-type record are copied verbatim (codec, band_mask, x, z, aux and the stored
     // bytes) after they decode (a MOD_DATA that breaks its framing rules too: the game ignores it, never rewrites it): a world a newer build saved keeps that build's records through this one's
     // compaction. emod.py `compact` is the reference, byte for byte.
     //

@@ -231,6 +231,27 @@ menu and the MP join window read) is atomic too.
   one bad world refused every later one until restart), and the refusal puts "Could not load this world: <reason>"
   on the menu status bar (`eden_load_failed_reason()`). Gate: `--load-fail-selftest`.
 
+Leaving a world with its save goes through **`World::requestExit()`** (K.6-2): the mods' `leave` handlers
+(`ModScript::leaving()`), then `fm->saveWorld()`, then `exitToMenu()`; on a failed save it returns false and the
+world stays open (QA.5: the HUD shows the Try again / Leave without saving / Stay dialog; Try again calls it again,
+so `leave` fires again). The order is load-bearing (rule 7): what a `leave` handler edits or stores must be in that
+save. A clean app quit (`SDL_EVENT_QUIT` → `App::onQuit` → `eden_app_will_quit`) runs `leave` and the same save;
+going to the background (`eden_app_will_background`), "Leave without saving", a multiplayer exit and a warp do not.
+
+**Mod dialogs (K.7-1b).** `eden.ask`/`eden.input` park the coroutine (`Co::ticket`, "WAIT_UI": no timer, no work budget) and
+queue a request; `ModScript::update` shows at most one at its end (`pumpDialogs`). While a `GLDialog` is up `World::update`
+returns at its head, so scripts and the game clock stand still. The dialog's callback only **records** the answer
+(`g_dlgResults`; no Lua runs there, rule 7); the next frame's `ModScript::update` step 1 resumes the handler, so an
+edit it makes in response is meshed that frame like any script edit. If an engine dialog replaces a mod's, the waiter is
+resolved `nil, "replaced"` but resumes only once the engine dialog is gone (the world is frozen under it).
+
+**Mod menus (K.7-3a).** `eden.menu`'s screen (`Classes/ModMenuScreen`) is updated in the Console's slot of `World::update`
+(after `menu->console->update`, before the sky clocks, which it holds like `hud->inmenu`) and drawn after the Console. The
+world runs under it. Its update only **records** what the player did (`ModScript::menuInput` / `menuClosed` push onto
+`g_menuEvents`); step 2 of the same frame's `ModScript::update` (`dispatchMenus`, after the world events) runs
+`on_action` / `on_close` as handler coroutines, so an edit made in response is meshed that frame. `World::update` closes the
+screen when the game leaves play, and `ModScript::closeAll` / `closePack` close it with the states (no `on_close`).
+
 `World::exitToMenu` reverses it: `unloadTerrain`, `UnloadModels`,
 `unloadGameAssets` (frees the game textures again since Q.3), `terrain->deallocateMemory()`, reload menu textures, menu music.
 

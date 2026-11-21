@@ -5,6 +5,8 @@
 #include "../../../Classes/BlockRegistry.h"
 #include "../../../Classes/Graphics.h"
 #include "../../../Classes/DebugMenu.h"
+#include "../../../Classes/ModMenuScreen.h"
+#include "../../../Classes/UIIcons.h"
 #include "../../../Classes/Tutorial.h"
 extern "C" int eden_profile_touch_chrome(void);
 #include "../../../Classes/TutorialInstall.h"
@@ -422,7 +424,12 @@ int run_shot() {
         if (clash) std::fprintf(stderr, "[shot] mods: a fixture pack folder is already in %s, skipping the mods shots\n", packs.c_str());
         else {
         for (const char* id : { "stairs", "trims", "broken" }) eden_fs_make_dirs(packs + "/" + id);
-        put(packs + "/stairs/pack.json", "{\"format\": 1, \"id\": \"stairs\", \"name\": \"Stairs and Trims\", \"version\": \"1.2.0\", \"blocks\": []}\n");
+        put(packs + "/stairs/pack.json", "{\"format\": 1, \"id\": \"stairs\", \"name\": \"Stairs and Trims\", \"version\": \"1.2.0\", \"blocks\": [], \"settings\": ["
+            "{\"type\": \"heading\", \"label\": \"Growth\"},"
+            "{\"id\": \"speed\", \"type\": \"slider\", \"label\": \"Grow speed\", \"hint\": \"Higher is faster.\", \"min\": 0.5, \"max\": 4, \"step\": 0.5, \"default\": 1},"
+            "{\"id\": \"glow\", \"type\": \"toggle\", \"label\": \"Glow at night\", \"hint\": \"Trims light up after dark.\", \"default\": true},"
+            "{\"id\": \"mode\", \"type\": \"choice\", \"label\": \"Mode\", \"options\": [\"Simple\", \"Full\"], \"default\": \"Simple\"},"
+            "{\"id\": \"sign\", \"type\": \"text\", \"label\": \"Greeting\", \"max\": 32, \"default\": \"Hello\"}]}\n");
         put(packs + "/trims/pack.json", "{\"format\": 1, \"id\": \"trims\", \"name\": \"Extra Trims\", \"version\": \"0.9\", \"requires\": [\"stairs>=2.0\"], \"blocks\": []}\n");
         put(packs + "/broken/pack.json", "{ \"format\": 1, oops");
         m->showHome(true);
@@ -436,6 +443,13 @@ int run_shot() {
         mm->select(2);
         tick(2);
         capture("mods-skipped");
+        mm->select(1);   // K.7-2b: Stairs and Trims declares settings
+        tick(2);
+        ui_tap_rect(mm->controlRect("settings"));
+        tick(3);
+        capture("mods-settings");
+        mm->back();
+        tick(2);
         mm->select(0);
         tick(2);
         capture("mods-refused");
@@ -795,6 +809,53 @@ int run_shot() {
         eden_native_debug_set_keyboard_top(-2.0f);
         cm->close();
         tick(5);
+    }
+    // K.7-3a: a mod's eden.menu screen (opened directly with the spec a script's table becomes; serial -1 belongs
+    // to no script, so taps report nowhere): every row type on one page, then the icon rail, then a tab strip.
+    {
+        using namespace ModMenu;
+        auto row = [](int type, const char* id, const char* label) { Row r; r.type = type; r.id = id; r.label = label; return r; };
+        std::vector<Row> rows;
+        rows.push_back(row(R_HEADING, "", "Power"));
+        rows.push_back(row(R_TEXT, "", "Wires carry power from a source to anything next to them. Tap a row to place it where you stand."));
+        Row r = row(R_ROW, "cable", "Place a cable");
+        r.detail = "12 left"; r.icon = UIICON_CABLE; r.hint = "One block of wire";
+        rows.push_back(r);
+        r = row(R_ROW, "lever", "Place a lever");
+        r.detail = "none left"; r.icon = UIICON_ZAP; r.enabled = false;
+        rows.push_back(r);
+        r = row(R_TOGGLE, "glow", "Glow when powered"); r.on = true; r.hint = "Lit wires show the circuit at night.";
+        rows.push_back(r);
+        r = row(R_SLIDER, "delay", "Delay"); r.min = 0; r.max = 5; r.step = 0.5; r.value = 1.5;
+        rows.push_back(r);
+        r = row(R_CHOICE, "mode", "Mode"); r.options = {"Pulse", "Steady", "Toggle"}; r.choice = 1;
+        rows.push_back(r);
+        r = row(R_BUTTON, "wipe", "Remove every wire"); r.action = "Remove"; r.danger = true;
+        rows.push_back(r);
+        Spec one;
+        one.title = "Circuits"; one.pack = "circuits";
+        one.tabs.resize(1);
+        one.tabs[0].rows = rows;
+        ModMenuScreen::open(-1, one, 0);
+        tick(5);
+        capture("mod-menu");
+        Spec rail = one;
+        rail.tabs.resize(3);
+        rail.tabs[0].id = "wires"; rail.tabs[0].label = "Wires"; rail.tabs[0].icon = UIICON_CABLE;
+        rail.tabs[1].id = "tools"; rail.tabs[1].label = "Tools"; rail.tabs[1].icon = UIICON_HAMMER;
+        rail.tabs[1].rows = {row(R_HEADING, "", "Tools"), row(R_ROW, "probe", "Probe a block")};
+        rail.tabs[2].id = "map"; rail.tabs[2].label = "Map"; rail.tabs[2].icon = UIICON_MAP;
+        rail.tabs[2].rows = {row(R_TEXT, "", "Every circuit in this world.")};
+        ModMenuScreen::open(-1, rail, 0);
+        tick(5);
+        capture("mod-menu-rail");
+        Spec tabs = rail;
+        for (Tab& t : tabs.tabs) t.icon = -1;
+        ModMenuScreen::open(-1, tabs, 1);
+        tick(5);
+        capture("mod-menu-tabs");
+        ModMenuScreen::close();
+        tick(3);
     }
     eden_tap_hud_button_begin(0); tick(6); eden_tap_hud_button_end(0); tick(10);
 

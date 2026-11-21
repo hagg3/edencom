@@ -147,6 +147,7 @@ void texImage2D(GLenum target, GLint level, GLint internalformat, GLsizei width,
                 type == GL_UNSIGNED_SHORT_5_5_5_1) bpp = 2;
             else if (esFormat == GL_ALPHA || esFormat == GL_LUMINANCE) bpp = 1;
             else if (esFormat == GL_LUMINANCE_ALPHA) bpp = 2;
+            else if (esFormat == GL_DEPTH_COMPONENT) bpp = 2;   // SH.2: TF_DEPTH16
             unsigned long long b = (unsigned long long)width * (unsigned long long)height * bpp;
             if (g_pending_generate_mipmap && level == 0) b = b * 4 / 3;
             g_tex_upload_bytes += b;

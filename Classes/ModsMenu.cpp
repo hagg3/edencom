@@ -6,6 +6,7 @@
 //
 #include "ModsMenu.h"
 #include "ContentPack.h"
+#include "ModScript.h"
 #include "PackInstall.h"
 #include "WorldBrowser.h"   // eden_net_*
 #include "GLDialog.h"
@@ -85,7 +86,9 @@ static std::string s_removeFolder, s_removeName;
 // K.8-3: an install that would replace a pack with an older version waits here for the player's answer.
 static ModsImpl* s_downOwner = NULL;
 static std::string s_downPath, s_downSha, s_downId, s_downLabel;
-static bool s_downTemp = false;   // s_downPath is a copy the menu owns (the download); removed when answered
+static bool s_downTemp = false;
+static ModsImpl* s_textOwner = NULL;       // K.7-2b: a text setting's prompt
+static int s_textRow = -1;   // s_downPath is a copy the menu owns (the download); removed when answered
 
 struct ModsImpl {
     bool open;
@@ -109,7 +112,7 @@ struct ModsImpl {
     GLW::Label  lines[MM_MAX_LINES];
     GLW::Color  lineColor[MM_MAX_LINES];
     int         nLines;
-    GLW::Button back, toggle, up, down, remove, file, install, refresh;
+    GLW::Button back, toggle, up, down, remove, file, install, refresh, settings;
     GLW::TabRail tabs;
     GLW::ListRow rows[MM_MAX_ROWS];
     std::string rowText[MM_MAX_ROWS];
@@ -118,14 +121,24 @@ struct ModsImpl {
     CGRect panel, list, detail;
     float pitch, btnH, titleY;
     bool built, showTitle, tabsOn, shownTabsOn;
-    std::string shownStatus, shownToggle, shownInstall, detailKey, shownEmpty;
+    std::string shownStatus, shownToggle, shownInstall, detailKey, shownEmpty, detailPlain;   // detailPlain: every detail line as text (harness)
     int gen;                                  // bumps on every rescan / catalogue change (the detail's cache key)
     float clock;
     int listTouch, barTouch, downRow, tabTouch;
+    // K.7-2b: the settings page
+    bool page;
+    ContentPack::ModPack pagePack;            // a copy: the list may rescan under the page
+    std::vector<ContentPack::SettingValue> pageVals;
+    GLW::RowList rl;
+    GLW::Label pageTitleL;
+    std::string pageTitleText, shownPageTitle;
+    int pageTouch;
+    CGRect pageContent;
 
     ModsImpl() : open(false), tab(0), catLoaded(false), catJob(0), dlJob(0), dlFrac(0), pickWait(0), nLines(0),
                  pitch(30), btnH(30), titleY(0), built(false), showTitle(true), tabsOn(false), shownTabsOn(false),
-                 gen(0), clock(0), listTouch(-1), barTouch(-1), downRow(-1), tabTouch(-1) {
+                 gen(0), clock(0), listTouch(-1), barTouch(-1), downRow(-1), tabTouch(-1), page(false), pageTouch(-1) {
+        pageContent = CGRectMake(0, 0, 0, 0);
         sel[0] = sel[1] = -1;
         first[0] = first[1] = 0;
         panel = list = detail = CGRectMake(0, 0, 0, 0);
@@ -330,6 +343,84 @@ struct ModsImpl {
         clearDowngrade();
     }
 
+    // --- K.7-2b: the settings page ---------------------------------------------------------
+    bool canSettings() const {
+        const ContentPack::ModPack* p = pack();
+        return tab == 0 && p && !p->id.empty() && p->state != ContentPack::PACK_REFUSED && !p->settings.empty();
+    }
+    static int stepDecimals(double step) {
+        int dec = 0;
+        double m = 1;
+        while (dec < 3 && fabs(step * m - floor(step * m + 0.5)) > 1e-6) { ++dec; m *= 10; }
+        return dec;
+    }
+    std::string sliderText(const ContentPack::ModSetting& st, double v) const {
+        char b[48];
+        std::snprintf(b, sizeof b, "%.*f", stepDecimals(st.step), v);
+        return b;
+    }
+    // A text value on a button: cut at a character boundary, never empty.
+    static std::string buttonText(const std::string& s) {
+        if (s.empty()) return "(empty)";
+        if (s.size() <= 16) return s;
+        size_t n = 15;
+        while (n > 0 && ((unsigned char)s[n] & 0xC0) == 0x80) --n;
+        return s.substr(0, n) + "...";
+    }
+    void refreshRow(int i) {
+        const ContentPack::ModSetting& st = pagePack.settings[(size_t)i];
+        if (st.type == "slider") rl.setSliderReadout(i, sliderText(st, pageVals[(size_t)i].n));
+        else if (st.type == "text") rl.setTextLabel(i, buttonText(pageVals[(size_t)i].s));
+    }
+    void openPage() {
+        if (!canSettings()) return;
+        pagePack = *pack();
+        pageVals = ContentPack::settingValues(docs(), pagePack);
+        std::vector<GLW::RowList::Row> rows;
+        for (size_t i = 0; i < pagePack.settings.size(); i++) {
+            const ContentPack::ModSetting& st = pagePack.settings[i];
+            const ContentPack::SettingValue& v = pageVals[i];
+            GLW::RowList::Row r;
+            r.title = st.label;
+            r.hint = st.hint;
+            if (st.type == "toggle") { r.kind = GLW::RowList::TOGGLE; r.on = v.b; }
+            else if (st.type == "slider") { r.kind = GLW::RowList::SLIDER; r.min = (float)st.min; r.max = (float)st.max; r.step = (float)st.step; r.value = (float)v.n; }
+            else if (st.type == "choice") {
+                r.kind = GLW::RowList::CHOICE;
+                r.options = st.options;
+                for (size_t o = 0; o < st.options.size(); o++) if (st.options[o] == v.s) r.choice = (int)o;
+            } else if (st.type == "text") r.kind = GLW::RowList::TEXT;
+            rows.push_back(r);
+        }
+        rl.setRows(rows);
+        for (int i = 0; i < (int)pagePack.settings.size(); i++) refreshRow(i);
+        pageTitleText = packTitle(pagePack) + " settings";
+        page = true;
+        pageTouch = -1;
+        status.clear();
+    }
+    void closePage() { page = false; pageTouch = -1; status.clear(); detailKey.clear(); }
+    void saveRow(int i) {
+        const ContentPack::ModSetting& st = pagePack.settings[(size_t)i];
+        const GLW::RowList::Row& r = rl.row(i);
+        ContentPack::SettingValue& v = pageVals[(size_t)i];
+        if (st.type == "toggle") v.b = r.on;
+        else if (st.type == "slider") v.n = r.value;
+        else if (st.type == "choice") v.s = st.options[(size_t)r.choice];
+        if (!ContentPack::saveSetting(docs(), pagePack, (size_t)i, v)) status = "Couldn't save " + st.label;
+        else status.clear();
+        refreshRow(i);
+    }
+    static void textCb(int chosen, const char* text);
+    void askText(int i) {
+        if (!GLDialog::textEntryAvailable()) { status = "Typing isn't available here"; return; }
+        const ContentPack::ModSetting& st = pagePack.settings[(size_t)i];
+        s_textOwner = this;
+        s_textRow = i;
+        static const char* const kBtn[] = { "Save", "Cancel" };
+        GLDialog::prompt(st.label.c_str(), st.hint.empty() ? "Type the new text." : st.hint.c_str(), pageVals[(size_t)i].s.c_str(), st.maxLen, kBtn, 2, textCb);
+    }
+
     // --- actions ----------------------------------------------------------------------------
     void doToggle() {
         const ContentPack::ModPack* p = pack();
@@ -368,12 +459,33 @@ struct ModsImpl {
     }
 };
 
+void ModsImpl::textCb(int chosen, const char* text) {
+    ModsImpl* d = s_textOwner;
+    const int i = s_textRow;
+    s_textOwner = NULL;
+    s_textRow = -1;
+    if (!d || !d->page || chosen != 0 || i < 0 || i >= (int)d->pagePack.settings.size()) return;
+    std::string t = text ? text : "";
+    for (char& c : t) if ((unsigned char)c < 0x20 || c == 0x7f) c = ' ';
+    const int mx = d->pagePack.settings[(size_t)i].maxLen;
+    if ((int)t.size() > mx) {
+        t.resize((size_t)mx);
+        while (!t.empty() && ((unsigned char)t[t.size() - 1] & 0xC0) == 0x80) t.erase(t.size() - 1);   // a multi-byte tail cut mid-character
+        if (!t.empty() && (unsigned char)t[t.size() - 1] >= 0xC0) t.erase(t.size() - 1);
+    }
+    d->pageVals[(size_t)i].s = t;
+    if (!ContentPack::saveSetting(docs(), d->pagePack, (size_t)i, d->pageVals[(size_t)i])) d->status = "Couldn't save " + d->pagePack.settings[(size_t)i].label;
+    else d->status.clear();
+    d->refreshRow(i);
+}
+
 // ---------------------------------------------------------------------------------------------
 ModsMenu::ModsMenu() : d(new ModsImpl()) {}
 ModsMenu::~ModsMenu() {
     if (d->catJob) eden_net_release(d->catJob);
     d->cancelDownload(NULL);
     if (s_removeOwner == d) s_removeOwner = NULL;
+    if (s_textOwner == d) s_textOwner = NULL;
     if (s_downOwner == d) { if (GLDialog::active()) GLDialog::dismiss(); ModsImpl::clearDowngrade(); }
     delete d;
 }
@@ -382,6 +494,7 @@ bool ModsMenu::isOpen() const { return d->open; }
 
 void ModsMenu::open() {
     d->open = true;
+    d->page = false;
     d->tab = TAB_INSTALLED;
     d->status.clear();
     d->installLines.clear();
@@ -394,7 +507,9 @@ void ModsMenu::open() {
 
 void ModsMenu::close() {
     if (d->dlJob) d->cancelDownload(NULL);
-    if (GLDialog::active() && (s_removeOwner == d || s_downOwner == d)) GLDialog::dismiss();
+    if (GLDialog::active() && (s_removeOwner == d || s_downOwner == d || s_textOwner == d)) GLDialog::dismiss();
+    s_textOwner = NULL;
+    d->page = false;
     if (s_downOwner == d) ModsImpl::clearDowngrade();
     s_removeOwner = NULL;
     d->open = false;
@@ -402,6 +517,7 @@ void ModsMenu::close() {
 
 bool ModsMenu::back() {
     if (!d->open) return false;
+    if (d->page) { d->closePage(); return true; }   // K.7-2b: Escape on the page goes back to the list
     close();
     return true;
 }
@@ -420,6 +536,7 @@ static void mm_layout(ModsImpl* d) {
         d->remove.setTone(GLW::Button::TONE_DANGER);
         d->file.setLabel("Install from file...", du(16));
         d->refresh.setLabel("Refresh", du(18));
+        d->settings.setLabel("Settings", du(16));
         d->tabs.setTabs(kTabNames, 2, du(18));
     }
     d->tabsOn = d->catalogueOn();
@@ -466,6 +583,10 @@ static void mm_layout(ModsImpl* d) {
     const bool canPick = eden_pick_zip_available() != 0;
     const float fileW = canPick && inst ? std::min(du(210), cw * 0.5f) : 0.0f;
     d->file.setRect(CGRectMake(left, row2Y, fileW, d->btnH));
+    // K.7-2b: Settings sits beside Install from file... (both on the bottom row, Installed tab only).
+    const float setW = inst ? std::min(du(120), std::max(du(80), cw * 0.3f)) : 0.0f;
+    d->settings.setRect(CGRectMake(left + (fileW > 0 ? fileW + gap : 0.0f), row2Y, setW, d->btnH));
+    d->settings.setEnabled(d->canSettings());
 
     // Toggle / Install labels flip on state (setLabel is a raster: only on change).
     const ContentPack::ModPack* sp = d->pack();
@@ -486,6 +607,21 @@ static void mm_layout(ModsImpl* d) {
     d->file.setEnabled(canPick && d->pickWait == 0);
     d->refresh.setEnabled(!d->catJob && !busy);
     d->install.setEnabled(busy || d->entry() != NULL);
+
+    if (d->page) {   // K.7-2b: the pack's settings page replaces the list and the detail pane
+        const float barW = du(20);
+        const float bodyTop2 = d->back.rect().origin.y - gap;
+        const float bodyBottom2 = row2Y + d->btnH + gap;
+        d->pageContent = CGRectMake(left, bodyBottom2, cw - barW - du(6), std::max(d->pitch, bodyTop2 - bodyBottom2));
+        d->rl.layout(d->pageContent, CGRectMake(left + cw - barW, bodyBottom2, barW, d->pageContent.size.height));
+        const std::string titleKey = d->pageTitleText + "|" + std::to_string((int)(du(22) * 10.0f)) + "|" + std::to_string((int)cw);
+        if (titleKey != d->shownPageTitle) {
+            d->shownPageTitle = titleKey;
+            d->pageTitleL.set(d->pageTitleText.c_str(), du(22), UITextAlignmentCenter, std::max(du(60), cw - 2.0f * (backW + gap)), FACE_DISPLAY);
+        }
+        d->titleY = d->back.rect().origin.y + (d->btnH + d->pageTitleL.height()) * 0.5f;
+        return;
+    }
 
     // Body: list + scrollbar, detail beside (wide) or below (narrow).
     const bool narrow = cw < du(540);
@@ -518,11 +654,12 @@ static void mm_layout(ModsImpl* d) {
         const int v = d->scroll.first() + r;
         std::string t, dt;
         if (v < d->count()) {
-            if (inst) { t = packTitle(d->packs[(size_t)v]); dt = stateWord(d->packs[(size_t)v].state); }
+            if (inst) { t = packTitle(d->packs[(size_t)v]); dt = stateWord(d->packs[(size_t)v].state); if (!d->packs[(size_t)v].scripts.empty()) dt += ", Scripts"; }
             else {
                 t = d->cat[(size_t)v].name.empty() ? d->cat[(size_t)v].id : d->cat[(size_t)v].name;
                 const char* iv = d->installed(d->cat[(size_t)v].id);
                 dt = *iv ? "Installed" : "";
+                if (d->cat[(size_t)v].scripts) dt += dt.empty() ? "Scripts" : ", Scripts";
             }
         }
         const std::string key = (inst ? "i:" : "g:") + t + "\n" + dt;
@@ -543,11 +680,13 @@ static void mm_layout(ModsImpl* d) {
         const float dp = du(10), wrap = std::max(du(40), (float)d->detail.size.width - 2.0f * dp);
         for (int i = 0; i < MM_MAX_LINES; i++) d->lines[i].clear();
         d->nLines = 0;
+        d->detailPlain.clear();
         float used = dp;
         const float room = d->detail.size.height - dp;
         int more = 0;
         auto add = [&](const std::string& text, float pt, GLW::Color c, bool bold) {
             if (text.empty()) return;
+            d->detailPlain += text + "\n";
             if (d->nLines >= MM_MAX_LINES - 1) { more++; return; }
             GLW::Label& L = d->lines[d->nLines];
             L.set(text.c_str(), pt, UITextAlignmentLeft, wrap, bold ? FACE_DISPLAY : FACE_BODY);
@@ -567,6 +706,21 @@ static void mm_layout(ModsImpl* d) {
                 std::snprintf(b, sizeof(b), "%d block%s", (int)p->blocksInFile, p->blocksInFile == 1 ? "" : "s");
                 add(std::string(stateWord(p->state)) + ", " + b, du(14), kText, false);
                 if (!p->why.empty()) add(p->why, du(14), kTextWarn, false);
+                // K.8-6 (C-12, C-9): a "Scripts" tag, and what the scripts did the last time a world ran them
+                if (!p->scripts.empty()) {
+                    add("Runs scripts (" + std::to_string(p->scripts.size()) + " file" + (p->scripts.size() == 1 ? "" : "s") + ")", du(14), kText, false);
+                    for (const ModScript::Info& si : ModScript::lastReport()) {
+                        if (si.pack != p->id) continue;
+                        if (si.stopped) add("Scripts stopped: " + si.why, du(14), kTextError, false);
+                        else if (si.errors > 0) {
+                            char eb[48];
+                            std::snprintf(eb, sizeof(eb), "%d script error%s. Last:", si.errors, si.errors == 1 ? "" : "s");
+                            add(eb, du(14), kTextWarn, false);
+                            add(si.why, du(13), kTextError, false);
+                        }
+                        break;
+                    }
+                }
                 if (!p->needs.empty()) add("Requires: " + joinNeeds(p->needs), du(14), kTextSecondary, false);
                 if (!p->conflicts.empty()) add("Conflicts with: " + joinNeeds(p->conflicts), du(14), kTextSecondary, false);
                 for (size_t i = 0; i < p->lines.size(); i++)
@@ -586,6 +740,7 @@ static void mm_layout(ModsImpl* d) {
                 const char* iv = d->installed(e->id);
                 if (*iv) add(std::string("installed v") + iv, du(14), kText, false);
                 if (!e->needs.empty()) { std::string r; for (size_t i = 0; i < e->needs.size(); i++) r += (i ? ", " : "") + e->needs[i]; add("Requires: " + r, du(14), kTextSecondary, false); }
+                if (e->scripts) add("Runs scripts", du(14), kText, false);
                 add(e->description, du(14), kText, false);
             }
         }
@@ -614,16 +769,55 @@ void ModsMenu::update(float etime) {
     mm_layout(d);
 
     if (GLDialog::active()) return;   // the Remove confirmation is modal
+    if (d->page) {   // K.7-2b: the settings page has its own touches: Back, then the RowList
+        if (int wheel = eden_ui_take_wheel()) d->rl.scrollBy(-wheel);
+        Input* pin = Input::getInput();
+        itouch* pt = pin->getTouches();
+        for (int i = 0; i < MAX_TOUCHES; i++) {
+            if (pt[i].inuse == 0 && pt[i].down == M_DOWN) {
+                pt[i].inuse = usage_id;
+                if (d->back.hit(pt[i].mx, pt[i].my)) { d->back.setPressed(true); d->pageTouch = i; }
+                else d->rl.touchDown(i, pt[i].mx, pt[i].my);
+            }
+            if (pt[i].inuse == usage_id && pt[i].down == M_DOWN && i != d->pageTouch) d->rl.touchHeld(i, pt[i].mx, pt[i].my);
+            if (pt[i].inuse == usage_id && pt[i].down == M_RELEASE) {
+                const float mx = pt[i].mx, my = pt[i].my;
+                pt[i].inuse = 0;
+                pt[i].down = M_NONE;
+                if (i == d->pageTouch) {
+                    d->pageTouch = -1;
+                    d->back.setPressed(false);
+                    if (d->back.hit(mx, my)) { d->closePage(); return; }
+                    continue;
+                }
+                d->rl.touchUp(i, mx, my);
+                int row;
+                GLW::RowList::Event ev;
+                while (d->rl.takeChange(&row, &ev)) {
+                    if (ev == GLW::RowList::EV_TEXT) d->askText(row);
+                    else d->saveRow(row);
+                }
+            }
+        }
+        // A slider drag saves per snapped step while it is held.
+        int row;
+        GLW::RowList::Event ev;
+        while (d->rl.takeChange(&row, &ev)) {
+            if (ev == GLW::RowList::EV_TEXT) d->askText(row);
+            else d->saveRow(row);
+        }
+        return;
+    }
     if (int wheel = eden_ui_take_wheel()) { d->scroll.scrollBy(-wheel); d->first[d->tab] = d->scroll.first(); }
 
     Input* input = Input::getInput();
     itouch* touches = input->getTouches();
-    GLW::Button* const btns[] = { &d->back, &d->toggle, &d->up, &d->down, &d->remove, &d->file, &d->install, &d->refresh };
+    GLW::Button* const btns[] = { &d->back, &d->toggle, &d->up, &d->down, &d->remove, &d->file, &d->install, &d->refresh, &d->settings };
     const int nb = (int)(sizeof(btns) / sizeof(btns[0]));
     const bool inst = d->tab == TAB_INSTALLED;
     auto live = [&](GLW::Button* b) {
         if (b == &d->back) return true;
-        if (inst) return b == &d->toggle || b == &d->up || b == &d->down || b == &d->remove || b == &d->file;
+        if (inst) return b == &d->toggle || b == &d->up || b == &d->down || b == &d->remove || b == &d->file || b == &d->settings;
         return b == &d->install || b == &d->refresh;
     };
     auto inList = [&](float x, float y) {
@@ -690,6 +884,7 @@ void ModsMenu::update(float etime) {
             else if (hit == &d->up) d->doMove(-1);
             else if (hit == &d->down) d->doMove(+1);
             else if (hit == &d->remove) d->askRemove();
+            else if (hit == &d->settings) d->openPage();
             else if (hit == &d->file) { d->pickWait = 1; eden_pick_zip_begin(); if (!eden_pick_zip_busy()) d->pickWait = 0; }
             else if (hit == &d->refresh) { d->catLoaded = false; d->startCatalogue(); }
             else if (hit == &d->install) { if (d->dlJob) d->cancelDownload("Download cancelled"); else d->startInstall(); }
@@ -707,6 +902,16 @@ void ModsMenu::render() {
     fill(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, kScrim);
     bevel(d->panel, BEVEL_WINDOW);
     d->back.render();
+    if (d->page) {   // K.7-2b
+        d->pageTitleL.drawCentered(d->panel.origin.x + d->panel.size.width * 0.5f, d->titleY, kText);
+        d->rl.render();
+        const std::string pst = d->status.empty() ? std::string("Saved as you change them. Apply when a world opens.") : d->status;
+        const float pw = d->panel.size.width - 2.0f * du(12);
+        if (pst != d->shownStatus) { d->shownStatus = pst; d->statusL.set(pst.c_str(), du(14), UITextAlignmentLeft, std::max(du(40), pw), FACE_BODY); }
+        d->statusL.draw(d->panel.origin.x + du(12), d->panel.origin.y + du(12) + (d->btnH + d->statusL.height()) * 0.5f, d->status.empty() ? kTextSecondary : kText);
+        Pen::color(1.0f, 1.0f, 1.0f, 1.0f);
+        return;
+    }
     if (d->showTitle) d->title.drawCentered(d->panel.origin.x + d->panel.size.width * 0.5f, d->titleY, kText);
     if (d->tabsOn) d->tabs.render();
 
@@ -754,7 +959,7 @@ void ModsMenu::render() {
     }
 
     // Action rows.
-    if (inst) { d->toggle.render(); d->up.render(); d->down.render(); d->remove.render(); if (d->file.rect().size.width > 0) d->file.render(); }
+    if (inst) { d->toggle.render(); d->up.render(); d->down.render(); d->remove.render(); if (d->file.rect().size.width > 0) d->file.render(); d->settings.render(); }
     else { d->refresh.render(); d->install.render(); }
 
     // Footer: the outcome of the last action, else the standing note.
@@ -767,7 +972,8 @@ void ModsMenu::render() {
             st = d->packs[(size_t)si].why; refusedWhy = true;
         }
     }
-    const float fx = d->file.rect().size.width > 0 ? d->file.rect().origin.x + d->file.rect().size.width + du(12) : d->file.rect().origin.x;
+    const CGRect lastBtn = d->settings.rect().size.width > 0 ? d->settings.rect() : d->file.rect();
+    const float fx = lastBtn.size.width > 0 ? lastBtn.origin.x + lastBtn.size.width + du(12) : lastBtn.origin.x;
     const float fw = d->panel.origin.x + d->panel.size.width - du(12) - fx;
     if (st != d->shownStatus) {
         d->shownStatus = st;
@@ -789,6 +995,7 @@ CGRect ModsMenu::controlRect(const char* which) {
     if (!std::strcmp(which, "file"))      return d->file.rect();
     if (!std::strcmp(which, "install"))   return d->install.rect();
     if (!std::strcmp(which, "refresh"))   return d->refresh.rect();
+    if (!std::strcmp(which, "settings"))  return d->settings.rect();
     if (!std::strcmp(which, "list"))      return d->list;
     if (!std::strcmp(which, "scrollbar")) return d->scroll.barRect();
     return CGRectMake(0, 0, 0, 0);
@@ -828,6 +1035,13 @@ int  ModsMenu::selectedIndex() const { return d->sel[d->tab]; }
 void ModsMenu::select(int i) { if (i >= 0 && i < d->count()) d->sel[d->tab] = i; }
 bool ModsMenu::canToggle() const { return d->canToggle(); }
 bool ModsMenu::canMove(int delta) const { return d->canMove(delta); }
+const char* ModsMenu::detailText() const { return d->detailPlain.c_str(); }
+bool ModsMenu::canSettings() const { return d->canSettings(); }
+bool ModsMenu::pageOpen() const { return d->open && d->page; }
+int  ModsMenu::pageRowCount() const { return d->page ? d->rl.count() : 0; }
+bool ModsMenu::pageRowRect(int i, CGRect* r) { mm_layout(d); return d->page && d->rl.controlRect(i, r); }
+void ModsMenu::pageShowRow(int i) { mm_layout(d); if (d->page) { d->rl.showRow(i); mm_layout(d); } }
+const char* ModsMenu::pageTitle() const { return d->pageTitleText.c_str(); }
 bool ModsMenu::canRemove() const { return d->canRemove(); }
 bool ModsMenu::busy() const { return d->catJob != 0 || d->dlJob != 0; }
 const char* ModsMenu::statusText() const { return d->status.c_str(); }

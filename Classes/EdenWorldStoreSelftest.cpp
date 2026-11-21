@@ -882,19 +882,19 @@ void section_skyclock() {
     v = s.verify();
     check(v.empty(), "verify clean after compaction", v.empty() ? "" : v[0]);
     s.close();
-    // An old reader: what a pre-DN build does with type 11 is what this build does with reserved 14 (10 was the example until K.1-2 made it BLOCK_PALETTE, 12 until AT.1b made it WEATHER, 13 until K.6-5 made it MOD_DATA) --
+    // An old reader: what a pre-DN build does with type 11 is what this build does with reserved 15 (10 was the example until K.1-2 made it BLOCK_PALETTE, 12 until AT.1b made it WEATHER, 13 until K.6-5 made it MOD_DATA, 14 until LM.2 made it LIGHTING) --
     // a member of its batch, otherwise ignored; verify warns; compaction keeps it since K.6-5a (C-4).
     check(s.open(p.c_str(), true), "reopens", s.error());
     const std::string d1 = s.stateDigest();
     s.beginBatch();
-    s.putRecord(14, k1.data(), k1.size());
+    s.putRecord(15, k1.data(), k1.size());
     s.putRecord(T_WORLD_HEADER, hdr.data(), hdr.size());
     check(s.commitBatch(), "a batch with a reserved-type record commits", s.error());
     s.close();
-    check(s.open(p.c_str(), true) && !s.damaged() && has_warning(s, "reserved type 14") && s.stateDigest() == d1 &&
+    check(s.open(p.c_str(), true) && !s.damaged() && has_warning(s, "reserved type 15") && s.stateDigest() == d1 &&
           s.readRecord(T_SKY_CLOCK, got) == EdenWorldStore::READ_OK && got == k2,
           "an unknown singleton is ignored: opens undamaged, state and clock unchanged, a warning");
-    check(s.compact() && s.hasRecord(14) && s.hasRecord(T_SKY_CLOCK), "compaction keeps the unknown type (K.6-5a) and SKY_CLOCK", s.error());
+    check(s.compact() && s.hasRecord(15) && s.hasRecord(T_SKY_CLOCK), "compaction keeps the unknown type (K.6-5a) and SKY_CLOCK", s.error());
     s.close();
     // A malformed clock (a buggy or foreign writer): the file still opens; verify names it; the engine
     // (SkyCycle::load) ignores a payload that is not 16 bytes.
@@ -1033,9 +1033,9 @@ void section_reserved() {
     check(s.commitBatch(), "a world commits", s.error());
     s.beginBatch();
     s.putRecord(200, m1.data(), m1.size());
-    s.putRecord(14, x13.data(), x13.size());
+    s.putRecord(15, x13.data(), x13.size());
     s.putRecord(T_WORLD_HEADER, hdr.data(), hdr.size());
-    check(s.commitBatch(), "a batch with types 200 and 14 commits (zstd)", s.error());
+    check(s.commitBatch(), "a batch with types 200 and 15 commits (zstd)", s.error());
     s.setCodec(C_ZLIB);                  // a codec compaction re-encodes for known types: kept as is here
     s.beginBatch();
     s.putRecord(200, m2.data(), m2.size());
@@ -1050,7 +1050,7 @@ void section_reserved() {
     const std::string d0 = s.stateDigest();
     std::vector<RawFrame> before = raw_frames(p);
     const RawFrame* b200 = nullptr; const RawFrame* b13 = nullptr;
-    for (const RawFrame& f : before) { if (f.type == 200) b200 = &f; if (f.type == 14) b13 = &f; }
+    for (const RawFrame& f : before) { if (f.type == 200) b200 = &f; if (f.type == 15) b13 = &f; }
     check(b200 && b13 && b200->head[1] == C_ZLIB, "the newest type 200 is stored zlib");
     check(s.compact(), "compact()", s.error());
     std::vector<RawFrame> after = raw_frames(p);
@@ -1059,13 +1059,13 @@ void section_reserved() {
     for (size_t i = 0; i < after.size(); i++) {
         const RawFrame& f = after[i];
         if (f.type == 200) { n200++; i200 = (int)i; same200 = b200 && f.head == b200->head && f.payload == b200->payload; }
-        if (f.type == 14) { n13++; i13 = (int)i; same13 = b13 && f.head == b13->head && f.payload == b13->payload; }
+        if (f.type == 15) { n13++; i13 = (int)i; same13 = b13 && f.head == b13->head && f.payload == b13->payload; }
         if (f.type == T_SKY_CLOCK) iSky = (int)i;
         if (f.type == T_COLUMN && iCol < 0) iCol = (int)i;
     }
     check(n200 == 1 && n13 == 1 && same200 && same13,
           "the newest record of each reserved type survives compaction, byte for byte",
-          sfmt("type 200 x%d %s, type 14 x%d %s", n200, same200 ? "same" : "differs", n13, same13 ? "same" : "differs"));
+          sfmt("type 200 x%d %s, type 15 x%d %s", n200, same200 ? "same" : "differs", n13, same13 ? "same" : "differs"));
     check(iSky >= 0 && iSky < i13 && i13 < i200 && i200 < iCol, "after the known singletons, ascending, before the columns");
     check(s.readRecord(200, got) == EdenWorldStore::READ_OK && got == m2, "type 200 reads back as the newest version");
     check(s.stateDigest() == d0 && s.lastSeq() == 1, "state unchanged, one batch");
@@ -1087,8 +1087,8 @@ void section_moddata() {
     say("== MOD_DATA (K.6-5): framing rules, putRecord, verify, compaction verbatim");
     std::string p = P("moddata.emod");
     std::remove(p.c_str());
-    check(record_decoded_max(T_MOD_DATA) == (1u << 20) && known_record_type(T_MOD_DATA) && !known_record_type(14),
-          "MOD_DATA is a known type with a 1 MiB decode ceiling; 14 is the first reserved one");
+    check(record_decoded_max(T_MOD_DATA) == (1u << 20) && known_record_type(T_MOD_DATA) && known_record_type(14) && !known_record_type(15),
+          "MOD_DATA is a known type with a 1 MiB decode ceiling; 14 (LIGHTING) is known, 15 is the first reserved one");
     std::vector<ModDataEntry> es(2);
     es[0].id = "wires"; es[0].data.assign(100, 5);
     es[1].id = "a_pack";                                     // an empty entry is valid
@@ -1161,7 +1161,7 @@ void section_moddata() {
               sfmt("a MOD_DATA with \"%s\": parse says so, putRecord refuses it, the world still opens, verify names it, compaction keeps it verbatim", b.want).c_str(),
               sfmt("parse %d '%s'; refused %d; opened %d; named %d; kept %d", parsed, pw.c_str(), refused, opened, named, kept));
     }
-    // a good one: round trip, verify clean, compaction order (... SKY_CLOCK, WEATHER, MOD_DATA, 14, COLUMN) and bytes
+    // a good one: round trip, verify clean, compaction order (... SKY_CLOCK, WEATHER, MOD_DATA, LIGHTING (14), 15, COLUMN) and bytes
     std::remove(p.c_str());
     EdenWorldStore s;
     check(s.create(p.c_str(), 4, 1234567), "create()");
@@ -1172,19 +1172,19 @@ void section_moddata() {
     check(s.commitBatch(), "a world commits", s.error());
     const std::string d0 = s.stateDigest();
     s.beginBatch();
-    s.putRecord(14, x14.data(), x14.size());
+    s.putRecord(15, x14.data(), x14.size());
     check(s.putRecord(T_MOD_DATA, good.data(), good.size()), "putRecord takes a good MOD_DATA", s.error());
     s.putRecord(T_WEATHER, w.data(), w.size());
     s.putRecord(T_WORLD_HEADER, hdr.data(), hdr.size());
-    check(s.commitBatch(), "MOD_DATA + WEATHER + type 14 commit", s.error());
+    check(s.commitBatch(), "MOD_DATA + WEATHER + type 15 commit", s.error());
     for (int n = 0; n < 4; n++) {
         s.beginBatch();
         s.putColumn(10, 10, c0.data());
         s.commitBatch();
     }
     s.close();
-    check(s.open(p.c_str(), true) && !has_warning(s, "reserved type 13") && has_warning(s, "reserved type 14"),
-          "reopens; type 13 is known (no warning), 14 is reserved", s.error());
+    check(s.open(p.c_str(), true) && !has_warning(s, "reserved type 13") && has_warning(s, "reserved type 15"),
+          "reopens; type 13 is known (no warning), 15 is reserved", s.error());
     check(s.readRecord(T_MOD_DATA, got) == EdenWorldStore::READ_OK && got == good, "round trip byte for byte");
     check(s.stateDigest() == d0, "MOD_DATA is not part of the state digest (like WEATHER)");
     std::vector<std::string> v = s.verify();
@@ -1201,7 +1201,7 @@ void section_moddata() {
         const RawFrame& f = after[i];
         if (f.type == T_WEATHER) iWe = (int)i;
         if (f.type == T_MOD_DATA) { iMd = (int)i; same = f0 && f.head == f0->head && f.payload == f0->payload; }
-        if (f.type == 14) i14 = (int)i;
+        if (f.type == 15) i14 = (int)i;
         if (f.type == T_COLUMN && iCol < 0) iCol = (int)i;
     }
     check(same && iWe >= 0 && iWe < iMd && iMd < i14 && i14 < iCol,

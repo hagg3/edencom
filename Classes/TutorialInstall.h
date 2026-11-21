@@ -43,7 +43,7 @@ std::string install(const std::string& documents);
 // (the old world is then untouched). Caller must ensure no world is open.
 std::string restore(const std::string& documents);
 
-// The once-per-install hook (Menu::loadWorlds, before the world list is read): installs and sets prefs
+// The once-per-install function (Menu::loadWorlds no longer calls it; the harness does before a scan): installs and sets prefs
 // `tutorial.installed` only if the prefs key is unset, autoInstall is on and no conversion/download is live.
 // A failure is logged and retried at the next launch. Returns true if it installed.
 bool installOnce(const std::string& documents);

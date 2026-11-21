@@ -234,17 +234,10 @@ void applyShadow() {
     World* w = World::getWorld;
     if (!shadowOn() || !w || !w->fm) { R::cloudShadowOff(); return; }
     // The sun: the clock's, or with the cycle off a fixed high one (the painted sky has no sun), none at night.
+    // SH.3: SkyCycle::shadowSun, shared with the sun shadows so both agree.
     float day;
     Vector sun;
-    if (SkyCycle::enabled()) {
-        const float e = SkyCycle::sunElevationDeg();
-        const float t = clampf((e - 2.0f) / 13.0f, 0, 1);
-        day = t * t * (3 - 2 * t);
-        sun = SkyCycle::sunDir();
-    } else {
-        day = sky_isNight() ? 0.0f : 1.0f;
-        sun = MakeVector(0.28f, 0.94f, 0.18f);
-    }
+    SkyCycle::shadowSun(&sun, &day);
     float c, h;
     weatherCover(&c, &h);
     const float strength = 0.32f * day * (1.0f - c);
@@ -273,6 +266,12 @@ void applyShadow() {
 }
 
 void reset() { freeAll(); }
+
+float weatherShare() {
+    float c, h;
+    weatherCover(&c, &h);
+    return c;
+}
 
 bool live() { return g_tex != 0 && g_buf != 0; }
 bool drawn() { return g_drawn; }

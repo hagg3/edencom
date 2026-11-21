@@ -70,7 +70,16 @@ const EdenProfile* eden_profile_get(int id);
 const EdenProfile* eden_profile_active(void);
 
 int  eden_low_memory(void);
-int  eden_script_low_memory(void);   // K.8-5: the overlay, or <= 3 GB of RAM: the scripts' 24 MiB total cap
+
+// N.6-2b: the runtime device class. DESKTOP = macOS/Linux/Windows. MOBILE = iOS (Android next). MOBILE_LOW = a
+// mobile device that is short on RAM: the Air 2-class hardware list (eden_device_air2_class) or <= 3 GB of RAM. Decided once per process; `EDEN_DEVICE_CLASS=desktop|mobile|mobile_low` overrides
+// it (tests: a Mac can show the iOS option lists). It picks the per-platform settings option lists, the Air 2-class
+// defaults and the mod scripts' memory cap (24 vs 64 MiB, ModScript::defaultAllMemBytes). It is NOT LOW_MEM_DEVICE,
+// the stock engine switch, which no class sets: it turns coloured lighting off, and the Air 2 measured under budget
+// without it (main.cpp, N.4.10).
+enum { EDEN_DEVICE_DESKTOP = 0, EDEN_DEVICE_MOBILE = 1, EDEN_DEVICE_MOBILE_LOW = 2 };
+int  eden_device_class(void);
+int  eden_device_air2_class(void);   // 1 = the FT.16 Air 2-class defaults apply (75% render scale, 30 fps, Atmosphere Off, ...)
 
 // The page's real canvas/viewport box, in CSS pixels. Only the RATIO is used (the pixel buffer is
 // sized separately by eden_set_drawable_size). Re-derives the metrics and re-lays-out the UI.

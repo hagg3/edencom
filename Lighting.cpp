@@ -9,6 +9,8 @@
 #include "Lighting.h"
 #include "F3Timing.h"
 #include "Terrain.h"
+#include <assert.h>
+#include <vector>
 // Stage R / R.3: no longer the light store (see Lighting.h). NULL unless g_light_selfcheck, when it
 // is the stock dense array again, written by the stock code beside the bricks as a reference.
 extern Vector8* lightarray;
@@ -46,6 +48,100 @@ static void light_lbfreeClearAll(){
 int g_light_rebuilds=0;
 double g_light_rebuild_ms=0,g_light_rebuild_max_ms=0;   // F3 clock (0 without EDEN_F3_HOOKS)
 int g_light_test_mutation=0;
+
+// LM.1: the lamp light profile (Lighting.h). Legacy's radius is the LIGHT_RADIUS literal itself, so
+// the splat's float expressions see exactly the value stock's constant gave them.
+static int g_light_mode=LIGHT_MODE_LEGACY;
+static float g_light_radius=LIGHT_RADIUS;
+static float g_newdawn_radius=LIGHT_RADIUS_NEWDAWN;
+float light_radius(){ return g_light_radius; }
+int light_mode(){ return g_light_mode; }
+int light_refreshRadius(){
+    const int r=(int)ceilf(g_light_radius);
+    return r<CHUNK_SIZE?r:CHUNK_SIZE;
+}
+// LM.1: the splat's sphere, precomputed per radius: every (x,z) of the disc in stock's loop order,
+// each with its run of (y, intensity) in the sphere. The intensity is stock's expression, evaluated
+// once here instead of per voxel per lamp, so the bytes are the same; what goes is the sqrtf and the
+// division per voxel and the y loop's rejected half of the cube (at R=16 the cube is 35,937 voxels,
+// the sphere 17,077). Built on the main thread, the splat's only thread, when the radius changes.
+struct LightOffsetCol { int x,z,first,count; };
+static std::vector<LightOffsetCol> light_ocols;
+static std::vector<int> light_ody;
+static std::vector<float> light_ointen;
+static float light_otableR=-1.0f;
+static void light_buildOffsets(){
+    const float R=g_light_radius;
+    if(R==light_otableR)return;
+    light_ocols.clear();
+    light_ody.clear();
+    light_ointen.clear();
+    for(int x=-R;x<=R;x++){
+        for(int z=-R;z<=R;z++){
+            if(x*x+z*z>R*R)continue;
+            LightOffsetCol c={x,z,(int)light_ody.size(),0};
+            for(int y=-R;y<=R;y++){
+                if(x*x+z*z+y*y>R*R)continue;
+                light_ody.push_back(y);
+                light_ointen.push_back(1.0f-sqrtf(x*x+z*z+y*y)/R);
+            }
+            c.count=(int)light_ody.size()-c.first;
+            light_ocols.push_back(c);
+        }
+    }
+    light_otableR=R;
+}
+void terrain_requestWindowRemesh();   // Terrain.cpp
+void updateLightingBegin();           // Terrain.cpp
+static void light_applyProfile(int mode){
+    const float r=mode==LIGHT_MODE_NEWDAWN?g_newdawn_radius:LIGHT_RADIUS;
+    if(mode==g_light_mode&&r==g_light_radius)return;
+    g_light_mode=mode;
+    g_light_radius=r;
+    const float cap=g_light_test_mutation==5?LIGHT_RADIUS_MAX+1:LIGHT_RADIUS_MAX;
+    assert(g_light_radius<=cap);
+    (void)cap;
+    World* w=World::getWorld;
+    if(w&&w->terrain&&w->terrain->loaded&&lightbricks){
+        updateLightingBegin();
+        terrain_requestWindowRemesh();
+    }
+}
+void light_setProfile(int mode){
+    light_applyProfile(mode==LIGHT_MODE_NEWDAWN?LIGHT_MODE_NEWDAWN:LIGHT_MODE_LEGACY);
+}
+void light_setNewDawnRadius(float r){
+    const float cap=g_light_test_mutation==5?LIGHT_RADIUS_MAX+1:LIGHT_RADIUS_MAX;
+    g_newdawn_radius=r<1.0f?1.0f:(r>cap?cap:r);
+    light_applyProfile(g_light_mode);
+}
+static int g_light_forced=-1;
+int light_detectMode(bool autoOn,int bands,bool hasProvenance,unsigned provFlags){
+    if(autoOn&&bands==16&&hasProvenance&&!(provFlags&LIGHT_PROV_PROMOTED))return LIGHT_MODE_NEWDAWN;
+    return LIGHT_MODE_LEGACY;
+}
+bool light_recordDecode(const unsigned char* p,unsigned long n,LightingRecord* out){
+    if(!p||n!=LIGHTING_RECORD_BYTES)return false;
+    if((p[0]|(p[1]<<8))!=LIGHTING_RECORD_VERSION)return false;
+    if(out){out->mode=p[2];out->origin=p[3];out->detector=p[4];}
+    return true;
+}
+void light_recordEncode(const LightingRecord& r,unsigned char out[LIGHTING_RECORD_BYTES]){
+    memset(out,0,LIGHTING_RECORD_BYTES);
+    out[0]=LIGHTING_RECORD_VERSION;
+    out[2]=r.mode;out[3]=r.origin;out[4]=r.detector;
+}
+int light_recordProfile(unsigned char mode){return mode==LIGHT_MODE_NEWDAWN?LIGHT_MODE_NEWDAWN:LIGHT_MODE_LEGACY;}
+void light_setWorldProfile(int mode){
+    if(g_light_forced>=0)return;
+    light_setProfile(mode);
+}
+void light_forceProfile(int mode){
+    g_light_forced=-1;
+    if(mode<0)return;   // released: worlds obey their own record again
+    light_setProfile(mode);
+    g_light_forced=mode==LIGHT_MODE_NEWDAWN?LIGHT_MODE_NEWDAWN:LIGHT_MODE_LEGACY;
+}
 
 void light_storeAllocate(){
     lightbrick_slots=CHUNKS_PER_SIDE*CHUNKS_PER_SIDE*CHUNKS_PER_COLUMN;
@@ -177,31 +273,45 @@ extern int g_offcz;
 static void light_splat(int xx,int zz,int yy,float brightness,Vector color,bool scratch,const unsigned char* colMask){
  //   printf("light intensities: ");
     Vector8** table=scratch?lightscratch:lightbricks;
-    for(int x=-LIGHT_RADIUS;x<=LIGHT_RADIUS;x++){
-        for(int z=-LIGHT_RADIUS;z<=LIGHT_RADIUS;z++){
-            if(x*x+z*z>LIGHT_RADIUS*LIGHT_RADIUS)continue;
+    // LM.1: the profile's sphere (light_buildOffsets), where stock looped over the LIGHT_RADIUS cube
+    // and computed each intensity here. Same voxels, same intensities (no fast-math: x/R is the same
+    // IEEE division for a variable R as for the literal), so Legacy's bytes are stock's.
+    // The window's runtime sizes are read once: the byte stores below may alias any global, so the
+    // compiler would otherwise reload them per voxel. The brick slot and index are light_brickSlot/
+    // light_brickIndex split into a per-column base plus the y part.
+    light_buildOffsets();
+    const int H=T_HEIGHT,cps=CHUNKS_PER_SIDE,cpc=CHUNKS_PER_COLUMN,tsize=T_SIZE,offx=g_offcx,offz=g_offcz;
+    const bool wrap=g_light_test_mutation==3;
+    Vector8* const dense=lightarray;
+    const int* const ody=light_ody.data();
+    const float* const ointen=light_ointen.data();
+    for(const LightOffsetCol& oc:light_ocols){
+        const int x=oc.x,z=oc.z;
+        {
             //if(xx+x<0||xx+x>=T_SIZE||zz+<0||z>=T_SIZE)return;
-            if(g_light_test_mutation!=3&&!isColumnResident(xx+x,zz+z))continue;
-            const int tx=(xx+x+g_offcx)%T_SIZE,tz=(zz+z+g_offcz)%T_SIZE;
-            if(colMask&&!colMask[(tx/CHUNK_SIZE)*CHUNKS_PER_SIDE+tz/CHUNK_SIZE])continue;
-            for(int y=-LIGHT_RADIUS;y<=LIGHT_RADIUS;y++){
-                if(x*x+z*z+y*y>LIGHT_RADIUS*LIGHT_RADIUS)continue;
-                if(y+yy<0||y+yy>=T_HEIGHT)continue;
-                float inten=1.0f-sqrtf(x*x+z*z+y*y)/LIGHT_RADIUS;
+            if(!wrap&&!isColumnResident(xx+x,zz+z))continue;
+            const int tx=(xx+x+offx)%tsize,tz=(zz+z+offz)%tsize;
+            if(colMask&&!colMask[(tx/CHUNK_SIZE)*cps+tz/CHUNK_SIZE])continue;
+            const int sbase=((tx/CHUNK_SIZE)*cps+(tz/CHUNK_SIZE))*cpc;
+            const int ibase=(tx%CHUNK_SIZE)*CHUNK_SIZE2+(tz%CHUNK_SIZE)*CHUNK_SIZE;
+            for(int k=oc.first;k<oc.first+oc.count;k++){
+                const int y=ody[k];
+                if(y+yy<0||y+yy>=H)continue;
+                float inten=ointen[k];
 
-                if(lightarray){   // R.3 self-check: the stock dense write, untouched
-                int lidx=tx*T_SIZE*T_HEIGHT+tz*T_HEIGHT+yy+y;
-                lightarray[lidx].x=MAX(0,MIN(255,lightarray[lidx].x+64.0f*inten*brightness*color.x));
-                lightarray[lidx].y=MAX(0,MIN(255,lightarray[lidx].y+64.0f*inten*brightness*color.y));
-                lightarray[lidx].z=MAX(0,MIN(255,lightarray[lidx].z+64.0f*inten*brightness*color.z));
+                if(dense){   // R.3 self-check: the stock dense write (lightarray, hoisted)
+                int lidx=tx*tsize*H+tz*H+yy+y;
+                dense[lidx].x=MAX(0,MIN(255,dense[lidx].x+64.0f*inten*brightness*color.x));
+                dense[lidx].y=MAX(0,MIN(255,dense[lidx].y+64.0f*inten*brightness*color.y));
+                dense[lidx].z=MAX(0,MIN(255,dense[lidx].z+64.0f*inten*brightness*color.z));
                 }
                 // R.3: the same arithmetic on the brick. A slot with no brick reads as zero, and
                 // stays brickless unless this write leaves something non-zero -- so a lightbox
                 // being broken (brightness -1, clamped at 0) never allocates.
-                const int slot=light_brickSlot(tx,tz,yy+y);
+                const int slot=sbase+(yy+y)/CHUNK_SIZE,bidx=ibase+(yy+y)%CHUNK_SIZE;
                 Vector8* b=table[slot];
                 Vector8 cur;
-                if(b)cur=b[light_brickIndex(tx,tz,yy+y)];
+                if(b)cur=b[bidx];
                 else cur.x=cur.y=cur.z=0;
                 Vector8 nv;
                 nv.x=MAX(0,MIN(255,cur.x+64.0f*inten*brightness*color.x));
@@ -211,7 +321,7 @@ static void light_splat(int xx,int zz,int yy,float brightness,Vector color,bool 
                     if(!nv.x&&!nv.y&&!nv.z)continue;
                     if(!(b=scratch?light_newScratchBrick(slot):light_newBrick(slot)))continue;
                 }
-                b[light_brickIndex(tx,tz,yy+y)]=nv;
+                b[bidx]=nv;
             }
         }
     }
@@ -229,7 +339,7 @@ extern TerrainChunk** chunkTablec;
 static void sweepLightingHit(int x,int z,int y){
     g_f3.lightboxes++;
     addlight(x,z,y,1.0f,colorTable[getColorc(x,z,y)]);
-    World::getWorld->terrain->refreshChunksInRadius(x,z,y,LIGHT_RADIUS);
+    World::getWorld->terrain->refreshChunksInRadius(x,z,y,light_refreshRadius());
 }
 
 // One (cx,cz) column of the resident window: find its TYPE_LIGHTBOX blocks and hand each one to
@@ -312,7 +422,7 @@ static int sweepLightingColumn(int cx,int cz,void (*hit)(int x,int z,int y)){
 // B.5b-1c: per-column light under ring streaming (plan §3.3 step 4).
 //
 // The invariant: every resident column's light is exactly what a full sweep of the current window
-// would give it -- the clamped sum of the lightboxes in RESIDENT columns within LIGHT_RADIUS, never
+// would give it -- the clamped sum of the lightboxes in RESIDENT columns within light_radius(), never
 // wrapped (light_splat). A column landing in slot S changes that for two sets of columns: the
 // departing occupant's spatial neighbours (its lightboxes no longer count) and the newcomer's (its
 // do). Both sets sit in the 3x3 of SLOTS around S, because a resident column at world offset d from

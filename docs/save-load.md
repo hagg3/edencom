@@ -376,6 +376,7 @@ The port's second world container: an append-only log of per-column zstd records
   **AT.1b:** `WEATHER` (record 12) follows the same rules through `Weather::needsSave()` / `saved()` /
   `load()` / `reset()`, with coarse steps (kind or flags, ≥ 30 s left, ≥ 0.1 intensity) so a running storm
   adds nothing between real saves; it never marks the world dirty, and a `--weather=KIND` run never stages it.
+  **LM.2:** `LIGHTING` (record 14) is read by `finishLoadOnMain` (main thread, before the first light sweep) and applied with `light_setWorldProfile`; an unreadable record or an `.eden` loads Legacy, so a world never inherits the last world's profile. **LM.3:** with no record, `finishLoadOnMain` runs the detector (`light_detectMode`: toggle on, 16 bands, `PROVENANCE`, flag 256 clear = New Dawn) and `saveWorld` stages the result once (`fm_lightingOwed`, origin 0) while the file has none; a session (no store) follows the same rule from its height and stores nothing. World Properties writes origin 1 (`applyWorldProperties`). A harness `--lamp-light=` forces the profile over every world's record.
   **K.6-5:** `MOD_DATA` (record 13, `eden.store`) rides in the batch when `ModScript::storeNeedsSave()` (a pack
   stored something since the load or the last commit); `ModScript::storeSaved()` after the commit, so a failed
   save keeps it dirty. Never staged in a session (a session never reaches `saveEmodWorld`, and the store is

@@ -152,4 +152,10 @@ void App::onPageHide() {
     stopAnimation();
 }
 
+void App::onQuit() {
+    // A clean quit closes the world for good: `leave` fires (a background does not; K.6-2, V7).
+    eden_app_will_quit();
+    stopAnimation();
+}
+
 }  // namespace eden_native

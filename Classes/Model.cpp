@@ -257,6 +257,7 @@ typedef struct _entity{
     int gotoDest;
    
     Polyhedra box;
+    float knock;   // K.6-4b: seconds left of a script launch (h:setvel); >0 = the AI neither walks nor decides (runtime only)
     
 }Entity;
 #define nguys 300
@@ -269,6 +270,17 @@ typedef struct _entity{
 // MP.5: the remote players' bodies, after the player body and under the same rules.
 #define REMOTE_BODY(i) (nguys+2+(i))
 static Entity guys[nguys+2+MAX_REMOTE_BODIES];
+// K.6-4a: mod-script creature handles are (slot, generation) (docs/entities-and-creatures.md "Script handles").
+// slotGen[i] moves on whenever slot i stops holding the same live creature: ResetModel (every reuse and every
+// load), a death or pick-up, a removal, and `update` going true->false when its cell leaves the resident window.
+// Never saved (rule 5: not in EntityData) and never reset, so a handle from an earlier world or slot use can't match.
+static uint32_t slotGen[nguys];
+static uint32_t spawnCount=0;
+static int lastSpawnSlot=-1;
+static inline void slotChanged(int i){ if(i>=0&&i<nguys)slotGen[i]++; }
+// K.6-4b: a script launch (h:setvel) lasts until the creature is down and slower than KNOCK_SETTLED blocks/s, or KNOCK_MAX s.
+#define KNOCK_MAX 3.0f
+#define KNOCK_SETTLED 0.5f
 static Vector min[NUM_CREATURES];
 static Vector max[NUM_CREATURES];
 
@@ -531,6 +543,7 @@ int SimpleCollision(Entity* e){
     
 }
 void ResetModel(int i){
+    slotChanged(i);
     guys[i].model_type=-1;
     guys[i].angle=0;
     guys[i].pos=Vec3f(0,0,0);    
@@ -557,6 +570,7 @@ void ResetModel(int i){
     guys[i].acc=Vec3f(0,0,0);
     guys[i].onground=guys[i].onIce=0;
     guys[i].onfire=false;
+    guys[i].knock=0;
 }
 // Web port dev console (row F5): spawns a creature at an EXACT position, bypassing
 // addMoreCreaturesIfNeeded's randomized ground-search and biome-based type selection below (the
@@ -575,6 +589,8 @@ bool SpawnCreatureAt(int type,Vector pos){
             guys[gc].model_type=type;
             guys[gc].timer=1;
             guys[gc].frame=getFrame(type,0,0);
+            lastSpawnSlot=gc;
+            spawnCount++;
             return true;
         }
     }
@@ -583,6 +599,76 @@ bool SpawnCreatureAt(int type,Vector pos){
 // Web port dev console (row F5): a read-only count for the console's "world stats" command.
 // Same liveness test addMoreCreaturesIfNeeded's own totalactive scan uses (model_type!=-1 and
 // either actively updating or a nearby touched/saved one), just exposed instead of file-local.
+// K.6-4a: what a script handle reads (Model.h). A live creature is a slot with a model that is alive and updating.
+static bool slotLive(int i){
+    return i>=0&&i<nguys&&guys[i].alive&&guys[i].update&&guys[i].model_type>=0&&guys[i].model_type<NUM_CREATURES;
+}
+int CreatureSlots(){ return nguys; }
+uint32_t CreatureGen(int slot){ return slot>=0&&slot<nguys?slotGen[slot]:0; }
+bool CreatureHandleLive(int slot,uint32_t gen){
+    if(slot<0||slot>=nguys||slotGen[slot]!=gen)return false;
+    if(slotLive(slot))return true;
+    slotChanged(slot);   // a transition no hook saw: the handle is gone for good, even if the slot comes back
+    return false;
+}
+bool CreatureRead(int slot,int* type,Vector* pos){
+    if(!slotLive(slot))return false;
+    if(type)*type=guys[slot].model_type;
+    if(pos)*pos=MakeVector(guys[slot].pos.x,guys[slot].pos.y,guys[slot].pos.z);
+    return true;
+}
+bool RemoveCreature(int slot){
+    if(!slotLive(slot))return false;
+    guys[slot].alive=false;   // as killCreature, without its sound and puff; not saved (SaveModels skips the dead)
+    slotChanged(slot);
+    return true;
+}
+void setState(int idx,int state);
+bool CreatureVel(int slot,Vector* vel){
+    if(!slotLive(slot))return false;
+    if(vel)*vel=MakeVector(guys[slot].vel.x,guys[slot].vel.y,guys[slot].vel.z);
+    return true;
+}
+// K.6-4b: a script teleport. The caller has checked the cell is loaded and not solid; this checks the AI's own window
+// (UpdateModels' test), so a creature moved here still updates next frame. It lands as from a spawn: still, airborne.
+int CreatureSetPos(int slot,Vector pos){
+    if(!slotLive(slot))return 1;
+    const float adjx=pos.x-World::getWorld->fm->chunkOffsetX*CHUNK_SIZE;
+    const float adjz=pos.z-World::getWorld->fm->chunkOffsetZ*CHUNK_SIZE;
+    if(!(adjx>0&&adjx<T_SIZE&&adjz>0&&adjz<T_SIZE&&pos.y>=0&&pos.y<T_HEIGHT))return 2;
+    Entity& e=guys[slot];
+    e.pos=e.lpos=Vec3f(pos.x,pos.y,pos.z);
+    e.vel=Vec3f(0,0,0);
+    e.onground=e.onIce=false;
+    e.knock=0;
+    e.gotoDest=0;
+    return 0;
+}
+// K.6-4b: a script launch, the way HitModel knocks a creature back: the velocity is set once and then gravity, friction,
+// liquid and collisions integrate it while the AI holds off (Entity::knock). The caller has refused non-finite values;
+// the length is clamped to CREATURE_SPEED_MAX so no Move sub-step passes 0.4 blocks at the 1/20 s etime cap.
+bool CreatureSetVel(int slot,Vector vel){
+    if(!slotLive(slot))return false;
+    Entity& e=guys[slot];
+    const float len=sqrtf(vel.x*vel.x+vel.y*vel.y+vel.z*vel.z);
+    const float k=len>CREATURE_SPEED_MAX?CREATURE_SPEED_MAX/len:1.0f;
+    e.vel=Vec3f(vel.x*k,vel.y*k,vel.z*k);
+    e.onground=false;   // Move runs this frame even out of view
+    e.knock=KNOCK_MAX;
+    e.gotoDest=0;
+    if(e.state==DEFAULT_WALK||e.state==DEFAULT_JUMP)setState(slot,DEFAULT_IDLE_START);
+    return true;
+}
+bool CreatureKnocked(int slot){ return slotLive(slot)&&guys[slot].knock>0; }
+uint32_t CreatureSpawns(int* lastSlot){
+    if(lastSlot)*lastSlot=lastSpawnSlot;
+    return spawnCount;
+}
+bool CreatureSlotFree(){
+    for(int gc=0;gc<nguys;gc++)
+        if(guys[gc].touched==false&&(guys[gc].model_type==-1||!guys[gc].update||!guys[gc].alive))return true;   // SpawnCreatureAt's test
+    return false;
+}
 int CountActiveCreatures(){
     int n=0;
     for(int i=0;i<nguys;i++){
@@ -1307,7 +1393,7 @@ void Move(Entity* e,float etime){
         
     }
     
-    if(e->state==DEFAULT_WALK||e->state==DEFAULT_JUMP){
+    if((e->state==DEFAULT_WALK||e->state==DEFAULT_JUMP)&&e->knock<=0){   // K.6-4b: a launched creature is not steering
         float cosYaw=cos(e->angle+C_PI/2.0f );
         float sinYaw=sin(e->angle+C_PI/2.0f);
         if(e->runaway>0||e->ragetimer>0)move_speed*=2.0f;
@@ -1472,16 +1558,17 @@ void UpdateModels(float etime){
             //guys[i].update=TRUE;
         }else {
             guys[i].update=false;
+            slotChanged(i);
             continue;
            
         }
         nestmove=0;
-        if(guys[i].insideView||(!guys[i].onground||guys[i].onIce||guys[i].ragetimer>0||guys[i].onfire))
+        if(guys[i].insideView||(!guys[i].onground||guys[i].onIce||guys[i].ragetimer>0||guys[i].onfire||guys[i].knock>0))
         Move(&guys[i],etime);
         
         
         
-        if(guys[i].model_type<0||guys[i].model_type>NUM_CREATURES)guys[i].alive=false;
+        if(guys[i].model_type<0||guys[i].model_type>NUM_CREATURES){guys[i].alive=false;slotChanged(i);}
     }
     
     
@@ -1561,6 +1648,14 @@ void UpdateModels(float etime){
         }
         if(guys[i].onground&&(guys[i].justhit||guys[i].runaway>0||guys[i].ragetimer>0)&&guys[i].state!=DEFAULT_WALK){
             endCycle=true;
+        }
+        if(guys[i].knock>0){   // K.6-4b: a script launch runs out when it has settled (or after KNOCK_MAX); then the AI decides again
+            guys[i].knock-=etime;
+            const bool settled=(guys[i].onground||guys[i].inLiquid)&&guys[i].vel.x*guys[i].vel.x+guys[i].vel.z*guys[i].vel.z<KNOCK_SETTLED*KNOCK_SETTLED;
+            if(settled||guys[i].knock<=0){
+                guys[i].knock=0;
+                endCycle=true;
+            }else continue;
         }
         Vec3f player_pos=MakePVR(World::getWorld->player->pos);
         player_pos.x=wrapx(player_pos.x);
@@ -1992,6 +2087,7 @@ void BurnModel(int idx){
 }
 void killCreature(int idx){
     guys[idx].alive=false;
+    slotChanged(idx);
     Resources::getResources->playSound(S_CREATURE_VANISH);
     Vec3f upos=unwrap(guys[idx].pos);
     World::getWorld->effects->addCreatureVanish(upos.x,upos.z,guys[idx].pos.y,guys[idx].color,guys[idx].model_type);
@@ -2045,6 +2141,7 @@ void ColorModel(int idx,int color){
 void PickupModel(int idx){
     if(idx>=0&&idx<nguys){
         guys[idx].alive=false;
+        slotChanged(idx);
         World::getWorld->hud->blocktype=TYPE_CLOUD;
         World::getWorld->hud->creature_color=guys[idx].color;
         World::getWorld->hud->holding_creature=idx+1;

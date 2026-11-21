@@ -161,16 +161,36 @@ void saved(){
     g_savedLocked=g_locked;
 }
 
-Vector sunDir(){
+static Vector sunDirAt(double t){
     // Plan D2: theta = 2pi(t - 0.25), rising in +x at t 0.25; the arc is tilted 20 degrees off the
     // zenith toward +z so the noon sun is not straight overhead.
-    const double th=2.0*M_PI*(g_t-0.25);
+    const double th=2.0*M_PI*(t-0.25);
     const double tilt=20.0*M_PI/180.0;
     Vector v;
     v.x=(float)cos(th);
     v.y=(float)(sin(th)*cos(tilt));
     v.z=(float)(sin(th)*sin(tilt));
     return v;
+}
+Vector sunDir(){return sunDirAt(g_t);}
+
+void shadowSun(Vector* dir,float* day,float quantDeg){
+    // SH.3: factored out of Clouds::applyShadow (same arithmetic, so its pixels are unchanged).
+    if(g_enabled){
+        const float e=elevationDeg();
+        float t=(e-2.0f)/13.0f;
+        t=t<0?0:t>1?1:t;
+        *day=t*t*(3-2*t);
+        double tq=g_t;
+        if(quantDeg>0){
+            const double steps=360.0/quantDeg;   // one step of arc = 1/steps of the day
+            tq=floor(g_t*steps+0.5)/steps;
+        }
+        *dir=sunDirAt(tq);
+    }else{
+        *day=sky_isNight()?0.0f:1.0f;
+        *dir=MakeVector(0.28f,0.94f,0.18f);
+    }
 }
 
 }

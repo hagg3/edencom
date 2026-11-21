@@ -1,6 +1,7 @@
 // null_renderer.cpp — the renderer with no context (headless runs, a failed context; plan §5). Resource
 // ids are nonzero and distinct (the engine tests handles against 0, like the shim's fake GL names) and
 // draws are counted, so --render-selftest can assert the frame structure and the invariants without GL.
+// SH.2's depth pass needs nothing here: the core answers beginDepthPass true and counts drawDepth as a draw.
 #include "../render_internal.h"
 
 #include <unordered_set>

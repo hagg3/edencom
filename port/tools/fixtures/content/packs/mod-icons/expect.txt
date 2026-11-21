@@ -1,0 +1,9 @@
+# K.7-3c mod pack icons: every line, in order (eight good ones load, the ninth is over the cap), then how much loads
+mod-icons@55: icon "Bad": the name must match [a-z0-9_]{1,24}
+mod-icons@79: icon "notstr": must be a relative path inside the pack
+mod-icons@94: icon "escape": must be a relative path inside the pack
+mod-icons@121: icon "absent": cannot read "absent.png"
+mod-icons@145: icon "text": "notpng.png" is not a PNG
+mod-icons@170: icon "small": "small.png" is 16x16 (an icon is 64x64)
+mod-icons@333: icon "over": a pack has at most 8 icons (skipped)
+= blocks 0

@@ -16,6 +16,10 @@
 //  (PackInstall::parseCatalogue) as rows, Install = download to Packs/.download.partial (polled per
 //  frame with progress) then installZip with the entry's sha256.
 //
+//  Settings (K.7-2b, plan V15): the selected pack's "settings" (pack.json) open as a page on this screen: a
+//  GLW::RowList of toggles, sliders, choices and text buttons, each saved at once to
+//  Packs/.settings/<id>.json (ContentPack::saveSetting); `eden.setting` reads them in a world.
+//
 //  Never in a session: the menu offers it only on the home screen / main menu.
 //
 #ifndef Eden_ModsMenu_h
@@ -40,7 +44,7 @@ public:
 
     // --- harness surface (--ui-selftest / --shot): point space, y up ---------------------------
     // controlRect: "back", "toggle", "up", "down", "remove", "file" (Install from file), "install",
-    // "refresh" (Get Mods), "list", "scrollbar". tabRect(i) is a tab (zero-size when no tabs).
+    // "refresh" (Get Mods), "settings" (the selected pack's page), "list", "scrollbar". tabRect(i) is a tab (zero-size when no tabs).
     CGRect controlRect(const char* which);
     CGRect tabRect(int tab);
     bool   rowRect(int index, CGRect* r);
@@ -57,6 +61,14 @@ public:
     bool   canToggle() const;
     bool   canMove(int delta) const;
     bool   canRemove() const;
+    const char* detailText() const;              // the detail pane's lines, one per line (K.8-6)
+    bool   canSettings() const;                  // the selected installed pack declares settings
+    // The settings page (harness): open via the "settings" button; Back (or back()) returns to the list.
+    bool   pageOpen() const;
+    int    pageRowCount() const;
+    bool   pageRowRect(int i, CGRect* r);        // the row's control (the whole row for a heading); false = off screen
+    void   pageShowRow(int i);
+    const char* pageTitle() const;
     bool   busy() const;                         // a catalogue fetch or a download is in flight
     const char* statusText() const;
     // Get Mods without a network: hand the tab the bytes a catalogue request would have returned.

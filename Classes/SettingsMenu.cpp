@@ -138,6 +138,7 @@ static bool sm_row_in_scope(int si,bool worldOpen){
 static const char* sm_hint(int si){
     if(eden_settings_kind(si)==SM_KIND_HEADING&&eden_settings_scope(si)==SM_SCOPE_WORLD&&MpWorld::active())
         return "Temporary: this device only. Not shared with the server or saved.";
+    if(const char* h=eden_settings_inactive_hint(si)) return h;   // SH.3: Shadows while Sun shadows is on
     return eden_settings_hint(si);
 }
 
@@ -322,6 +323,7 @@ void SettingsMenu::controlSize(int si,float* w,float* h) const{
 
 bool SettingsMenu::rowMuted(int k) const{
     if(sm_kind(m_si[k])==SM_KIND_ACTION&&sm_world_open()) return true;   // UX.10-2: Restore tutorial world needs the title screen
+    if(eden_settings_inactive_hint(m_si[k])) return true;   // SH.3
     const int p=eden_settings_parent(m_si[k]);
     return p>=0&&sm_get(p)==0.0f;
 }
@@ -536,6 +538,7 @@ void SettingsMenu::stepRow(int k,int dir){
     }
     // An enum can drive others (the graphics preset sets view distance): refresh the whole tab.
     for(int j=0;j<m_nRows;j++) if(j==k||sm_kind(m_si[j])!=SM_KIND_TOGGLE) refreshValue(j);
+    layout();   // SH.3: a preset can switch Sun shadows, which changes the Shadows row's hint (free when nothing did)
 }
 
 // MP.8: Experiments > Matchmakers. A prompt over the current string; Save validates the whole list
@@ -776,7 +779,7 @@ void SettingsMenu::update(float etime){
                 const int si=m_si[k];
                 const int kind=sm_kind(si);
                 if(kind==SM_KIND_TOGGLE){
-                    if(m_toggle[k].hit(mx,my)){ sm_toggle(si); refreshValue(k); break; }
+                    if(m_toggle[k].hit(mx,my)){ sm_toggle(si); refreshValue(k); layout(); break; }   // SH.3: layout re-reads hints
                 }else if(kind==SM_KIND_ENUM){
                     if(m_stepper[k].hitDec(mx,my))      { stepRow(k,-1); break; }
                     else if(m_stepper[k].hitInc(mx,my)) { stepRow(k,+1); break; }

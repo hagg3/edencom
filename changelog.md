@@ -1,25 +1,39 @@
 # Beta 0.6
-Insert summary here. Headings below with bullets for features/changes.
-
-## Interface
-- **Tutorial world:** a Tutorial world is added to My Worlds once for every player. Its stations teach moving, building, blocks and paint, the hotbar, signs, command blocks, doors and portals, liquids and fire, and flying. In-world hints for touch, keyboard + mouse and gamepad close when you do the thing, and can be hidden with the card's close box. Settings › Gameplay › *Restore tutorial world* adds it back.
+Big improvements to the modding APIs.
 
 ## Modding
-- **Scripting API version 2** (still beta): `eden.version` is 2, and a pack can require it with `"requires": ["emod>=2"]`. The scripting docs say which version added each call and event.
+- **Scripting API version 2:** `eden.version` is 2, and a pack can require it with `"requires": ["emod>=2"]`.
+- **Signs for scripts:** `eden.sign` reads a sign, `eden.setsign` writes, `sign` event fires if player places or edits a sign.
+- **Saved data for scripts:** `eden.store.get`, `eden.store.set` and `eden.store.keys` keep a pack's values in the world. Up to 64 KiB per pack. 
+- **Sharing a world with mod data:** Share › Export has a *World copy (.emod)* format. If the world holds data saved by mods, it asks whether to include it or not.
+- **`mod <pack>:<name>`** runs a command from a specific pack when two packs use the same name.
+- **`scripts reload`** re-reads the script files from disk.
+- **Menus and dialogs for scripts:** `eden.menu` opens a full-screen menu (tabs, rows, buttons, toggles, sliders, choices) over the running world; `eden.ask` and `eden.input` raise a dialog and wait for the answer; `eden.toast` shows a small popup.
+- **Pack settings:** a pack's `pack.json` can declare a settings page (toggles, sliders, choices, text). 
+- **Pack icons:** a pack can ship its own 64×64 icons for menu rows and tabs.
 - **New `use` event:** fires when the player uses a block (for now: a fire tap, on any block, before anything burns).
-- **Signs for scripts:** `eden.sign` reads a sign, `eden.setsign` writes one, and a `sign` event fires when the player places or edits a sign.
-- **Saved data for scripts:** `eden.store.get`, `eden.store.set` and `eden.store.keys` keep a pack's values (numbers, strings, booleans and tables) in the world, saved with its blocks. Up to 64 KiB per pack. A pack you remove keeps its saved data in the world for when you add it back.
-- **Sharing a world with mod data:** Share › Export has a *World copy (.emod)* format. If the world holds data saved by mods, it asks whether to include it, leave it out, or cancel.
-- **`mod <pack>:<name>`** runs a command from a specific pack when two packs use the same name; a name clash now only warns.
-- **`scripts reload`** re-reads the script files from disk, so edits show up without restarting.
+- **Usable blocks:** a mod block with the `usable` trait fires the `use` event when tapped in build mode, instead of building.
+- **Creature handles:** `eden.spawn` returns a handle you can move, launch (`h:setvel`) and remove, and `eden.creatures` finds the ones near a point.
+- **`leave` event:** fires as the world closes, before the final save, so what a script stores is in it.
+- **More for scripts to read:** `eden.look` (the cell under the crosshair) and a fuller `eden.player` (tool in use, paint colour, block in hand).
+- **`eden.fire`** now lights only a flammable block; a fired `eden:firework` launches when its fuse burns down.
+
+## Graphics
+- **Lamp light modes:** choice between *Legacy* (pre 2.2 small lamp radius) or *New Dawn* (post 2.2 wider, smoother glow) in World Properties › World. Imported worlds from the New Dawn era open in New Dawn automatically, via Settings › World › *Auto-detect lamp light*.
+- **Graphics preset** (Low, Default, High, Custom) sets view distance, render scale, atmosphere and sun shadows together.
+- **Sharp UI** (`video.sharp_ui`, on by default) draws the interface at full resolution; applies on relaunch.
 
 ## Fixes
 - **A script's `load` event now fires after all of its files have run**, even when a long start-up is spread over several frames.
 - **Scripts that start many coroutines no longer error at the limit:** extra ticks wait for a free slot instead.
 - **Installing from Get Mods only ever replaces the pack you picked**, and installing an older version asks first.
-- **Mod scripts share a total memory limit** (64 MiB, 24 MiB on devices with 3 GB of RAM or less), so one greedy pack can't run the game out of memory.
-- **Compacting a world keeps data this version doesn't know about**, such as records a newer Emod saved, instead of deleting it. Builds up to Beta 0.5 still drop it.
-- **Menu icons no longer turn into black squares** after a texture was drawn after being freed: the next texture loaded could overwrite the icon images (reported on Windows after several world rejoins).
+- **Mod scripts share a total memory limit** (64 MiB, 24 MiB on devices with 3 GB of RAM or less).
+- **Compacting a world keeps data this version doesn't know about**, such as records a newer Emod saved.
+- **Menu icons no longer turn into black squares** after a texture was drawn after being freed: the next texture loaded could overwrite the icon images .
+
+## Experimental
+- **Tutorial world:** a Tutorial world can be generated under experimental settings. It is a proof of concept for a possible feature in future.
+- **Sun shadows** blocks, leaves and glass near you cast shadows along the sun's angle, with crisp pixel edges. Tunable with the `shadow.*` console variables. Remains experimental/conceptual for now.
 
 # Beta 0.5
 This beta is mostly about polish and robustness: a keyboard-friendly interface, a hotbar, desktop window handling, and data safety improvements.

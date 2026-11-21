@@ -207,6 +207,8 @@ Two rules fall out of it, and both are load-bearing for callers:
 - New widget? Add it to `GLWidgets`, not to a screen (docs/ui.md "Building blocks").
 - New icon? Add the Lucide path to `../tools/eden-icons.js` and re-run `ui-icons.py` (regenerates
   `media/ui/ui_icons.png` and `Classes/UIIcons.h`). Never a *new* PNG; the only raster allowed is art
-  the engine already ships.
+  the engine already ships. **Append to `ICONS` only** (K.7-3a): a cell's Lucide name is mod API (`eden.menu`'s
+  `icon = "zap"`, looked up through the generated `kUIIconNames`), so a name is never removed, renamed or re-pointed.
+  The 8x8 atlas holds 64; 58 are used.
 - New setting row? Add it to `kSettings[]` in `src/seam/Settings.cpp`; the GL Settings screen
   renders the table generically.

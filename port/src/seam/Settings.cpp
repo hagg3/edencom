@@ -31,6 +31,7 @@
 #include "../../../Classes/Input.h"
 #include "../../../Classes/SimpleAudioEngine.h"
 #include "../../../Classes/Shadow.h"          // H.2: the shadows row
+#include "../../../Classes/SunShadow.h"       // SH.3: the sun_shadows row
 #include <string>
 #include <cstdlib>   // getenv (S.5e: EDEN_UPGRADE_256Z)
 #include "DisplayProfile.h"
@@ -86,7 +87,7 @@ struct Setting {
     int scope;            // SX.6: SCOPE_*; trailing, 0 = always shown
 };
 
-static const Setting kSettings[] = {
+static Setting kSettings[] = {   // mutable only for kMobileRows[] (N.6-2b), applied once before main()
   // key                 label                group        kind         min  max  step  def   hint                                                                options
   { "health",            "Health",            "Gameplay",  KIND_TOGGLE, 0,   1,   1,   1,  "Falls, fire and creatures hurt.",                     NULL },
   { "autojump",          "Auto-jump",         "Gameplay",  KIND_TOGGLE, 0,   1,   1,   1,  NULL,                            NULL },
@@ -163,11 +164,7 @@ static const Setting kSettings[] = {
   { "heading_video_quality", "Quality", "Video", KIND_HEADING, 0, 0, 0, 0, NULL, NULL },
   // B.8: a shortcut over view_distance + render_scale (see kPresets[]). Stored like any row, but
   // moving either knob by hand drops it to Custom. Default reproduces the pre-B.8 look exactly.
-#if defined(EDEN_PLATFORM_IOS)
-  { "graphics_preset",   "Graphics preset",   "Video",     KIND_ENUM,   0,   3,   1,   2,  "Sets view distance, render scale and atmosphere.", "Custom,Low,Default,High" },
-#else
-  { "graphics_preset",   "Graphics preset",   "Video",     KIND_ENUM,   0,   3,   1,   2,  "Sets view distance, render scale and atmosphere.", "Custom,Low,Default,High" },
-#endif
+  { "graphics_preset",   "Graphics preset",   "Video",     KIND_ENUM,   0,   3,   1,   2,  "Sets view distance, render scale, atmosphere and sun shadows.", "Custom,Low,Default,High" },
   // B.5a: draw-culling only (Graphics::setZFAR); a "less" knob for weak CPUs/GPUs. Auto = the per-device value.
   { "view_distance",     "View distance",     "Video",     KIND_ENUM,   0,   6,   1,   0,  "How far terrain is drawn. Lower is faster.", "Auto,4,5,6,7,8,9" },
   // B.5b-2: the resident window's radius in chunks (kRenderRadius[] below), read once per world
@@ -177,30 +174,29 @@ static const Setting kSettings[] = {
   // X.17: 4-8 added below 9 (T_RADIUS_MIN is 4; the runtime window ran ASan clean at R4). The stored value is an
   // INDEX, so prepending options needed a new key: "render_radius" replaced "render_distance" (9,10,12,16 = old
   // indexes 0-3 = new 5-8), migrated once in eden_settings_init.
-#if defined(EDEN_PLATFORM_IOS)
-  { "render_radius",     "Render distance",   "Video",     KIND_ENUM,   0,   7,   1,   5,  "Applies when a world opens.", "4,5,6,7,8,9,10,12" },
-#else
+  // N.6-2b: this is the desktop list; a mobile device class drops the 16 (kMobileRows[] below).
   { "render_radius",     "Render distance",   "Video",     KIND_ENUM,   0,   8,   1,   5,  "Applies when a world opens.", "4,5,6,7,8,9,10,12,16" },
-#endif
   // Audit item #6 (§4a/§4c.1-2): the drawable used to be pinned to 1136x640 with devicePixelRatio
   // never read at all, so on any modern display the game was a small buffer upscaled — permanently
   // blurry. These two rows are the knobs on the now-dynamic drawable that public/eden-st.html
   // computes (CSS box x min(devicePixelRatio, dpr_cap) x render_scale). Neither touches the
   // engine's 568x320 POINT space; see eden_set_drawable_size() in the GL shim.
   // Defaults reproduce "as sharp as the display allows, no supersampling": cap 2x, scale 100%.
-#if defined(EDEN_PLATFORM_IOS)
-  // iOS offers no 125% (N.4.11b): on an iPad Air 2 it took the footprint 372 -> 601 MB, kept 564 MB
-  // after going back to 100%, and bought nothing (the device is not fill-bound). max 2 makes
+  // Mobile offers no 125% (N.4.11b, kMobileRows[] below): on an iPad Air 2 it took the footprint 372 -> 601 MB, kept
+  // 564 MB after going back to 100%, and bought nothing (the device is not fill-bound). max 2 makes
   // eden_settings_set() clamp to 100%; eden_get_render_scale_pct() reads a stored 3 as 100%.
   // Hidden and read as 100% from N.4.12 until FT.16 (2026-10-28) replaced the blit with a quad.
-  // The default is per device: 75% on Air 2-class hardware (eden_ios_air2_class), 100% elsewhere.
-  { "render_scale",      "Render scale",      "Video",     KIND_ENUM,   0,   2,   1,   2,  "Below 100% is softer but cooler and faster.", "50%,75%,100%" },
-#else
+  // The default is per device: 75% on Air 2-class hardware (eden_device_air2_class), 100% elsewhere.
   { "render_scale",      "Render scale",      "Video",     KIND_ENUM,   0,   3,   1,   2,  "Below 100% is softer but cooler and faster.", "50%,75%,100%,125%" },
-#endif
+  // PW.4b: Sharp UI = a Retina (HIGH_PIXEL_DENSITY) drawable. Off opens the window point-sized (1x), which saved
+  // 0.4-0.8 W on the Air 2 (PW.4 G2) and is that device's default; read at window creation, so a change applies on relaunch.
+  { "sharp_ui",          "Sharp UI",          "Video",     KIND_TOGGLE, 0,   1,   1,   1,  "Full-resolution drawing. Off is cooler and softer. Applies on relaunch.", NULL },
   // H.2: baked top-face shadows (Classes/Shadow.h). CPU meshing only (< 1 % computed), so not in the
   // presets. Default Off until the user's T look picks the shipped one (ROADMAP Stage H).
   { "shadows",           "Shadows",           "Video",     KIND_ENUM,   0,   2,   1,   1,  "Soft shading under overhangs. Smooth costs a little more meshing.", "Off,Classic,Smooth" },
+  // SH.3: GPU sun shadows (Classes/SunShadow.h). An Experiment (SH.4 parked: sun-shadow quirks), off by default everywhere, hidden and
+  // forced off on the Air 2 class (eden_sun_shadows_offered). While on they replace the Shadows row above.
+  { "sun_shadows",       "Sun shadows",       "Video",     KIND_TOGGLE, 0,   1,   1,   0,  "Shadows cast by the sun near you. Replaces Shadows while on.", NULL, NULL, "Experiments" },
   // Lamp light in shadows: off = a shaded top face by day ignores coloured lamp light (shadows are plain grey).
   { "shadow_lamp_tint",   "Tinted lamp shadows", "Video",    KIND_TOGGLE, 0,   1,   1,   0,  "Lamp light colours shadows, even by day.", NULL },
   // AT.1a: the Atmosphere tier (A7). Default High; eden_apply_profile_defaults seeds Off on Air 2-class iOS.
@@ -211,14 +207,10 @@ static const Setting kSettings[] = {
   // game at an uncapped rAF is a thermal-throttle machine there — perf-audit §4b). Uncapped is the
   // default for everyone; eden_apply_input_profile() below sets it to 60 the first time a touch
   // profile is detected AND the player has never explicitly touched this row.
-#if defined(EDEN_PLATFORM_IOS)
-  // P.14 (decision P.4-4): no 45 on iOS -- at vsync 1 on a 60 Hz panel it alternates 16.7 / 33.3 ms
-  // frames. The list is 3 long here, so the stored index differs from the 4-entry list below:
+  // P.14 (decision P.4-4): no 45 on mobile (kMobileRows[] below) -- at vsync 1 on a 60 Hz panel it alternates 16.7 / 33.3 ms
+  // frames. The mobile list is 3 long, so the stored index differs from this 4-entry one:
   // eden_get_fps_cap() maps it, the profile seeder remaps, and eden_settings_init migrates once.
-  { "fps_cap",           "Frame rate cap",    "Video",     KIND_ENUM,   0,   2,   1,   0,  "30 or 60 saves battery and heat.", "Uncapped,30,60" },
-#else
   { "fps_cap",           "Frame rate cap",    "Video",     KIND_ENUM,   0,   3,   1,   0,  "30 or 60 saves battery and heat.", "Uncapped,30,45,60" },
-#endif
   // G.5b-4 (renderer plan §7): ES 1.1 per-vertex lighting as 2.1 drew it. Off = the port's unlit look
   // before G.5b-4. Read by the GL backend's drawLit (R8); creatures are lit either way. Not in the presets.
   { "original_lighting", "Original lighting", "Video",     KIND_TOGGLE, 0,   1,   1,   1,  "Shading on debris and fireworks, as in Eden 2.1.", NULL },
@@ -293,8 +285,29 @@ static const Setting kSettings[] = {
   // eden_get_upgrade_256z() by FileManager's convert-on-play, native Get Worlds and the web Storage
   // tab's import; the convert prompt's "Keep 64z" overrides it for one world.
   { "upgrade_256z",      "Convert to 256 high", "Saves", KIND_TOGGLE, 0, 1, 1, 1, "Upgrade 64z worlds to 256z when converting: room to build up to y 255. Uses more memory.", NULL, NULL, "World" },
+  // LM.3: a world with no lamp-light choice yet gets New Dawn when it was imported at 256z (Get Worlds, .eden), else Legacy.
+  // Read through eden_get_auto_lamp_light() by FileManager::finishLoadOnMain.
+  { "auto_lamp_light",   "Auto-detect lamp light", "Saves", KIND_TOGGLE, 0, 1, 1, 1, "Imported 256z worlds that have no lamp-light choice yet open in New Dawn. Change it per world in World Properties.", NULL, NULL, "World" },
 };
 static const int kSettingCount = (int)(sizeof(kSettings) / sizeof(kSettings[0]));
+
+// N.6-2b: the three rows whose option list is per device class. kSettings[] holds the desktop lists; a mobile class
+// (eden_device_class() != EDEN_DEVICE_DESKTOP) swaps in these once, at static-init time, before any reader runs. The
+// stored value is an INDEX, so these lists are a wire format: change them only with a migration (see fps_cap_v2).
+struct MobileRow { const char* key; float max; const char* options; };
+static const MobileRow kMobileRows[] = {
+    { "render_radius", 7, "4,5,6,7,8,9,10,12" },          // no 16 (P.4 decision 5)
+    { "render_scale",  2, "50%,75%,100%" },               // no 125% (N.4.11b)
+    { "fps_cap",       2, "Uncapped,30,60" },             // no 45 (P.14)
+};
+static bool eden_apply_device_rows(void) {
+    if (eden_device_class() == EDEN_DEVICE_DESKTOP) return false;
+    for (const MobileRow& m : kMobileRows)
+        for (int i = 0; i < kSettingCount; i++)
+            if (!std::strcmp(kSettings[i].key, m.key)) { kSettings[i].max = m.max; kSettings[i].options = m.options; }
+    return true;
+}
+[[maybe_unused]] static const bool kMobileLists = eden_apply_device_rows();
 
 static float g_value[kSettingCount];
 static std::string g_text[kSettingCount];   // KIND_TEXT rows only
@@ -361,6 +374,7 @@ float eden_gamepad_deadzone = 0.15f;
 float eden_save_backup      = 0.0f;
 // S.5e: read once per conversion through eden_get_upgrade_256z(). Default ON (the user's decision).
 float eden_upgrade_256z     = 1.0f;
+float eden_auto_lamp_light  = 1.0f;   // LM.3
 
 // ---------------------------------------------------------------------------------------------
 // Phase 2 — input mode: Auto(0) / Touch(1) / Keyboard+Mouse(2). "Auto" defers to whatever the
@@ -426,33 +440,21 @@ void eden_set_detected_touch(int isTouch) {
 // and Section 4b — so there is nothing to override for them.)
 extern "C" void eden_settings_set(int i, float v);   // defined further down in this file
 
-#if defined(EDEN_PLATFORM_IOS)
-// FT.16 (plan: WORKING/thermal-power-plan-2026-10-28.md §6): A8/A8X/A9-era devices draw the 3D pass
-// at 75% (2.25x stock 2.1's 1024x768 pixels on an iPad; 100% is 4.0x). The plan's "match 2.1" seeded
-// 50%; after Round 0 on the Air 2 (2026-10-28) the user found 50% too soft and chose 75%. By hw.machine: iPad5,x (Air 2, mini 4), iPad6,11/12 (iPad 5th gen),
-// iPhone7,x (6/6 Plus), iPhone8,x (6s/6s Plus/SE). The A9X iPad Pros (iPad6,3-8) are not on the list.
-#include <sys/sysctl.h>
-static int eden_ios_air2_class(void) {
-    static int cached = -1;
-    if (cached >= 0) return cached;
-    char m[64] = {0};
-    size_t n = sizeof(m) - 1;
-    cached = 0;
-    if (sysctlbyname("hw.machine", m, &n, nullptr, 0) != 0) return cached;
-    if (std::strncmp(m, "iPad5,", 6) == 0 || std::strcmp(m, "iPad6,11") == 0 ||
-        std::strcmp(m, "iPad6,12") == 0 || std::strncmp(m, "iPhone7,", 8) == 0 ||
-        std::strncmp(m, "iPhone8,", 8) == 0)
-        cached = 1;
-    std::fprintf(stderr, "[eden-settings] device %s: %s render scale default\n", m,
-                 cached ? "Air 2-class, 75%" : "100%");
-    return cached;
+// N.6-2b: the device class and the Air 2-class hardware list (FT.16) live in DisplayProfile.cpp (eden_device_class,
+// eden_device_air2_class). "Mobile" below = every class but desktop: the shorter option lists, the 30/60 frame caps.
+static inline bool eden_is_mobile(void) { return eden_device_class() != EDEN_DEVICE_DESKTOP; }
+// PW.4b: does this launch open a Retina drawable? Read straight from the prefs file (the window exists before the
+// settings model loads). A stored Sharp UI choice wins; otherwise Air 2-class iOS opens 1x and everything else sharp.
+extern "C" int eden_sharp_ui_wanted(void) {
+    if (eden_prefs_type("sharp_ui") == 1) return eden_prefs_get_int("sharp_ui", 1000) != 0;
+    if (eden_device_air2_class()) return 0;
+    return 1;
 }
-#endif
 // The device's render_scale default, as an option index (0 = 50%, 1 = 75%, 2 = 100%).
 static int eden_device_render_scale_default(int profileIndex) {
-#if defined(EDEN_PLATFORM_IOS)
-    if (eden_ios_air2_class()) return 1;
-#endif
+    // PW.4b: under a 1x drawable the 3D pass is already point-sized, so scaling it again only blurs: seed 100%.
+    if (!eden_sharp_ui_wanted()) return 2;
+    if (eden_device_air2_class()) return 1;
     return profileIndex;
 }
 static bool g_presetApplying = false;
@@ -474,9 +476,7 @@ static void eden_atmo_sync(void);
 static int g_atmoOverride = -1;      // --atmo=: -1 none, else the tier
 static int g_weatherOverride = -1;   // --weather=: -1 none, 0 off, 1 clear, 2 overcast, 3 rain, 4 snow, 5 storm
 static int eden_atmo_device_default(void) {
-#if defined(EDEN_PLATFORM_IOS)
-    if (eden_ios_air2_class()) return 0;
-#endif
+    if (eden_device_air2_class()) return 0;
     return 2;
 }
 static bool g_profileDefaultsApplied = false;
@@ -498,10 +498,8 @@ static void eden_apply_profile_defaults(void) {
         rs  = lm->render_scale;
         if (lm->fps_cap) fps = lm->fps_cap;
     }
-#if defined(EDEN_PLATFORM_IOS)
-    if (fps >= 2) fps -= 1;   // profile indices are into {Uncapped,30,45,60}; iOS dropped 45 (P.14): 45 -> 30, 60 -> 60
-    if (eden_ios_air2_class()) fps = 1;   // FT.15d: Air 2-class seeds 30 fps (-0.9 W, FT.15c); index 1 in {Uncapped,30,60}
-#endif
+    if (eden_is_mobile() && fps >= 2) fps -= 1;   // profile indices are into {Uncapped,30,45,60}; mobile dropped 45 (P.14): 45 -> 30, 60 -> 60
+    if (eden_device_air2_class()) fps = 1;   // FT.15d: Air 2-class seeds 30 fps (-0.9 W, FT.15c); index 1 in {Uncapped,30,60}
     eden_seed_profile_default("fps_cap",      fps);
     eden_seed_profile_default("render_scale", eden_device_render_scale_default(rs));
     if (eden_atmo_device_default() != 2) {   // AT.1a A7: Air 2-class starts Off (High is the row default); not a preset change
@@ -550,18 +548,33 @@ static SettingsMenu* eden_engine_settings(void) {
 // device's default (eden_preset_render_scale), so an Air 2 at its seeded 50% still reads Default.
 // B.5b-2 adds render_distance (an index into kRenderRadius[]): High is radius 16 on desktop native,
 // and 10 on iOS (P.4 decision 6, after T.B16 measured R10 on the Air 2; R12 is opt-in only there).
-struct GfxPreset { int view_distance, render_scale, render_distance, atmosphere; };   // AT.1a: atmosphere -1 = the device default
-#if defined(EDEN_PLATFORM_IOS)
-static const GfxPreset kPresets[] = { {0, 0, 5, 0}, {1, 0, 5, 0}, {0, 2, 5, -1}, {0, 2, 6, 2} };   // Custom, Low, Default, High
-#else
-static const GfxPreset kPresets[] = { {0, 0, 5, 0}, {1, 1, 5, 0}, {0, 2, 5, -1}, {0, 2, 8, 2} };
-#endif
+// AT.1a: atmosphere -1 = the device default. SH.3: sun_shadows likewise (-1 = the row's per-platform default);
+// only where the row is offered (not the Air 2 class).
+struct GfxPreset { int view_distance, render_scale, render_distance, atmosphere, sun_shadows; };
+static const GfxPreset kPresetsDesktop[] = { {0, 0, 5, 0, 0}, {1, 1, 5, 0, 0}, {0, 2, 5, -1, -1}, {0, 2, 8, 2, 0} };   // Custom, Low, Default, High
+static const GfxPreset kPresetsMobile[]  = { {0, 0, 5, 0, 0}, {1, 0, 5, 0, 0}, {0, 2, 5, -1, -1}, {0, 2, 6, 2, 0} };   // N.6-2b: picked by device class
+static const int kPresetCount = 4;
+static const GfxPreset* const kPresets = eden_is_mobile() ? kPresetsMobile : kPresetsDesktop;
 static const int kRenderRadius[] = { 4, 5, 6, 7, 8, 9, 10, 12, 16 };
 static int eden_preset_render_scale(int p) {
     return p == 2 ? eden_device_render_scale_default(kPresets[2].render_scale) : kPresets[p].render_scale;
 }
 static int eden_preset_atmosphere(int p) {
     return kPresets[p].atmosphere < 0 ? eden_atmo_device_default() : kPresets[p].atmosphere;
+}
+// SH.3 (S1): the Air 2 class never offers sun shadows (the row is hidden and reads as off). --sunshadow-selftest
+// pretends to be one through eden_settings_test_air2.
+static int g_air2Test = -1;
+extern "C" void eden_settings_test_air2(int on) { g_air2Test = on < 0 ? -1 : on ? 1 : 0; }
+extern "C" int eden_sun_shadows_offered(void) {
+    if (g_air2Test >= 0) return g_air2Test ? 0 : 1;
+    if (eden_device_air2_class()) return 0;
+    return 1;
+}
+static int eden_preset_sun_shadows(int p) {
+    if (kPresets[p].sun_shadows >= 0) return kPresets[p].sun_shadows;
+    const int si = eden_setting_index("sun_shadows");
+    return si >= 0 && kSettings[si].def != 0.0f ? 1 : 0;
 }
 static void eden_preset_sync(int changedKnob);
 static void eden_persist_setting(int i);
@@ -668,12 +681,13 @@ static const SettingBinding kBindings[] = {
         // Only a deliberate change applies the knobs; the load-time pass must not overwrite stored knobs
         // (or the low-memory seeds) with the preset's.
         const int p = (int)lroundf(v);
-        if (!commit || p < 1 || p >= (int)(sizeof(kPresets) / sizeof(kPresets[0]))) return;
+        if (!commit || p < 1 || p >= kPresetCount) return;
         g_presetApplying = true;
         eden_settings_set(eden_setting_index("view_distance"), (float)kPresets[p].view_distance);
         eden_settings_set(eden_setting_index("render_radius"), (float)kPresets[p].render_distance);
         eden_settings_set(eden_setting_index("render_scale"), (float)eden_preset_render_scale(p));
         eden_settings_set(eden_setting_index("atmosphere"), (float)eden_preset_atmosphere(p));
+        if (eden_sun_shadows_offered()) eden_settings_set(eden_setting_index("sun_shadows"), (float)eden_preset_sun_shadows(p));
         g_presetApplying = false;
     } },
   { "view_distance",   &eden_view_distance, [](int i, float, bool) {
@@ -684,6 +698,10 @@ static const SettingBinding kBindings[] = {
   { "render_scale",    &eden_render_scale, apply_preset_knob },
   { "shadows",         nullptr, [](int, float v, bool) { shadow_setSetting((int)lroundf(v)); } },   // re-meshes if the mode changed
   { "shadow_lamp_tint", nullptr, [](int, float v, bool) { shadow_setLampTint(v >= 0.5f); } },     // re-meshes if it changed
+  { "sun_shadows",     nullptr, [](int i, float v, bool) {   // SH.3: off on the Air 2 class whatever is stored
+        SunShadow::setEnabled(on(v) && eden_sun_shadows_offered());
+        eden_preset_sync(i);
+    } },
   { "atmosphere",      nullptr, [](int i, float v, bool commit) {
         // A deliberate change writes the element rows (the load-time pass must not overwrite hand-set ones).
         const int t = (int)lroundf(v);
@@ -705,6 +723,7 @@ static const SettingBinding kBindings[] = {
   { "block_preview",   nullptr, [](int, float v, bool) { eden_set_block_preview(on(v)); } },
   { "ui_scale",        &eden_ui_scale, [](int, float, bool) { eden_display_refresh(); } },   // re-derives the point space, re-lays-out
   { "reduce_flashing", nullptr, apply_none },   // eden_reduce_flashing()
+  { "sharp_ui", nullptr, apply_none },   // PW.4b: read at window creation by eden_sharp_ui_wanted()
   { "precip",          nullptr, apply_atmo_element },
   { "splash",          nullptr, apply_atmo_element },
   { "clouds",          nullptr, apply_atmo_element },
@@ -742,6 +761,7 @@ static const SettingBinding kBindings[] = {
     } },
   { "save_backup",     &eden_save_backup },
   { "upgrade_256z",    &eden_upgrade_256z },
+  { "auto_lamp_light", &eden_auto_lamp_light },
 };
 static const int kBindingCount = (int)(sizeof(kBindings) / sizeof(kBindings[0]));
 static const SettingBinding* g_binding[kSettingCount];   // by row; filled by eden_settings_resolve_bindings
@@ -840,13 +860,16 @@ static void eden_preset_sync(int changedKnob) {
         ri = eden_setting_index("render_scale"), di = eden_setting_index("render_radius");
     if (pi < 0 || vi < 0 || ri < 0 || di < 0) return;
     int p = (int)lroundf(g_value[pi]);
-    if (p < 1 || p >= (int)(sizeof(kPresets) / sizeof(kPresets[0]))) return;
+    if (p < 1 || p >= kPresetCount) return;
     bool match = (int)lroundf(g_value[vi]) == kPresets[p].view_distance &&
                  (int)lroundf(g_value[di]) == kPresets[p].render_distance;
     match = match && (int)lroundf(g_value[ri]) == eden_preset_render_scale(p);
     // AT.1a: a player who never touched the tier keeps the preset they had (the row's default is not a choice)
     const int ai = eden_setting_index("atmosphere");
     if (ai >= 0 && g_hadStored[ai]) match = match && (int)lroundf(g_value[ai]) == eden_preset_atmosphere(p);
+    const int si = eden_setting_index("sun_shadows");   // SH.3: likewise, where offered
+    if (si >= 0 && g_hadStored[si] && eden_sun_shadows_offered())
+        match = match && (int)lroundf(g_value[si]) == eden_preset_sun_shadows(p);
     if (!match) { g_value[pi] = 0.0f; g_hadStored[pi] = true; eden_persist_setting(pi); }
 }
 
@@ -913,8 +936,7 @@ void eden_settings_init(void) {
             eden_persist_setting(di);
         }
     }
-#if defined(EDEN_PLATFORM_IOS)
-    {   // P.14: fps_cap lost its 45 entry, so a stored index > 1 shifts down once (45 -> 30, 60 -> 60)
+    if (eden_is_mobile()) {   // P.14: fps_cap lost its 45 entry, so a stored index > 1 shifts down once (45 -> 30, 60 -> 60)
         int fi = eden_setting_index("fps_cap");
         if (fi >= 0 && !eden_prefs_has("fps_cap_v2")) {
             if (g_hadStored[fi]) {
@@ -925,7 +947,6 @@ void eden_settings_init(void) {
             eden_prefs_sync();
         }
     }
-#endif
     {   // B.8: a preset nobody chose is whatever the knobs add up to (Default, unless a seed moved them)
         int pi = eden_setting_index("graphics_preset");
         if (pi >= 0 && !g_hadStored[pi]) {
@@ -936,6 +957,9 @@ void eden_settings_init(void) {
                           && (int)lroundf(g_value[ri]) == eden_preset_render_scale(2);
             const int ai = eden_setting_index("atmosphere");
             if (ai >= 0 && g_hadStored[ai]) isDefault = isDefault && (int)lroundf(g_value[ai]) == eden_preset_atmosphere(2);
+            const int si = eden_setting_index("sun_shadows");   // SH.3
+            if (si >= 0 && g_hadStored[si] && eden_sun_shadows_offered())
+                isDefault = isDefault && (int)lroundf(g_value[si]) == eden_preset_sun_shadows(2);
             g_value[pi] = isDefault ? 2.0f : 0.0f;
         }
     }
@@ -1178,6 +1202,13 @@ int eden_get_upgrade_256z(void) {
     if (e && e[0]) return e[0] != '0';
     return eden_upgrade_256z != 0.0f;
 }
+// LM.3: "Auto-detect lamp light". EDEN_AUTO_LAMP_LIGHT=0|1 wins over the setting (a harness pins it to 0 so a
+// converted fixture's light hash never depends on the save directory's settings).
+int eden_get_auto_lamp_light(void) {
+    const char* e = getenv("EDEN_AUTO_LAMP_LIGHT");
+    if (e && e[0]) return e[0] != '0';
+    return eden_auto_lamp_light != 0.0f;
+}
 // B.5b-2: the window radius World::loadWorld hands eden_set_window_radius() for a world of this
 // height, before Terrain::allocateMemory(). EDEN_WINDOW_RADIUS=N wins, the way EDEN_UPGRADE_256Z
 // does (every native scripted mode pins it to 9 unless --radius= is given, so a gate's checksums do
@@ -1202,24 +1233,21 @@ int eden_window_radius_for_world(int height) {
 int eden_get_render_scale_pct(void) {
     static const int kPct[] = {50, 75, 100, 125};
     int i = (int)lroundf(eden_render_scale);
-#if defined(EDEN_PLATFORM_IOS)
     // N.4.12 read every value as 100% here (the HUD drew over a frozen menu at 50%); FT.16's quad
-    // composite brought the setting back. iOS has no 125%: a stored 3 still reads as 100%.
-    if (i == 3) return 100;
-#endif
+    // composite brought the setting back. Mobile has no 125%: a stored 3 still reads as 100%.
+    if (i == 3 && eden_is_mobile()) return 100;
     if (i < 0 || i >= (int)(sizeof(kPct) / sizeof(kPct[0]))) return 100;
     return kPct[i];
 }
 // Row #14. Read every rAF tick by eden_main.cpp's frame gate — plain int, not a bool getter, since
 // 0 means "uncapped" and any other value IS the target fps, no separate on/off flag needed.
 int eden_get_fps_cap(void) {
-#if defined(EDEN_PLATFORM_IOS)
-    static const int kFps[] = {0, 30, 60};
-#else
-    static const int kFps[] = {0, 30, 45, 60};
-#endif
+    static const int kFpsDesktop[] = {0, 30, 45, 60};
+    static const int kFpsMobile[]  = {0, 30, 60};   // N.6-2b: no 45 on mobile (P.14)
+    const bool mobile = eden_is_mobile();
+    const int* kFps = mobile ? kFpsMobile : kFpsDesktop;
     int i = (int)lroundf(eden_fps_cap);
-    if (i < 0 || i >= (int)(sizeof(kFps) / sizeof(kFps[0]))) return 0;
+    if (i < 0 || i >= (mobile ? 3 : 4)) return 0;
     return kFps[i];
 }
 
@@ -1248,6 +1276,12 @@ const char* eden_settings_page_target(int i) {
     return (s && s->kind == KIND_PAGE && s->options) ? s->options : "";
 }
 const char* eden_settings_hint(int i)  { const Setting* s = eden_row(i); return (s && s->hint) ? s->hint : ""; }
+// SH.3: a row another one overrides right now (drawn muted with this hint instead of its own), or NULL.
+const char* eden_settings_inactive_hint(int i) {
+    const Setting* s = eden_row(i);
+    if (s && std::strcmp(s->key, "shadows") == 0 && SunShadow::wanted()) return "Off while Sun shadows is on.";
+    return nullptr;
+}
 // Index of the toggle row `i` depends on (muted while it is off), or -1. A parent that is missing or
 // not a KIND_TOGGLE is a table bug (muting under a range/enum has no meaning): reported, then ignored.
 int eden_settings_parent(int i) {
@@ -1324,6 +1358,7 @@ int eden_settings_apply(int i) {
     if (!s) return 0;
     if (std::strcmp(s->key, "render_radius") == 0) return 1;
     if (std::strcmp(s->key, "upgrade_256z") == 0) return 2;
+    if (std::strcmp(s->key, "auto_lamp_light") == 0) return 1;   // LM.3: read at the next world open
     return 0;
 }
 
@@ -1339,6 +1374,7 @@ int eden_settings_native_hidden(int i) {
     };
     for (const char* h : kHidden) if (std::strcmp(s->key, h) == 0) return 1;
     if (std::strcmp(s->key, "fullscreen") == 0) return eden_host_can_quit() ? 0 : 1;   // UX.5: no window manager on iOS
+    if (std::strcmp(s->key, "sun_shadows") == 0) return eden_sun_shadows_offered() ? 0 : 1;   // SH.3 (S1): not on the Air 2 class
     // Stage L: look rows follow the effective input device.
     const bool touch = eden_effective_input_is_touch() != 0;
     if (std::strcmp(s->key, "touch_controls_sound") == 0) return touch ? 0 : 1;   // SX.3

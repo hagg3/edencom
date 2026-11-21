@@ -27,6 +27,8 @@
 #include "../shim/foundation/platform_shims.h"   // (Phase N Stage 1)
 #include <SDL3/SDL_cpuinfo.h>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <cmath>
 
 // Declared in Classes/Globals.mm but NOT in Globals.h — the original EAGLView.mm:34 externs it
@@ -164,13 +166,61 @@ extern "C" const EdenProfile* eden_profile_get(int id) {
 
 extern "C" int eden_low_memory(void) { return g_low_memory ? 1 : 0; }
 
-// K.8-5: the device class the mod scripts' total memory cap reads (ModScript::Limits::allMemBytes): the overlay
-// flag above, or a device that reports 3 GB of RAM or less (the 2 GB iPad Air 2). A stand-in for N.6-2b's
-// eden_device_class(); native never sets the overlay (see main.cpp), so the RAM is what decides here.
-// eden_low_memory() itself is unchanged: World.cpp's 256z refusal and Settings.cpp's radius pin still read only the overlay.
-extern "C" int eden_script_low_memory(void) {
+// N.6-2b: the device class (DisplayProfile.h). Tests override it with EDEN_DEVICE_CLASS.
+#if defined(EDEN_PLATFORM_IOS)
+#include <sys/sysctl.h>
+// FT.16: A8/A8X/A9-era devices draw the 3D pass at 75% (2.25x stock 2.1's 1024x768 pixels on an iPad; 100% is 4.0x).
+// The plan's "match 2.1" seeded 50%; after Round 0 on the Air 2 (2026-10-28) the user found 50% too soft and chose 75%.
+// By hw.machine: iPad5,x (Air 2, mini 4), iPad6,11/12 (iPad 5th gen), iPhone7,x (6/6 Plus), iPhone8,x (6s/6s Plus/SE).
+// The A9X iPad Pros (iPad6,3-8) are not on the list.
+static int eden_hw_air2_list(void) {
+    static int cached = -1;
+    if (cached >= 0) return cached;
+    char m[64] = {0};
+    size_t n = sizeof(m) - 1;
+    cached = 0;
+    if (sysctlbyname("hw.machine", m, &n, nullptr, 0) != 0) return cached;
+    if (std::strncmp(m, "iPad5,", 6) == 0 || std::strcmp(m, "iPad6,11") == 0 ||
+        std::strcmp(m, "iPad6,12") == 0 || std::strncmp(m, "iPhone7,", 8) == 0 ||
+        std::strncmp(m, "iPhone8,", 8) == 0)
+        cached = 1;
+    std::fprintf(stderr, "[eden-settings] device %s: %s render scale default\n", m,
+                 cached ? "Air 2-class, 75%" : "100%");
+    return cached;
+}
+#else
+static int eden_hw_air2_list(void) { return 0; }
+#endif
+
+static int eden_device_class_override(void) {   // -1 = none
+    const char* e = std::getenv("EDEN_DEVICE_CLASS");
+    if (!e || !e[0]) return -1;
+    if (!std::strcmp(e, "desktop"))    return EDEN_DEVICE_DESKTOP;
+    if (!std::strcmp(e, "mobile"))     return EDEN_DEVICE_MOBILE;
+    if (!std::strcmp(e, "mobile_low")) return EDEN_DEVICE_MOBILE_LOW;
+    std::fprintf(stderr, "[eden-display] EDEN_DEVICE_CLASS=%s ignored (desktop, mobile or mobile_low)\n", e);
+    return -1;
+}
+
+extern "C" int eden_device_class(void) {
+    static int cached = -1;
+    if (cached >= 0) return cached;
+    cached = eden_device_class_override();
+    if (cached >= 0) return cached;
+#if defined(EDEN_PLATFORM_IOS)
     const int ram_mib = SDL_GetSystemRAM();   // 0 when SDL can't tell: not low
-    return g_low_memory || (ram_mib > 0 && ram_mib <= 3072) ? 1 : 0;
+    cached = (eden_hw_air2_list() || (ram_mib > 0 && ram_mib <= 3072)) ? EDEN_DEVICE_MOBILE_LOW : EDEN_DEVICE_MOBILE;
+#else
+    cached = EDEN_DEVICE_DESKTOP;   // N.6-2a: Android = mobile, low at <= 3 GB, once the platform macro exists
+#endif
+    return cached;
+}
+
+// The Air 2-class defaults follow the hardware list, NOT the RAM rule, so an iPhone 7/8/X (2-3 GB, never measured)
+// keeps the full defaults; under an EDEN_DEVICE_CLASS override they follow the class.
+extern "C" int eden_device_air2_class(void) {
+    const int o = eden_device_class_override();
+    return o >= 0 ? o == EDEN_DEVICE_MOBILE_LOW : eden_hw_air2_list();
 }
 
 extern "C" const EdenProfile* eden_profile_active(void) {

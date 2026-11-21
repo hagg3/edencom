@@ -533,12 +533,14 @@ void invariants_clean(const char* phase) {
     const rcore::Invariants& v = rcore::inv();
     char d[400];
     std::snprintf(d, sizeof d, "frames %ld draws %ld outside %ld nested %ld unmatched %ld stacks %ld 2d %ld scene %ld "
-                  "passes %ld contracts %ld/%ld%s%s", v.frames, v.draws, v.drawsOutsideFrame, v.nestedFrames,
+                  "passes %ld contracts %ld/%ld depth %ld%s%s", v.frames, v.draws, v.drawsOutsideFrame, v.nestedFrames,
                   v.endWithoutBegin, v.stackUnbalancedFrames, v.unbalanced2D, v.unbalancedScene, v.passUnbalancedFrames,
-                  v.contractFails, v.contractChecks, v.firstFailure.empty() ? "" : "; first: ", v.firstFailure.c_str());
+                  v.contractFails, v.contractChecks, v.depthPassMisuse, v.firstFailure.empty() ? "" : "; first: ",
+                  v.firstFailure.c_str());
     const bool ok = v.frames > 0 && v.draws > 0 && v.drawsOutsideFrame == 0 && v.nestedFrames == 0 &&
                     v.endWithoutBegin == 0 && v.stackUnbalancedFrames == 0 && v.unbalanced2D == 0 &&
-                    v.unbalancedScene == 0 && v.passUnbalancedFrames == 0 && v.contractFails == 0;
+                    v.unbalancedScene == 0 && v.passUnbalancedFrames == 0 && v.contractFails == 0 &&
+                    v.depthPassMisuse == 0;
     char what[80];
     std::snprintf(what, sizeof what, "invariants hold: %s", phase);
     check(ok, what, d);
@@ -595,6 +597,43 @@ int run_render_selftest() {
         check(cn.draws[9] == 2 && cn.verts[9] == 6 && cn.texCreates == 1 && cn.texUpdates == 1 && cn.bufCreates == 1 && cn.bufUploads == 2,
               "R::counts: draws, vertices, creates and uploads are counted", d);
         R::texDestroy(ct); R::bufDestroy(cb);
+
+        // SH.2: the depth pass on the null backend. A pass binds, drawDepth counts as category "shadow" (index 10)
+        // whatever pass is open, the target lives exactly as long as its texture; then each misuse is counted.
+        R::resetCounts();
+        rcore::inv() = rcore::Invariants();
+        const R::TexDesc dd = {16, 16, R::TF_DEPTH16, false, false, true, true, "selftest-depth"};
+        const R::Tex dt = R::texCreate(dd, nullptr), at = R::texCreate(td, nullptr);
+        R::beginFrame();
+        const bool began = R::beginDepthPass(dt, 16);
+        R::drawDepth(g, 0, -1.0f);
+        R::drawDepth(g, at, 0.5f);
+        R::endDepthPass();
+        R::endFrame();
+        const bool tgtLive = R::depthTargetLive();
+        R::texDestroy(dt);
+        std::snprintf(d, sizeof d, "began %d passes %ld draws(shadow) %ld verts %ld live %d -> %d misuse %ld", began,
+                      cn.depthPasses, cn.draws[10], cn.verts[10], tgtLive, R::depthTargetLive(), rcore::inv().depthPassMisuse);
+        check(began && cn.depthPasses == 1 && cn.draws[10] == 2 && cn.verts[10] == 6 && cn.draws[9] == 0 && tgtLive &&
+              !R::depthTargetLive() && rcore::inv().depthPassMisuse == 0,
+              "SH.2 depth pass (null): binds, counts as shadow, its target lives as long as its texture", d);
+        const R::Tex dt2 = R::texCreate(dd, nullptr);
+        R::beginFrame();
+        R::beginScene();
+        const bool inScene = R::beginDepthPass(dt2, 16);   // refused: inside the scene pass
+        R::endScene();
+        R::drawDepth(g, 0, -1.0f);                          // outside a pass
+        R::endDepthPass();                                  // without a begin
+        R::beginDepthPass(dt2, 16);
+        const bool nested = R::beginDepthPass(dt2, 16);     // refused: nested
+        R::endFrame();                                      // left open (closed by endFrame)
+        const long misuse = rcore::inv().depthPassMisuse;
+        R::texDestroy(dt2); R::texDestroy(at);
+        std::snprintf(d, sizeof d, "in scene %d nested %d misuse %ld (want 5) draws(shadow) %ld", inScene, nested, misuse,
+                      cn.draws[10]);
+        check(!inScene && !nested && misuse == 5 && cn.draws[10] == 2 && !R::depthTargetLive(),
+              "SH.2 depth pass misuse is refused and counted (in scene, outside, unmatched end, nested, left open)", d);
+        rcore::inv() = rcore::Invariants();
     }
 
     // Negative self-checks: each invariant must notice its own violation.

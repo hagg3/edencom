@@ -14,6 +14,7 @@
 #include "Geometry.h"
 #include "SkyCycle.h"
 #include "Shadow.h"   // H.2 baked shadows
+#include "SunShadow.h"   // SH.3: geometry changes re-render the sun-shadow map
 #include "BlockTraits.h"   // K.2-1: per-type behaviour
 
 
@@ -1594,6 +1595,8 @@ static void eden_mesh_hash_vertices(unsigned long long& geom, unsigned long long
 
 void TerrainChunk::prepareVBO(){
     rebuildCounter=0;
+    // SH.3: new geometry (or none): the sun-shadow map re-renders if this chunk is inside it.
+    if(needsVBO||clearOldVerticesOnly)SunShadow::noteChunk(pbounds);
     // Before anything below frees or zeroes them. n_vertices/n_vertices2 (not the rt* copies) are
     // the counts that match verticesbg/verticesbg2 at this instant — the rt* ones are only
     // assigned from them further down.
@@ -1872,6 +1875,7 @@ void TerrainChunk::unbuild(){
 // chunk is in the same state however it got here -- which is what lets a walked window and a fresh
 // load at the same spot hash equal (eden_debug_chunk_state). Main thread.
 void TerrainChunk::dropGeometry(){
+    if(n_vertices||n_vertices2)SunShadow::noteChunk(pbounds);   // SH.3: casters gone
     clearMeshes();
 	n_vertices=0;
     n_vertices2=0;

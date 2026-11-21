@@ -14,7 +14,14 @@ from PIL import Image, ImageDraw
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ICONS = ["wrench", "volume-2", "gamepad-2", "keyboard", "monitor", "flask-conical",
-         "hard-drive", "settings", "square", "mountain", "play", "info", "trees", "terminal", "lock", "lock-open", "message-square", "users"]
+         "hard-drive", "settings", "square", "mountain", "play", "info", "trees", "terminal", "lock", "lock-open", "message-square", "users",
+         # K.7-3a (plan V13 step 1): the curated set a mod's eden.menu names. A NAME IS API: append only, never remove,
+         # rename or re-point one (a pack written today must draw the same glyph on every later build).
+         "zap", "cable", "box", "package", "hammer", "pickaxe", "map", "compass", "flag", "star", "heart", "shield", "key",
+         "gift", "clock", "sun", "moon", "cloud", "flame", "droplet", "leaf", "bug", "home", "door-open", "arrow-up",
+         "arrow-down", "arrow-left", "arrow-right", "check", "x", "plus", "minus", "search", "trash-2", "pencil", "eye",
+         "bell", "music", "book", "coins"]
+assert len(ICONS) <= 64 and len(set(ICONS)) == len(ICONS)
 FILLED = {"play"}
 CELL, SS, GRID, STROKE = 64, 8, 8, 2.4
 
@@ -65,7 +72,7 @@ def bez(p0, ps, n=16):
     return out
 
 def flatten(d):
-    """-> list of (points, closed). Supports M L H V C S Q A Z, absolute and relative."""
+    """-> list of (points, closed). Supports M L H V C S Q T A Z, absolute and relative."""
     t = tokens(d); i = 0
     subs = []; cur = None
     x = y = sx = sy = 0.0
@@ -73,6 +80,11 @@ def flatten(d):
     def num():
         nonlocal i
         v = float(t[i]); i += 1; return v
+    def flag():   # an arc flag is one digit; minified paths pack them ("a1.5 1.5 0 00-2.474" = flags 0, 0)
+        nonlocal i
+        if len(t[i]) > 1 and t[i][0] in "01":
+            v = int(t[i][0]); t[i] = t[i][1:]; return v
+        return int(num())
     while i < len(t):
         if re.match(r"[A-Za-z]", t[i]):
             cmd = t[i]; i += 1
@@ -102,8 +114,12 @@ def flatten(d):
         elif C == "Q":
             a = (ox + num(), oy + num()); e = (ox + num(), oy + num())
             cur += bez((x, y), [a, e]); x, y = e; lastq = a; lastc = None
+        elif C == "T":   # K.7-3a: Lucide's flame
+            a = (2*x - lastq[0], 2*y - lastq[1]) if lastq else (x, y)
+            e = (ox + num(), oy + num())
+            cur += bez((x, y), [a, e]); x, y = e; lastq = a; lastc = None
         elif C == "A":
-            rx, ry, phi, fa, fs = num(), num(), num(), int(num()), int(num())
+            rx, ry, phi = num(), num(), num(); fa = flag(); fs = flag()
             e = (ox + num(), oy + num())
             cur += arc_pts(x, y, rx, ry, phi, fa, fs, *e); x, y = e; lastc = lastq = None
         else:
@@ -154,6 +170,18 @@ def main():
           "};", "", "#define UIICON_CELL_PX 64", "#define UIICON_GRID %d" % GRID,
           "static inline int UIIconCol(int icon) { return icon % UIICON_GRID; }",
           "static inline int UIIconRow(int icon) { return icon / UIICON_GRID; }", "",
+          "// K.7-3a: the Lucide name of every cell (eden.menu's `icon = \"zap\"`). A name is API: never removed or re-pointed.",
+          "static const char* const kUIIconNames[UIICON_COUNT] = {"]
+    h += ["    \"%s\"," % n for n in ICONS]
+    h += ["};",
+          "static inline int uiIconByName(const char* name) {   // -1 = no such icon in this build",
+          "    for (int i = 0; i < UIICON_COUNT; ++i) {",
+          "        const char* a = kUIIconNames[i]; const char* b = name;",
+          "        while (*a && *a == *b) { ++a; ++b; }",
+          "        if (!*a && !*b) return i;",
+          "    }",
+          "    return -1;",
+          "}", "",
           "#endif", ""]
     open(os.path.join(ROOT, "Classes/UIIcons.h"), "w").write("\n".join(h))
 

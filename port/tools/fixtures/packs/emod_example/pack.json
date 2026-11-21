@@ -18,6 +18,7 @@
   "name": "Example blocks",
   "version": "1.0.0",
   "scripts": ["scripts/main.lua"],
+  "icons": {"spark": "icons/spark.png"},   // 64x64, white on transparent; eden.menu names it "emod_example:spark"
   "tiles": {
     "oak": {"png": "textures/oak.png", "unpainted": "oak_color"},
     "oak_color": {"png": "textures/oak_color.png"},

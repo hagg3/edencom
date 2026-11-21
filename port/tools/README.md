@@ -18,7 +18,7 @@ Finished one-off scripts (`bool-modernise`, `sm2-spelling`, `atlas-d2t`, `atlas-
 | `dead-exports.py` (+ `dead-exports-allow.txt`) | dead-export check | gate |
 | `engine-sources.txt` | the engine source list CMake compiles | data |
 | `console-reference.py` | regenerates/`--check`s `docs/console-reference.md` (needs `--console-dump`) | generator, manual |
-| `atlas-k13.py`, `ui-icons.py`, `eden-icons.js`, `wonders-pack-art.py`, `example-pack-art.py` | draw atlas tiles, icons, pack art | generator |
+| `atlas-k13.py`, `ui-icons.py`, `eden-icons.js`, `wonders-pack-art.py`, `example-pack-art.py`, `funfair-pack-art.py` | draw atlas tiles, icons, pack art (`funfair-pack-art.py SRC PACK_DIR`: the Moof Funfair example pack's tiles and its 64x64 menu icons) | generator |
 | `shot-diff.py`, `power-{leg,report,sampler}`, `folders-{stage,getworlds}-gate.sh`, `mp-live-gate.sh`, `ui-device-shots.sh` | screenshots, power, device and live-server rounds | manual |
 | `vendor-lua.sh`, `vendor-zstd.sh` (+ `vendor-lua-emod.patch`) | refresh vendored libraries | manual |
 | `ring-walk-gate.sh`, `ring-light-gate.sh` | B.5b-1 ring-streaming walk/light gates (`EDEN_WINDOW_RADIUS`, `CLASSIC=` from the environment) | manual |
@@ -34,6 +34,10 @@ Finished one-off scripts (`bool-modernise`, `sm2-spelling`, `atlas-d2t`, `atlas-
   resolution (`scan_mods`, `resolve_requires`) mirror `Classes/Json.cpp` and `Classes/ContentPack.cpp` line for line,
   messages included. `fixtures/content/packs/` (corrupt packs + `expect.txt`) is read by both `pack.py fixtures` and
   `--pack-selftest`; change both sides together.
+- **`fuzz/`** (K.0): four libFuzzer targets (`.emod` reader, `.eden`/`.gz`/`.zip` converter, `Json.cpp`, net framer + SNAPZ). `build.sh [outdir]` then `run.sh [seconds] [outdir]`
+  (seeds come from the fixtures; a crash input lands in `native/fuzz-work/crashes`). Linux uses clang's `-fsanitize=fuzzer`; on a Mac set `FUZZER_LIB` to Homebrew LLVM's `libclang_rt.fuzzer_osx.a`.
+  CI job `fuzz` runs 4 minutes a target.
+- **`check-lua-stubs.py`** (K.8-8): `eden_native --lua-api-dump` must equal `docs/eden-api.lua`.
 - **`emod.py`** needs `zstandard` in a venv. Pack-art scripts need Pillow; run them with `python3 -I`.
 - **`tutorial.py`** builds the bundled tutorial world `media/Tutorial.emod` from `tutorial/layout.py` (the stations as
   code; the site survey is in its docstring, `--survey` re-runs it), `tutorial/copy.txt` (every sign and command-block
