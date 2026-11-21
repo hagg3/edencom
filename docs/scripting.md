@@ -85,6 +85,8 @@ console verbs), the same refusals (bedrock, door/portal halves, a cell inside th
 `TYPE_CUSTOM`), the same caps (fill ≤ 4096 cells, `run` chains 8 deep), the same toasts. A malformed argument (an
 unknown block, a `;` or space in a name) **raises** the parser's message (`Unknown block: glas`); a refused cell
 does not raise, it shows in the return values.
+The `unbreakable` trait stops the player's tools only: `set`, `fill` and `cmd` replace an unbreakable block like
+any other (`setCell` refuses bedrock, door and portal halves), while `explode` refuses one (checked 2026-11-21).
 
 | Call | Returns | Same as | Since |
 |---|---|---|---|
@@ -265,7 +267,7 @@ stores something, the 1 MiB and 64-pack record caps, and a session loading none.
 
 | Event | Arguments | When | Since |
 |---|---|---|---|
-| `load` | — | once, when the pack's last top level has finished (it can be frames after the first frame of play: a long top level is paused, a starved one starts late; a `load` handler registered at its end still fires) | 1 |
+| `load` | — | once, when the pack's last top level has finished (it can be frames after the first frame of play: a long top level is paused, a starved one starts late; a `load` handler registered at its end still fires). It can come before the player has landed and the land round them is loaded (`eden.get` under the feet answers nothing): a handler that builds round the player waits for that first (checked 2026-11-21) | 1 |
 | `tick` | `dt` | every frame; a handler still running (waiting or paused) skips frames rather than piling up | 1 |
 | `build` | `x, y, z, block` | the local player built a block (each cell of a double brush; jump-and-build) | 1 |
 | `mine` | `x, y, z, block` (what was there) | the local player removed one | 1 |

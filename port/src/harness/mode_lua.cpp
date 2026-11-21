@@ -1084,6 +1084,7 @@ return table.concat(r, ","))");
         std::vector<emod::ModDataEntry> es;
         const bool rec1 = readRec(&es);
         const emod::ModDataEntry* ar = entryOf(es, "ar_store");
+        const size_t arBytes = ar ? ar->data.size() : 0;   // `ar` points into `es`, which readRec() reassigns below
         // a pack that is not installed (zz_gone) and a blob as_bad's runtime cannot decode (blob version 9)
         std::vector<uint8_t> gone(300), garbage = {9, 9, 9};
         for (size_t i = 0; i < gone.size(); ++i) gone[i] = (uint8_t)(i * 7 + 1);
@@ -1124,7 +1125,7 @@ return table.concat(r, ","))");
                       !g2 ? "missing" : g2->data == gone ? "same" : "DIFFERS", !b2 ? "missing" : b2->data == garbage ? "same" : "DIFFERS",
                       a2 ? a2->data.size() : (size_t)0);
         check(s1 == "true nil" && s2 == "true nil" && quit2 && rec2 && g2 && g2->data == gone && b2 && b2->data == garbage && a2 && ar &&
-                  a2->data.size() > ar->data.size(),
+                  a2->data.size() > arBytes,
               "two saves later: a pack that is not loaded keeps its bytes, an undecodable blob is kept until its pack stores something", d);
 
         // as_bad stores something: its blob is replaced by a valid one

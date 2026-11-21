@@ -301,6 +301,11 @@ void Texture2D::initFromImage(const EdenImage* image, bool sizeToFit,
         width /= 2;
         height /= 2;
     }
+    // REL.6: a thin image (8192x1, the browser selftest's stb-ceiling leg) halves its short side to 0; a
+    // 0-row canvas is calloc(0), and the centre-pixel diagnostic below then read 8 KB past it (ASan; a
+    // segfault on Windows CI). Keep both sides at least 1.
+    if (width < 1) width = 1;
+    if (height < 1) height = 1;
     // Q.2: an NPOT row gets a transparent column or three so it stays 4-byte aligned; _maxS
     // already excludes them. A POT width is left as the stock rule made it.
     if (width & (width - 1)) {
