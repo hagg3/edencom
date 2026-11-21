@@ -70,7 +70,7 @@ void freeMap() {
     g_dirty = true;
 }
 
-void sync() {
+void syncReplace() {
     const bool w = wanted();
     if (w != g_replacing) {
         g_replacing = w;
@@ -226,15 +226,15 @@ void renderPass(int N) {
     if (!ok) {   // the driver refused the framebuffer (logged once by the renderer): behave Off from now on
         g_failed = true;
         freeMap();
-        sync();
+        syncReplace();
     }
 }
 }  // namespace
 
 namespace SunShadow {
 
-void setEnabled(bool on) { g_setting = on; sync(); }
-void setOverride(int v) { g_override = v < 0 ? -1 : v > 1 ? 1 : v; sync(); }
+void setEnabled(bool on) { g_setting = on; syncReplace(); }
+void setOverride(int v) { g_override = v < 0 ? -1 : v > 1 ? 1 : v; syncReplace(); }
 int override() { return g_override; }
 bool wanted() { return !g_failed && (g_override >= 0 ? g_override == 1 : g_setting); }
 
