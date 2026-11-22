@@ -267,6 +267,7 @@ void check(bool ok, const char* what, const char* detail) {
     std::printf("[%s] %-46s %s%s%s\n", g_selftestTag, what, ok ? "PASS" : "FAIL",
                 detail && *detail ? "  " : "", detail ? detail : "");
     if (!ok) g_selftestFailures++;
+    std::fflush(stdout);   // piped to a file stdout is block-buffered: stderr chatter landed mid-line and split a FAIL line the mutant gates grep for
 }
 
 bool mutation_known(const char* tag, const char* flag, const std::string& value,
